@@ -1,0 +1,51 @@
+name: Hardware evidence (real RR-DR60)
+description: Share recordings, measurements, photos, or documents from a real Panasonic RR-DR60.
+labels: ["hardware-evidence"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Real-unit evidence is the most valuable contribution to this project — it lets us verify or correct
+        our [assumptions](https://github.com/chancehouston/rr-dr60-emu/blob/main/docs/hardware/assumptions.md).
+
+        **Most useful captures** (play the signal into the RR-DR60's mic, then record its playback):
+        - 1 kHz sine tone at a few loudness levels (quiet / normal / loud)
+        - A slow sine sweep 50 Hz → 10 kHz
+        - Silence in a quiet room (noise floor), with and without VAS enabled
+        - Tone bursts with gaps (AGC and VAS timing)
+        - Normal speech
+
+        Please describe how you captured it (earphone jack vs. microphone at the speaker, interface, sample rate).
+  - type: textarea
+    id: unit
+    attributes:
+      label: Unit details
+      description: Model marking, serial range/date code if visible, condition, battery type and charge.
+    validations:
+      required: true
+  - type: textarea
+    id: method
+    attributes:
+      label: Capture method
+      description: Signal source, playback path (earphone jack / speaker), recording interface, sample rate, VAS and volume settings.
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Files or links
+      description: Attach files (zip if needed) or link to them. Lossless formats (WAV/FLAC) please.
+    validations:
+      required: true
+  - type: input
+    id: assumptions
+    attributes:
+      label: Assumption IDs this relates to (if known)
+      placeholder: e.g. A-001, A-008
+  - type: checkboxes
+    id: license
+    attributes:
+      label: Permission
+      options:
+        - label: I agree these files may be used for analysis and, where small, included in this MIT-licensed repository as test fixtures.
+          required: true

@@ -1,0 +1,19 @@
+name: Feature request
+description: Suggest an API, integration, or capability.
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe your use case (e.g. "my iOS app needs to tap the signal after the codec").
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

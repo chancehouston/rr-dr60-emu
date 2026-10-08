@@ -1,0 +1,26 @@
+name: Accuracy / fidelity report
+description: The emulator doesn't sound or measure like a real RR-DR60.
+labels: ["fidelity", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! Accuracy reports are most useful when they're specific and measurable.
+        Have recordings from a real unit? Use the **Hardware evidence** template instead.
+  - type: input
+    id: stage
+    attributes:
+      label: Signal-chain stage (if known)
+      description: See docs/hardware/signal-chain.md — e.g. "AGC", "speaker", "speech codec".
+  - type: input
+    id: assumption
+    attributes:
+      label: Related assumption ID (if any)
+      placeholder: e.g. A-007
+  - type: textarea
+    id: difference
+    attributes:
+      label: What differs, and how do you know?
+      description: Describe the difference and your evidence (measurements, comparisons, sources).
+    validations:
+      required: true

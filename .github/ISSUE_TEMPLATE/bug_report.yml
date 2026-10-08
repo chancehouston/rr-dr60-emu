@@ -1,0 +1,36 @@
+name: Bug report
+description: Something in the library or its API doesn't work as documented.
+labels: ["bug", "triage"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you expected vs. what actually happened.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal code, configuration, and input audio description (sample rate, length, content).
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: API surface
+      options: [Rust API, C API, Swift / iOS, CLI / tools, Other]
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: e.g. macOS 27 arm64, iOS 26 device, Ubuntu 24.04 x86_64
