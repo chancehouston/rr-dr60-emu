@@ -8,10 +8,10 @@ use rr_dr60_ffi::{
     RrDr60Pipeline, RrDr60Settings, RrDr60Status, rr_dr60_create, rr_dr60_destroy,
     rr_dr60_latency_samples, rr_dr60_process, rr_dr60_reset, rr_dr60_settings_default,
 };
-use rr_dr60_harness::{analysis, stimulus};
+use rr_dr60_harness::{analysis, configs, stimulus};
 
 fn run(host: u32, input: &[f32]) -> Vec<f32> {
-    let mut p = Pipeline::new(Settings::new(host)).expect("supported rate");
+    let mut p = Pipeline::new(configs::settings("default", host)).expect("supported rate");
     let mut out = vec![0.0; input.len()];
     p.process(input, &mut out).expect("equal lengths");
     out
@@ -42,7 +42,7 @@ fn as2_out_of_band_tones_are_attenuated() {
 #[test]
 fn as3_n_samples_in_n_samples_out_at_every_rate() {
     for &host in &SUPPORTED_HOST_RATES {
-        let mut p = Pipeline::new(Settings::new(host)).unwrap();
+        let mut p = Pipeline::new(configs::settings("default", host)).unwrap();
         for n in [0usize, 1, 7, 64, 4096, 48_000] {
             let x = stimulus::noise(0x0D60, n);
             let mut y = vec![f32::NAN; n];
@@ -56,7 +56,7 @@ fn as3_n_samples_in_n_samples_out_at_every_rate() {
 #[test]
 fn as3_length_mismatch_is_rejected_without_changing_state() {
     let x = stimulus::tone(1000.0, 0.5, 48_000.0, 4800);
-    let mut p = Pipeline::new(Settings::new(48_000)).unwrap();
+    let mut p = Pipeline::new(configs::settings("default", 48_000)).unwrap();
     let mut short = vec![0.0; 10];
     assert_eq!(
         p.process(&x, &mut short),
@@ -94,9 +94,11 @@ fn as5_c_api_matches_rust_api() {
     let fs = 48_000;
     let x = stimulus::tone(1000.0, 0.1, f64::from(fs), fs as usize);
     let want = run(fs, &x);
-    let rust_latency = Pipeline::new(Settings::new(fs)).unwrap().latency_samples();
+    let rust_latency = Pipeline::new(configs::settings("default", fs))
+        .unwrap()
+        .latency_samples();
 
-    let settings: RrDr60Settings = rr_dr60_settings_default(fs);
+    let settings: RrDr60Settings = configs::c_default_001(fs);
     let mut p: *mut RrDr60Pipeline = std::ptr::null_mut();
     // SAFETY: valid pointers to a settings struct and an out-pointer.
     assert_eq!(

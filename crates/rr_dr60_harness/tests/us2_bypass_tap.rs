@@ -10,11 +10,13 @@ use rr_dr60_ffi::{
     rr_dr60_process, rr_dr60_reconfigure, rr_dr60_settings_default,
 };
 use rr_dr60_harness::analysis::{self, Complex64};
+use rr_dr60_harness::configs::c_default_001;
 use rr_dr60_harness::stimulus;
 
-/// The five named configurations (data-model.md).
+/// The five named configurations (data-model.md), with the AGC bypassed (spec 002 FR-018).
 fn config(name: &str, host: u32) -> Settings {
     let mut s = Settings::new(host);
+    s.agc.enabled = false;
     match name {
         "default" => {}
         "record_only" => s.playback_stage_enabled = false,
@@ -160,14 +162,14 @@ fn as4_reported_latency_matches_measured_group_delay() {
 #[test]
 fn reconfigure_equals_new() {
     let x = stimulus::log_sweep(20.0, 3900.0, 0.25, 8000.0, 8000);
-    let mut p = Pipeline::new(Settings::new(48_000)).unwrap();
+    let mut p = Pipeline::new(config("default", 48_000)).unwrap();
     let mut scratch = vec![0.0; 4800];
     p.process(&stimulus::noise(1, 4800), &mut scratch).unwrap(); // dirty the state first
     for s in [
-        Settings::new(44_100),
+        config("default", 44_100),
         config("record_only", 8000),
         config("tap_after_record", 48_000),
-        Settings::new(8000),
+        config("default", 8000),
     ] {
         p.reconfigure(s).unwrap();
         assert_eq!(p.settings(), &s);
@@ -204,13 +206,13 @@ fn failed_reconfigure_changes_nothing() {
 #[test]
 fn c_api_reconfigure() {
     let x = stimulus::tone(1000.0, 0.25, 44_100.0, 4410);
-    let s = rr_dr60_settings_default(48_000);
+    let s = c_default_001(48_000);
     let mut p: *mut RrDr60Pipeline = std::ptr::null_mut();
     // SAFETY: valid pointers.
     assert_eq!(unsafe { rr_dr60_create(&s, &mut p) }, RrDr60Status::Ok);
 
     // Invalid tap: rejected, and the old configuration still processes.
-    let mut bad = rr_dr60_settings_default(44_100);
+    let mut bad = c_default_001(44_100);
     bad.tap = 7;
     // SAFETY: p is live; bad is valid.
     assert_eq!(
@@ -225,7 +227,7 @@ fn c_api_reconfigure() {
     );
     assert_eq!(
         lat,
-        Pipeline::new(Settings::new(48_000))
+        Pipeline::new(config("default", 48_000))
             .unwrap()
             .latency_samples()
     );
@@ -242,7 +244,7 @@ fn c_api_reconfigure() {
     );
 
     // A valid change matches the Rust API.
-    let mut good = rr_dr60_settings_default(44_100);
+    let mut good = c_default_001(44_100);
     good.playback_stage_enabled = false;
     // SAFETY: p is live; good is valid.
     assert_eq!(unsafe { rr_dr60_reconfigure(p, &good) }, RrDr60Status::Ok);

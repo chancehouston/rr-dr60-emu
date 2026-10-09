@@ -61,11 +61,11 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
 
 ### Tests (write first, must fail)
 
-- [ ] T004 [P] Settings tests in the `#[cfg(test)]` module of `crates/rr_dr60/src/settings.rs`. Assert:
+- [X] T004 [P] Settings tests in the `#[cfg(test)]` module of `crates/rr_dr60/src/settings.rs`. Assert:
   - **Defaults**: `AgcSettings::DEVICE` and `AgcSettings::default()` are `enabled: true` (A-020), `target_dbfs: -10.0`, `max_gain_db: 40.0`, `max_attenuation_db: 20.0` (A-017), `attack_ms: 10.0` and `release_ms: 1000.0` (A-018).
   - `Settings::new(48_000).agc == AgcSettings::DEVICE`.
   - `Tap::AfterAgc` exists, and `Tap::default()` is still `AfterPlayback`.
-- [ ] T005 [P] Validation tests in the test module of the new `crates/rr_dr60/src/validate.rs`. For each AGC field, using the data-model ranges quoted verbatim:
+- [X] T005 [P] Validation tests in the test module of the new `crates/rr_dr60/src/validate.rs`. For each AGC field, using the data-model ranges quoted verbatim:
   - `target_dbfs` "−30.0 … 0.0"
   - `max_gain_db` "0.0 … 60.0"
   - `max_attenuation_db` "0.0 … 40.0"
@@ -78,55 +78,55 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
   - **Rate first**: an unsupported host rate is reported before any AGC error.
   - **Combinations**: a release shorter than the attack (attack 100, release 50) is accepted (spec FR-012).
   - **Display**: `Setting`'s `Display` contains the field name (e.g. `agc.attack_ms`) and its range.
-- [ ] T006 [P] Pipeline validation tests in the test module of `crates/rr_dr60/src/pipeline.rs`:
+- [X] T006 [P] Pipeline validation tests in the test module of `crates/rr_dr60/src/pipeline.rs`:
   - `Pipeline::new` with `attack_ms = 0.0` returns `Err(Error::InvalidSetting { setting: Setting::AgcAttackMs })`.
   - `reconfigure` with invalid AGC settings returns the error, and leaves `settings()`, `latency_samples()` and the processing state unchanged. Check this by comparing output with a clone of the pipeline that was never reconfigured.
-- [ ] T007 [P] Saturation test in `crates/rr_dr60/src/sanitize.rs`:
+- [X] T007 [P] Saturation test in `crates/rr_dr60/src/sanitize.rs`:
   - `narrow_out(1e300)` returns `f32::MAX`, and `narrow_out(-1e300)` returns `f32::MIN`. Both are finite (research.md R-07).
   - Existing behavior for normal values and subnormals is unchanged.
-- [ ] T008 [P] Hilbert coefficient tests in `crates/rr_dr60/src/stages/agc_hilbert_coeffs.rs`, in a `#[cfg(test)]` module that the generator writes or that is appended next to it in `stages/mod.rs`:
+- [X] T008 [P] Hilbert coefficient tests in `crates/rr_dr60/src/stages/agc_hilbert_coeffs.rs`, in a `#[cfg(test)]` module that the generator writes or that is appended next to it in `stages/mod.rs`:
   - Evaluate the frequency response analytically, with detmath `sin`/`cos`, at 300, 500, 1000, 2000, 8000/3 and 3400 Hz. |H| must be within ±0.01 dB (engineering target, 002 R-15).
   - Antisymmetry: h[k] = −h[62−k]. Odd-index taps, including the centre h[31], are exactly 0.
-- [ ] T009 [P] Harness helper tests in `crates/rr_dr60_harness/src/analysis.rs` and `crates/rr_dr60_harness/src/stimulus.rs` test modules:
+- [X] T009 [P] Harness helper tests in `crates/rr_dr60_harness/src/analysis.rs` and `crates/rr_dr60_harness/src/stimulus.rs` test modules:
   - `analytic_envelope` recovers a constant 0.5 amplitude for a 1 kHz sine to within 0.01 dB away from the ends.
   - `settle_index(trajectory, final, excursion)` returns the last index outside 2/27 of the excursion. Check it on a synthetic exponential with a known τ, where the answer is τ·ln 13.5 ± 1 sample.
   - `midpoint_fraction` gives 1 − e^(−ln 13.5 / 4) ≈ 0.478 ± 0.01 for an exponential.
-  - `thd_n` (least-squares fit of the fundamental's sine and cosine terms; residual power including DC, relative to the fundamental) returns below −100 dB for a pure tone, and −40 dB ± 0.1 dB for a tone plus an added 1 % 3rd harmonic. The same holds at 2000 Hz at an 8 kHz rate, where that harmonic folds onto the fundamental's own frequency; this proves the method can see folded harmonics.
+  - `thd_n` (least-squares fit of the fundamental's sine and cosine terms; residual power including DC, relative to the fundamental) returns below −100 dB for a pure tone, and −40 dB ± 0.1 dB for a tone plus an added 1 % 3rd harmonic. At 8 kHz, an 8000/3 Hz tone plus a 1 % 3rd harmonic (which folds to DC) gives −36.99 dB ± 0.1 dB, proving folded products are counted. (A harmonic that folds exactly onto the fundamental is caught by the FR-008 level check instead; research.md R-11.)
   - `level_dbfs_aes17` returns 0.0 for a full-scale sine and −70.0 ± 0.05 for `bandlimited_noise(…, -70.0)`.
   - `step(levels, durations)` and `tone_bursts` produce the exact sample counts requested.
   - Every new stimulus is bit-reproducible (detmath and PCG32 only): two calls give identical bits.
-- [ ] T010 [P] Write `crates/rr_dr60_harness/tests/golden_agc.rs` with a first test, `golden_v1_unchanged`. It computes the SHA-256 of `include_bytes!("../golden/golden-v1.json")` and asserts it equals a constant recorded from the file as committed on `main`, which has not changed since spec 001. The test fails only if someone edits the 001 golden file (FR-017, FR-018).
+- [X] T010 [P] Write `crates/rr_dr60_harness/tests/golden_agc.rs` with a first test, `golden_v1_unchanged`. It computes the SHA-256 of `include_bytes!("../golden/golden-v1.json")` and asserts it equals a constant recorded from the file as committed on `main`, which has not changed since spec 001. The test fails only if someone edits the 001 golden file (FR-017, FR-018).
 
 ### Implementation
 
-- [ ] T011 Implement in `crates/rr_dr60/src/settings.rs` (contracts/rust-api.md):
+- [X] T011 Implement in `crates/rr_dr60/src/settings.rs` (contracts/rust-api.md):
   - `#[non_exhaustive] pub struct AgcSettings { enabled, target_dbfs, max_gain_db, max_attenuation_db, attack_ms, release_ms }`, deriving `Clone, Copy, Debug, PartialEq`.
   - `pub const DEVICE`, and `Default`.
   - `Settings.agc`. `Settings` derives `Clone, Copy, Debug, PartialEq`, with **no `Eq`/`Hash`**.
   - `Tap::AfterAgc`, with rustdoc citing A-017, A-018, A-020 and spec FR-003/FR-011.
   - Rustdoc on `AgcSettings` states the overshoot warning: output can exceed ±1.0 by up to `max_gain_db`; limit or clip before converting to integer formats. Makes T004 pass.
-- [ ] T012 Implement in `crates/rr_dr60/src/error.rs` and the new `crates/rr_dr60/src/validate.rs`:
+- [X] T012 Implement in `crates/rr_dr60/src/error.rs` and the new `crates/rr_dr60/src/validate.rs`:
   - The `#[non_exhaustive] pub enum Setting` (with `Display`), and `Error::InvalidSetting { setting }` with `Display`.
   - `pub(crate) fn validate(&Settings) -> Result<(), Error>`: rate first, then the AGC fields in struct order, inclusive ranges, non-finite rejected.
   - Re-export `AgcSettings` and `Setting` from `crates/rr_dr60/src/lib.rs`.
   - Call `validate` at the start of `Pipeline::new`, which `reconfigure` already goes through. Makes T005 and T006 pass.
-- [ ] T013 [P] Make `narrow_out` in `crates/rr_dr60/src/sanitize.rs` saturate ±Inf results to ±`f32::MAX` (R-07). Makes T007 pass.
-- [ ] T014 Update `DeviceChain::new` in `crates/rr_dr60/src/pipeline.rs` with the stage gating `run_record = settings.record_stage_enabled && settings.tap != Tap::AfterAgc` and `run_playback = settings.playback_stage_enabled && settings.tap == Tap::AfterPlayback` (data-model.md). The latency calculation is unchanged, and with `AfterAgc` it reports the boundary delay only. Add a unit test: with `Tap::AfterAgc` and both stages enabled, output equals the both-stages-bypassed output.
-- [ ] T015 [P] Implement the helpers that T009 tests in `crates/rr_dr60_harness/src/analysis.rs`: `analytic_envelope` (FFT Hilbert via `rustfft`), `gain_trajectory_exact` (y/x where |x| ≥ 0.1·A, engineering target R-15), `settle_index`, `midpoint_fraction`, `thd_n`, `level_dbfs_aes17`. Analysis code is outside the R-04 ban, as in 001.
-- [ ] T016 [P] Implement the stimuli that T009 tests in `crates/rr_dr60_harness/src/stimulus.rs`: `step`, `tone_bursts`, and `bandlimited_noise(seed, len, fs, level_dbfs)`. The noise is PCG32 through a Kaiser-windowed sinc band-pass FIR, 300–3400 Hz, designed with detmath, then scaled by the AES17 convention (RMS = 10^(L/20)/√2). It never uses `rr_dr60`'s filters (Principle VII).
-- [ ] T017 Move every spec 001 harness configuration onto AGC-bypassed settings in `crates/rr_dr60_harness/src/configs.rs`:
+- [X] T013 [P] Make `narrow_out` in `crates/rr_dr60/src/sanitize.rs` saturate ±Inf results to ±`f32::MAX` (R-07). Makes T007 pass.
+- [X] T014 Update `DeviceChain::new` in `crates/rr_dr60/src/pipeline.rs` with the stage gating `run_record = settings.record_stage_enabled && settings.tap != Tap::AfterAgc` and `run_playback = settings.playback_stage_enabled && settings.tap == Tap::AfterPlayback` (data-model.md). The latency calculation is unchanged, and with `AfterAgc` it reports the boundary delay only. Add a unit test: with `Tap::AfterAgc` and both stages enabled, output equals the both-stages-bypassed output.
+- [X] T015 [P] Implement the helpers that T009 tests in `crates/rr_dr60_harness/src/analysis.rs`: `analytic_envelope` (FFT Hilbert via `rustfft`), `gain_trajectory_exact` (y/x where |x| ≥ 0.1·A, engineering target R-15), `settle_index`, `midpoint_fraction`, `thd_n`, `level_dbfs_aes17`. Analysis code is outside the R-04 ban, as in 001.
+- [X] T016 [P] Implement the stimuli that T009 tests in `crates/rr_dr60_harness/src/stimulus.rs`: `step`, `tone_bursts`, and `bandlimited_noise(seed, len, fs, level_dbfs)`. The noise is PCG32 through a Kaiser-windowed sinc band-pass FIR, 300–3400 Hz, designed with detmath, then scaled by the AES17 convention (RMS = 10^(L/20)/√2). It never uses `rr_dr60`'s filters (Principle VII).
+- [X] T017 Move every spec 001 harness configuration onto AGC-bypassed settings in `crates/rr_dr60_harness/src/configs.rs`:
   - `settings()` sets `s.agc.enabled = false` for `default`, `record_only`, `playback_only`, `tap_after_record` and `bypass_all`. Add a doc comment saying each name means "the spec 001 configuration with the AGC bypassed (spec 002 FR-018)".
   - Add the new names: `agc_only` (AGC on, both stages off, `Tap::AfterAgc`), `agc_isolated_after_playback` (AGC on, both stages off, `AfterPlayback`), `agc_tap_stages_on` (AGC on, both stages on, `AfterAgc`), and `default_agc` (`Settings::new`).
   - Keep `CONFIGS` (001's list) unchanged, and add `AGC_CONFIGS`.
   - Extend `configs_match_data_model_table`.
-- [ ] T018 Extend `RrDr60Settings` in `crates/rr_dr60_ffi/src/lib.rs`:
+- [X] T018 Extend `RrDr60Settings` in `crates/rr_dr60_ffi/src/lib.rs`:
   - Append `agc_enabled: bool, agc_target_dbfs: f32, agc_max_gain_db: f32, agc_max_attenuation_db: f32, agc_attack_ms: f32, agc_release_ms: f32` in that order (contracts/c-api.md offsets 24–44, size 48). The derive drops `Eq`.
   - `rr_dr60_settings_default` fills the device defaults.
   - Add `RrDr60Tap::AfterAgc = 2`. `to_settings` maps tap 2 and copies the AGC fields. The `struct_size ≥ sizeof` rule is unchanged.
   - Until T031, map `Error::InvalidSetting` to `InvalidArgument`.
   - Add a `const _: () = assert!(size_of::<RrDr60Settings>() == 48);`.
   - Regenerate the header.
-- [ ] T019 Update the 001 tests that build settings by hand so they use AGC-bypassed settings and map every tap exhaustively:
+- [X] T019 Update the 001 tests that build settings by hand so they use AGC-bypassed settings and map every tap exhaustively:
   - In `crates/rr_dr60_harness/tests/ffi_parity.rs` (`c_settings`) and `crates/rr_dr60_harness/tests/alloc_free.rs` (around line 85), replace the `if tap == AfterRecord {0} else {1}` mapping with an exhaustive `match` including `Tap::AfterAgc => 2`, and copy `agc_enabled` and the AGC fields from the Rust settings.
   - Check `us1_voiceband.rs`, `us2_bypass_tap.rs`, `edge_cases.rs`, `timing.rs`, `determinism.rs`, `memory.rs`, `mutation.rs` and `crates/rr_dr60_ffi/tests/c/` for `Settings::new` or `rr_dr60_settings_default` used as "the 001 default". Each must set the AGC off (`agc_enabled = false` in C).
   - No expected value or tolerance may change.

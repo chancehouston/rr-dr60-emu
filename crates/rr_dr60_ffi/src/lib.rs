@@ -54,11 +54,16 @@ pub enum RrDr60Tap {
     AfterRecord = 0,
     /// After signal-chain stage 10 (playback band-limit). The default.
     AfterPlayback = 1,
+    /// After signal-chain stage 3 (AGC). Stages 4 and 10 are not run (spec 002 FR-003).
+    AfterAgc = 2,
 }
 
 /// Pipeline settings. Start from `rr_dr60_settings_default` and change fields as needed.
+///
+/// AGC levels use the AES17 convention (a full-scale sine is 0 dBFS). AGC ranges are
+/// inclusive; out-of-range or non-finite values are rejected even when the AGC is off.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RrDr60Settings {
     /// Must be `sizeof(RrDr60Settings)`. Lets the struct grow in later versions.
     pub struct_size: u32,
@@ -72,7 +77,24 @@ pub struct RrDr60Settings {
     pub tap: u32,
     /// Seed for stochastic stages. No effect on output in this version.
     pub seed: u64,
+    /// Signal-chain stage 3 (AGC) on (true, default; assumed always active, A-020) or bypassed.
+    pub agc_enabled: bool,
+    /// AGC target level in dBFS. Default -10 (A-017). Range -30 to 0.
+    pub agc_target_dbfs: f32,
+    /// AGC maximum gain in dB. Default 40 (A-017). Range 0 to 60. A loud first sound after
+    /// create, reset or long silence can exceed full scale by up to this much: limit or clip
+    /// before converting to integer PCM.
+    pub agc_max_gain_db: f32,
+    /// AGC maximum attenuation in dB (positive). Default 20 (A-017). Range 0 to 40.
+    pub agc_max_attenuation_db: f32,
+    /// AGC attack time in ms. Default 10 (A-018). Range 1 to 100.
+    pub agc_attack_ms: f32,
+    /// AGC release time in ms. Default 1000 (A-018). Range 50 to 10000.
+    pub agc_release_ms: f32,
 }
+
+// contracts/c-api.md: the 0.2 layout is 48 bytes, with the AGC fields at offsets 24–44.
+const _: () = assert!(size_of::<RrDr60Settings>() == 48);
 
 /// Opaque pipeline handle.
 pub struct RrDr60Pipeline {
@@ -108,6 +130,7 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, RrDr60Status> {
     let tap = match s.tap {
         0 => Tap::AfterRecord,
         1 => Tap::AfterPlayback,
+        2 => Tap::AfterAgc,
         _ => return Err(RrDr60Status::InvalidArgument),
     };
     let mut out = Settings::new(s.host_rate_hz);
@@ -115,13 +138,20 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, RrDr60Status> {
     out.playback_stage_enabled = s.playback_stage_enabled;
     out.tap = tap;
     out.seed = s.seed;
+    out.agc.enabled = s.agc_enabled;
+    out.agc.target_dbfs = s.agc_target_dbfs;
+    out.agc.max_gain_db = s.agc_max_gain_db;
+    out.agc.max_attenuation_db = s.agc_max_attenuation_db;
+    out.agc.attack_ms = s.agc_attack_ms;
+    out.agc.release_ms = s.agc_release_ms;
     Ok(out)
 }
 
-/// Default settings for `host_rate_hz` (not validated): both stages on, tap after playback,
-/// seed 0. Never fails.
+/// Default settings for `host_rate_hz` (not validated): AGC on with the assumed device values,
+/// both band-limit stages on, tap after playback, seed 0. Never fails.
 #[unsafe(no_mangle)]
 pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings {
+    let agc = rr_dr60::AgcSettings::DEVICE; // A-017, A-018, A-020
     RrDr60Settings {
         struct_size: SETTINGS_SIZE,
         host_rate_hz,
@@ -129,6 +159,12 @@ pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings 
         playback_stage_enabled: true,
         tap: RrDr60Tap::AfterPlayback as u32,
         seed: 0,
+        agc_enabled: agc.enabled,
+        agc_target_dbfs: agc.target_dbfs,
+        agc_max_gain_db: agc.max_gain_db,
+        agc_max_attenuation_db: agc.max_attenuation_db,
+        agc_attack_ms: agc.attack_ms,
+        agc_release_ms: agc.release_ms,
     }
 }
 
@@ -375,6 +411,14 @@ mod tests {
         assert_eq!(to_settings(&s), Err(RrDr60Status::InvalidArgument));
         s.tap = RrDr60Tap::AfterRecord as u32;
         assert_eq!(to_settings(&s).unwrap().tap, Tap::AfterRecord);
+        s.tap = RrDr60Tap::AfterAgc as u32;
+        assert_eq!(to_settings(&s).unwrap().tap, Tap::AfterAgc);
+        s.agc_release_ms = 3000.0;
+        assert_eq!(to_settings(&s).unwrap().agc.release_ms, 3000.0);
+        assert_eq!(
+            to_settings(&rr_dr60_settings_default(48_000)).unwrap(),
+            Settings::new(48_000)
+        );
         s.struct_size = 4;
         assert_eq!(to_settings(&s), Err(RrDr60Status::InvalidArgument));
     }

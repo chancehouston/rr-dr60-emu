@@ -1,22 +1,8 @@
 //! C API parity and error contract (FR-023, FR-024; contracts/c-api.md; tasks.md T054).
 
-use rr_dr60::{Pipeline, Tap};
+use rr_dr60::Pipeline;
 use rr_dr60_ffi::*;
 use rr_dr60_harness::{configs, golden};
-
-fn c_settings(s: rr_dr60::Settings) -> RrDr60Settings {
-    RrDr60Settings {
-        record_stage_enabled: s.record_stage_enabled,
-        playback_stage_enabled: s.playback_stage_enabled,
-        tap: if s.tap == Tap::AfterRecord {
-            RrDr60Tap::AfterRecord as u32
-        } else {
-            RrDr60Tap::AfterPlayback as u32
-        },
-        seed: s.seed,
-        ..rr_dr60_settings_default(s.host_rate_hz)
-    }
-}
 
 fn create(s: &RrDr60Settings) -> *mut RrDr60Pipeline {
     let mut p = std::ptr::null_mut();
@@ -34,7 +20,7 @@ fn c_api_matches_rust_api_everywhere() {
             let mut want = vec![0.0; x.len()];
             let mut rust = Pipeline::new(s).unwrap();
             rust.process(&x, &mut want).unwrap();
-            let p = create(&c_settings(s));
+            let p = create(&configs::c_settings(&s));
             let mut got = vec![0.0f32; x.len()];
             // SAFETY: live handle; valid non-overlapping buffers.
             assert_eq!(

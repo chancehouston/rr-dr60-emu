@@ -1,5 +1,31 @@
 //! Settings validation (spec 002 FR-011; data-model.md › AgcSettings).
 
+use crate::error::{Error, Setting};
+use crate::rate::RatePlan;
+use crate::settings::Settings;
+
+/// Checks `settings`: the host rate first (FR-002), then every AGC field in struct order.
+/// Ranges are inclusive; NaN and ±Inf fail. AGC fields are checked even when the AGC is
+/// bypassed, so a bad value is always reported.
+pub(crate) fn validate(settings: &Settings) -> Result<(), Error> {
+    RatePlan::for_host(settings.host_rate_hz)?;
+    let a = &settings.agc;
+    for (setting, value) in [
+        (Setting::AgcTargetDbfs, a.target_dbfs),
+        (Setting::AgcMaxGainDb, a.max_gain_db),
+        (Setting::AgcMaxAttenuationDb, a.max_attenuation_db),
+        (Setting::AgcAttackMs, a.attack_ms),
+        (Setting::AgcReleaseMs, a.release_ms),
+    ] {
+        let (lo, hi) = setting.range();
+        // NaN fails both comparisons, so it is rejected; ±Inf is outside every range.
+        if !(value >= lo && value <= hi) {
+            return Err(Error::InvalidSetting { setting });
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -25,7 +51,9 @@ mod tests {
                 a.max_attenuation_db = v
             }),
             (Setting::AgcAttackMs, 1.0, 100.0, |a, v| a.attack_ms = v),
-            (Setting::AgcReleaseMs, 50.0, 10_000.0, |a, v| a.release_ms = v),
+            (Setting::AgcReleaseMs, 50.0, 10_000.0, |a, v| {
+                a.release_ms = v
+            }),
         ]
     }
 
@@ -38,7 +66,11 @@ mod tests {
     fn bounds_are_inclusive_and_outside_values_are_rejected() {
         for (setting, lo, hi, set) in fields() {
             for ok in [lo, hi] {
-                assert_eq!(validate(&with_agc(|a| set(a, ok))), Ok(()), "{setting:?} {ok}");
+                assert_eq!(
+                    validate(&with_agc(|a| set(a, ok))),
+                    Ok(()),
+                    "{setting:?} {ok}"
+                );
             }
             let below = f32::from_bits(if lo > 0.0 {
                 lo.to_bits() - 1

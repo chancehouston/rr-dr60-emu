@@ -87,6 +87,123 @@ pub fn power_ratio_db<T: Copy + Into<f64>, U: Copy + Into<f64>>(
     10.0 * (pout / pin).log10()
 }
 
+/// Analytic-signal envelope |x + j·H{x}| of `x`, via an FFT Hilbert transform (spec 002
+/// research.md R-11). Edge samples are affected by the transform's circularity; callers
+/// measure away from the ends.
+pub fn analytic_envelope<T: Copy + Into<f64>>(x: &[T]) -> Vec<f64> {
+    let n = x.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let mut planner = rustfft::FftPlanner::<f64>::new();
+    let mut buf: Vec<Complex64> = x.iter().map(|&v| Complex64::new(v.into(), 0.0)).collect();
+    planner.plan_fft_forward(n).process(&mut buf);
+    // Keep DC (and Nyquist for even n), double the positive frequencies, drop the negative ones.
+    let half = n.div_ceil(2);
+    for (k, c) in buf.iter_mut().enumerate() {
+        if k == 0 || (n % 2 == 0 && k == n / 2) {
+            continue;
+        } else if k < half {
+            *c *= 2.0;
+        } else {
+            *c = Complex64::new(0.0, 0.0);
+        }
+    }
+    planner.plan_fft_inverse(n).process(&mut buf);
+    buf.iter().map(|c| c.norm() / n as f64).collect()
+}
+
+/// Exact per-sample gain in dB, `|y[n] / x[n]|`, at every sample where `|x[n]| ≥ 0.1·amp`
+/// (gating threshold: engineering target, spec 002 R-15). Valid where the device under test is
+/// a pure multiplier with no delay, e.g. the AGC at the 8 kHz host rate (R-11).
+pub fn gain_trajectory_exact<T: Copy + Into<f64>, U: Copy + Into<f64>>(
+    input: &[T],
+    output: &[U],
+    amp: f64,
+) -> Vec<(usize, f64)> {
+    input
+        .iter()
+        .zip(output)
+        .enumerate()
+        .filter_map(|(n, (&x, &y))| {
+            let (x, y): (f64, f64) = (x.into(), y.into());
+            (x.abs() >= 0.1 * amp).then(|| (n, db((y / x).abs())))
+        })
+        .collect()
+}
+
+/// Index of the last trajectory point outside the settling band: `|v − final| > 2/27 ·
+/// |excursion|` (spec 002, Overview › Settling band). Returns 0 if every point is inside.
+pub fn settle_index(trajectory: &[(usize, f64)], final_db: f64, excursion_db: f64) -> usize {
+    let band = excursion_db.abs() * 2.0 / 27.0;
+    trajectory
+        .iter()
+        .rev()
+        .find(|&&(_, v)| (v - final_db).abs() > band)
+        .map_or(0, |&(n, _)| n)
+}
+
+/// Fraction of the dB change from `start_db` to `final_db` reached at `step_index +
+/// release_samples / 4` (spec 002 FR-006 shape check). Uses the first trajectory point at or
+/// after that time.
+pub fn midpoint_fraction(
+    trajectory: &[(usize, f64)],
+    step_index: usize,
+    start_db: f64,
+    final_db: f64,
+    release_samples: usize,
+) -> f64 {
+    let at = step_index + release_samples / 4;
+    let v = trajectory
+        .iter()
+        .find(|&&(n, _)| n >= at)
+        .map_or(final_db, |&(_, v)| v);
+    (v - start_db) / (final_db - start_db)
+}
+
+/// THD+N in dB of `x[start..start + len]` (spec 002 FR-008, research.md R-11): a least-squares
+/// fit of the fundamental's cosine and sine at `freq_hz`, then the power of everything left
+/// over, DC included, relative to the fitted fundamental's power. A harmonic that folds onto
+/// the fundamental's own frequency cannot be separated from it; it shows up as a level change,
+/// which the FR-008 level check covers.
+pub fn thd_n_db<T: Copy + Into<f64>>(
+    x: &[T],
+    freq_hz: f64,
+    fs: f64,
+    start: usize,
+    len: usize,
+) -> f64 {
+    let w = TAU * freq_hz / fs;
+    let seg: Vec<f64> = x[start..start + len].iter().map(|&v| v.into()).collect();
+    let (mut scc, mut sss, mut scs, mut sxc, mut sxs) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for (m, &v) in seg.iter().enumerate() {
+        let (s, c) = (w * m as f64).sin_cos();
+        scc += c * c;
+        sss += s * s;
+        scs += c * s;
+        sxc += v * c;
+        sxs += v * s;
+    }
+    let det = scc * sss - scs * scs;
+    let a = (sxc * sss - sxs * scs) / det;
+    let b = (sxs * scc - sxc * scs) / det;
+    let (mut fund, mut resid) = (0.0, 0.0);
+    for (m, &v) in seg.iter().enumerate() {
+        let (s, c) = (w * m as f64).sin_cos();
+        let f = a * c + b * s;
+        fund += f * f;
+        resid += (v - f) * (v - f);
+    }
+    10.0 * (resid / fund).log10()
+}
+
+/// Level in dBFS by the AES17 convention (a full-scale sine is 0 dBFS):
+/// `20·log10(RMS·√2) = 10·log10(2·mean square)` (spec 002, Overview › Level).
+pub fn level_dbfs_aes17<T: Copy + Into<f64>>(x: &[T]) -> f64 {
+    let ms = x.iter().map(|&v| v.into() * v.into()).sum::<f64>() / x.len() as f64;
+    10.0 * (2.0 * ms).log10()
+}
+
 /// Amplitude ratio to decibels.
 pub fn db(ratio: f64) -> f64 {
     20.0 * ratio.log10()
@@ -164,7 +281,7 @@ mod tests {
         assert!(!traj.is_empty() && traj.len() < x.len());
         for &(n, g) in &traj {
             assert!(x[n].abs() >= 0.05);
-            assert!((g - db(0.5)).abs() < 1e-9, "n {n}: {g}");
+            assert!((g - db(0.25)).abs() < 1e-9, "n {n}: {g}");
         }
     }
 

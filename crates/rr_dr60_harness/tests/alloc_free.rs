@@ -6,8 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 use rr_dr60::Pipeline;
 use rr_dr60_ffi::{
-    RrDr60Pipeline, RrDr60Settings, RrDr60Status, rr_dr60_create, rr_dr60_destroy, rr_dr60_process,
-    rr_dr60_reset,
+    RrDr60Pipeline, RrDr60Status, rr_dr60_create, rr_dr60_destroy, rr_dr60_process, rr_dr60_reset,
 };
 use rr_dr60_harness::configs;
 use rr_dr60_harness::stimulus::{self, Pcg32};
@@ -79,16 +78,7 @@ fn processing_never_touches_the_heap() {
         for config in configs::CONFIGS {
             let settings = configs::settings(config, rate);
             let mut p = Pipeline::new(settings).unwrap();
-            let c_settings = RrDr60Settings {
-                record_stage_enabled: settings.record_stage_enabled,
-                playback_stage_enabled: settings.playback_stage_enabled,
-                tap: if settings.tap == rr_dr60::Tap::AfterRecord {
-                    0
-                } else {
-                    1
-                },
-                ..rr_dr60_ffi::rr_dr60_settings_default(rate)
-            };
+            let c_settings = configs::c_settings(&settings);
             let mut handle: *mut RrDr60Pipeline = std::ptr::null_mut();
             // SAFETY: valid pointers.
             assert_eq!(

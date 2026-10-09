@@ -6,6 +6,7 @@ use crate::resample::{self, PolyphaseDown, PolyphaseUp};
 use crate::sanitize::{narrow_out, sanitize_in};
 use crate::settings::{DEVICE_RATE_HZ, Settings, Tap};
 use crate::stages::voiceband::VoiceBandStage;
+use crate::validate::validate;
 
 /// One emulator instance: host-rate mono audio in, host-rate mono audio out.
 ///
@@ -60,7 +61,7 @@ const _: fn() = || {
 struct DeviceChain {
     record: VoiceBandStage,
     playback: VoiceBandStage,
-    /// Stage 4 runs (FR-007).
+    /// Stage 4 runs: enabled and the tap is not after the AGC (FR-007; spec 002 FR-003).
     run_record: bool,
     /// Stage 10 runs: enabled and the tap is after playback (data-model.md › Tap).
     run_playback: bool,
@@ -71,7 +72,7 @@ impl DeviceChain {
         Self {
             record: VoiceBandStage::new(),
             playback: VoiceBandStage::new(),
-            run_record: settings.record_stage_enabled,
+            run_record: settings.record_stage_enabled && settings.tap != Tap::AfterAgc,
             run_playback: settings.playback_stage_enabled && settings.tap == Tap::AfterPlayback,
         }
     }
@@ -113,8 +114,11 @@ impl Pipeline {
     /// # Errors
     ///
     /// [`Error::UnsupportedHostRate`] if `settings.host_rate_hz` is not in
-    /// [`SUPPORTED_HOST_RATES`](crate::SUPPORTED_HOST_RATES).
+    /// [`SUPPORTED_HOST_RATES`](crate::SUPPORTED_HOST_RATES), checked first.
+    /// [`Error::InvalidSetting`] if an AGC setting is out of range or not finite
+    /// (spec 002 FR-011).
     pub fn new(settings: Settings) -> Result<Self, Error> {
+        validate(&settings)?;
         let plan = RatePlan::for_host(settings.host_rate_hz)?;
         let chain = DeviceChain::new(&settings);
         let latency = latency_samples(&plan, &settings, &chain);
@@ -178,7 +182,8 @@ impl Pipeline {
     ///
     /// # Errors
     ///
-    /// [`Error::UnsupportedHostRate`] if `settings.host_rate_hz` is not supported.
+    /// [`Error::UnsupportedHostRate`] if `settings.host_rate_hz` is not supported, or
+    /// [`Error::InvalidSetting`] if an AGC setting is invalid (spec 002 FR-011).
     pub fn reconfigure(&mut self, settings: Settings) -> Result<(), Error> {
         *self = Self::new(settings)?;
         Ok(())
@@ -241,6 +246,34 @@ mod validation_tests {
     use crate::error::Setting;
     use std::vec::Vec;
 
+    /// 002 T014: with the tap after the AGC, stages 4 and 10 do not run, whatever their
+    /// settings (spec 002 FR-003, data-model.md › Tap).
+    #[test]
+    fn tap_after_agc_skips_both_band_limit_stages() {
+        let x: Vec<f32> = (0..9600)
+            .map(|n| if n % 97 == 0 { 0.5 } else { -0.01 })
+            .collect();
+        let run = |s: Settings| {
+            let mut y = x.clone();
+            Pipeline::new(s).unwrap().process_in_place(&mut y);
+            y
+        };
+        for rate in crate::SUPPORTED_HOST_RATES {
+            let mut tap_agc = Settings::new(rate);
+            tap_agc.agc.enabled = false; // isolate the tap logic from the AGC stage
+            tap_agc.tap = Tap::AfterAgc;
+            let mut bypass = tap_agc;
+            bypass.tap = Tap::AfterPlayback;
+            bypass.record_stage_enabled = false;
+            bypass.playback_stage_enabled = false;
+            assert_eq!(run(tap_agc), run(bypass), "{rate} Hz");
+            assert_eq!(
+                Pipeline::new(tap_agc).unwrap().latency_samples(),
+                Pipeline::new(bypass).unwrap().latency_samples()
+            );
+        }
+    }
+
     /// 002 T006: AGC settings are validated on creation (FR-011).
     #[test]
     fn new_rejects_invalid_agc_setting() {
@@ -258,7 +291,9 @@ mod validation_tests {
     /// 001 FR-008).
     #[test]
     fn failed_reconfigure_leaves_pipeline_unchanged() {
-        let x: Vec<f32> = (0..4800).map(|n| if n % 50 == 0 { 0.5 } else { 0.0 }).collect();
+        let x: Vec<f32> = (0..4800)
+            .map(|n| if n % 50 == 0 { 0.5 } else { 0.0 })
+            .collect();
         let mut p = Pipeline::new(Settings::new(48_000)).unwrap();
         let mut warm = x.clone();
         p.process_in_place(&mut warm);

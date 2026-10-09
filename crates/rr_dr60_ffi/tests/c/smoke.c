@@ -39,6 +39,9 @@ int main(void) {
   RrDr60Settings s = rr_dr60_settings_default(FS);
   CHECK(s.struct_size == sizeof(RrDr60Settings), "struct_size %u", s.struct_size);
   CHECK(s.tap == RR_DR60_TAP_AFTER_PLAYBACK, "default tap");
+  CHECK(s.agc_enabled, "AGC on by default (spec 002, A-020)");
+  /* The spec 001 checks below run with the AGC bypassed (spec 002 FR-018). */
+  s.agc_enabled = false;
 
   RrDr60Pipeline *p = NULL;
   CHECK(rr_dr60_create(&s, &p) == RR_DR60_STATUS_OK && p != NULL, "create");
@@ -85,6 +88,7 @@ int main(void) {
   CHECK(rr_dr60_process(p, in, out, 64) == RR_DR60_STATUS_OK, "process after failed reconfigure");
   CHECK(rr_dr60_reconfigure(p, NULL) == RR_DR60_STATUS_NULL_POINTER, "reconfigure(NULL)");
   RrDr60Settings bypass = rr_dr60_settings_default(FS);
+  bypass.agc_enabled = false;
   bypass.record_stage_enabled = false;
   bypass.playback_stage_enabled = false;
   CHECK(rr_dr60_reconfigure(p, &bypass) == RR_DR60_STATUS_OK, "reconfigure to bypass_all");

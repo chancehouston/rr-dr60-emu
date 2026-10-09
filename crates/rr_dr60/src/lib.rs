@@ -40,9 +40,9 @@ mod stages;
 mod test_util;
 mod validate;
 
-pub use error::Error;
+pub use error::{Error, Setting};
 pub use pipeline::Pipeline;
-pub use settings::{DEVICE_RATE_HZ, SUPPORTED_HOST_RATES, Settings, Tap};
+pub use settings::{AgcSettings, DEVICE_RATE_HZ, SUPPORTED_HOST_RATES, Settings, Tap};
 
 /// Test-only hooks for the measurement harness. Not part of the public API; enabled only by
 /// the `__test-hooks` feature.

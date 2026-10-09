@@ -3,8 +3,8 @@
 
 use std::time::Instant;
 
-use rr_dr60::{Pipeline, Settings};
-use rr_dr60_harness::stimulus;
+use rr_dr60::Pipeline;
+use rr_dr60_harness::{configs, stimulus};
 
 fn skip_in_debug() -> bool {
     if cfg!(debug_assertions) {
@@ -18,7 +18,7 @@ fn skip_in_debug() -> bool {
 fn ns_per_sample(x: &[f32], block: usize, warm: Option<&[f32]>) -> f64 {
     let mut runs: Vec<f64> = (0..9)
         .map(|_| {
-            let mut p = Pipeline::new(Settings::new(48_000)).unwrap();
+            let mut p = Pipeline::new(configs::settings("default", 48_000)).unwrap();
             if let Some(w) = warm {
                 p.process_in_place(&mut w.to_vec());
             }
@@ -63,7 +63,7 @@ fn per_sample_time_is_flat_and_fast() {
     );
 
     // SC-006 (engineering target): 60 s of 48 kHz audio at >= 20x real time.
-    let mut p = Pipeline::new(Settings::new(48_000)).unwrap();
+    let mut p = Pipeline::new(configs::settings("default", 48_000)).unwrap();
     let mut buf = long_stream.clone();
     let t = Instant::now();
     for chunk in buf.chunks_mut(512) {
@@ -82,10 +82,10 @@ fn ten_minute_block_equals_small_blocks() {
     }
     let x = stimulus::noise(0x0D60, 10 * 60 * 48_000);
     let mut whole = x.clone();
-    Pipeline::new(Settings::new(48_000))
+    Pipeline::new(configs::settings("default", 48_000))
         .unwrap()
         .process_in_place(&mut whole);
-    let mut p = Pipeline::new(Settings::new(48_000)).unwrap();
+    let mut p = Pipeline::new(configs::settings("default", 48_000)).unwrap();
     let mut pieces = x.clone();
     for chunk in pieces.chunks_mut(4096) {
         p.process_in_place(chunk);

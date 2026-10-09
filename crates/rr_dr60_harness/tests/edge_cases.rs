@@ -1,7 +1,7 @@
 //! Spec Edge Cases, one test each (tasks.md T051).
 
 use rr_dr60::{Error, Pipeline, Settings};
-use rr_dr60_harness::{analysis, stimulus};
+use rr_dr60_harness::{analysis, configs, stimulus};
 
 fn run(p: &mut Pipeline, x: &[f32]) -> Vec<f32> {
     let mut y = vec![0.0; x.len()];
@@ -10,7 +10,7 @@ fn run(p: &mut Pipeline, x: &[f32]) -> Vec<f32> {
 }
 
 fn fresh(rate: u32) -> Pipeline {
-    Pipeline::new(Settings::new(rate)).unwrap()
+    Pipeline::new(configs::settings("default", rate)).unwrap()
 }
 
 #[test]

@@ -70,6 +70,8 @@ enum RrDr60Tap
   RR_DR60_TAP_AFTER_RECORD = 0,
   // After signal-chain stage 10 (playback band-limit). The default.
   RR_DR60_TAP_AFTER_PLAYBACK = 1,
+  // After signal-chain stage 3 (AGC). Stages 4 and 10 are not run (spec 002 FR-003).
+  RR_DR60_TAP_AFTER_AGC = 2,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -83,6 +85,9 @@ typedef uint32_t RrDr60Tap;
 typedef struct RrDr60Pipeline RrDr60Pipeline;
 
 // Pipeline settings. Start from `rr_dr60_settings_default` and change fields as needed.
+//
+// AGC levels use the AES17 convention (a full-scale sine is 0 dBFS). AGC ranges are
+// inclusive; out-of-range or non-finite values are rejected even when the AGC is off.
 typedef struct RrDr60Settings {
   // Must be `sizeof(RrDr60Settings)`. Lets the struct grow in later versions.
   uint32_t struct_size;
@@ -96,14 +101,28 @@ typedef struct RrDr60Settings {
   uint32_t tap;
   // Seed for stochastic stages. No effect on output in this version.
   uint64_t seed;
+  // Signal-chain stage 3 (AGC) on (true, default; assumed always active, A-020) or bypassed.
+  bool agc_enabled;
+  // AGC target level in dBFS. Default -10 (A-017). Range -30 to 0.
+  float agc_target_dbfs;
+  // AGC maximum gain in dB. Default 40 (A-017). Range 0 to 60. A loud first sound after
+  // create, reset or long silence can exceed full scale by up to this much: limit or clip
+  // before converting to integer PCM.
+  float agc_max_gain_db;
+  // AGC maximum attenuation in dB (positive). Default 20 (A-017). Range 0 to 40.
+  float agc_max_attenuation_db;
+  // AGC attack time in ms. Default 10 (A-018). Range 1 to 100.
+  float agc_attack_ms;
+  // AGC release time in ms. Default 1000 (A-018). Range 50 to 10000.
+  float agc_release_ms;
 } RrDr60Settings;
 
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
 
-// Default settings for `host_rate_hz` (not validated): both stages on, tap after playback,
-// seed 0. Never fails.
+// Default settings for `host_rate_hz` (not validated): AGC on with the assumed device values,
+// both band-limit stages on, tap after playback, seed 0. Never fails.
 struct RrDr60Settings rr_dr60_settings_default(uint32_t host_rate_hz);
 
 // Creates a pipeline. On success, writes the new handle to `*out_pipeline`. Not real-time

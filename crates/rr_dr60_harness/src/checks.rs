@@ -537,7 +537,9 @@ pub fn check_fr012_latency(
 
 /// FR-013: default-configuration latency is at most 20 ms.
 pub fn check_fr013_latency(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
-    let ms = f64::from(make(Settings::new(rate)).latency_samples()) / f64::from(rate) * 1000.0;
+    let ms = f64::from(make(configs::settings("default", rate)).latency_samples())
+        / f64::from(rate)
+        * 1000.0;
     vec![MeasurementResult::new(
         "FR-013",
         "default latency",
