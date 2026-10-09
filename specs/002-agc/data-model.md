@@ -45,8 +45,8 @@ This extends [spec 001's data model](../001-pipeline-skeleton/data-model.md). On
 
 | State | Type | Initial / reset value |
 |---|---|---|
-| detector history: the last 63 device samples (Hilbert input and peak-hold window) | `[f64; 63]` ring + index | all 0.0, index 0 |
-| gain `G` in dB | f64 | `max_gain_db` |
+| detector history: the last 63 device samples (Hilbert input and peak-hold window), stored twice so they can be read as one contiguous slice | `[f64; 126]` + index of the newest sample | all 0.0, index 0 |
+| gain `G` in dB, and its linear value g = exp(G · ln 10 / 20) | f64, f64 | `max_gain_db` and its linear value |
 | derived at construction: `α_a`, `α_r`, `T`, `G_max`, `A_max` | f64 | from settings (R-05) |
 
 All state lives inline in the stage, so nothing is allocated (FR-013). Reset restores the initial values without allocating.
@@ -54,12 +54,12 @@ All state lives inline in the stage, so nothing is allocated (FR-013). Reset res
 ## Per-sample processing (device rate, AGC enabled)
 
 1. x = input device sample (already sanitized, 001 R-05).
-2. Push x into the history.
-3. e² = max(max over k = 0…31 of x[n−k]², x[n−31]² + h[n]², 1e-20), where h is the Hilbert FIR output (R-02).
-4. L = (10 / ln 10) · ln(e²).
-5. G<sub>t</sub> = clamp(−0.9 · (L − T), −A<sub>max</sub>, +G<sub>max</sub>).
-6. G ← G + (G<sub>t</sub> − G) · (α<sub>a</sub> if G<sub>t</sub> < G else α<sub>r</sub>), then G ← flush_state(G) (|G| < 1e-30 → 0.0; R-07).
-7. y = x · exp(G · ln 10 / 20).
+2. y = x · g, where g is the gain from **before** this sample's update. It starts at the maximum gain (A-019), so the first sample after creation or reset gets exactly the maximum gain. The gain trails the detector by one device sample (0.125 ms), well inside every timing tolerance (design choice made in T022).
+3. Push x into the history.
+4. e² = max(max over k = 0…31 of x[n−k]², x[n−31]² + h[n]², 1e-20), where h is the Hilbert FIR output (R-02).
+5. L = (10 / ln 10) · ln(e²).
+6. G<sub>t</sub> = clamp(−0.9 · (L − T), −A<sub>max</sub>, +G<sub>max</sub>).
+7. G ← G + (G<sub>t</sub> − G) · (α<sub>a</sub> if G<sub>t</sub> < G else α<sub>r</sub>), then G ← flush_state(G) (|G| < 1e-30 → 0.0; R-07), and g ← exp(G · ln 10 / 20) for the next sample.
 
 Constants: ln 10 = `core::f64::consts::LN_10`. 10 / ln 10 and ln 10 / 20 are computed by IEEE division at construction. 0.9 = 1 − 1/10 is the A-017 slope. α<sub>a</sub> and α<sub>r</sub> come from `detmath::exp` at construction (R-05, R-06). Detector constants are engineering targets (R-15).
 

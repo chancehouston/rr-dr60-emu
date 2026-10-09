@@ -217,6 +217,20 @@ fn overshoot_is_unclipped_and_finite() {
     eprintln!("start-at-maximum peak {:.2} dBFS", db(f64::from(peak)));
     assert!(peak > 10.0, "overshoot looks clipped: peak {peak}");
     assert!(y.iter().all(|v| v.is_finite()));
+    // "About one attack time": the output is more than 6 dB above its steady peak for at most
+    // 2 × the attack time after the boundary latency (engineering target; expected about 7 ms,
+    // since the gain falls from +40 dB exponentially in dB with τ = attack / ln 13.5).
+    let steady = y[y.len() - 4800..]
+        .iter()
+        .fold(0.0f32, |m, v| m.max(v.abs()));
+    let lat = Pipeline::new(s).unwrap().latency_samples() as usize;
+    let last_hot = y.iter().rposition(|v| v.abs() > 2.0 * steady).unwrap();
+    let hot_ms = (last_hot.saturating_sub(lat)) as f64 / fs * 1000.0;
+    eprintln!("overshoot more than 6 dB above steady for {hot_ms:.2} ms");
+    assert!(
+        hot_ms <= 20.0,
+        "overshoot lasted {hot_ms:.2} ms (attack 10 ms)"
+    );
     let huge = run(s, &stimulus::dc(1e37, 4800));
     assert!(
         huge.iter().all(|v| v.is_finite()),

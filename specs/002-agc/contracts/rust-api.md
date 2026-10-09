@@ -55,6 +55,13 @@ pub struct Settings {
     pub agc: AgcSettings,
 }
 
+impl Settings {
+    pub const fn new(host_rate_hz: u32) -> Self;
+    /// NEW (added in T031). The same check, in the same order, as `Pipeline::new`:
+    /// host rate first, then the AGC fields. Never allocates.
+    pub fn validate(&self) -> Result<(), Error>;
+}
+
 /// NEW. Names a setting in `Error::InvalidSetting`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -81,6 +88,7 @@ pub enum Error {
 ## Behavior
 
 - `Pipeline::new`, `reconfigure`: also validate `settings.agc`, even when it is bypassed. Host-rate errors are reported first.
+- `Settings::validate`: runs that check without building a pipeline; real-time safe. The C API's `rr_dr60_settings_validate` is built on it.
 - `Pipeline::latency_samples`: unaffected by the AGC (FR-010). With `Tap::AfterAgc` the value is the boundary delay only.
 - `Pipeline::reset`: also restores the AGC to maximum gain with an empty detector (FR-013).
 - `Pipeline::process*`: still real-time safe and block-partition invariant with the AGC on (FR-013).

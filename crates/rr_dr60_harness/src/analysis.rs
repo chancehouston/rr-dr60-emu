@@ -87,9 +87,12 @@ pub fn power_ratio_db<T: Copy + Into<f64>, U: Copy + Into<f64>>(
     10.0 * (pout / pin).log10()
 }
 
-/// Analytic-signal envelope |x + j·H{x}| of `x`, via an FFT Hilbert transform (spec 002
-/// research.md R-11). Edge samples are affected by the transform's circularity; callers
-/// measure away from the ends.
+/// Analytic-signal envelope |x + j·H{x}| of `x`, via an FFT Hilbert transform. Edge samples
+/// are affected by the transform's circularity; callers measure away from the ends.
+///
+/// Kept for diagnostics only: spec 002 found it reads AGC attack times about 1.6 ms long
+/// (the 1 kHz test tone is too slow a carrier for a 3.7 ms time constant), so the AGC checks
+/// use the reference-ratio method instead (research.md R-11, T026).
 pub fn analytic_envelope<T: Copy + Into<f64>>(x: &[T]) -> Vec<f64> {
     let n = x.len();
     if n == 0 {

@@ -122,7 +122,8 @@ crates/rr_dr60_harness/
 │   ├── configs.rs            # 001 configs → AGC bypassed (doc comment); + agc_only,
 │   │                         #   agc_isolated_after_playback, agc_tap_stages_on, default_agc
 │   ├── stimulus.rs           # + level steps, tone bursts, band-limited noise (detmath FIR)
-│   ├── analysis.rs           # + analytic envelope, gain trajectory, settling/midpoint, THD+N fit
+│   ├── analysis.rs           # + gain trajectory (reference ratio), settling/midpoint, THD+N fit;
+│   │                         #   analytic envelope kept for diagnostics only (R-11)
 │   ├── agc_checks.rs         # NEW: one check per 002 FR (R-11)
 │   └── golden.rs             # generalized to multiple files; + AGC stimuli/configs
 ├── golden/

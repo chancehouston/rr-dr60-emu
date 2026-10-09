@@ -247,7 +247,7 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
 ### Harness checks and tests (write first; each must fail against a deliberately wrong AGC)
 
 - [X] T034 [US3] Create `crates/rr_dr60_harness/src/agc_checks.rs`, one public function per requirement (research.md R-11). Each takes `(rate, &AgcSettings, Make)`, returns `Vec<MeasurementResult>` citing `002/FR-0xx` plus A-IDs, and labels engineering targets:
-  - **`check_ratio_self_test`**: at every host rate, the reference-ratio method (output ÷ AGC-bypassed reference) agrees with the exact y/x at 8 kHz within 0.25 ms on attack and release, and within 0.1 dB on steady levels (research.md R-11, corrected in T026).
+  - **`check_ratio_self_test`**: at every host rate, the reference-ratio method (output ÷ AGC-bypassed reference) agrees with the exact y/x at 8 kHz within 0.25 ms on attack, 1 % on release, and 0.1 dB on steady levels (research.md R-11, corrected in T026 and T034).
   - **`check_fr004_regulation`**: points 3 dB inside the regulated range from (T − G<sub>max</sub>/0.9) to (T + A<sub>max</sub>/0.9), on the regulation line ± 1 dB.
   - **`check_fr005_limits`**: a sweep from the lower knee − 10 dB to the upper knee + 10 dB in steps of at most 5 dB, with points 3 dB beyond each knee at G<sub>max</sub> ± 1 dB or −A<sub>max</sub> ± 1 dB.
   - **`check_fr006_timing`**:
