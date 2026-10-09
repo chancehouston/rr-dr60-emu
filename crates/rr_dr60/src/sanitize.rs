@@ -22,10 +22,20 @@ pub(crate) fn sanitize_in(x: f32) -> f64 {
 
 /// Internal f64 sample to f32 output, rounding to nearest. Results that would be f32
 /// subnormals become 0.0, so the output never contains subnormals (spec Edge Cases).
+/// Results beyond the f32 range saturate to ±`f32::MAX` instead of becoming ±Inf, so the
+/// output is always finite even with up to +60 dB of AGC gain (spec 002 R-07).
 #[inline]
 pub(crate) fn narrow_out(y: f64) -> f32 {
     let v = y as f32;
-    if v.is_subnormal() { 0.0 } else { v }
+    if v.is_subnormal() {
+        0.0
+    } else if v == f32::INFINITY {
+        f32::MAX
+    } else if v == f32::NEG_INFINITY {
+        f32::MIN
+    } else {
+        v
+    }
 }
 
 /// Flushes tiny filter state to exactly 0.0 (R-05).
@@ -41,6 +51,20 @@ pub(crate) fn flush_state(x: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 002 T007 / research.md R-07: with up to +60 dB of AGC gain, huge finite inputs must not
+    /// become ±Inf on narrowing; they saturate to ±f32::MAX.
+    #[test]
+    fn narrow_out_saturates_instead_of_overflowing() {
+        assert_eq!(narrow_out(1e300).to_bits(), f32::MAX.to_bits());
+        assert_eq!(narrow_out(-1e300).to_bits(), f32::MIN.to_bits());
+        assert_eq!(
+            narrow_out(f64::from(f32::MAX) * 2.0).to_bits(),
+            f32::MAX.to_bits()
+        );
+        assert_eq!(narrow_out(0.25).to_bits(), 0.25f32.to_bits());
+        assert_eq!(narrow_out(1e-40).to_bits(), 0.0f32.to_bits());
+    }
 
     #[test]
     fn sanitize_in_zeroes_non_finite_and_subnormal() {

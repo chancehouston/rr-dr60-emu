@@ -21,12 +21,12 @@
 use std::ffi::c_char;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use rr_dr60::{Error, Pipeline, Settings, Tap};
+use rr_dr60::{Error, Pipeline, Setting, Settings, Tap};
 
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 1;
+pub const RR_DR60_VERSION_MINOR: u32 = 2;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -44,6 +44,33 @@ pub enum RrDr60Status {
     InvalidArgument = 3,
     /// An internal error (a caught panic). The handle is poisoned until `rr_dr60_reset`.
     InternalError = 4,
+    /// An AGC setting is out of range or not finite (spec 002 FR-011).
+    /// `rr_dr60_settings_validate` names it.
+    InvalidSetting = 5,
+}
+
+/// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RrDr60SettingField {
+    /// The settings are valid.
+    None = 0,
+    /// `host_rate_hz` is not a supported rate.
+    HostRate = 1,
+    /// `tap` is not an `RrDr60Tap` value.
+    Tap = 2,
+    /// `struct_size` is smaller than `sizeof(RrDr60Settings)` of this library version.
+    StructSize = 3,
+    /// `agc_target_dbfs` is outside -30 to 0, or not finite.
+    AgcTargetDbfs = 4,
+    /// `agc_max_gain_db` is outside 0 to 60, or not finite.
+    AgcMaxGainDb = 5,
+    /// `agc_max_attenuation_db` is outside 0 to 40, or not finite.
+    AgcMaxAttenuationDb = 6,
+    /// `agc_attack_ms` is outside 1 to 100, or not finite.
+    AgcAttackMs = 7,
+    /// `agc_release_ms` is outside 50 to 10000, or not finite.
+    AgcReleaseMs = 8,
 }
 
 /// Output tap point, passed as `uint32_t` in [`RrDr60Settings::tap`].
@@ -54,11 +81,16 @@ pub enum RrDr60Tap {
     AfterRecord = 0,
     /// After signal-chain stage 10 (playback band-limit). The default.
     AfterPlayback = 1,
+    /// After signal-chain stage 3 (AGC). Stages 4 and 10 are not run (spec 002 FR-003).
+    AfterAgc = 2,
 }
 
 /// Pipeline settings. Start from `rr_dr60_settings_default` and change fields as needed.
+///
+/// AGC levels use the AES17 convention (a full-scale sine is 0 dBFS). AGC ranges are
+/// inclusive; out-of-range or non-finite values are rejected even when the AGC is off.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RrDr60Settings {
     /// Must be `sizeof(RrDr60Settings)`. Lets the struct grow in later versions.
     pub struct_size: u32,
@@ -72,7 +104,24 @@ pub struct RrDr60Settings {
     pub tap: u32,
     /// Seed for stochastic stages. No effect on output in this version.
     pub seed: u64,
+    /// Signal-chain stage 3 (AGC) on (true, default; assumed always active, A-020) or bypassed.
+    pub agc_enabled: bool,
+    /// AGC target level in dBFS. Default -10 (A-017). Range -30 to 0.
+    pub agc_target_dbfs: f32,
+    /// AGC maximum gain in dB. Default 40 (A-017). Range 0 to 60. A loud first sound after
+    /// create, reset or long silence can exceed full scale by up to this much: limit or clip
+    /// before converting to integer PCM.
+    pub agc_max_gain_db: f32,
+    /// AGC maximum attenuation in dB (positive). Default 20 (A-017). Range 0 to 40.
+    pub agc_max_attenuation_db: f32,
+    /// AGC attack time in ms. Default 10 (A-018). Range 1 to 100.
+    pub agc_attack_ms: f32,
+    /// AGC release time in ms. Default 1000 (A-018). Range 50 to 10000.
+    pub agc_release_ms: f32,
 }
+
+// contracts/c-api.md: the 0.2 layout is 48 bytes, with the AGC fields at offsets 24–44.
+const _: () = assert!(size_of::<RrDr60Settings>() == 48);
 
 /// Opaque pipeline handle.
 pub struct RrDr60Pipeline {
@@ -94,10 +143,44 @@ fn panic_to_status(pipeline: Option<&mut RrDr60Pipeline>) -> RrDr60Status {
 }
 
 fn status_from_error(e: Error) -> RrDr60Status {
+    error_to_status_and_field(e).0
+}
+
+/// Maps a core error to the C status and the field it names (spec 002 R-09).
+fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
     match e {
-        Error::UnsupportedHostRate { .. } => RrDr60Status::UnsupportedHostRate,
-        _ => RrDr60Status::InvalidArgument,
+        Error::UnsupportedHostRate { .. } => (
+            RrDr60Status::UnsupportedHostRate,
+            RrDr60SettingField::HostRate,
+        ),
+        Error::InvalidSetting { setting } => {
+            let field = match setting {
+                Setting::AgcTargetDbfs => RrDr60SettingField::AgcTargetDbfs,
+                Setting::AgcMaxGainDb => RrDr60SettingField::AgcMaxGainDb,
+                Setting::AgcMaxAttenuationDb => RrDr60SettingField::AgcMaxAttenuationDb,
+                Setting::AgcAttackMs => RrDr60SettingField::AgcAttackMs,
+                Setting::AgcReleaseMs => RrDr60SettingField::AgcReleaseMs,
+                _ => RrDr60SettingField::None,
+            };
+            (RrDr60Status::InvalidSetting, field)
+        }
+        _ => (RrDr60Status::InvalidArgument, RrDr60SettingField::None),
     }
+}
+
+/// The one validator behind `rr_dr60_create`, `rr_dr60_reconfigure` and
+/// `rr_dr60_settings_validate`, so their status and named field always agree (spec 002 R-09).
+/// Order: struct size → tap → host rate → AGC fields in struct order.
+fn validate_c(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60SettingField)> {
+    if s.struct_size < SETTINGS_SIZE {
+        return Err((
+            RrDr60Status::InvalidArgument,
+            RrDr60SettingField::StructSize,
+        ));
+    }
+    let settings = to_settings(s).map_err(|status| (status, RrDr60SettingField::Tap))?;
+    settings.validate().map_err(error_to_status_and_field)?;
+    Ok(settings)
 }
 
 /// Converts C settings to Rust settings, validating `struct_size` and `tap`.
@@ -108,6 +191,7 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, RrDr60Status> {
     let tap = match s.tap {
         0 => Tap::AfterRecord,
         1 => Tap::AfterPlayback,
+        2 => Tap::AfterAgc,
         _ => return Err(RrDr60Status::InvalidArgument),
     };
     let mut out = Settings::new(s.host_rate_hz);
@@ -115,13 +199,20 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, RrDr60Status> {
     out.playback_stage_enabled = s.playback_stage_enabled;
     out.tap = tap;
     out.seed = s.seed;
+    out.agc.enabled = s.agc_enabled;
+    out.agc.target_dbfs = s.agc_target_dbfs;
+    out.agc.max_gain_db = s.agc_max_gain_db;
+    out.agc.max_attenuation_db = s.agc_max_attenuation_db;
+    out.agc.attack_ms = s.agc_attack_ms;
+    out.agc.release_ms = s.agc_release_ms;
     Ok(out)
 }
 
-/// Default settings for `host_rate_hz` (not validated): both stages on, tap after playback,
-/// seed 0. Never fails.
+/// Default settings for `host_rate_hz` (not validated): AGC on with the assumed device values,
+/// both band-limit stages on, tap after playback, seed 0. Never fails.
 #[unsafe(no_mangle)]
 pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings {
+    let agc = rr_dr60::AgcSettings::DEVICE; // A-017, A-018, A-020
     RrDr60Settings {
         struct_size: SETTINGS_SIZE,
         host_rate_hz,
@@ -129,6 +220,12 @@ pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings 
         playback_stage_enabled: true,
         tap: RrDr60Tap::AfterPlayback as u32,
         seed: 0,
+        agc_enabled: agc.enabled,
+        agc_target_dbfs: agc.target_dbfs,
+        agc_max_gain_db: agc.max_gain_db,
+        agc_max_attenuation_db: agc.max_attenuation_db,
+        agc_attack_ms: agc.attack_ms,
+        agc_release_ms: agc.release_ms,
     }
 }
 
@@ -150,7 +247,7 @@ pub unsafe extern "C" fn rr_dr60_create(
     // SAFETY: checked non-null above; the caller guarantees it points to a valid struct.
     let settings = unsafe { &*settings };
     let result = catch_unwind(|| {
-        let s = to_settings(settings)?;
+        let s = validate_c(settings).map_err(|(status, _)| status)?;
         let inner = Pipeline::new(s).map_err(status_from_error)?;
         Ok(Box::new(RrDr60Pipeline {
             inner,
@@ -316,7 +413,7 @@ pub unsafe extern "C" fn rr_dr60_reconfigure(
     // SAFETY: both non-null; the caller guarantees a live handle and a valid struct.
     let (p, settings) = unsafe { (&mut *pipeline, &*settings) };
     let result = catch_unwind(AssertUnwindSafe(|| {
-        let s = to_settings(settings)?;
+        let s = validate_c(settings).map_err(|(status, _)| status)?;
         p.inner.reconfigure(s).map_err(status_from_error)
     }));
     match result {
@@ -327,6 +424,37 @@ pub unsafe extern "C" fn rr_dr60_reconfigure(
         Ok(Err(status)) => status,
         Err(_) => panic_to_status(Some(p)),
     }
+}
+
+/// Checks `settings` without creating a pipeline. Returns exactly the status
+/// `rr_dr60_create` would return for them and, if `out_field` is not NULL, writes the field
+/// at fault there (`RR_DR60_SETTING_FIELD_NONE` when the status is OK). Fields are checked in
+/// the order struct size, tap, host rate, then the AGC fields. Never allocates; real-time safe.
+///
+/// # Safety
+///
+/// `settings` must be NULL or point to a valid `RrDr60Settings`. `out_field` must be NULL or
+/// writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_settings_validate(
+    settings: *const RrDr60Settings,
+    out_field: *mut RrDr60SettingField,
+) -> RrDr60Status {
+    if settings.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: checked non-null above; the caller guarantees it points to a valid struct.
+    let settings = unsafe { &*settings };
+    let (status, field) = match catch_unwind(|| validate_c(settings)) {
+        Ok(Ok(_)) => (RrDr60Status::Ok, RrDr60SettingField::None),
+        Ok(Err(fault)) => fault,
+        Err(_) => (panic_to_status(None), RrDr60SettingField::None),
+    };
+    if !out_field.is_null() {
+        // SAFETY: out_field is non-null and writable (caller contract).
+        unsafe { *out_field = field };
+    }
+    status
 }
 
 /// The library version as a static NUL-terminated string, e.g. `"0.1.0"`. Never NULL; do not
@@ -375,6 +503,14 @@ mod tests {
         assert_eq!(to_settings(&s), Err(RrDr60Status::InvalidArgument));
         s.tap = RrDr60Tap::AfterRecord as u32;
         assert_eq!(to_settings(&s).unwrap().tap, Tap::AfterRecord);
+        s.tap = RrDr60Tap::AfterAgc as u32;
+        assert_eq!(to_settings(&s).unwrap().tap, Tap::AfterAgc);
+        s.agc_release_ms = 3000.0;
+        assert_eq!(to_settings(&s).unwrap().agc.release_ms, 3000.0);
+        assert_eq!(
+            to_settings(&rr_dr60_settings_default(48_000)).unwrap(),
+            Settings::new(48_000)
+        );
         s.struct_size = 4;
         assert_eq!(to_settings(&s), Err(RrDr60Status::InvalidArgument));
     }

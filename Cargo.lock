@@ -141,25 +141,25 @@ dependencies = [
 
 [[package]]
 name = "rr_dr60"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rr_dr60_detmath",
 ]
 
 [[package]]
 name = "rr_dr60_detmath"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "rr_dr60_ffi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rr_dr60",
 ]
 
 [[package]]
 name = "rr_dr60_harness"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rr_dr60",
  "rr_dr60_detmath",

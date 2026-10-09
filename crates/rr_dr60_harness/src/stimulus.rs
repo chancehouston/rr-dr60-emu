@@ -4,7 +4,7 @@
 //! `rr_dr60_detmath` and integer arithmetic, never the platform math library. That's because
 //! stimuli feed the golden files (FR-014, FR-021). This module stays under the clippy R-04 ban.
 
-use rr_dr60_detmath::{TAU, exp, ln, sin};
+use rr_dr60_detmath::{PI, TAU, bessel_i0, exp, ln, sin, sqrt};
 
 /// Fractional part of a non-negative value, using basic operations only.
 fn frac(x: f64) -> f64 {
@@ -57,6 +57,91 @@ pub fn log_sweep(f0: f64, f1: f64, amp: f64, fs: f64, len: usize) -> Vec<f32> {
     (0..len)
         .map(|k| (amp * sin(log_sweep_phase(f0, f1, fs, len, k))) as f32)
         .collect()
+}
+
+/// Amplitude of a sine at `level_dbfs` (AES17: 0 dBFS = peak 1.0), computed with detmath.
+pub fn amplitude(level_dbfs: f64) -> f64 {
+    exp(level_dbfs * ln(10.0) / 20.0)
+}
+
+/// A tone at `freq_hz` whose level steps through `levels_dbfs`, holding each for the matching
+/// entry of `durations_s` (spec 002 step stimulus). The phase is continuous across steps.
+/// Segment `i` has `(durations_s[i] · fs) as usize` samples.
+pub fn step(freq_hz: f64, levels_dbfs: &[f64], durations_s: &[f64], fs: f64) -> Vec<f32> {
+    assert_eq!(levels_dbfs.len(), durations_s.len());
+    let mut out = Vec::new();
+    for (&level, &secs) in levels_dbfs.iter().zip(durations_s) {
+        let amp = amplitude(level);
+        let start = out.len();
+        out.extend(
+            (start..start + (secs * fs) as usize).map(|n| tone_sample(freq_hz, amp, fs, n) as f32),
+        );
+    }
+    out
+}
+
+/// `cycles` repetitions of a tone burst at `level_dbfs` for `on_s` seconds followed by `off_s`
+/// seconds of silence (spec 002 FR-009). The tone's phase follows the global sample index.
+pub fn tone_bursts(
+    freq_hz: f64,
+    level_dbfs: f64,
+    on_s: f64,
+    off_s: f64,
+    cycles: usize,
+    fs: f64,
+) -> Vec<f32> {
+    let amp = amplitude(level_dbfs);
+    let (on, off) = ((on_s * fs) as usize, (off_s * fs) as usize);
+    let mut out = Vec::with_capacity(cycles * (on + off));
+    for _ in 0..cycles {
+        let start = out.len();
+        out.extend((start..start + on).map(|n| tone_sample(freq_hz, amp, fs, n) as f32));
+        out.extend(std::iter::repeat_n(0.0f32, off));
+    }
+    out
+}
+
+/// Seeded white noise band-limited to 300–3400 Hz and scaled to `level_dbfs` by the AES17
+/// convention (RMS = 10^(L/20) / √2), for spec 002 FR-009.
+///
+/// The band-pass is a Kaiser-windowed (β = 8) sinc FIR of about 10 ms, designed here with
+/// detmath. It never uses `rr_dr60`'s own filters, so the stimulus does not depend on
+/// signal-chain stage 4 (Principle VII). Filter length, window and band edges are engineering
+/// targets (spec 002 R-15). Bit-reproducible on every platform.
+pub fn bandlimited_noise(seed: u64, len: usize, fs: f64, level_dbfs: f64) -> Vec<f32> {
+    let taps = ((fs * 0.01) as usize) | 1;
+    let mid = (taps - 1) as f64 / 2.0;
+    let (f1, f2) = (300.0 / fs, 3400.0 / fs);
+    let lowpass = |fc: f64, m: f64| {
+        if m == 0.0 {
+            2.0 * fc
+        } else {
+            sin(2.0 * PI * fc * m) / (PI * m)
+        }
+    };
+    let beta = 8.0;
+    let i0_beta = bessel_i0(beta);
+    let h: Vec<f64> = (0..taps)
+        .map(|k| {
+            let m = k as f64 - mid;
+            let r = m / mid;
+            let w = bessel_i0(beta * sqrt(1.0 - r * r)) / i0_beta;
+            w * (lowpass(f2, m) - lowpass(f1, m))
+        })
+        .collect();
+    let src = noise(seed, len + taps - 1);
+    let filtered: Vec<f64> = (0..len)
+        .map(|n| {
+            h.iter()
+                .enumerate()
+                .map(|(k, &hk)| hk * f64::from(src[n + taps - 1 - k]))
+                .fold(0.0, |acc, v| acc + v)
+        })
+        .collect();
+    let mean_square = filtered.iter().fold(0.0, |acc, &v| acc + v * v) / len as f64;
+    let target_rms = amplitude(level_dbfs) / sqrt(2.0);
+    let scale = target_rms / sqrt(mean_square);
+    filtered.iter().map(|&v| (v * scale) as f32).collect()
 }
 
 /// PCG32 (XSH-RR 64/32) random number generator, as in pcg-random.org's `pcg32_random_r`.
@@ -185,6 +270,42 @@ mod tests {
         assert!(a.iter().all(|&v| (-0.5..0.5).contains(&v)));
         assert_eq!(a, noise(0x0D60, 10_000));
         assert_ne!(a, noise(0x0D61, 10_000));
+    }
+
+    /// 002 T009: level steps have exact segment lengths and amplitudes.
+    #[test]
+    fn step_lengths_and_levels() {
+        let fs = 8000.0;
+        let x = step(1000.0, &[-40.0, -10.0], &[0.5, 0.25], fs);
+        assert_eq!(x.len(), 4000 + 2000);
+        let peak = |s: &[f32]| s.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+        assert!((f64::from(peak(&x[..4000])) - 0.01).abs() < 1e-6);
+        assert!((f64::from(peak(&x[4000..])) - 0.316_227_766).abs() < 1e-6);
+        assert_eq!(x, step(1000.0, &[-40.0, -10.0], &[0.5, 0.25], fs));
+    }
+
+    /// 002 T009: bursts are on/off with exact counts.
+    #[test]
+    fn tone_burst_layout() {
+        let x = tone_bursts(1000.0, -10.0, 0.1, 0.4, 2, 8000.0);
+        assert_eq!(x.len(), 2 * (800 + 3200));
+        assert!(x[800..4000].iter().all(|&v| v == 0.0));
+        assert!(x[..800].iter().any(|&v| v != 0.0));
+        assert!(x[4800..].iter().all(|&v| v == 0.0));
+    }
+
+    /// 002 T009: band-limited noise hits its AES17 level and is bit-reproducible.
+    #[test]
+    fn bandlimited_noise_level_and_determinism() {
+        let fs = 48_000.0;
+        let a = bandlimited_noise(0x0D60, 48_000, fs, -70.0);
+        assert_eq!(a.len(), 48_000);
+        let mean_square =
+            a.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / a.len() as f64;
+        // AES17: level = 20·log10(RMS·√2) = 10·log10(2·mean square).
+        let level = 10.0 * rr_dr60_detmath::ln(2.0 * mean_square) / rr_dr60_detmath::ln(10.0);
+        assert!((level + 70.0).abs() < 0.05, "level {level}");
+        assert_eq!(a, bandlimited_noise(0x0D60, 48_000, fs, -70.0));
     }
 
     #[test]

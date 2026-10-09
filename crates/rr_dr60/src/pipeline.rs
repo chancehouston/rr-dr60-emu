@@ -5,16 +5,26 @@ use crate::rate::RatePlan;
 use crate::resample::{self, PolyphaseDown, PolyphaseUp};
 use crate::sanitize::{narrow_out, sanitize_in};
 use crate::settings::{DEVICE_RATE_HZ, Settings, Tap};
+use crate::stages::agc::AgcStage;
 use crate::stages::voiceband::VoiceBandStage;
+use crate::validate::validate;
 
 /// One emulator instance: host-rate mono audio in, host-rate mono audio out.
 ///
-/// Internally, each sample goes through the 8 kHz device-rate domain (A-001), the record
-/// band-limit stage (signal-chain stage 4) and the playback band-limit stage (stage 10).
-/// Each stage can be bypassed, and the output can be taken after stage 4 instead
-/// ([`Settings`], FR-007). The device rate itself is always applied (FR-004).
-/// Both stages are modeled on the MSM7702 voice-band codec's assumed 300–3400 Hz band
-/// (A-002, A-014).
+/// Internally, each sample goes through the 8 kHz device-rate domain (A-001), the record-path
+/// AGC (signal-chain stage 3, spec 002), the record band-limit stage (stage 4) and the
+/// playback band-limit stage (stage 10). Each stage can be bypassed, and the output can be
+/// taken after the AGC or after stage 4 instead ([`Settings`], FR-007). The device rate
+/// itself is always applied (FR-004). The band-limit stages are modeled on the MSM7702
+/// voice-band codec's assumed 300–3400 Hz band (A-002, A-014); the AGC is modeled on an
+/// assumed AGC (A-017 – A-020).
+///
+/// # Output level
+///
+/// With the AGC on (the default), output can exceed ±1.0 by up to
+/// [`AgcSettings::max_gain_db`](crate::AgcSettings::max_gain_db) (+40 dB by default) for
+/// about one attack time after creation, a reset or a long silence. The output is never
+/// clipped and is always finite. Limit or clip it before converting to integer PCM.
 ///
 /// # Real-time use
 ///
@@ -55,12 +65,15 @@ const _: fn() = || {
     assert_send_sync::<Pipeline>();
 };
 
-/// The device-rate part of the chain (stages 4 and 10) and which parts of it run.
+/// The device-rate part of the chain (stages 3, 4 and 10) and which parts of it run.
 #[derive(Clone, Debug)]
 struct DeviceChain {
+    agc: AgcStage,
+    /// Stage 3 runs: the AGC is enabled (spec 002 FR-002).
+    run_agc: bool,
     record: VoiceBandStage,
     playback: VoiceBandStage,
-    /// Stage 4 runs (FR-007).
+    /// Stage 4 runs: enabled and the tap is not after the AGC (FR-007; spec 002 FR-003).
     run_record: bool,
     /// Stage 10 runs: enabled and the tap is after playback (data-model.md › Tap).
     run_playback: bool,
@@ -69,9 +82,11 @@ struct DeviceChain {
 impl DeviceChain {
     fn new(settings: &Settings) -> Self {
         Self {
+            agc: AgcStage::new(&settings.agc),
+            run_agc: settings.agc.enabled,
             record: VoiceBandStage::new(),
             playback: VoiceBandStage::new(),
-            run_record: settings.record_stage_enabled,
+            run_record: settings.record_stage_enabled && settings.tap != Tap::AfterAgc,
             run_playback: settings.playback_stage_enabled && settings.tap == Tap::AfterPlayback,
         }
     }
@@ -80,6 +95,9 @@ impl DeviceChain {
     /// with no arithmetic (FR-007).
     #[inline]
     fn process(&mut self, mut d: f64) -> f64 {
+        if self.run_agc {
+            d = self.agc.process(d);
+        }
         if self.run_record {
             d = self.record.process(d);
         }
@@ -102,6 +120,7 @@ impl DeviceChain {
     }
 
     fn reset(&mut self) {
+        self.agc.reset();
         self.record.reset();
         self.playback.reset();
     }
@@ -113,8 +132,11 @@ impl Pipeline {
     /// # Errors
     ///
     /// [`Error::UnsupportedHostRate`] if `settings.host_rate_hz` is not in
-    /// [`SUPPORTED_HOST_RATES`](crate::SUPPORTED_HOST_RATES).
+    /// [`SUPPORTED_HOST_RATES`](crate::SUPPORTED_HOST_RATES), checked first.
+    /// [`Error::InvalidSetting`] if an AGC setting is out of range or not finite
+    /// (spec 002 FR-011).
     pub fn new(settings: Settings) -> Result<Self, Error> {
+        validate(&settings)?;
         let plan = RatePlan::for_host(settings.host_rate_hz)?;
         let chain = DeviceChain::new(&settings);
         let latency = latency_samples(&plan, &settings, &chain);
@@ -178,7 +200,8 @@ impl Pipeline {
     ///
     /// # Errors
     ///
-    /// [`Error::UnsupportedHostRate`] if `settings.host_rate_hz` is not supported.
+    /// [`Error::UnsupportedHostRate`] if `settings.host_rate_hz` is not supported, or
+    /// [`Error::InvalidSetting`] if an AGC setting is invalid (spec 002 FR-011).
     pub fn reconfigure(&mut self, settings: Settings) -> Result<(), Error> {
         *self = Self::new(settings)?;
         Ok(())
@@ -234,6 +257,83 @@ fn latency_samples(plan: &RatePlan, settings: &Settings, chain: &DeviceChain) ->
     (total + 0.5) as u32
 }
 
+#[cfg(test)]
+mod validation_tests {
+    extern crate std;
+    use super::*;
+    use crate::error::Setting;
+    use std::vec::Vec;
+
+    /// 002 T014: with the tap after the AGC, stages 4 and 10 do not run, whatever their
+    /// settings (spec 002 FR-003, data-model.md › Tap).
+    #[test]
+    fn tap_after_agc_skips_both_band_limit_stages() {
+        let x: Vec<f32> = (0..9600)
+            .map(|n| if n % 97 == 0 { 0.5 } else { -0.01 })
+            .collect();
+        let run = |s: Settings| {
+            let mut y = x.clone();
+            Pipeline::new(s).unwrap().process_in_place(&mut y);
+            y
+        };
+        for rate in crate::SUPPORTED_HOST_RATES {
+            let mut tap_agc = Settings::new(rate);
+            tap_agc.agc.enabled = false; // isolate the tap logic from the AGC stage
+            tap_agc.tap = Tap::AfterAgc;
+            let mut bypass = tap_agc;
+            bypass.tap = Tap::AfterPlayback;
+            bypass.record_stage_enabled = false;
+            bypass.playback_stage_enabled = false;
+            assert_eq!(run(tap_agc), run(bypass), "{rate} Hz");
+            assert_eq!(
+                Pipeline::new(tap_agc).unwrap().latency_samples(),
+                Pipeline::new(bypass).unwrap().latency_samples()
+            );
+        }
+    }
+
+    /// 002 T006: AGC settings are validated on creation (FR-011).
+    #[test]
+    fn new_rejects_invalid_agc_setting() {
+        let mut s = Settings::new(48_000);
+        s.agc.attack_ms = 0.0;
+        assert_eq!(
+            Pipeline::new(s).err(),
+            Some(Error::InvalidSetting {
+                setting: Setting::AgcAttackMs
+            })
+        );
+    }
+
+    /// 002 T006: a failed reconfigure leaves settings, latency and state unchanged (FR-011,
+    /// 001 FR-008).
+    #[test]
+    fn failed_reconfigure_leaves_pipeline_unchanged() {
+        let x: Vec<f32> = (0..4800)
+            .map(|n| if n % 50 == 0 { 0.5 } else { 0.0 })
+            .collect();
+        let mut p = Pipeline::new(Settings::new(48_000)).unwrap();
+        let mut warm = x.clone();
+        p.process_in_place(&mut warm);
+        let mut untouched = p.clone();
+
+        let mut bad = Settings::new(48_000);
+        bad.agc.release_ms = f32::NAN;
+        assert_eq!(
+            p.reconfigure(bad),
+            Err(Error::InvalidSetting {
+                setting: Setting::AgcReleaseMs
+            })
+        );
+        assert_eq!(p.settings(), untouched.settings());
+        assert_eq!(p.latency_samples(), untouched.latency_samples());
+        let (mut a, mut b) = (x.clone(), x);
+        p.process_in_place(&mut a);
+        untouched.process_in_place(&mut b);
+        assert_eq!(a, b);
+    }
+}
+
 #[cfg(all(test, feature = "op-count"))]
 mod op_count_tests {
     extern crate std;
@@ -243,7 +343,7 @@ mod op_count_tests {
     impl Pipeline {
         fn ops(&self) -> u64 {
             let conv = self.converters.as_ref().map_or(0, |(d, u)| d.ops + u.ops);
-            conv + self.chain.record.ops() + self.chain.playback.ops()
+            conv + self.chain.agc.ops + self.chain.record.ops() + self.chain.playback.ops()
         }
 
         fn taps(&self) -> (u64, u64) {
@@ -254,8 +354,9 @@ mod op_count_tests {
     }
 
     /// FR-015 bounded work: no host sample costs more than one full decimator branch, one
-    /// interpolator branch and both stages (2 × 6 sections × 5 multiply-adds), and the total is
-    /// independent of how the input is split into blocks.
+    /// interpolator branch, both band-limit stages (2 × 6 sections × 5 multiply-adds) and one
+    /// AGC update (spec 002), and the total is independent of how the input is split into
+    /// blocks. The default settings have the AGC on, so it is included.
     #[test]
     fn per_sample_work_is_bounded_and_block_independent() {
         for rate in crate::SUPPORTED_HOST_RATES {
@@ -264,7 +365,9 @@ mod op_count_tests {
                 .collect();
             let mut one = Pipeline::new(Settings::new(rate)).unwrap();
             let (taps_down, taps_up) = one.taps();
-            let bound = taps_down + taps_up + 60;
+            // + the AGC's fixed per-device-sample work (002 T024: 32 Hilbert multiply-adds,
+            // 33 compares and 12 scalar operations).
+            let bound = taps_down + taps_up + 60 + 77;
             let mut worst = 0;
             for &v in &x {
                 let before = one.ops();

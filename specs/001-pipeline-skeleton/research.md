@@ -49,6 +49,8 @@ Each entry gives a **Decision**, its **Rationale**, and the **Alternatives consi
 
 ## R-06 Deterministic math crate `rr_dr60_detmath`
 
+> **Amended by spec 002 R-06:** `ln`/`exp` also run on the processing path (the AGC stage, once per device sample). They use basic operations only, so output stays bit-identical, and their cost is fixed.
+
 - **Decision**: A small `no_std` crate (MIT, published alongside the core) providing:
   - `sin`/`cos`: Cody-Waite range reduction by π/2 using a 3-part split constant, then minimax polynomials on [−π/4, π/4]. Target error is 1 ulp or less for |x| < 1e6.
   - `bessel_i0`: power series until the term is below 1e-17 of the sum, with at most 64 iterations.

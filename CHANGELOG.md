@@ -18,6 +18,20 @@ Changes to assumed hardware values ([assumption register](docs/hardware/assumpti
 - Measurement harness (`rr_dr60_harness`, not published): deterministic stimuli, response analysis, the full measurement matrix (FR-005, FR-010–FR-013 at all six rates, 212 checks with FR and trace IDs), determinism, allocation-free, C API parity, timing and SC-008 mutation tests.
 - Golden files: initial bless (`golden-v1.json`, 96 SHA-256 entries).
 - CI: fmt, clippy, tests, C smoke test, the 80% coverage gate, C header drift, release timing, a cross-platform golden matrix (Linux, macOS and Windows on x86-64 and ARM64, plus the iOS simulator) and an MSRV (1.85) job. Also a release checklist (`docs/release-checklist.md`) with the manual iOS-device golden gate.
+- **Record-path automatic gain control** ([spec 002](specs/002-agc/spec.md)), signal-chain stage 3, **on by default**. It raises quiet input and lowers loud input toward a target level with a 10:1 slope, which produces level "pumping" after loud sounds and background noise that rises during pauses. It runs at the 8 kHz device rate before stage 4, adds no latency, and is bit-identical on every platform. Modeled on an *assumed* AGC: new assumptions **A-017** (target −10 dBFS, 10:1 slope, +40 dB maximum gain, 20 dB maximum attenuation), **A-018** (attack 10 ms, release 1 s, exponential in dB), **A-019** (peak-responding detector on the device band, no hold, no look-ahead, starts at maximum gain) and **A-020** (always active); A-007 is refined by them.
+- Rust API: `AgcSettings` (with `AgcSettings::DEVICE`), `Settings::agc`, `Tap::AfterAgc`, `Error::InvalidSetting` and `Setting`, and `Settings::validate`.
+- C API: the `agc_enabled`, `agc_target_dbfs`, `agc_max_gain_db`, `agc_max_attenuation_db`, `agc_attack_ms` and `agc_release_ms` fields, `RR_DR60_TAP_AFTER_AGC`, `RR_DR60_STATUS_INVALID_SETTING`, `RrDr60SettingField` and `rr_dr60_settings_validate` (names the invalid field; real-time safe).
+- AGC measurement harness: `agc_checks` and the `agc_matrix` test (1162 checks in the normal suite, 1734 in the release-mode full settings matrix), `agc_edge_cases`, AGC mutation tests, and the AGC golden file `golden-agc-v1.json` (36 entries: 3 AGC stimuli × `agc_only`/`default_agc` × 6 rates; FR-017). Bless only with `RR_DR60_BLESS=agc cargo test -p rr_dr60_harness --test golden_agc`. `golden-v1.json` is unchanged; the spec 001 checks now run with the AGC bypassed (FR-018).
+- `tools/filter-design/design_hilbert.py`: designs and verifies the AGC detector's 63-tap Hilbert FIR.
+- CI: the AGC golden file on every target, the release-mode AGC matrix and slow edge cases, and the traceability audit extended to the AGC checks.
+
+### Changed
+
+- **Default output now includes the AGC** (A-020). To get the 0.1 sound (band-limiting only), set `settings.agc.enabled = false` (C: `agc_enabled = false`).
+- **Breaking (0.1 → 0.2):** `Settings` and the C `RrDr60Settings` no longer implement `Eq`/`Hash`, because the AGC settings are floating-point. `RrDr60Settings` grows from 24 to 48 bytes; `struct_size` must still be at least `sizeof(RrDr60Settings)`, so code built against the 0.1 header must be rebuilt.
+- With the AGC on, output can briefly exceed full scale by up to the maximum gain (+40 dB by default, +60 dB at most) after creation, a reset or a long silence. It is never clipped; limit or clip it before converting to integer PCM. Results beyond the `f32` range now saturate to ±`f32::MAX` instead of becoming ±Inf.
+- `rr_dr60_detmath` `ln`/`exp` now also run on the processing path (spec 002 R-06); they stay bit-identical and fixed-cost.
+- Version 0.2.0 (crates and `RR_DR60_VERSION_*`).
 
 ### Fixed
 

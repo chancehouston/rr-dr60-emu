@@ -1,11 +1,12 @@
 name: CI
 
-# CI for spec 001.
-#   check         fmt, clippy, tests, C smoke test (ubuntu + macos); golden with default
-#                 features, release timing, C header drift (ubuntu)          — T010, T038, T060
+# CI for specs 001 and 002.
+#   check         fmt, clippy, tests, C smoke test (ubuntu + macos); golden (001 + AGC) with
+#                 default features, release timing, release-mode AGC matrix and edge cases,
+#                 C header drift (ubuntu)                — 001 T010, T038, T060; 002 T043
 #   coverage      >= 80% line coverage (Constitution III)                   — T010
-#   golden-matrix golden + determinism tests on 6 desktop targets (FR-014)    — T061
-#   ios           golden + determinism in the iOS simulator; iOS builds       — T063
+#   golden-matrix golden (001 + AGC) + determinism on 6 desktop targets (FR-014) — T061
+#   ios           golden (001 + AGC) + determinism in the iOS simulator; iOS builds — T063
 #   msrv          full test suite on Rust 1.85                                — T065
 # The 8th FR-014 target, a physical iOS device, is a release-time manual gate
 # (scripts/ios-device-golden.sh, docs/release-checklist.md).
@@ -55,10 +56,13 @@ jobs:
         run: scripts/check-traceability.sh
       - name: Golden files with default features (shipped configuration, no op-count)
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test -p rr_dr60_harness --test golden
+        run: cargo test -p rr_dr60_harness --test golden --test golden_agc
       - name: Timing checks (release; FR-015 bounded work, SC-006)
         if: matrix.os == 'ubuntu-latest'
         run: cargo test -p rr_dr60_harness --release --test timing -- --ignored --nocapture
+      - name: AGC full settings matrix and slow edge cases (release; spec 002 SC-002, R-07)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test -p rr_dr60_harness --release --test agc_matrix --test agc_edge_cases -- --ignored
       - name: Install pinned cbindgen
         if: matrix.os == 'ubuntu-latest'
         uses: taiki-e/install-action@v2
@@ -111,7 +115,7 @@ jobs:
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - name: Golden files and determinism
-        run: cargo test -p rr_dr60_harness --all-features --target ${{ matrix.target }} --test golden --test determinism
+        run: cargo test -p rr_dr60_harness --all-features --target ${{ matrix.target }} --test golden --test golden_agc --test determinism
 
   ios:
     name: ios (simulator + builds)
@@ -123,7 +127,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Golden files and determinism in the iOS simulator
         # .cargo/config.toml routes aarch64-apple-ios-sim binaries through scripts/ios-sim-runner.sh.
-        run: cargo test -p rr_dr60_harness --target aarch64-apple-ios-sim --test golden --test determinism
+        run: cargo test -p rr_dr60_harness --target aarch64-apple-ios-sim --test golden --test golden_agc --test determinism
       - name: Build the C API library for iOS device and Intel simulator
         run: |
           cargo build -p rr_dr60_ffi --release --target aarch64-apple-ios

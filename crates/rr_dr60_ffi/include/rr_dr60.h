@@ -13,7 +13,8 @@
  *     independent.
  *  5. RrDr60Settings only grows at the end; always start from rr_dr60_settings_default().
  *
- * Real-time safe: rr_dr60_process, rr_dr60_reset, rr_dr60_latency_samples.
+ * Real-time safe: rr_dr60_process, rr_dr60_reset, rr_dr60_latency_samples,
+ *   rr_dr60_settings_validate.
  * Not real-time safe (allocate): rr_dr60_create, rr_dr60_destroy.
  *
  * SPDX-License-Identifier: MIT
@@ -30,7 +31,7 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 1
+#define RR_DR60_VERSION_MINOR 2
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
@@ -51,12 +52,48 @@ enum RrDr60Status
   RR_DR60_STATUS_INVALID_ARGUMENT = 3,
   // An internal error (a caught panic). The handle is poisoned until `rr_dr60_reset`.
   RR_DR60_STATUS_INTERNAL_ERROR = 4,
+  // An AGC setting is out of range or not finite (spec 002 FR-011).
+  // `rr_dr60_settings_validate` names it.
+  RR_DR60_STATUS_INVALID_SETTING = 5,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
 typedef enum RrDr60Status RrDr60Status;
 #else
 typedef int32_t RrDr60Status;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
+enum RrDr60SettingField
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+  // The settings are valid.
+  RR_DR60_SETTING_FIELD_NONE = 0,
+  // `host_rate_hz` is not a supported rate.
+  RR_DR60_SETTING_FIELD_HOST_RATE = 1,
+  // `tap` is not an `RrDr60Tap` value.
+  RR_DR60_SETTING_FIELD_TAP = 2,
+  // `struct_size` is smaller than `sizeof(RrDr60Settings)` of this library version.
+  RR_DR60_SETTING_FIELD_STRUCT_SIZE = 3,
+  // `agc_target_dbfs` is outside -30 to 0, or not finite.
+  RR_DR60_SETTING_FIELD_AGC_TARGET_DBFS = 4,
+  // `agc_max_gain_db` is outside 0 to 60, or not finite.
+  RR_DR60_SETTING_FIELD_AGC_MAX_GAIN_DB = 5,
+  // `agc_max_attenuation_db` is outside 0 to 40, or not finite.
+  RR_DR60_SETTING_FIELD_AGC_MAX_ATTENUATION_DB = 6,
+  // `agc_attack_ms` is outside 1 to 100, or not finite.
+  RR_DR60_SETTING_FIELD_AGC_ATTACK_MS = 7,
+  // `agc_release_ms` is outside 50 to 10000, or not finite.
+  RR_DR60_SETTING_FIELD_AGC_RELEASE_MS = 8,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum RrDr60SettingField RrDr60SettingField;
+#else
+typedef uint32_t RrDr60SettingField;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -70,6 +107,8 @@ enum RrDr60Tap
   RR_DR60_TAP_AFTER_RECORD = 0,
   // After signal-chain stage 10 (playback band-limit). The default.
   RR_DR60_TAP_AFTER_PLAYBACK = 1,
+  // After signal-chain stage 3 (AGC). Stages 4 and 10 are not run (spec 002 FR-003).
+  RR_DR60_TAP_AFTER_AGC = 2,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -83,6 +122,9 @@ typedef uint32_t RrDr60Tap;
 typedef struct RrDr60Pipeline RrDr60Pipeline;
 
 // Pipeline settings. Start from `rr_dr60_settings_default` and change fields as needed.
+//
+// AGC levels use the AES17 convention (a full-scale sine is 0 dBFS). AGC ranges are
+// inclusive; out-of-range or non-finite values are rejected even when the AGC is off.
 typedef struct RrDr60Settings {
   // Must be `sizeof(RrDr60Settings)`. Lets the struct grow in later versions.
   uint32_t struct_size;
@@ -96,14 +138,28 @@ typedef struct RrDr60Settings {
   uint32_t tap;
   // Seed for stochastic stages. No effect on output in this version.
   uint64_t seed;
+  // Signal-chain stage 3 (AGC) on (true, default; assumed always active, A-020) or bypassed.
+  bool agc_enabled;
+  // AGC target level in dBFS. Default -10 (A-017). Range -30 to 0.
+  float agc_target_dbfs;
+  // AGC maximum gain in dB. Default 40 (A-017). Range 0 to 60. A loud first sound after
+  // create, reset or long silence can exceed full scale by up to this much: limit or clip
+  // before converting to integer PCM.
+  float agc_max_gain_db;
+  // AGC maximum attenuation in dB (positive). Default 20 (A-017). Range 0 to 40.
+  float agc_max_attenuation_db;
+  // AGC attack time in ms. Default 10 (A-018). Range 1 to 100.
+  float agc_attack_ms;
+  // AGC release time in ms. Default 1000 (A-018). Range 50 to 10000.
+  float agc_release_ms;
 } RrDr60Settings;
 
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
 
-// Default settings for `host_rate_hz` (not validated): both stages on, tap after playback,
-// seed 0. Never fails.
+// Default settings for `host_rate_hz` (not validated): AGC on with the assumed device values,
+// both band-limit stages on, tap after playback, seed 0. Never fails.
 struct RrDr60Settings rr_dr60_settings_default(uint32_t host_rate_hz);
 
 // Creates a pipeline. On success, writes the new handle to `*out_pipeline`. Not real-time
@@ -163,6 +219,18 @@ RrDr60Status rr_dr60_reset(struct RrDr60Pipeline *pipeline);
 // `RrDr60Settings`.
 RrDr60Status rr_dr60_reconfigure(struct RrDr60Pipeline *pipeline,
                                  const struct RrDr60Settings *settings);
+
+// Checks `settings` without creating a pipeline. Returns exactly the status
+// `rr_dr60_create` would return for them and, if `out_field` is not NULL, writes the field
+// at fault there (`RR_DR60_SETTING_FIELD_NONE` when the status is OK). Fields are checked in
+// the order struct size, tap, host rate, then the AGC fields. Never allocates; real-time safe.
+//
+// # Safety
+//
+// `settings` must be NULL or point to a valid `RrDr60Settings`. `out_field` must be NULL or
+// writable.
+RrDr60Status rr_dr60_settings_validate(const struct RrDr60Settings *settings,
+                                       RrDr60SettingField *out_field);
 
 // The library version as a static NUL-terminated string, e.g. `"0.1.0"`. Never NULL; do not
 // free.

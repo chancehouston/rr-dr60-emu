@@ -87,6 +87,126 @@ pub fn power_ratio_db<T: Copy + Into<f64>, U: Copy + Into<f64>>(
     10.0 * (pout / pin).log10()
 }
 
+/// Analytic-signal envelope |x + j·H{x}| of `x`, via an FFT Hilbert transform. Edge samples
+/// are affected by the transform's circularity; callers measure away from the ends.
+///
+/// Kept for diagnostics only: spec 002 found it reads AGC attack times about 1.6 ms long
+/// (the 1 kHz test tone is too slow a carrier for a 3.7 ms time constant), so the AGC checks
+/// use the reference-ratio method instead (research.md R-11, T026).
+pub fn analytic_envelope<T: Copy + Into<f64>>(x: &[T]) -> Vec<f64> {
+    let n = x.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let mut planner = rustfft::FftPlanner::<f64>::new();
+    let mut buf: Vec<Complex64> = x.iter().map(|&v| Complex64::new(v.into(), 0.0)).collect();
+    planner.plan_fft_forward(n).process(&mut buf);
+    // Keep DC (and Nyquist for even n), double the positive frequencies, drop the negative ones.
+    let half = n.div_ceil(2);
+    for (k, c) in buf.iter_mut().enumerate() {
+        if k == 0 || (n % 2 == 0 && k == n / 2) {
+            continue;
+        } else if k < half {
+            *c *= 2.0;
+        } else {
+            *c = Complex64::new(0.0, 0.0);
+        }
+    }
+    planner.plan_fft_inverse(n).process(&mut buf);
+    buf.iter().map(|c| c.norm() / n as f64).collect()
+}
+
+/// Exact per-sample gain in dB, `|y[n] / x[n]|`, at every sample where `|x[n]| ≥ 0.1·amp`
+/// (gating threshold: engineering target, spec 002 R-15). Valid where the device under test is
+/// a pure multiplier with no delay, e.g. the AGC at the 8 kHz host rate (R-11).
+pub fn gain_trajectory_exact<T: Copy + Into<f64>, U: Copy + Into<f64>>(
+    input: &[T],
+    output: &[U],
+    amp: f64,
+) -> Vec<(usize, f64)> {
+    input
+        .iter()
+        .zip(output)
+        .enumerate()
+        .filter_map(|(n, (&x, &y))| {
+            let (x, y): (f64, f64) = (x.into(), y.into());
+            (x.abs() >= 0.1 * amp).then(|| (n, db((y / x).abs())))
+        })
+        .collect()
+}
+
+/// Index of the last trajectory point outside the settling band: `|v − final| > 2/27 ·
+/// |excursion|` (spec 002, Overview › Settling band). Returns 0 if every point is inside.
+pub fn settle_index(trajectory: &[(usize, f64)], final_db: f64, excursion_db: f64) -> usize {
+    let band = excursion_db.abs() * 2.0 / 27.0;
+    trajectory
+        .iter()
+        .rev()
+        .find(|&&(_, v)| (v - final_db).abs() > band)
+        .map_or(0, |&(n, _)| n)
+}
+
+/// Fraction of the dB change from `start_db` to `final_db` reached at `step_index +
+/// release_samples / 4` (spec 002 FR-006 shape check). Uses the first trajectory point at or
+/// after that time.
+pub fn midpoint_fraction(
+    trajectory: &[(usize, f64)],
+    step_index: usize,
+    start_db: f64,
+    final_db: f64,
+    release_samples: usize,
+) -> f64 {
+    let at = step_index + release_samples / 4;
+    let v = trajectory
+        .iter()
+        .find(|&&(n, _)| n >= at)
+        .map_or(final_db, |&(_, v)| v);
+    (v - start_db) / (final_db - start_db)
+}
+
+/// THD+N in dB of `x[start..start + len]` (spec 002 FR-008, research.md R-11): a least-squares
+/// fit of the fundamental's cosine and sine at `freq_hz`, then the power of everything left
+/// over, DC included, relative to the fitted fundamental's power. A harmonic that folds onto
+/// the fundamental's own frequency cannot be separated from it; it shows up as a level change,
+/// which the FR-008 level check covers.
+pub fn thd_n_db<T: Copy + Into<f64>>(
+    x: &[T],
+    freq_hz: f64,
+    fs: f64,
+    start: usize,
+    len: usize,
+) -> f64 {
+    let w = TAU * freq_hz / fs;
+    let seg: Vec<f64> = x[start..start + len].iter().map(|&v| v.into()).collect();
+    let (mut scc, mut sss, mut scs, mut sxc, mut sxs) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for (m, &v) in seg.iter().enumerate() {
+        let (s, c) = (w * m as f64).sin_cos();
+        scc += c * c;
+        sss += s * s;
+        scs += c * s;
+        sxc += v * c;
+        sxs += v * s;
+    }
+    let det = scc * sss - scs * scs;
+    let a = (sxc * sss - sxs * scs) / det;
+    let b = (sxs * scc - sxc * scs) / det;
+    let (mut fund, mut resid) = (0.0, 0.0);
+    for (m, &v) in seg.iter().enumerate() {
+        let (s, c) = (w * m as f64).sin_cos();
+        let f = a * c + b * s;
+        fund += f * f;
+        resid += (v - f) * (v - f);
+    }
+    10.0 * (resid / fund).log10()
+}
+
+/// Level in dBFS by the AES17 convention (a full-scale sine is 0 dBFS):
+/// `20·log10(RMS·√2) = 10·log10(2·mean square)` (spec 002, Overview › Level).
+pub fn level_dbfs_aes17<T: Copy + Into<f64>>(x: &[T]) -> f64 {
+    let ms = x.iter().map(|&v| v.into() * v.into()).sum::<f64>() / x.len() as f64;
+    10.0 * (2.0 * ms).log10()
+}
+
 /// Amplitude ratio to decibels.
 pub fn db(ratio: f64) -> f64 {
     20.0 * ratio.log10()
@@ -142,6 +262,83 @@ mod tests {
         for v in [-120.0, -6.0, 0.0, 3.5] {
             assert!((db(from_db(v)) - v).abs() < 1e-12);
         }
+    }
+
+    /// 002 T009: the analytic envelope of a steady sine is its amplitude.
+    #[test]
+    fn analytic_envelope_of_sine_is_constant() {
+        let x = sinusoid(0.5, 0.3, 1000.0, 48_000.0, 48_000);
+        let env = analytic_envelope(&x);
+        assert_eq!(env.len(), x.len());
+        for &e in &env[1000..47_000] {
+            assert!(db(e / 0.5).abs() < 0.01, "envelope {e}");
+        }
+    }
+
+    /// 002 T009: exact gain trajectory y/x, gated where |x| < 0.1·A (002 R-15).
+    #[test]
+    fn exact_gain_trajectory_is_gated_ratio() {
+        let x = sinusoid(0.5, 0.0, 1000.0, 8000.0, 80);
+        let y: Vec<f64> = x.iter().map(|v| 0.25 * v).collect();
+        let traj = gain_trajectory_exact(&x, &y, 0.5);
+        assert!(!traj.is_empty() && traj.len() < x.len());
+        for &(n, g) in &traj {
+            assert!(x[n].abs() >= 0.05);
+            assert!((g - db(0.25)).abs() < 1e-9, "n {n}: {g}");
+        }
+    }
+
+    /// 002 T009: settle index and release midpoint on an exponential with a known τ.
+    #[test]
+    fn settle_index_and_midpoint_on_exponential() {
+        let tau = 400.0;
+        let exc = 27.0;
+        let traj: Vec<(usize, f64)> = (0..10_000)
+            .map(|n| (n, -exc * (-(n as f64) / tau).exp()))
+            .collect();
+        let idx = settle_index(&traj, 0.0, exc);
+        let expected = tau * 13.5f64.ln();
+        assert!((idx as f64 - expected).abs() <= 1.0, "{idx} vs {expected}");
+        let release = idx + 1;
+        let frac = midpoint_fraction(&traj, 0, -exc, 0.0, release);
+        let want = 1.0 - (-(13.5f64.ln()) / 4.0).exp();
+        assert!((frac - want).abs() < 0.01, "{frac} vs {want}");
+    }
+
+    /// 002 T009: THD+N fits the fundamental and counts everything else, DC included.
+    #[test]
+    fn thd_n_counts_harmonics_and_folded_dc() {
+        let fs = 48_000.0;
+        let n = 48_000;
+        let pure = sinusoid(1.0, 0.2, 1000.0, fs, n);
+        assert!(thd_n_db(&pure, 1000.0, fs, 0, n) < -100.0);
+        let h3: Vec<f64> = pure
+            .iter()
+            .zip(sinusoid(0.01, 0.0, 3000.0, fs, n))
+            .map(|(a, b)| a + b)
+            .collect();
+        let t = thd_n_db(&h3, 1000.0, fs, 0, n);
+        assert!((t + 40.0).abs() < 0.1, "1 % third harmonic: {t} dB");
+        // At 8 kHz, the 3rd harmonic of 8000/3 Hz falls at 8000 Hz and samples as DC (here a
+        // cosine, so DC = 0.01). THD+N must count it: 10·log10(0.01² / 0.5) = −36.99 dB.
+        let f = 8000.0 / 3.0;
+        let x: Vec<f64> = sinusoid(1.0, 0.0, f, 8000.0, 24_000)
+            .iter()
+            .zip(sinusoid(0.01, 0.0, 3.0 * f, 8000.0, 24_000))
+            .map(|(a, b)| a + b)
+            .collect();
+        let t = thd_n_db(&x, f, 8000.0, 0, 24_000);
+        let want = 10.0 * (1e-4f64 / 0.5).log10();
+        assert!((t - want).abs() < 0.1, "folded to DC: {t} vs {want}");
+    }
+
+    /// 002 T009: AES17 level: a full-scale sine is 0 dBFS (RMS · √2).
+    #[test]
+    fn aes17_level_of_full_scale_sine() {
+        let x = sinusoid(1.0, 0.0, 1000.0, 48_000.0, 48_000);
+        assert!(level_dbfs_aes17(&x).abs() < 1e-6);
+        let y = sinusoid(0.1, 0.0, 1000.0, 48_000.0, 48_000);
+        assert!((level_dbfs_aes17(&y) + 20.0).abs() < 1e-6);
     }
 
     #[test]

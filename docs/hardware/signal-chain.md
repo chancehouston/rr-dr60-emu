@@ -23,7 +23,7 @@ The IDs refer to [sources.md](sources.md) (`S-###`) and [assumptions.md](assumpt
 |---|-------|-------|---------|--------------------------|
 | 1 | Mic capsule | Built-in mic (S-001) | Omni electret (A-005) | Bass/treble roll-off, self-noise, handling sensitivity |
 | 2 | Mic preamp | Discrete transistors 2SB1218A / 2SD1819A (S-002) | Gain, hiss, soft clip (A-006) | Hiss floor, clipping on loud sounds |
-| 3 | AGC | Claimed (S-004) | Exists; time constants TBD (A-007) | "Pumping", noise rising in quiet passages |
+| 3 | AGC | Claimed (S-004) | Exists (A-007). **Modeled in [spec 002](../../specs/002-agc/spec.md): target −10 dBFS, 10:1 slope, +40/−20 dB limits (A-017); attack 10 ms, release 1 s (A-018); peak-responding detector on the device band, starts at maximum gain (A-019); always active (A-020).** | "Pumping", noise rising in quiet passages |
 | 4 | Anti-alias filter + ADC | OKI MSM7702 voice-band codec (S-002, S-003) | 8 kHz rate (A-001); 300–3400 Hz band (A-002); coding format TBD (A-003). **Modeled in [spec 001](../../specs/001-pipeline-skeleton/spec.md): G.712-like minimum-phase band-pass, A-014/A-015/A-016.** Quantization (A-003) not modeled yet. | Telephone-band sound, quantization noise |
 | 5 | VAS gate | Pauses recording when quiet (S-001) | Thresholds and levels TBD (A-008) | Clipped word onsets, abrupt splices, missing gaps |
 | 6 | Noise reduction | Claimed only (S-004) | Optional, off by default (A-009) | Possible "swirly" or gated artifacts |

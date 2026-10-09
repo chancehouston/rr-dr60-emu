@@ -40,3 +40,70 @@ fn golden_check_catches_shifted_band_edges() {
         "{report}"
     );
 }
+
+/// Spec 002 SC-008: a deliberate change of the default release time by 50 %, or of the target
+/// level by 3 dB, is caught by both a tolerance check and the AGC golden check. The mutants are
+/// built through the harness's `Make` factory with altered public settings (research.md R-12).
+mod agc {
+    use rr_dr60::{Pipeline, Settings};
+    use rr_dr60_harness::agc_checks;
+    use rr_dr60_harness::golden;
+
+    fn release_x1_5(mut s: Settings) -> Pipeline {
+        s.agc.release_ms *= 1.5;
+        Pipeline::new(s).unwrap()
+    }
+
+    fn target_plus_3(mut s: Settings) -> Pipeline {
+        s.agc.target_dbfs += 3.0;
+        Pipeline::new(s).unwrap()
+    }
+
+    fn failed_properties(
+        results: &[rr_dr60_harness::checks::MeasurementResult],
+    ) -> Vec<&'static str> {
+        results
+            .iter()
+            .filter(|r| !r.passed)
+            .map(|r| r.property)
+            .collect()
+    }
+
+    #[test]
+    fn release_change_is_caught() {
+        let defaults = agc_checks::matrix()[0];
+        let failed = failed_properties(&agc_checks::check_fr006_timing(
+            48_000,
+            &defaults,
+            &release_x1_5,
+        ));
+        assert!(
+            failed.contains(&"release time"),
+            "not caught; failures: {failed:?}"
+        );
+        let diff = golden::compare(
+            &golden::committed_agc(),
+            &golden::generate_agc(&release_x1_5),
+        );
+        assert!(diff.is_err(), "AGC golden check missed the release change");
+    }
+
+    #[test]
+    fn target_change_is_caught() {
+        let defaults = agc_checks::matrix()[0];
+        let failed = failed_properties(&agc_checks::check_fr004_regulation(
+            48_000,
+            &defaults,
+            &target_plus_3,
+        ));
+        assert!(
+            failed.contains(&"output level on the regulation line"),
+            "not caught; failures: {failed:?}"
+        );
+        let diff = golden::compare(
+            &golden::committed_agc(),
+            &golden::generate_agc(&target_plus_3),
+        );
+        assert!(diff.is_err(), "AGC golden check missed the target change");
+    }
+}

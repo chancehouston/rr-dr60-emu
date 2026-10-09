@@ -91,3 +91,38 @@ fn seed_does_not_change_output() {
     b.seed = u64::MAX;
     assert_eq!(one_block(a, &x), one_block(b, &x)); // FR-009
 }
+
+/// Spec 002 SC-003, FR-013: the AGC is block-partition invariant. 100 random partitions
+/// (including sizes 0 and 1) of each AGC golden stimulus, for the AGC configurations and two
+/// extreme settings, at 8 kHz (where the stimuli are shortest), plus 10 partitions at 48 kHz.
+#[test]
+fn agc_partitions() {
+    let mut rng = Pcg32::new(0x0D60, 4);
+    let cases = |rate: u32| {
+        let mut attack_min = configs::settings("default_agc", rate);
+        attack_min.agc.attack_ms = 1.0;
+        let mut release_max = configs::settings("default_agc", rate);
+        release_max.agc.release_ms = 10_000.0;
+        [
+            ("agc_only", configs::settings("agc_only", rate)),
+            ("default_agc", configs::settings("default_agc", rate)),
+            ("attack min", attack_min),
+            ("release max", release_max),
+        ]
+    };
+    for (rate, partitions) in [(8000, 100), (48_000, 10)] {
+        for (name, s) in cases(rate) {
+            for stim in golden::AGC_STIMULI {
+                let x = golden::stimulus(stim, rate);
+                let want = one_block(s, &x);
+                for i in 0..partitions {
+                    assert_eq!(
+                        partitioned(s, &x, &mut rng),
+                        want,
+                        "{rate} Hz {name} {stim}, partition {i}"
+                    );
+                }
+            }
+        }
+    }
+}

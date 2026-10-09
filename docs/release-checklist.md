@@ -22,7 +22,7 @@ release PR or issue and tick each item. The reason for each item is in brackets.
 - [ ] **Windows ARM64**, only if the `windows-11-arm` hosted runner was removed from
       `golden-matrix`. On a Windows ARM64 machine, run:
 
-      cargo test -p rr_dr60_harness --all-features --test golden --test determinism
+      cargo test -p rr_dr60_harness --all-features --test golden --test golden_agc --test determinism
 
       Record the machine and OS version here. [FR-014]
 - [ ] The release-mode timing checks pass on a developer machine:
