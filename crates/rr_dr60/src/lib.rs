@@ -3,18 +3,28 @@
 //! A portable software emulator of the audio signal chain of the Panasonic
 //! RR-DR60 digital voice recorder (mid-1990s IC recorder).
 //!
-//! This version models two stages of that chain:
+//! This version models three stages of that chain:
 //!
+//! - **Stage 3**, the record-path automatic gain control (AGC). It raises quiet
+//!   input and lowers loud input toward a target level, which produces level
+//!   "pumping" after loud sounds and background noise that rises in pauses. It
+//!   is modeled on an *assumed* AGC (A-017 – A-020) and is on by default; see
+//!   [`AgcSettings`].
 //! - **Stage 4**, the record-side anti-alias filter and ADC, and
 //! - **Stage 10**, the playback-side DAC and reconstruction filter.
 //!
-//! Both are modeled on the OKI MSM7702 voice-band codec. They are *assumed* to
-//! follow a telephone-style 300–3400 Hz band-pass (A-002, A-014) at the
-//! device's internal rate of 8 kHz (A-001). These values have not yet been
-//! measured against a real unit. See `docs/hardware/assumptions.md`.
+//! Stages 4 and 10 are modeled on the OKI MSM7702 voice-band codec. They are
+//! *assumed* to follow a telephone-style 300–3400 Hz band-pass (A-002, A-014)
+//! at the device's internal rate of 8 kHz (A-001). None of these values has yet
+//! been measured against a real unit. See `docs/hardware/assumptions.md`.
 //!
-//! The crate describes signal processing only: band-limiting, latency and
-//! level. It makes no claims about what recorded audio contains.
+//! The crate describes signal processing only: gain control, band-limiting,
+//! latency and level. It makes no claims about what recorded audio contains.
+//!
+//! **Output level:** with the AGC on, output can briefly exceed ±1.0 (by up to
+//! the AGC's maximum gain, +40 dB by default) after creation, a reset or a long
+//! silence. It is never clipped and always finite. Limit or clip it before
+//! converting to integer PCM.
 //!
 //! ## Guarantees
 //!

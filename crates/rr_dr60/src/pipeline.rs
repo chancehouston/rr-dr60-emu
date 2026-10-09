@@ -5,17 +5,26 @@ use crate::rate::RatePlan;
 use crate::resample::{self, PolyphaseDown, PolyphaseUp};
 use crate::sanitize::{narrow_out, sanitize_in};
 use crate::settings::{DEVICE_RATE_HZ, Settings, Tap};
+use crate::stages::agc::AgcStage;
 use crate::stages::voiceband::VoiceBandStage;
 use crate::validate::validate;
 
 /// One emulator instance: host-rate mono audio in, host-rate mono audio out.
 ///
-/// Internally, each sample goes through the 8 kHz device-rate domain (A-001), the record
-/// band-limit stage (signal-chain stage 4) and the playback band-limit stage (stage 10).
-/// Each stage can be bypassed, and the output can be taken after stage 4 instead
-/// ([`Settings`], FR-007). The device rate itself is always applied (FR-004).
-/// Both stages are modeled on the MSM7702 voice-band codec's assumed 300–3400 Hz band
-/// (A-002, A-014).
+/// Internally, each sample goes through the 8 kHz device-rate domain (A-001), the record-path
+/// AGC (signal-chain stage 3, spec 002), the record band-limit stage (stage 4) and the
+/// playback band-limit stage (stage 10). Each stage can be bypassed, and the output can be
+/// taken after the AGC or after stage 4 instead ([`Settings`], FR-007). The device rate
+/// itself is always applied (FR-004). The band-limit stages are modeled on the MSM7702
+/// voice-band codec's assumed 300–3400 Hz band (A-002, A-014); the AGC is modeled on an
+/// assumed AGC (A-017 – A-020).
+///
+/// # Output level
+///
+/// With the AGC on (the default), output can exceed ±1.0 by up to
+/// [`AgcSettings::max_gain_db`](crate::AgcSettings::max_gain_db) (+40 dB by default) for
+/// about one attack time after creation, a reset or a long silence. The output is never
+/// clipped and is always finite. Limit or clip it before converting to integer PCM.
 ///
 /// # Real-time use
 ///
@@ -56,9 +65,12 @@ const _: fn() = || {
     assert_send_sync::<Pipeline>();
 };
 
-/// The device-rate part of the chain (stages 4 and 10) and which parts of it run.
+/// The device-rate part of the chain (stages 3, 4 and 10) and which parts of it run.
 #[derive(Clone, Debug)]
 struct DeviceChain {
+    agc: AgcStage,
+    /// Stage 3 runs: the AGC is enabled (spec 002 FR-002).
+    run_agc: bool,
     record: VoiceBandStage,
     playback: VoiceBandStage,
     /// Stage 4 runs: enabled and the tap is not after the AGC (FR-007; spec 002 FR-003).
@@ -70,6 +82,8 @@ struct DeviceChain {
 impl DeviceChain {
     fn new(settings: &Settings) -> Self {
         Self {
+            agc: AgcStage::new(&settings.agc),
+            run_agc: settings.agc.enabled,
             record: VoiceBandStage::new(),
             playback: VoiceBandStage::new(),
             run_record: settings.record_stage_enabled && settings.tap != Tap::AfterAgc,
@@ -81,6 +95,9 @@ impl DeviceChain {
     /// with no arithmetic (FR-007).
     #[inline]
     fn process(&mut self, mut d: f64) -> f64 {
+        if self.run_agc {
+            d = self.agc.process(d);
+        }
         if self.run_record {
             d = self.record.process(d);
         }
@@ -103,6 +120,7 @@ impl DeviceChain {
     }
 
     fn reset(&mut self) {
+        self.agc.reset();
         self.record.reset();
         self.playback.reset();
     }
@@ -325,7 +343,7 @@ mod op_count_tests {
     impl Pipeline {
         fn ops(&self) -> u64 {
             let conv = self.converters.as_ref().map_or(0, |(d, u)| d.ops + u.ops);
-            conv + self.chain.record.ops() + self.chain.playback.ops()
+            conv + self.chain.agc.ops + self.chain.record.ops() + self.chain.playback.ops()
         }
 
         fn taps(&self) -> (u64, u64) {
@@ -336,8 +354,9 @@ mod op_count_tests {
     }
 
     /// FR-015 bounded work: no host sample costs more than one full decimator branch, one
-    /// interpolator branch and both stages (2 × 6 sections × 5 multiply-adds), and the total is
-    /// independent of how the input is split into blocks.
+    /// interpolator branch, both band-limit stages (2 × 6 sections × 5 multiply-adds) and one
+    /// AGC update (spec 002), and the total is independent of how the input is split into
+    /// blocks. The default settings have the AGC on, so it is included.
     #[test]
     fn per_sample_work_is_bounded_and_block_independent() {
         for rate in crate::SUPPORTED_HOST_RATES {
@@ -346,7 +365,9 @@ mod op_count_tests {
                 .collect();
             let mut one = Pipeline::new(Settings::new(rate)).unwrap();
             let (taps_down, taps_up) = one.taps();
-            let bound = taps_down + taps_up + 60;
+            // + the AGC's fixed per-device-sample work (002 T024: 32 Hilbert multiply-adds,
+            // 33 compares and 12 scalar operations).
+            let bound = taps_down + taps_up + 60 + 77;
             let mut worst = 0;
             for &v in &x {
                 let before = one.ops();

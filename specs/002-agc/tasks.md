@@ -146,23 +146,23 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
 
 ### Tests for User Story 1 (write first, must fail)
 
-- [ ] T020 [P] [US1] Unit tests in the `#[cfg(test)]` module of the new `crates/rr_dr60/src/stages/agc.rs`. They drive `AgcStage` directly at 8 kHz with detmath tones:
+- [X] T020 [P] [US1] Unit tests in the `#[cfg(test)]` module of the new `crates/rr_dr60/src/stages/agc.rs`. They drive `AgcStage` directly at 8 kHz with detmath tones:
   - **Static curve** (FR-004, FR-005, A-017): 1 kHz tones in, steady output peak level out, measured over the last 0.25 s after 20 × attack + detector delay. Expected −60 → −20, −40 → −13, −10 → −10, 0 → −9 and +5 → −8.5 dBFS, each ±1 dB. The prototype achieved within 0.01 dB.
   - **Start at maximum** (FR-013, A-019): for the first non-zero input sample, y/x = 10^(40/20) within 1e-9 relative.
   - **Silence** (FR-007, US1 AS4): 10 s of 0.0 gives exactly 0.0 out. After a loud tone and then 10 s of silence, G is within 0.1 dB of `max_gain_db`.
   - **Timing** (FR-006, A-018): use the exact gain trajectory y/x on the step −40 → −10 → −40 dBFS. Attack must be 10 ms ± 2 ms (prototype 10.00 ms) and release 1.0 s ± 0.2 s (prototype 1.001 s). The midpoint at 25 % of the measured release must be in 35–65 % (prototype 47 %).
   - **Gain flush** (R-07): with `max_attenuation_db = 0` and the other settings at default, a 0 dBFS tone for 10 minutes. The tone is above the target, so the clamp gives G<sub>t</sub> = −0.0 and G decays from 40 toward 0. Assert that G is never subnormal, that it becomes exactly 0.0, and that from then on the output equals the input bit for bit. Run it `#[ignore]` in debug if slow; release-mode CI runs it.
   - **Reset** (FR-013): after any input, `reset()` makes the next output bit-identical to a fresh stage.
-- [ ] T021 [P] [US1] Write `crates/rr_dr60_harness/tests/us1_agc.rs`, covering spec US1 AS1–AS5 at 48 kHz with the Phase 2 helpers:
+- [X] T021 [P] [US1] Write `crates/rr_dr60_harness/tests/us1_agc.rs`, covering spec US1 AS1–AS5 at 48 kHz with the Phase 2 helpers:
   - **AS1, AS2**: `agc_only`, levels by AES17 single-bin DFT.
-  - **AS3**: the step stimulus, using `analytic_envelope` divided by the input amplitude, with latency removed.
+  - **AS3**: the step stimulus, with the gain measured as output ÷ an AGC-bypassed reference run (`gain_trajectory_exact(&reference, &output, A)`), research.md R-11 as corrected in T026.
   - **AS4**: silence in gives exact zeros out.
   - **AS5**: `default_agc` gives −13 dBFS ± 1.2 dB for −40 dBFS in.
   - **FR-010**: `latency_samples()` is equal with the AGC on and bypassed, for every tap at every rate.
 
 ### Implementation for User Story 1
 
-- [ ] T022 [US1] Implement `AgcStage` in `crates/rr_dr60/src/stages/agc.rs`, following data-model.md › Per-sample processing exactly:
+- [X] T022 [US1] Implement `AgcStage` in `crates/rr_dr60/src/stages/agc.rs`, following data-model.md › Per-sample processing exactly:
   - **State**: a ring of the last 63 samples.
   - **e²** = max(the peak hold over k = 0…31 of x[n−k]², x[n−31]² + h[n]², 1e-20), with h from `AGC_HILBERT`'s 32 non-zero even-index taps.
   - **L** = (10 / LN_10) · `detmath::ln(e²)`.
@@ -173,15 +173,15 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
   - **Traceability**: label constants per 002 R-15, and cite A-017, A-018, A-019.
 
   Makes T020 pass.
-- [ ] T023 [US1] Integrate the stage in `crates/rr_dr60/src/pipeline.rs`:
+- [X] T023 [US1] Integrate the stage in `crates/rr_dr60/src/pipeline.rs`:
   - `DeviceChain` gets `agc: AgcStage` and `run_agc = settings.agc.enabled`. `process` runs AGC → stage 4 → stage 10.
   - `reset` also resets the AGC.
   - A bypassed AGC does no arithmetic (FR-002).
   - Update the `Pipeline` rustdoc: stage 3 is listed, plus the overshoot warning.
   - Remove the `#[allow(dead_code)]` from T003.
-- [ ] T024 [US1] Update the `op-count` test in `crates/rr_dr60/src/pipeline.rs`. Add a fixed AGC term to the per-sample bound: 32 Hilbert multiply-adds plus the counted `ln`/`exp` and smoother operations. Count AGC operations under `cfg(feature = "op-count")` in `agc.rs`. Assert that the work is still independent of how the input is split into blocks, with the AGC on.
-- [ ] T025 [P] [US1] Update the crate docs in `crates/rr_dr60/src/lib.rs`, which list the modeled stages: add stage 3, "modeled on an assumed AGC (A-017–A-020)", with no EVP claims either way. Update the `crates/rr_dr60_detmath/src/lib.rs` docs: `ln`/`exp` now also run on the processing path (002 R-06).
-- [ ] T026 [US1] Run `cargo test -p rr_dr60_harness --test us1_agc` and fix until green. Confirm that every 001 test and `golden_v1_unchanged` are still green.
+- [X] T024 [US1] Update the `op-count` test in `crates/rr_dr60/src/pipeline.rs`. Add a fixed AGC term to the per-sample bound: 32 Hilbert multiply-adds plus the counted `ln`/`exp` and smoother operations. Count AGC operations under `cfg(feature = "op-count")` in `agc.rs`. Assert that the work is still independent of how the input is split into blocks, with the AGC on.
+- [X] T025 [P] [US1] Update the crate docs in `crates/rr_dr60/src/lib.rs`, which list the modeled stages: add stage 3, "modeled on an assumed AGC (A-017–A-020)", with no EVP claims either way. Update the `crates/rr_dr60_detmath/src/lib.rs` docs: `ln`/`exp` now also run on the processing path (002 R-06).
+- [X] T026 [US1] Run `cargo test -p rr_dr60_harness --test us1_agc` and fix until green. Confirm that every 001 test and `golden_v1_unchanged` are still green.
 
 **Checkpoint (US1 / MVP)**: T020 and T021 pass, all 001 tests pass unchanged, and the default pipeline now includes the AGC. Stop and demo (quickstart.md § 7). This is the MVP.
 
@@ -247,7 +247,7 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
 ### Harness checks and tests (write first; each must fail against a deliberately wrong AGC)
 
 - [ ] T034 [US3] Create `crates/rr_dr60_harness/src/agc_checks.rs`, one public function per requirement (research.md R-11). Each takes `(rate, &AgcSettings, Make)`, returns `Vec<MeasurementResult>` citing `002/FR-0xx` plus A-IDs, and labels engineering targets:
-  - **`check_envelope_self_test`**: at 8 kHz, the envelope method agrees with the exact y/x within 0.25 ms on attack and release, and within 0.1 dB on steady levels.
+  - **`check_ratio_self_test`**: at every host rate, the reference-ratio method (output ÷ AGC-bypassed reference) agrees with the exact y/x at 8 kHz within 0.25 ms on attack and release, and within 0.1 dB on steady levels (research.md R-11, corrected in T026).
   - **`check_fr004_regulation`**: points 3 dB inside the regulated range from (T − G<sub>max</sub>/0.9) to (T + A<sub>max</sub>/0.9), on the regulation line ± 1 dB.
   - **`check_fr005_limits`**: a sweep from the lower knee − 10 dB to the upper knee + 10 dB in steps of at most 5 dB, with points 3 dB beyond each knee at G<sub>max</sub> ± 1 dB or −A<sub>max</sub> ± 1 dB.
   - **`check_fr006_timing`**:

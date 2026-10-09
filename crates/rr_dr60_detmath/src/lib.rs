@@ -9,6 +9,11 @@
 //! used: its results differ in the last bits between operating systems, which
 //! would break the single set of golden files.
 //!
+//! Where it is used: at construction (resampler taps), in the measurement harness
+//! (stimuli), and, since spec 002, on the processing path: the AGC stage calls `ln` and `exp`
+//! once per device sample (specs/002-agc/research.md R-06). Each function has a fixed maximum
+//! operation count, so the per-sample work stays bounded.
+//!
 //! Accuracy targets (research.md R-06): `sin`, `cos`, `exp` and `ln` are
 //! within 2 ulp (for `sin`/`cos`, for |x| < 2²⁰·π/2 ≈ 1.6e6), `sqrt` is
 //! correctly rounded, and `bessel_i0` has a relative error of at most 1e-14.

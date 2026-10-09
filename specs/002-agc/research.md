@@ -139,8 +139,8 @@ Decisions for feature 002. They build on [spec 001's research](../001-pipeline-s
 - **Level convention**: spec levels follow AES17: a sine of amplitude A is 20·log₁₀ A dBFS, so for any signal, level = 20·log₁₀(RMS · √2). Stimuli are generated and outputs measured with this convention. That includes the FR-009 noise: −70 dBFS means RMS = 10^(−70/20) / √2. Using raw RMS dBFS would be off by 3.01 dB and fail the ±2 dB check.
 - **Gain trajectory**:
   - **At the 8 kHz host rate**: the exact per-sample gain, y[n] / x[n], wherever |x[n]| ≥ 0.1 × the tone amplitude (engineering target, R-15). The AGC is a pure multiplier and the boundary is the identity, so this gives 0.125 ms resolution.
-  - **At other rates**: the output's analytic envelope (FFT-based Hilbert transform in `analysis`), divided by the known input amplitude. The boundary latency is removed using the pipeline's reported latency.
-  - **Self-check**: at the 8 kHz host rate, the envelope method is run against the exact y/x gain on the step stimulus. They must agree within 0.25 ms on attack and release times, and within 0.1 dB on steady levels (engineering targets). This proves the method before it is used at other rates.
+  - **At other rates**: the **reference ratio**: output ÷ a reference run of the same stimulus with the AGC bypassed (same configuration otherwise), sample by sample, wherever the reference is at least 0.1 × the tone amplitude. Both runs share the rate conversion, so the ratio is the AGC's gain at every host sample and is already latency-aligned. *(Corrected during implementation, T026: the original plan divided an FFT analytic envelope by the input amplitude. A probe showed that envelope reads attack ≈1.6 ms long at every rate, 8 kHz included, because the 1 kHz test tone is too slow a carrier for the 3.7 ms attack time constant. The reference ratio measured 9.88 ms at 8 kHz, identical to the exact y/x, and 10.09–10.12 ms at 16, 48 and 96 kHz.)*
+  - **Self-check**: the reference ratio at each host rate must agree with the exact y/x at 8 kHz within 0.25 ms on attack and release, and within 0.1 dB on steady levels (engineering targets). At 8 kHz the two methods are identical by construction.
   - **Resolution**: at least min(2 ms, attack / 4) and min(20 ms, release / 20) (FR-006).
 - **Settling waits** (runtime): every tone starts from maximum gain, so steady levels settle in the attack direction. Static measurements wait 20 × attack + the detector delay (3.875 ms) + the boundary latency, then measure over a whole number of cycles. For inputs below the regulated range the gain never leaves maximum. The step stimulus for timing is: low level 0.5 s, high level ≥ 20 × attack (minimum 0.2 s), low level ≥ 1.5 × release + 0.5 s. The spec's step definition is amended to match (see spec Overview › Step stimulus).
 - **Checks** (each named in the report):
@@ -169,7 +169,7 @@ Decisions for feature 002. They build on [spec 001's research](../001-pipeline-s
   - In the normal test run (debug), the matrix runs at 8 kHz and 48 kHz, plus the defaults at all six rates.
   - The full matrix at all six rates runs in the existing release-mode `--ignored` CI job. That covers the long release cases: 10 s release is about 16 s of audio per rate.
   - The tasks phase estimates the debug runtime and keeps it under 001's suite budget.
-- **Rationale**: The exact sample ratio at 8 kHz makes the 1 ms attack check reliable. The self-check proves the envelope method used at the other rates. THD+N catches distortion wherever it folds.
+- **Rationale**: The exact sample ratio at 8 kHz makes the 1 ms attack check reliable. The self-check proves the reference-ratio method used at the other rates. THD+N catches distortion wherever it folds.
 
 ## R-12 AGC golden file (FR-017, SC-003, SC-008)
 
