@@ -336,24 +336,24 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
 
 **Purpose**: Prove one golden file is bit-identical on all 8 targets. This phase is build infrastructure: it must not block the DSP stories, but the feature is not done until it passes.
 
-- [ ] T061 Expand `.github/workflows/ci.yml` into a `golden-matrix` job running `cargo test -p rr_dr60_harness --all-features` (which includes golden and determinism) on:
+- [X] T061 Expand `.github/workflows/ci.yml` into a `golden-matrix` job running `cargo test -p rr_dr60_harness --all-features` (which includes golden and determinism) on:
   - ubuntu-latest (x86_64-unknown-linux-gnu)
   - ubuntu-24.04-arm (aarch64-unknown-linux-gnu)
   - macos-latest (aarch64-apple-darwin)
   - macos-latest with target x86_64-apple-darwin under Rosetta 2. If an Intel runner such as `macos-15-intel` is available, prefer it; document the fallback in a comment.
   - windows-latest (x86_64-pc-windows-msvc)
   - windows-11-arm (aarch64-pc-windows-msvc). If that runner is unavailable, treat Windows ARM64 as having **no automated runner**: leave it out of the per-PR matrix, because a `continue-on-error` job does not satisfy FR-014, and move it to the release-time manual gate in T066 alongside the iOS device.
-- [ ] T062 [P] Create `scripts/ios-sim-runner.sh` (executable). It boots or reuses an iOS simulator (`xcrun simctl list` → pick the latest iPhone runtime; `xcrun simctl boot`, tolerating already-booted) and runs the test binary via `xcrun simctl spawn booted "$@"`, passing through the exit code. Set `GOLDEN_DIR`-style paths so the test finds `golden-v1.json`: the harness reads the path from `env!("CARGO_MANIFEST_DIR")` at compile time, and the simulator shares the host filesystem. Add `.cargo/config.toml` with `[target.aarch64-apple-ios-sim] runner = "scripts/ios-sim-runner.sh"`.
-- [ ] T063 Add an `ios` job on macos-latest to `.github/workflows/ci.yml`:
+- [X] T062 [P] Create `scripts/ios-sim-runner.sh` (executable). It boots or reuses an iOS simulator (`xcrun simctl list` → pick the latest iPhone runtime; `xcrun simctl boot`, tolerating already-booted) and runs the test binary via `xcrun simctl spawn booted "$@"`, passing through the exit code. Set `GOLDEN_DIR`-style paths so the test finds `golden-v1.json`: the harness reads the path from `env!("CARGO_MANIFEST_DIR")` at compile time, and the simulator shares the host filesystem. Add `.cargo/config.toml` with `[target.aarch64-apple-ios-sim] runner = "scripts/ios-sim-runner.sh"`.
+- [X] T063 Add an `ios` job on macos-latest to `.github/workflows/ci.yml`:
   - `cargo test -p rr_dr60_harness --target aarch64-apple-ios-sim --test golden --test determinism` through the runner.
   - `cargo build -p rr_dr60_ffi --release --target aarch64-apple-ios` and `--target x86_64-apple-ios` (build only).
-- [ ] T064 [P] Create `scripts/ios-device-golden.sh`. It installs or checks `cargo-dinghy`, requires a connected device, runs `cargo dinghy -d <device> test -p rr_dr60_harness --test golden --test determinism`, and prints PASS or FAIL plus the device model and iOS version for the release record.
-- [ ] T065 [P] Add `msrv` and `timing` jobs to `.github/workflows/ci.yml`:
+- [X] T064 [P] Create `scripts/ios-device-golden.sh`. It installs or checks `cargo-dinghy`, requires a connected device, runs `cargo dinghy -d <device> test -p rr_dr60_harness --test golden --test determinism`, and prints PASS or FAIL plus the device model and iOS version for the release record.
+- [X] T065 [P] Add `msrv` and `timing` jobs to `.github/workflows/ci.yml`:
   - `msrv` on ubuntu-latest: toolchain 1.85, `cargo test --workspace --all-features`.
   - `timing` on ubuntu-latest: release mode, `--ignored`.
 
   Pin the cbindgen version in a workflow-level env var.
-- [ ] T066 Create `docs/release-checklist.md`. It covers:
+- [X] T066 Create `docs/release-checklist.md`. It covers:
   - The CI matrix is green on all 7 automated targets.
   - `scripts/ios-device-golden.sh` passes on a physical device, with the device and OS recorded (FR-014, SC-003, iOS gate "before each release").
   - If Windows ARM64 has no automated runner (T061), run the golden and determinism tests on a Windows ARM64 machine and record the result.

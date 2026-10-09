@@ -166,6 +166,18 @@ pub fn compare(expected: &GoldenFile, actual: &GoldenFile) -> Result<(), String>
     }
 }
 
+/// The committed golden file, embedded at compile time, so comparisons need no filesystem
+/// access. That matters on a physical iOS device, where the source tree doesn't exist
+/// (tasks.md T064). After blessing, rebuild to pick up the new file.
+///
+/// # Panics
+///
+/// If the embedded file is not valid golden JSON.
+pub fn committed() -> GoldenFile {
+    serde_json::from_str(include_str!("../golden/golden-v1.json"))
+        .expect("valid embedded golden file")
+}
+
 /// Path of the committed golden file.
 pub fn path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-v1.json")

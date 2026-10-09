@@ -16,7 +16,7 @@ fn output_matches_golden_file() {
         eprintln!("blessed {}", path.display());
         return;
     }
-    let expected = golden::load(&path).expect("golden file (bless with RR_DR60_BLESS=1)");
+    let expected = golden::committed();
     assert_eq!(expected.format, "rr_dr60-golden");
     assert_eq!(expected.version, 1);
     if let Err(report) = golden::compare(&expected, &actual) {

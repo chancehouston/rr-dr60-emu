@@ -32,7 +32,7 @@ fn response_check_catches_shifted_band_edges() {
 
 #[test]
 fn golden_check_catches_shifted_band_edges() {
-    let expected = golden::load(&golden::path()).unwrap();
+    let expected = golden::committed();
     let actual = golden::generate(&mutant);
     let report = golden::compare(&expected, &actual).expect_err("mutant matched the golden file");
     assert!(
