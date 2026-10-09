@@ -88,7 +88,7 @@ All features go through Spec-Kit. The project principles live in [.specify/memor
   - `rr_dr60_detmath`: deterministic math.
   - `rr_dr60_ffi`: the C API and `include/rr_dr60.h`.
   - `rr_dr60_harness`: the measurement harness and golden files (unpublished).
-- 2026-10-09: **Feature 002 (record-path AGC, signal-chain stage 3) is implemented** on branch `002-agc`, draft PR #6 (CI green on all 11 jobs). The AGC is on by default (A-017 – A-020); version 0.2.0. Spec 001 checks run with the AGC bypassed, and `golden-v1.json` is unchanged; the AGC has its own `golden-agc-v1.json`. Measurement lesson (002 research R-11): measure gain timing at host rates as output ÷ an AGC-bypassed reference, not with an FFT envelope.
+- 2026-10-09: **Feature 002 (record-path AGC, signal-chain stage 3) is complete on `main`** (PR #6 merged; CI green on all 11 jobs; `/speckit-converge` found zero gaps). The AGC is on by default (A-017 – A-020); version 0.2.0. Spec 001 checks run with the AGC bypassed, and `golden-v1.json` is unchanged; the AGC has its own `golden-agc-v1.json`. Measurement lesson (002 research R-11): measure gain timing at host rates as output ÷ an AGC-bypassed reference, not with an FFT envelope.
 - CI (`.github/workflows/ci.yml`) runs on pull requests and on pushes to `main`. Feature branches get CI only through an open PR.
 - Useful commands:
   - Re-bless golden files after an *intended* output change: `RR_DR60_BLESS=1 cargo test -p rr_dr60_harness --test golden` (spec 001 file) or `RR_DR60_BLESS=agc cargo test -p rr_dr60_harness --test golden_agc` (AGC file). Add a CHANGELOG entry.
