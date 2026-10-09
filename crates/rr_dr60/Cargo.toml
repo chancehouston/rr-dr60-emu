@@ -1,0 +1,25 @@
+[package]
+name = "rr_dr60"
+description = "Portable emulator of the Panasonic RR-DR60 voice recorder's audio signal chain"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords = ["audio", "dsp", "emulation", "voice-recorder", "codec"]
+categories = ["multimedia::audio", "no-std"]
+
+[dependencies]
+rr_dr60_detmath.workspace = true
+
+[features]
+# Test-only. Exposes hidden hooks (e.g. replacing the voice-band coefficients) used by the
+# measurement harness for the SC-008 mutation test. Not part of the public API.
+__test-hooks = []
+# Test-only. Counts multiply-adds per sample to verify bounded work (FR-015, tasks.md T059).
+op-count = []
+
+[lints]
+workspace = true

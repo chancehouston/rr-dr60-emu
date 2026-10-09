@@ -1,0 +1,13 @@
+[package]
+name = "rr_dr60_detmath"
+description = "Deterministic, bit-identical math helpers (sin, cos, Bessel I0, …) for the rr-dr60-emu signal chain"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+categories = ["no-std", "mathematics"]
+
+[lints]
+workspace = true

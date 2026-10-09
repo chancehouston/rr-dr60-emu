@@ -1,0 +1,22 @@
+[package]
+name = "rr_dr60_harness"
+description = "Measurement harness and golden-file regression tests for rr_dr60 (not published)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+rr_dr60 = { workspace = true, features = ["__test-hooks"] }
+rr_dr60_ffi.workspace = true
+rr_dr60_detmath.workspace = true
+rustfft = "6.4.1"
+sha2 = "0.11.0"
+serde_json = "1.0.151"
+serde = { version = "1.0.229", features = ["derive"] }
+
+[lints]
+workspace = true

@@ -33,41 +33,41 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
 
 **Purpose**: Workspace skeleton, toolchain configuration, generated filter coefficients and basic CI with the coverage gate (Constitution III: "as soon as the Cargo workspace exists").
 
-- [ ] T001 Create the root workspace manifest `Cargo.toml`:
+- [X] T001 Create the root workspace manifest `Cargo.toml`:
   - `[workspace] resolver = "3"`, `members = ["crates/*"]`.
   - `[workspace.package]`: edition = "2024", rust-version = "1.85", license = "MIT", version = "0.1.0", repository = "https://github.com/chancehouston/rr-dr60-emu".
   - `[workspace.lints.rust]`: `missing_docs = "deny"`, `unsafe_op_in_unsafe_fn = "deny"`.
   - `[workspace.lints.clippy]`: `all = "deny"`.
   - `[profile.release]`: `panic = "unwind"` (R-12), `debug = 1`.
   - Optimized test builds: `[profile.test] opt-level = 3`, plus `[profile.dev.package.rr_dr60]` and `[profile.dev.package.rr_dr60_detmath]` at `opt-level = 3`. The suite budget is that `cargo test --all-features` completes in under 5 minutes on a CI runner.
-- [ ] T002 [P] Create `rust-toolchain.toml`: channel "stable", components ["rustfmt", "clippy", "llvm-tools-preview"], targets ["aarch64-apple-ios", "aarch64-apple-ios-sim", "x86_64-apple-ios"]. Also create `rustfmt.toml` with `edition = "2024"`.
-- [ ] T003 [P] Create `clippy.toml` with `disallowed-methods` banning `f64::sin`, `f64::cos`, `f64::tan`, `f64::exp`, `f64::ln`, `f64::log10`, `f64::powf`, `f64::powi`, `f64::mul_add`, `f64::sqrt` and the same `f32` methods. Give each the reason "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops".
-- [ ] T004 [P] Create the crate skeleton `crates/rr_dr60_detmath/Cargo.toml` (workspace package fields, `[lints] workspace = true`, no dependencies) and `crates/rr_dr60_detmath/src/lib.rs` (`#![no_std]`, `#![forbid(unsafe_code)]`, crate doc comment explaining R-06).
-- [ ] T005 [P] Create the crate skeleton `crates/rr_dr60/Cargo.toml` (depends on `rr_dr60_detmath` by path, with version; features `__test-hooks = []` and `op-count = []`, both documented as test-only) and `crates/rr_dr60/src/lib.rs`:
+- [X] T002 [P] Create `rust-toolchain.toml`: channel "stable", components ["rustfmt", "clippy", "llvm-tools-preview"], targets ["aarch64-apple-ios", "aarch64-apple-ios-sim", "x86_64-apple-ios"]. Also create `rustfmt.toml` with `edition = "2024"`.
+- [X] T003 [P] Create `clippy.toml` with `disallowed-methods` banning `f64::sin`, `f64::cos`, `f64::tan`, `f64::exp`, `f64::ln`, `f64::log10`, `f64::powf`, `f64::powi`, `f64::mul_add`, `f64::sqrt` and the same `f32` methods. Give each the reason "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops".
+- [X] T004 [P] Create the crate skeleton `crates/rr_dr60_detmath/Cargo.toml` (workspace package fields, `[lints] workspace = true`, no dependencies) and `crates/rr_dr60_detmath/src/lib.rs` (`#![no_std]`, `#![forbid(unsafe_code)]`, crate doc comment explaining R-06).
+- [X] T005 [P] Create the crate skeleton `crates/rr_dr60/Cargo.toml` (depends on `rr_dr60_detmath` by path, with version; features `__test-hooks = []` and `op-count = []`, both documented as test-only) and `crates/rr_dr60/src/lib.rs`:
   - `#![no_std]`, `extern crate alloc;`, `#![forbid(unsafe_code)]`. `no_std` together with `forbid(unsafe_code)` makes clock access, OS randomness, locks and I/O unavailable, which satisfies FR-016 by construction. Say so in the crate docs.
   - Crate docs in neutral, signal-processing-only language (Constitution VI): "modeled on the MSM7702 voice-band codec (assumed, A-002)".
   - Empty modules: `settings`, `error`, `sanitize`, `rate`, `resample/{mod,design,down,up}`, `stages/{mod,biquad,voiceband,voiceband_coeffs}`, `pipeline`.
-- [ ] T006 [P] Create the crate skeleton `crates/rr_dr60_ffi/Cargo.toml` (`crate-type = ["staticlib", "cdylib", "rlib"]`, depends on `rr_dr60`, feature `ffi-test-panic = []`) and `crates/rr_dr60_ffi/src/lib.rs` (crate docs; the only crate where `unsafe` is allowed).
-- [ ] T007 [P] Create the crate skeleton `crates/rr_dr60_harness/Cargo.toml`:
+- [X] T006 [P] Create the crate skeleton `crates/rr_dr60_ffi/Cargo.toml` (`crate-type = ["staticlib", "cdylib", "rlib"]`, depends on `rr_dr60`, feature `ffi-test-panic = []`) and `crates/rr_dr60_ffi/src/lib.rs` (crate docs; the only crate where `unsafe` is allowed).
+- [X] T007 [P] Create the crate skeleton `crates/rr_dr60_harness/Cargo.toml`:
   - `publish = false`.
   - Dependencies: `rr_dr60` (with feature `__test-hooks`), `rr_dr60_ffi`, `rr_dr60_detmath`, `rustfft`, `sha2`, `serde` (derive), `serde_json`.
   - `crates/rr_dr60_harness/src/lib.rs` declares modules `stimulus`, `analysis`, `checks`, `configs`, `golden`, `report`.
   - Empty test files: `crates/rr_dr60_harness/tests/{us1_voiceband,us2_bypass_tap,response_matrix,latency,edge_cases,determinism,alloc_free,ffi_parity,golden,timing}.rs`.
-- [ ] T008 Write the offline design tool `tools/filter-design/design_voiceband.py`, a uv inline-script with numpy and scipy dependencies. It must:
+- [X] T008 Write the offline design tool `tools/filter-design/design_voiceband.py`, a uv inline-script with numpy and scipy dependencies. It must:
   1. Design the R-07 filter at fs = 8000: Butterworth 5th-order high-pass at 300 Hz plus elliptic 6th-order low-pass (0.1 dB ripple, 40 dB stopband, 3380 Hz), as SOS.
   2. Scale the gain to exactly 0 dB at 1 kHz (A-015).
   3. Verify analytically every FR-010 bound: −3 dB at 300 ± 50 Hz and 3400 ± 50 Hz; ripple ±0.5 dB from 400 to 3200 Hz; ≥ 20 dB at 60 Hz and below; ≥ 40 dB at DC; ≥ 14 dB at 4000 Hz; group delay ≤ 2 ms at 1 kHz; group delay at 400 Hz and 3200 Hz greater than at 1 kHz; every pole and zero with |z| ≤ 1. Exit non-zero on any failure.
   4. Print a margin table. With `--check`, stop after design and verification without writing any file (used by the Phase 1 checkpoint). With `--shift-hz N --emit-fixture PATH`, design with both band edges shifted by N Hz and write a test fixture instead (used by T057).
   5. Emit `crates/rr_dr60/src/stages/voiceband_coeffs.rs`. The header must say "GENERATED — do not edit" and give the design parameters, A-002, A-014, A-015, A-016, and the regeneration command. Each coefficient is `f64::from_bits(0x…)` with a decimal comment, in `pub(crate) const VOICEBAND_SOS: [[f64; 5]; 6]` (b0, b1, b2, a1, a2), with the first-order section padded with b2 = a2 = 0.
-- [ ] T009 Commit a **placeholder** `crates/rr_dr60/src/stages/voiceband_coeffs.rs` with 6 identity sections (`[1.0, 0.0, 0.0, 0.0, 0.0]`), the same `VOICEBAND_SOS` signature, and the header "PLACEHOLDER — replaced in T029a". The placeholder lets the analytic test T023 fail first (Constitution III). Write `tools/filter-design/README.md` covering the purpose, the command, and the rule that "any change requires golden re-bless + CHANGELOG entry + assumption-register check" (Constitution II).
-- [ ] T010 [P] Create the basic CI workflow `.github/workflows/ci.yml`, triggered on `pull_request` and on `push` to `main`. Jobs `check` on ubuntu-latest and macos-latest each run:
+- [X] T009 Commit a **placeholder** `crates/rr_dr60/src/stages/voiceband_coeffs.rs` with 6 identity sections (`[1.0, 0.0, 0.0, 0.0, 0.0]`), the same `VOICEBAND_SOS` signature, and the header "PLACEHOLDER — replaced in T029a". The placeholder lets the analytic test T023 fail first (Constitution III). Write `tools/filter-design/README.md` covering the purpose, the command, and the rule that "any change requires golden re-bless + CHANGELOG entry + assumption-register check" (Constitution II).
+- [X] T010 [P] Create the basic CI workflow `.github/workflows/ci.yml`, triggered on `pull_request` and on `push` to `main`. Jobs `check` on ubuntu-latest and macos-latest each run:
   - checkout, then the toolchain from `rust-toolchain.toml`
   - `cargo fmt --all -- --check`
   - `cargo clippy --all-targets --all-features -- -D warnings`
   - `cargo test --all-features`
 
   A `coverage` job on ubuntu-latest installs cargo-llvm-cov and runs `cargo llvm-cov --all-features --workspace --fail-under-lines 80` from day one (Constitution III). Because CI runs only on PRs to `main` and pushes to `main`, the gate applies whenever the branch merges, which requires the branch to be green. Add a comment that the cross-platform matrix is added in Phase 6.
-- [ ] T011 Verify the skeleton: `cargo build --workspace`, `cargo clippy --all-targets --all-features -- -D warnings` and `cargo test --workspace` all succeed (with no tests yet). Commit as `chore: scaffold cargo workspace, design tool, basic CI`.
+- [X] T011 Verify the skeleton: `cargo build --workspace`, `cargo clippy --all-targets --all-features -- -D warnings` and `cargo test --workspace` all succeed (with no tests yet). Commit as `chore: scaffold cargo workspace, design tool, basic CI`.
 - [ ] T011a Push `001-pipeline-skeleton` to `origin` and open a **draft** PR to `main` titled `feat: 001 pipeline skeleton — US1 (MVP)`. The body links spec.md, plan.md and tasks.md and says the PR merges at the US1 checkpoint (T039a). Draft PRs trigger the `pull_request` CI from T010. Every later push re-runs CI.
 
 **Checkpoint**: The workspace builds, the draft PR exists, the CI `check` jobs are green (the coverage job is expected to stay red until the Phase 2 code and tests land), the design tool runs (`uv run tools/filter-design/design_voiceband.py --check` passes), and the placeholder coefficient file exists.

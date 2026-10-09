@@ -30,3 +30,14 @@ DerivedData/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Coverage / profiling output
+*.profraw
+*.profdata
+lcov.info
+/coverage/
+
+# Python (tools/filter-design runs via `uv run`)
+__pycache__/
+*.pyc
+.venv/

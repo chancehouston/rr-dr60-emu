@@ -1,0 +1,57 @@
+name: CI
+
+# Basic CI (spec 001, tasks.md T010). The cross-platform golden matrix (8 targets, FR-014),
+# the iOS jobs, the MSRV job and the release timing job are added in Phase 6 (T061–T065).
+#
+# Triggers: pull requests and pushes to main only. Test-first commits that are deliberately
+# red stay on feature branches until the branch is ready (tasks.md "Conventions").
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Test
+        run: cargo test --all-features
+
+  coverage:
+    # Constitution III: workspace line coverage >= 80%, enforced as soon as the workspace exists.
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: Coverage gate (>= 80% lines)
+        run: cargo llvm-cov --all-features --workspace --fail-under-lines 80

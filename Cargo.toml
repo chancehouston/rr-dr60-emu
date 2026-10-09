@@ -1,0 +1,38 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+version = "0.1.0"
+authors = ["Chance Houston"]
+repository = "https://github.com/chancehouston/rr-dr60-emu"
+
+[workspace.dependencies]
+rr_dr60 = { path = "crates/rr_dr60", version = "0.1.0" }
+rr_dr60_detmath = { path = "crates/rr_dr60_detmath", version = "0.1.0" }
+rr_dr60_ffi = { path = "crates/rr_dr60_ffi", version = "0.1.0" }
+
+[workspace.lints.rust]
+missing_docs = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+
+# R-12: the C API catches panics with catch_unwind, so unwinding must stay enabled.
+[profile.release]
+panic = "unwind"
+debug = 1
+
+# Test suite budget: `cargo test --all-features` < 5 min on a CI runner (tasks.md T001).
+[profile.test]
+opt-level = 3
+
+[profile.dev.package.rr_dr60]
+opt-level = 3
+
+[profile.dev.package.rr_dr60_detmath]
+opt-level = 3
