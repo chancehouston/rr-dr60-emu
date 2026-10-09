@@ -129,7 +129,7 @@ A maintainer or contributor runs the automated measurement harness. It drives th
   - Attenuation from 4600 Hz up to the host Nyquist frequency: at least 25 dB, counting the total output power, including any alias or image products.
   - Group delay at 1 kHz: at most 2 ms (A-016).
   - Group delay at 400 Hz and at 3200 Hz: each greater than the group delay at 1 kHz (A-016).
-  - Phase from 400 Hz to 3200 Hz: within ±5° of the minimum-phase response computed from the stage's measured magnitude (A-016; the ±5° figure is an engineering target).
+  - Phase from 400 Hz to 3200 Hz: within ±5° of the minimum-phase response computed from the stage's measured magnitude (A-016; the ±5° figure is an engineering target). This check is performed at the 8 kHz host rate, where the rate conversion boundary is the identity, so the stage response is observed directly. The stage coefficients are identical at every host rate, and the other FR-010 checks confirm this at the other rates.
 - **FR-011**: With both stages on, the measured response at every test frequency from 100 Hz to 3900 Hz MUST equal R_rec + R_play − R_base within ±0.3 dB, wherever that value is above −40 dB. Here R_rec and R_play are the measured responses with only the record or only the playback stage on, and R_base is the fully bypassed response, all in dB. Subtracting R_base once stops the rate conversion boundary being counted twice. (±0.3 dB and −40 dB are engineering targets.) The 1 kHz gain MUST be 0 dB ± 0.2 dB (A-015).
 
 **Latency**
@@ -158,7 +158,7 @@ A maintainer or contributor runs the automated measurement harness. It drives th
 **Integration surface**
 
 - **FR-023**: The pipeline MUST be usable from hosts in other languages (C, Swift, and others) through a stable, language-neutral interface. That interface MUST offer: create (with settings), process a block, query latency, reset, reconfigure, destroy, and query the library version. It MUST expose only plain data types and MUST behave identically to the native interface, bit for bit.
-- **FR-024**: Every failure through the language-neutral interface (unsupported rate, missing or invalid buffer, invalid settings) MUST be reported as an error value. A failure MUST never crash the host process or leave the pipeline in an unusable state. The interface is a versioned public surface under Semantic Versioning.
+- **FR-024**: Every failure through the language-neutral interface (unsupported rate, missing or invalid buffer, invalid settings) MUST be reported as an error value. A failure MUST never crash the host process or leave the pipeline unrecoverable. Ordinary errors (invalid arguments, unsupported rate) leave the pipeline unchanged and usable. After an internal error, the pipeline MAY refuse processing until `reset` or `reconfigure` succeeds, and either one MUST restore it to a working state. The interface is a versioned public surface under Semantic Versioning.
 
 ### Out of Scope
 
