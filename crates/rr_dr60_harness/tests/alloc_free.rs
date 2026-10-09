@@ -1,6 +1,7 @@
 //! No heap activity while processing (FR-015, FR-022, SC-004; tasks.md T053).
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 use rr_dr60::Pipeline;
@@ -13,6 +14,17 @@ use rr_dr60_harness::stimulus::{self, Pcg32};
 
 struct Counting;
 
+thread_local! {
+    /// Count only allocations made on the measuring thread. Other threads, such as libtest's
+    /// main thread printing "has been running for over 60 seconds" in slow coverage builds,
+    /// must not count. A `const` thread-local with no destructor never allocates on access.
+    static MEASURING: Cell<bool> = const { Cell::new(false) };
+}
+
+fn on_measuring_thread() -> bool {
+    MEASURING.with(Cell::get)
+}
+
 static ALLOCS: AtomicUsize = AtomicUsize::new(0);
 static DEALLOCS: AtomicUsize = AtomicUsize::new(0);
 static REALLOCS: AtomicUsize = AtomicUsize::new(0);
@@ -20,17 +32,23 @@ static REALLOCS: AtomicUsize = AtomicUsize::new(0);
 // SAFETY: forwards every call to the system allocator unchanged; only counts them.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCS.fetch_add(1, Relaxed);
+        if on_measuring_thread() {
+            ALLOCS.fetch_add(1, Relaxed);
+        }
         // SAFETY: same contract as the caller's.
         unsafe { System.alloc(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        DEALLOCS.fetch_add(1, Relaxed);
+        if on_measuring_thread() {
+            DEALLOCS.fetch_add(1, Relaxed);
+        }
         // SAFETY: same contract as the caller's.
         unsafe { System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        REALLOCS.fetch_add(1, Relaxed);
+        if on_measuring_thread() {
+            REALLOCS.fetch_add(1, Relaxed);
+        }
         // SAFETY: same contract as the caller's.
         unsafe { System.realloc(ptr, layout, new_size) }
     }
@@ -50,6 +68,7 @@ fn counts() -> [usize; 3] {
 /// Everything happens in one test, so no other test thread allocates concurrently.
 #[test]
 fn processing_never_touches_the_heap() {
+    MEASURING.with(|m| m.set(true));
     let input = stimulus::noise(0x0D60, 1024);
     let mut output = vec![0.0f32; 1024];
     let mut in_place = vec![0.0f32; 1024];
