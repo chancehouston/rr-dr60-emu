@@ -251,7 +251,7 @@ pub fn check_fr005_boundary(rate: u32, make: Make<'_>) -> Vec<MeasurementResult>
         "impulse",
         flat,
         "dB",
-        Tolerance::AtMost(0.1),
+        Tolerance::AtMost(0.1), // FR-005, engineering target
     )];
     for f in [
         4000.0,
@@ -273,7 +273,7 @@ pub fn check_fr005_boundary(rate: u32, make: Make<'_>) -> Vec<MeasurementResult>
                 format!("tone {f} Hz"),
                 a,
                 "dB",
-                Tolerance::AtLeast(60.0),
+                Tolerance::AtLeast(60.0), // FR-005, engineering target
             ));
         }
     }
@@ -288,7 +288,7 @@ pub fn check_fr005_boundary(rate: u32, make: Make<'_>) -> Vec<MeasurementResult>
         "tone 1000 Hz",
         r,
         "dB",
-        Tolerance::AtLeast(60.0),
+        Tolerance::AtLeast(60.0), // FR-005, engineering target
     ));
     out
 }
@@ -341,7 +341,7 @@ pub fn check_fr010_stage(rate: u32, stage: Stage, make: Make<'_>) -> Vec<Measure
             "impulse",
             g1k,
             "dB",
-            Tolerance::Range(-0.1, 0.1),
+            Tolerance::Range(-0.1, 0.1), // FR-010, A-015
         ),
         mr(
             "lower -3 dB point",
@@ -349,7 +349,7 @@ pub fn check_fr010_stage(rate: u32, stage: Stage, make: Make<'_>) -> Vec<Measure
             "impulse",
             lo3,
             "Hz",
-            Tolerance::Range(250.0, 350.0),
+            Tolerance::Range(250.0, 350.0), // FR-010, A-002, A-014
         ),
         mr(
             "upper -3 dB point",
@@ -357,7 +357,7 @@ pub fn check_fr010_stage(rate: u32, stage: Stage, make: Make<'_>) -> Vec<Measure
             "impulse",
             hi3,
             "Hz",
-            Tolerance::Range(3350.0, 3450.0),
+            Tolerance::Range(3350.0, 3450.0), // FR-010, A-002, A-014
         ),
         mr(
             "ripple 400-3200 Hz (max |dev|)",
@@ -365,7 +365,7 @@ pub fn check_fr010_stage(rate: u32, stage: Stage, make: Make<'_>) -> Vec<Measure
             "impulse",
             ripple,
             "dB",
-            Tolerance::AtMost(0.5),
+            Tolerance::AtMost(0.5), // FR-010, A-014
         ),
         mr(
             "attenuation <= 60 Hz",
@@ -373,7 +373,7 @@ pub fn check_fr010_stage(rate: u32, stage: Stage, make: Make<'_>) -> Vec<Measure
             "impulse",
             a60,
             "dB",
-            Tolerance::AtLeast(20.0),
+            Tolerance::AtLeast(20.0), // FR-010, A-014
         ),
         mr(
             "attenuation at DC",
@@ -381,7 +381,7 @@ pub fn check_fr010_stage(rate: u32, stage: Stage, make: Make<'_>) -> Vec<Measure
             "impulse",
             adc,
             "dB",
-            Tolerance::AtLeast(40.0),
+            Tolerance::AtLeast(40.0), // FR-010, A-014
         ),
         mr(
             "group delay at 1 kHz",
@@ -389,7 +389,7 @@ pub fn check_fr010_stage(rate: u32, stage: Stage, make: Make<'_>) -> Vec<Measure
             "impulse",
             gd1k,
             "ms",
-            Tolerance::AtMost(2.0),
+            Tolerance::AtMost(2.0), // FR-010, A-016
         ),
         mr(
             "group delay 400 Hz minus 1 kHz",
@@ -421,7 +421,7 @@ pub fn check_fr010_stage(rate: u32, stage: Stage, make: Make<'_>) -> Vec<Measure
             "tone 4000 Hz",
             a4k,
             "dB",
-            Tolerance::AtLeast(14.0),
+            Tolerance::AtLeast(14.0), // FR-010, A-014
         ));
     }
     for f in [4600.0, 6000.0, 10_000.0, 20_000.0] {
@@ -433,7 +433,7 @@ pub fn check_fr010_stage(rate: u32, stage: Stage, make: Make<'_>) -> Vec<Measure
                 &format!("tone {f} Hz"),
                 a,
                 "dB",
-                Tolerance::AtLeast(25.0),
+                Tolerance::AtLeast(25.0), // FR-010, A-014
             ));
         }
     }
@@ -461,7 +461,7 @@ pub fn check_fr010_minphase(make: Make<'_>) -> Vec<MeasurementResult> {
                 "impulse",
                 d,
                 "deg",
-                Tolerance::AtMost(5.0),
+                Tolerance::AtMost(5.0), // FR-010, A-016; ±5° is an engineering target
             )
         })
         .collect()
@@ -496,7 +496,7 @@ pub fn check_fr011_cascade(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> 
             "impulse, 48 log points 100-3900 Hz",
             worst,
             "dB",
-            Tolerance::AtMost(0.3),
+            Tolerance::AtMost(0.3), // FR-011, engineering target
         ),
         MeasurementResult::new(
             "FR-011",
@@ -507,7 +507,7 @@ pub fn check_fr011_cascade(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> 
             "impulse",
             at(&d, 1000.0),
             "dB",
-            Tolerance::Range(-0.2, 0.2),
+            Tolerance::Range(-0.2, 0.2), // FR-011, A-015
         ),
     ]
 }
@@ -531,7 +531,7 @@ pub fn check_fr012_latency(
         format!("tones 999/1001 Hz; reported {reported}"),
         reported - measured,
         "samples",
-        Tolerance::Range(-1.0, 1.0),
+        Tolerance::Range(-1.0, 1.0), // FR-012, engineering target
     )]
 }
 
@@ -547,7 +547,7 @@ pub fn check_fr013_latency(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> 
         "reported",
         ms,
         "ms",
-        Tolerance::AtMost(20.0),
+        Tolerance::AtMost(20.0), // FR-013, engineering target
     )]
 }
 

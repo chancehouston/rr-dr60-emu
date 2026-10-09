@@ -73,18 +73,33 @@ All features go through Spec-Kit. The project principles live in [.specify/memor
 
 ## Toolchain
 
-- Rust stable (installed via rustup) with targets `aarch64-apple-ios`, `aarch64-apple-ios-sim`, `x86_64-apple-ios`.
+- Rust stable (installed via rustup) with targets `aarch64-apple-ios`, `aarch64-apple-ios-sim`, `x86_64-apple-ios` (pinned in `rust-toolchain.toml`). MSRV is **1.85** (edition 2024).
+- `~/.cargo/bin` must be on `PATH`. rustup adds `. "$HOME/.cargo/env"` to `~/.zshenv`, but tools and sessions started before the install won't see it.
+- `cargo-llvm-cov` (coverage gate) and `cbindgen` 0.29.4 (C header; pinned in CI as `CBINDGEN_VERSION`): `cargo install cargo-llvm-cov cbindgen --locked`.
+- Full Xcode (not just the Command Line Tools) plus an iOS simulator runtime, for iOS builds and simulator tests. `.cargo/config.toml` runs `aarch64-apple-ios-sim` tests in a simulator.
 - `uv` + `specify` CLI for Spec-Kit (`uv tool upgrade specify-cli` to update).
 
 ## Current status
 
-- 2026-10-08: Repo bootstrapped. Spec-Kit initialized, community files added, hardware research started. **No Rust code yet**: the Cargo workspace is created by the first feature's plan/implement.
+- 2026-10-08: Repo bootstrapped. Spec-Kit initialized, community files added, hardware research started.
 - Published at https://github.com/chancehouston/rr-dr60-emu (public). Constitution amended to v1.1.0 (independently testable features, 80% coverage gate).
-- Not yet done: CI workflow. Add it once the Cargo workspace exists: fmt, clippy, test on Linux/macOS/Windows, an iOS target build check, and the `cargo llvm-cov` coverage gate.
+- 2026-10-09: **Feature 001 (pipeline skeleton)** implemented on branch `001-pipeline-skeleton`. The US1 MVP was merged in PR #2; US2, US3, the CI matrix and polish follow in the second PR. Workspace crates:
+  - `rr_dr60`: the `no_std` core.
+  - `rr_dr60_detmath`: deterministic math.
+  - `rr_dr60_ffi`: the C API and `include/rr_dr60.h`.
+  - `rr_dr60_harness`: the measurement harness and golden files (unpublished).
+- CI (`.github/workflows/ci.yml`) runs on pull requests and on pushes to `main`. Feature branches get CI only through an open PR.
+- Useful commands:
+  - Re-bless golden files after an *intended* output change: `RR_DR60_BLESS=1 cargo test -p rr_dr60_harness --test golden`. Add a CHANGELOG entry.
+  - Regenerate the filter coefficients: `uv run tools/filter-design/design_voiceband.py`.
+  - Regenerate the C header: see `crates/rr_dr60_ffi/cbindgen.toml`.
+  - Measurement report: `cargo test -p rr_dr60_harness --test response_matrix -- --nocapture`.
 
 ## Open decisions (resolve via specs/plan)
 
-- `no_std` support for the core (useful for embedded or exotic hosts), or `std` only?
 - Distribution for iOS: Swift Package wrapping an XCFramework (likely) vs. source port to Swift.
-- Exact public API shape (stage graph vs. fixed pipeline with presets).
-- Minimum supported Rust version (MSRV).
+
+Resolved by spec 001 (see `specs/001-pipeline-skeleton/research.md`):
+- `no_std`: **yes**. The core is `no_std` + `alloc` (R-02), which also rules out clock, I/O and locks (FR-016).
+- API shape: a **fixed pipeline with a `#[non_exhaustive]` `Settings` struct** (R-11). Presets can be layered on top later.
+- MSRV: **1.85** (R-01), checked by the `msrv` CI job.

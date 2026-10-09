@@ -17,6 +17,7 @@ Changes to assumed hardware values ([assumption register](docs/hardware/assumpti
 - `rr_dr60_detmath`: deterministic sin, cos, exp, ln, sqrt and Bessel I0, giving bit-identical results on every platform.
 - Measurement harness (`rr_dr60_harness`, not published): deterministic stimuli, response analysis, the full measurement matrix (FR-005, FR-010–FR-013 at all six rates, 212 checks with FR and trace IDs), determinism, allocation-free, C API parity, timing and SC-008 mutation tests.
 - Golden files: initial bless (`golden-v1.json`, 96 SHA-256 entries).
+- CI: fmt, clippy, tests, C smoke test, the 80% coverage gate, C header drift, release timing, a cross-platform golden matrix (Linux, macOS and Windows on x86-64 and ARM64, plus the iOS simulator) and an MSRV (1.85) job. Also a release checklist (`docs/release-checklist.md`) with the manual iOS-device golden gate.
 
 ### Fixed
 

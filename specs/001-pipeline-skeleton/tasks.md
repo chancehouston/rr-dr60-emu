@@ -368,25 +368,25 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T067 [P] Update `README.md` with a "Using the library" section: Rust and C snippets from quickstart.md §4–5, supported rates, latency, real-time notes, and the neutral accuracy statement ("modeled on… assumed… not yet measured against a real unit", Constitution VI).
-- [ ] T068 [P] Update `CHANGELOG.md` `[Unreleased]`:
+- [X] T067 [P] Update `README.md` with a "Using the library" section: Rust and C snippets from quickstart.md §4–5, supported rates, latency, real-time notes, and the neutral accuracy statement ("modeled on… assumed… not yet measured against a real unit", Constitution VI).
+- [X] T068 [P] Update `CHANGELOG.md` `[Unreleased]`:
   - "Added: pipeline skeleton — host-rate I/O through the 8 kHz device domain with record (stage 4) and playback (stage 10) voice-band stages, bypass/tap, latency reporting, C API, measurement harness and golden files"
   - "Added assumptions A-014, A-015, A-016"
   - "Golden files: initial bless (golden-v1)"
-- [ ] T069 [P] Update `CLAUDE.md`:
+- [X] T069 [P] Update `CLAUDE.md`:
   - Current status: the Cargo workspace exists and basic CI is on.
   - Open decisions resolved: `no_std` = yes with `alloc` (R-02); API shape = fixed pipeline with settings (R-11); MSRV = 1.85 (R-01). iOS distribution is still open.
   - Toolchain: add the `~/.cargo/bin` PATH note, cbindgen and cargo-llvm-cov.
-- [ ] T070 [P] Update `.github/pull_request_template.md` with checkboxes for: golden files re-blessed with a CHANGELOG entry explaining the output change; C header regenerated; assumption IDs cited for any new value.
-- [ ] T071 [P] Update `docs/hardware/signal-chain.md` rows 4 and 10 so they link to the implemented model ("Modeled in 001: G.712-like min-phase band-pass, A-014/A-015/A-016") and note that DAC imaging residue is not modeled yet.
-- [ ] T072 Time a walkthrough of the quickstart (§4 and §5) from a fresh clone and record the result in the PR (SC-001: under 15 minutes). Run the full [quickstart.md](quickstart.md) validation on macOS (§1–§3, §5, §6 simulator, §7 timing) and fix any drift between the docs and the commands. Run `cargo doc --workspace --no-deps` with `RUSTDOCFLAGS="-D warnings"`.
-- [ ] T072a Traceability audit (FR-018, SC-007). Add `scripts/check-traceability.sh`, which:
+- [X] T070 [P] Update `.github/pull_request_template.md` with checkboxes for: golden files re-blessed with a CHANGELOG entry explaining the output change; C header regenerated; assumption IDs cited for any new value.
+- [X] T071 [P] Update `docs/hardware/signal-chain.md` rows 4 and 10 so they link to the implemented model ("Modeled in 001: G.712-like min-phase band-pass, A-014/A-015/A-016") and note that DAC imaging residue is not modeled yet.
+- [X] T072 Time a walkthrough of the quickstart (§4 and §5) from a fresh clone and record the result in the PR (SC-001: under 15 minutes). Run the full [quickstart.md](quickstart.md) validation on macOS (§1–§3, §5, §6 simulator, §7 timing) and fix any drift between the docs and the commands. Run `cargo doc --workspace --no-deps` with `RUSTDOCFLAGS="-D warnings"`.
+- [X] T072a Traceability audit (FR-018, SC-007). Add `scripts/check-traceability.sh`, which:
   - Greps `crates/rr_dr60/src/**/*.rs` and `crates/rr_dr60_harness/src/checks.rs` for numeric `const` items and literal tolerances.
   - Fails if any of them has no `A-\d{3}`, `S-\d{3}`, `FR-\d{3}`, `SC-\d{3}` or `engineering target` comment within 2 lines.
   - Exempts `voiceband_coeffs.rs`, because its header cites the IDs.
 
   Add it as a step in the ubuntu CI job. Fix every hit.
-- [ ] T073 Final gate: `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-features` and `cargo llvm-cov --all-features --workspace --fail-under-lines 80` all pass. Then open the follow-up PR from `001-pipeline-skeleton` to `main` (US2, US3, the CI matrix and polish), titled `feat: 001 pipeline skeleton — US2, US3, CI matrix`. Extend the US1 CHANGELOG entry rather than duplicating it.
+- [X] T073 Final gate: `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-features` and `cargo llvm-cov --all-features --workspace --fail-under-lines 80` all pass. Then open the follow-up PR from `001-pipeline-skeleton` to `main` (US2, US3, the CI matrix and polish), titled `feat: 001 pipeline skeleton — US2, US3, CI matrix`. Extend the US1 CHANGELOG entry rather than duplicating it.
 
 ---
 

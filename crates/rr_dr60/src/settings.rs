@@ -4,7 +4,7 @@
 ///
 /// Any other rate is rejected by [`Pipeline::new`](crate::Pipeline::new) with
 /// [`Error::UnsupportedHostRate`](crate::Error::UnsupportedHostRate).
-pub const SUPPORTED_HOST_RATES: [u32; 6] = [8000, 16000, 44100, 48000, 88200, 96000];
+pub const SUPPORTED_HOST_RATES: [u32; 6] = [8000, 16000, 44100, 48000, 88200, 96000]; // FR-002
 
 /// The emulated device's internal sample rate, in Hz.
 ///

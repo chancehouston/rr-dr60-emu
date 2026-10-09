@@ -50,6 +50,9 @@ jobs:
         run: cargo test --all-features
       - name: C smoke test (FR-023, FR-024)
         run: crates/rr_dr60_ffi/tests/c/run_smoke.sh
+      - name: Traceability audit (FR-018, SC-007)
+        if: matrix.os == 'ubuntu-latest'
+        run: scripts/check-traceability.sh
       - name: Golden files with default features (shipped configuration, no op-count)
         if: matrix.os == 'ubuntu-latest'
         run: cargo test -p rr_dr60_harness --test golden
