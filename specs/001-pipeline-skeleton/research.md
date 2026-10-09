@@ -52,9 +52,12 @@ Each entry gives a **Decision**, its **Rationale**, and the **Alternatives consi
 - **Decision**: A small `no_std` crate (MIT, published alongside the core) providing:
   - `sin`/`cos`: Cody-Waite range reduction by π/2 using a 3-part split constant, then minimax polynomials on [−π/4, π/4]. Target error is 1 ulp or less for |x| < 1e6.
   - `bessel_i0`: power series until the term is below 1e-17 of the sum, with at most 64 iterations.
+  - `exp`, `ln`: fdlibm-derived reduction and polynomials, ≤ 2 ulp. These are needed for the deterministic exponential sweep stimulus.
+  - `sqrt`: Newton iteration with a final correction step, so it rounds correctly. This is needed for the Kaiser window.
+  - Sun's fdlibm notice is kept in the source and in `THIRD_PARTY.md`.
   - `PI` constants.
 
-  It is used only at construction (Kaiser taps), in the harness (stimulus generation), and in tests. Unit tests compare against high-precision reference values with tolerances. The cross-platform golden suite verifies that the results are bit-stable.
+  It is used only at construction (Kaiser taps), in the harness (stimulus generation; the harness's clippy exemption covers `analysis.rs` only), and in tests. Unit tests compare against high-precision reference values with tolerances. The cross-platform golden suite verifies that the results are bit-stable.
 - **Rationale**: This removes the last platform-dependent math from anything that affects output bits, including the golden stimuli themselves. A separate crate lets the harness reuse it without widening `rr_dr60`'s public API.
 - **Alternatives**: Precomputing all resampler taps as committed tables (rejected because 44.1/88.2 kHz prototypes run to ~35k–70k taps each, multi-MB generated source). Exposing math from `rr_dr60` (rejected because it pollutes the semver surface).
 

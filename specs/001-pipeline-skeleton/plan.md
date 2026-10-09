@@ -19,7 +19,7 @@ Technical approach:
 - **Rate conversion**: linear-phase rational polyphase FIR (Kaiser-windowed sinc, 70 dB), designed at construction with in-house deterministic math.
 - **Processing**: a per-sample state machine, giving block-size invariance.
 - **Bit-identity**: basic IEEE operations only on any path that affects output.
-- **Verification**: CI checks golden hashes on 7 automated targets on every PR, plus a manual iOS-device check before each release.
+- **Verification**: CI checks golden hashes on every target that has an automated runner (7 expected) on every PR. The iOS device, and Windows ARM64 if it has no hosted runner, are checked manually before each release.
 
 Expected default latency is about 11.3 ms, against the 20 ms limit. See [research.md](research.md) for all decisions.
 
@@ -195,7 +195,7 @@ Offline tooling lives in `tools/` and CI helper scripts in `scripts/`.
   - `scripts/ios-device-golden.sh` plus a release-checklist entry.
 
   The phase is kept separate because it is build infrastructure: it must not block the DSP stories, but the feature is not done until it passes.
-- **Coverage.** Coverage counts harness library code, so its `report` and `golden` bless paths need tests or must be exercised by the golden test. The unreachable `catch_unwind` panic arms in `rr_dr60_ffi` are excluded with `#[cfg_attr(coverage_nightly, coverage(off))]` or an `llvm-cov` ignore marker, each with a justification comment as Constitution III requires. A test-only panic hook (a cfg feature `ffi-test-panic`) exercises the poison and recover path (FR-024).
+- **Coverage.** Coverage counts harness library code, so its `report` and `golden` bless paths need tests or must be exercised by the golden test. The `catch_unwind` panic arms in `rr_dr60_ffi` are **not** excluded, because coverage exclusions need nightly. A test-only panic hook (cfg feature `ffi-test-panic`, enabled by `--all-features`) executes them and the poison and recover path (FR-024). A justification comment is added only if an arm still shows as uncovered.
 - **Coefficient file first.** Run `uv run tools/filter-design/design_voiceband.py` before writing the stage tests. The analytic FR-010 tests in `rr_dr60` should fail against an all-pass placeholder before the generated file lands.
 - **Documentation and records.**
   - README "Using the library" section.

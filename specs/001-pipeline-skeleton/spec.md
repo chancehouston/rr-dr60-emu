@@ -146,7 +146,7 @@ A maintainer or contributor runs the automated measurement harness. It drives th
 
 **Traceability**
 
-- **FR-018**: Every default value and every modeled tolerance in this feature MUST cite an S-### or A-### ID in the spec, in code and in tests. Values that are emulator engineering targets, not device properties, MUST be labeled as such. In this spec they are: FR-005 (all values), the ±5° phase tolerance in FR-010, ±0.3 dB and −40 dB in FR-011, ±1 sample in FR-012, FR-013 (20 ms), the tail decay (−120 dBFS within 0.5 s), SC-006 (20×), and the interface behavior in FR-023 and FR-024.
+- **FR-018**: Every default value and every modeled tolerance in this feature MUST cite an S-### or A-### ID in the spec, in code and in tests. Values that are emulator engineering targets, not device properties, MUST be labeled as such. In this spec they are: FR-005 (all values), the ±5° phase tolerance in FR-010, ±0.3 dB and −40 dB in FR-011, ±1 sample in FR-012, ±0.3 dB for the measured vs. analytic stage response (US2 AS1), FR-013 (20 ms), the tail decay (−120 dBFS within 0.5 s), SC-006 (20×), and the interface behavior in FR-023 and FR-024.
 
 **Measurement harness**
 
