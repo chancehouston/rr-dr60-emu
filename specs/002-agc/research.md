@@ -86,7 +86,7 @@ Decisions for feature 002. They build on [spec 001's research](../001-pipeline-s
   - e² has a floor, so `ln` never sees 0.
   - **Gain flush**: after every smoother update, `G = flush_state(G)` (001 R-05, threshold 1e-30). Without it, when the target gain is exactly 0 dB, G decays geometrically toward 0 and becomes subnormal after a few minutes. That happens with max gain = 0 and max attenuation = 0, or when L = T exactly. A host with FTZ/DAZ enabled would then produce different bits.
     - *Correction:* an earlier draft of this plan claimed G could never become subnormal. The plan review found it can.
-    - The fix is tested by 10 minutes of silence after a loud tone, with max gain = 0 and max attenuation = 0. The test asserts that G is exactly 0.0, that the output equals the input bit for bit, and that no subnormal appears.
+    - The fix is tested with max attenuation = 0 and a 0 dBFS tone for 10 minutes. The clamp gives G<sub>t</sub> = −0.0, so G decays from max gain toward 0. The test asserts that G flushes to exactly 0.0, that no subnormal appears, and that from then on the output equals the input bit for bit. (With both limits at 0, G starts at 0 and never moves, so that case doesn't exercise the flush.)
   - The Hilbert filter is non-recursive, so it has no decaying tails to flush.
   - The detector's history is a fixed-size array inside the stage. No allocation.
   - **New**: `narrow_out` saturates to ±`f32::MAX` instead of producing ±Inf (`as f32` overflows to Inf). With up to +60 dB of gain, a finite input above about 3.4e35 could otherwise become infinite. This changes output only for such inputs, so the 001 golden files are unaffected.
@@ -156,7 +156,7 @@ Decisions for feature 002. They build on [spec 001's research](../001-pipeline-s
   - **Start, reset, reconfigure** (FR-013, Edge Cases):
     - At 8 kHz, the first non-zero sample's gain y/x equals `max_gain_db` within 0.01 dB.
     - After processing a loud tone, `reset()` and `reconfigure(same settings)` each produce output bit-identical to a freshly created pipeline on the same stimulus.
-  - **Gain range of zero** (Edge Cases): with max gain = max attenuation = 0, output equals input within ±0.01 dB. In practice it is bit-exact, since the gain is exactly 0 dB and exp(0) = 1. This also covers the 10-minute flush test (R-07).
+  - **Gain range of zero** (Edge Cases): with max gain = max attenuation = 0, output equals input within ±0.01 dB. In practice it is bit-exact, since the gain is exactly 0 dB and exp(0) = 1. The flush test (R-07) is a separate case.
   - **DC and low frequencies** (Edge Cases):
     - A DC input of amplitude a reads like a sine of peak a: the steady output is a · 10^(G<sub>t</sub>(20·log₁₀ a)/20), within ±1 dB (engineering target), checked at a = 0.1.
     - A 50 Hz tone at −20 dBFS lowers the mean gain by at least 20 dB compared with silence (it drives the AGC; engineering target).
