@@ -307,7 +307,7 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
 
 ## Phase 7: Polish & cross-cutting concerns
 
-- [ ] T046 [P] Update `CHANGELOG.md` `[Unreleased]`:
+- [X] T046 [P] Update `CHANGELOG.md` `[Unreleased]`:
   - **Added**: the AGC (stage 3, spec 002), `AgcSettings`, `Setting`, `Tap::AfterAgc`, `Error::InvalidSetting`, the C AGC fields, `RR_DR60_TAP_AFTER_AGC`, `RR_DR60_STATUS_INVALID_SETTING`, `RrDr60SettingField`, `rr_dr60_settings_validate`, and `golden-agc-v1.json`.
   - **Changed**:
     - Default output now includes the AGC.
@@ -316,11 +316,11 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
     - `narrow_out` saturates instead of producing Inf.
     - detmath now runs on the processing path.
   - **Assumptions**: A-017 to A-020.
-- [ ] T047 [P] Update `docs/hardware/signal-chain.md`: in row 3, add "**Modeled in [spec 002](../../specs/002-agc/spec.md): A-017–A-020.**". Leave the A-017 to A-020 status in `docs/hardware/assumptions.md` as `assumed`.
-- [ ] T048 [P] Add a note to `specs/001-pipeline-skeleton/research.md` R-06: "Amended by spec 002 R-06: `ln`/`exp` also run on the processing path."
-- [ ] T049 [P] Update the "Current status" section of `CLAUDE.md` with feature 002, the new test names (`agc_matrix`, `agc_edge_cases`, `golden_agc`), and the AGC bless command.
-- [ ] T049a Traceability audit (SC-007, FR-015): list every numeric literal in the code and tests added by this feature. Check each one has an A-/S- ID or an engineering-target comment (`// engineering target (002 FR-015)` or `(002 R-15)`), and fix any that don't. Record the check in the PR description. Search: `git diff main -- crates/ tools/ | grep -E '^\+.*[0-9]+\.[0-9]+|^\+.*\b[0-9]{2,}\b' | grep -v -E 'A-0|S-0|engineering target|FR-0|R-[0-9]'`
-- [ ] T050 Run every step of `specs/002-agc/quickstart.md` § 1–6 and the coverage gate `cargo llvm-cov --all-features --workspace --fail-under-lines 80`. Fix anything that fails.
+- [X] T047 [P] Update `docs/hardware/signal-chain.md`: in row 3, add "**Modeled in [spec 002](../../specs/002-agc/spec.md): A-017–A-020.**". Leave the A-017 to A-020 status in `docs/hardware/assumptions.md` as `assumed`.
+- [X] T048 [P] Add a note to `specs/001-pipeline-skeleton/research.md` R-06: "Amended by spec 002 R-06: `ln`/`exp` also run on the processing path."
+- [X] T049 [P] Update the "Current status" section of `CLAUDE.md` with feature 002, the new test names (`agc_matrix`, `agc_edge_cases`, `golden_agc`), and the AGC bless command.
+- [X] T049a Traceability audit (SC-007, FR-015): list every numeric literal in the code and tests added by this feature. Check each one has an A-/S- ID or an engineering-target comment (`// engineering target (002 FR-015)` or `(002 R-15)`), and fix any that don't. Record the check in the PR description. Search: `git diff main -- crates/ tools/ | grep -E '^\+.*[0-9]+\.[0-9]+|^\+.*\b[0-9]{2,}\b' | grep -v -E 'A-0|S-0|engineering target|FR-0|R-[0-9]'`
+- [X] T050 Run every step of `specs/002-agc/quickstart.md` § 1–6 and the coverage gate `cargo llvm-cov --all-features --workspace --fail-under-lines 80`. Fix anything that fails.
 - [ ] T051 Ask the speckit-coach for a final review, then ask the user before merging the PR.
 
 ---

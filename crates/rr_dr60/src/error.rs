@@ -49,11 +49,11 @@ impl Setting {
     /// Inclusive valid range (data-model.md › AgcSettings; engineering targets, 002 FR-015).
     pub(crate) const fn range(self) -> (f32, f32) {
         match self {
-            Setting::AgcTargetDbfs => (-30.0, 0.0),
-            Setting::AgcMaxGainDb => (0.0, 60.0),
-            Setting::AgcMaxAttenuationDb => (0.0, 40.0),
-            Setting::AgcAttackMs => (1.0, 100.0),
-            Setting::AgcReleaseMs => (50.0, 10_000.0),
+            Setting::AgcTargetDbfs => (-30.0, 0.0), // engineering target (002 FR-011)
+            Setting::AgcMaxGainDb => (0.0, 60.0),   // engineering target (002 FR-011)
+            Setting::AgcMaxAttenuationDb => (0.0, 40.0), // engineering target (002 FR-011)
+            Setting::AgcAttackMs => (1.0, 100.0),   // engineering target (002 FR-011)
+            Setting::AgcReleaseMs => (50.0, 10_000.0), // engineering target (002 FR-011)
         }
     }
 
