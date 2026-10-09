@@ -18,6 +18,12 @@ pub const STIMULI: [&str; 4] = ["impulse", "noise_seed_0d60", "sweep_log", "tone
 /// Golden configurations, in sorted order.
 pub const CONFIGS: [&str; 4] = ["bypass_all", "default", "playback_only", "record_only"];
 
+/// Spec 002 AGC golden stimuli, in sorted order (specs/002-agc/contracts/golden-format.md).
+pub const AGC_STIMULI: [&str; 3] = ["agc_noise_burst", "agc_start_m10", "agc_step"];
+
+/// Spec 002 AGC golden configurations, in sorted order.
+pub const AGC_CONFIGS: [&str; 2] = ["agc_only", "default_agc"];
+
 /// The golden file (format `rr_dr60-golden`, version 1).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GoldenFile {
@@ -63,6 +69,10 @@ pub fn stimulus(name: &str, fs: u32) -> Vec<f32> {
         "tone_1k_m20" => stimulus::tone(1000.0, 0.1, f, secs(0.5)),
         "sweep_log" => stimulus::log_sweep(20.0, 0.45 * f, 0.25, f, secs(1.0)),
         "noise_seed_0d60" => stimulus::noise(0x0D60, secs(0.5)),
+        // Spec 002 (contracts/golden-format.md).
+        "agc_noise_burst" => crate::agc_checks::noise_burst_stimulus(f),
+        "agc_start_m10" => stimulus::step(1000.0, &[-10.0], &[0.5], f),
+        "agc_step" => stimulus::step(1000.0, &[-40.0, -10.0, -40.0], &[3.0, 1.0, 4.0], f),
         other => panic!("unknown stimulus {other:?}"),
     }
 }
@@ -104,12 +114,21 @@ pub fn entry(stimulus: &str, config: &str, host_rate_hz: u32, output: &[f32]) ->
     }
 }
 
-/// Generates every entry (4 stimuli × 4 configurations × 6 rates), each stimulus processed
-/// in one block.
+/// Generates every spec 001 entry (4 stimuli × 4 configurations × 6 rates), each stimulus
+/// processed in one block. The configurations have the AGC bypassed (spec 002 FR-018).
 pub fn generate(make: Make<'_>) -> GoldenFile {
+    generate_set(&STIMULI, &CONFIGS, make)
+}
+
+/// Generates every spec 002 AGC entry (3 stimuli × 2 configurations × 6 rates).
+pub fn generate_agc(make: Make<'_>) -> GoldenFile {
+    generate_set(&AGC_STIMULI, &AGC_CONFIGS, make)
+}
+
+fn generate_set(stimuli: &[&str], config_names: &[&str], make: Make<'_>) -> GoldenFile {
     let mut entries = Vec::new();
-    for s in STIMULI {
-        for c in CONFIGS {
+    for &s in stimuli {
+        for &c in config_names {
             for rate in configs::all_rates() {
                 let x = stimulus(s, rate);
                 let mut p = make(configs::settings(c, rate));
@@ -181,6 +200,22 @@ pub fn committed() -> GoldenFile {
 /// Path of the committed golden file.
 pub fn path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-v1.json")
+}
+
+/// The committed spec 002 AGC golden file, embedded at compile time like [`committed`].
+///
+/// # Panics
+///
+/// If the embedded file is not valid golden JSON.
+pub fn committed_agc() -> GoldenFile {
+    serde_json::from_str(include_str!("../golden/golden-agc-v1.json"))
+        .expect("valid embedded AGC golden file")
+}
+
+/// Path of the committed spec 002 AGC golden file. Bless it only with
+/// `RR_DR60_BLESS=agc cargo test -p rr_dr60_harness --test golden_agc`, with a CHANGELOG entry.
+pub fn path_agc() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-agc-v1.json")
 }
 
 /// Loads a golden file.
@@ -258,6 +293,9 @@ mod tests {
         assert_eq!(stimulus("tone_1k_m20", 48_000).len(), 24_000);
         assert_eq!(stimulus("sweep_log", 44_100).len(), 44_100);
         assert_eq!(stimulus("noise_seed_0d60", 8000).len(), 4000);
+        assert_eq!(stimulus("agc_step", 8000).len(), 64_000);
+        assert_eq!(stimulus("agc_start_m10", 16_000).len(), 8000);
+        assert_eq!(stimulus("agc_noise_burst", 8000).len(), 80_000);
     }
 
     #[test]

@@ -22,7 +22,7 @@ All are bit-reproducible: detmath tones and PCG32 noise.
 | `agc_only` | on (defaults) | — | — | AfterAgc |
 | `default_agc` | on (defaults) | on | on | AfterPlayback |
 
-That gives 3 × 2 × 6 rates = **36 entries**, about 15 KB.
+That gives 3 × 2 × 6 rates = **36 entries**, about 21 KB.
 
 ## Blessing
 

@@ -42,7 +42,7 @@ What exists today ([spec 001](specs/001-pipeline-skeleton/spec.md) and [spec 002
 - Inside, the audio is converted to the device's internal 8 kHz rate and passes through two band-limiting stages. They model the record and playback filters of the recorder's MSM7702 voice-band codec, *assumed* to follow a telephone-style 300–3400 Hz band. They're designed to the spec's tolerances but haven't been measured against a real unit ([A-002, A-014–A-016](docs/hardware/assumptions.md)).
 - A record-path **automatic gain control** (AGC), on by default. See [AGC](#agc-signal-chain-stage-3) below.
 - Fixed, reported latency: 541 samples (about 11.3 ms) at 48 kHz in the default configuration. It is under 20 ms at every supported rate, and each configuration reports its own.
-- **Real-time safe:** `process`, `process_in_place` and `reset` never allocate, lock or do I/O. Processing runs at about 230× real time at 48 kHz on a laptop (spec 001 configuration). `Pipeline::new` and `reconfigure` allocate, so call them outside the audio callback.
+- **Real-time safe:** `process`, `process_in_place` and `reset` never allocate, lock or do I/O. Processing runs at about 230× real time at 48 kHz on a laptop with the AGC on (about 245× without it). `Pipeline::new` and `reconfigure` allocate, so call them outside the audio callback.
 - **Deterministic:** the same input and settings give bit-identical output for any block size, and on every supported platform. One golden file is checked on Linux, macOS and Windows (x86-64 and ARM64) and on iOS.
 - A C API with a generated header ([`rr_dr60.h`](crates/rr_dr60_ffi/include/rr_dr60.h)).
 
@@ -110,7 +110,7 @@ if (rr_dr60_settings_validate(&s, &field) != RR_DR60_STATUS_OK) { /* field names
 
 ### Accuracy of this slice
 
-The AGC is **modeled on** an *assumed* AGC, and the two filter stages on the MSM7702 codec's *assumed* telephone-band filters. A [measurement harness](specs/001-pipeline-skeleton/quickstart.md) checks 212 properties against the spec's tolerances (band edges, ripple, rejection, latency) at every supported rate. That proves the emulator does what the spec says. It does **not** prove that the spec matches a real RR-DR60, because no real-unit recordings exist yet. See [Accuracy](#accuracy) above for how to help.
+The AGC is **modeled on** an *assumed* AGC, and the two filter stages on the MSM7702 codec's *assumed* telephone-band filters. A measurement harness ([001](specs/001-pipeline-skeleton/quickstart.md), [002](specs/002-agc/quickstart.md)) checks the filter stages' 212 properties (band edges, ripple, rejection, latency) and the AGC's 1162 (regulation, gain limits, attack and release, distortion, noise rise, latency; 1734 in the full settings matrix) against the specs' tolerances at every supported rate. That proves the emulator does what the spec says. It does **not** prove that the spec matches a real RR-DR60, because no real-unit recordings exist yet. See [Accuracy](#accuracy) above for how to help.
 
 ## Planned features
 

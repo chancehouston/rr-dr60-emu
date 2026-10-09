@@ -246,7 +246,7 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
 
 ### Harness checks and tests (write first; each must fail against a deliberately wrong AGC)
 
-- [ ] T034 [US3] Create `crates/rr_dr60_harness/src/agc_checks.rs`, one public function per requirement (research.md R-11). Each takes `(rate, &AgcSettings, Make)`, returns `Vec<MeasurementResult>` citing `002/FR-0xx` plus A-IDs, and labels engineering targets:
+- [X] T034 [US3] Create `crates/rr_dr60_harness/src/agc_checks.rs`, one public function per requirement (research.md R-11). Each takes `(rate, &AgcSettings, Make)`, returns `Vec<MeasurementResult>` citing `002/FR-0xx` plus A-IDs, and labels engineering targets:
   - **`check_ratio_self_test`**: at every host rate, the reference-ratio method (output ÷ AGC-bypassed reference) agrees with the exact y/x at 8 kHz within 0.25 ms on attack and release, and within 0.1 dB on steady levels (research.md R-11, corrected in T026).
   - **`check_fr004_regulation`**: points 3 dB inside the regulated range from (T − G<sub>max</sub>/0.9) to (T + A<sub>max</sub>/0.9), on the regulation line ± 1 dB.
   - **`check_fr005_limits`**: a sweep from the lower knee − 10 dB to the upper knee + 10 dB in steps of at most 5 dB, with points 3 dB beyond each knee at G<sub>max</sub> ± 1 dB or −A<sub>max</sub> ± 1 dB.
@@ -259,12 +259,12 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
   - **`check_fr008_frequency_thdn`**: 300, 500, 1000, 2000, 8000/3 and 3400 Hz at −30, −10 and 0 dBFS, with 4 phases at 2000 and 8000/3 Hz. Level within ±0.5 dB of 1 kHz, and THD+N ≤ 1 %.
   - **`check_fr009_noise_rise`**: the stimulus from T016. The last 1 s of each pause is at −30 dBFS ± 2 dB (AES17). The first 50 ms after each burst, counted after the boundary latency, is at least 20 dB lower.
   - **`check_fr010_latency`**.
-- [ ] T035 [US3] Write `crates/rr_dr60_harness/tests/agc_matrix.rs`:
+- [X] T035 [US3] Write `crates/rr_dr60_harness/tests/agc_matrix.rs`:
   - **Normal run**: (a) the defaults at all 6 rates; (b) the US2 examples (release 3 s, target −20) plus the minimum and maximum of each setting with the others at default, at 8 kHz and 48 kHz. Prints the report with `--nocapture`.
   - **`#[ignore]` test `full_matrix_all_rates`**: the full settings set at all 6 rates, for the release-mode job.
   - **Runtime**: measure the normal-run time and record it in the test's module docs. If it exceeds 60 s in debug, move cases to the ignored test.
   - **First run**: before T022 exists, or against a stage with 0.5 × release, at least one check per function must fail. Record that in the PR.
-- [ ] T036 [P] [US3] Write `crates/rr_dr60_harness/tests/agc_edge_cases.rs`, covering spec Edge Cases and research.md R-11, at 8 kHz and 48 kHz unless stated:
+- [X] T036 [P] [US3] Write `crates/rr_dr60_harness/tests/agc_edge_cases.rs`, covering spec Edge Cases and research.md R-11, at 8 kHz and 48 kHz unless stated:
   - **Start**: a fresh pipeline at 8 kHz has a first-sample gain of `max_gain_db` ± 0.01 dB.
   - **Reset and reconfigure**: after a loud tone, `reset()` and `reconfigure(same settings)` each give output bit-identical to a fresh pipeline.
   - **Zero gain range**: max gain = max attenuation = 0 gives output = input within ±0.01 dB at −60, −10 and +10 dBFS.
@@ -275,18 +275,18 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
   - **Above 4 kHz**, at 48 kHz: 1 kHz at −40 alone vs. plus 6 kHz at −10. The 1 kHz output level agrees within 0.1 dB.
   - **Non-finite**: NaN, +Inf and −Inf mid-stream give output bit-identical to the same stream with 0.0 in their place.
   - **Overshoot**: `agc_start_m10` peaks about +30 dBFS, unclipped and finite, and an input of 1e36 gives finite output.
-- [ ] T037 [US3] Generalize `crates/rr_dr60_harness/src/golden.rs`:
+- [X] T037 [US3] Generalize `crates/rr_dr60_harness/src/golden.rs`:
   - `GoldenSet { file, stimuli, configs }`, with the 001 set unchanged.
   - The AGC set: stimuli `agc_noise_burst`, `agc_start_m10`, `agc_step` (contracts/golden-format.md, exact durations); configs `agc_only` and `default_agc`.
   - `committed_agc()` embeds `golden/golden-agc-v1.json`.
   - Blessing: `RR_DR60_BLESS=agc` rewrites only the AGC file. `RR_DR60_BLESS=1` keeps its 001 meaning, and no task in this feature runs it.
-- [ ] T038 [US3] Add the `golden_agc_matches` test to `crates/rr_dr60_harness/tests/golden_agc.rs`. Bless `crates/rr_dr60_harness/golden/golden-agc-v1.json` with `RR_DR60_BLESS=agc cargo test -p rr_dr60_harness --test golden_agc`: 36 entries, about 15 KB. Add a CHANGELOG line for the new golden file.
-- [ ] T039 [P] [US3] Extend `crates/rr_dr60_harness/tests/mutation.rs` (SC-008) with two mutants built through `Make`, with no hidden hooks: `release_ms × 1.5`, and `target_dbfs + 3.0`. For each, assert that `check_fr006_timing` or `check_fr004_regulation` reports a failure, and that `golden::compare` against `committed_agc()` reports a difference.
-- [ ] T040 [P] [US3] Extend `crates/rr_dr60_harness/tests/determinism.rs` and `crates/rr_dr60_harness/tests/alloc_free.rs` (FR-013, SC-003, SC-004):
+- [X] T038 [US3] Add the `golden_agc_matches` test to `crates/rr_dr60_harness/tests/golden_agc.rs`. Bless `crates/rr_dr60_harness/golden/golden-agc-v1.json` with `RR_DR60_BLESS=agc cargo test -p rr_dr60_harness --test golden_agc`: 36 entries, about 15 KB. Add a CHANGELOG line for the new golden file.
+- [X] T039 [P] [US3] Extend `crates/rr_dr60_harness/tests/mutation.rs` (SC-008) with two mutants built through `Make`, with no hidden hooks: `release_ms × 1.5`, and `target_dbfs + 3.0`. For each, assert that `check_fr006_timing` or `check_fr004_regulation` reports a failure, and that `golden::compare` against `committed_agc()` reports a difference.
+- [X] T040 [P] [US3] Extend `crates/rr_dr60_harness/tests/determinism.rs` and `crates/rr_dr60_harness/tests/alloc_free.rs` (FR-013, SC-003, SC-004):
   - **Determinism**: the AGC golden stimuli in 100 seeded random block partitions, including sizes 0 and 1, are bit-identical, for `agc_only`, `default_agc` and the attack-minimum and release-maximum settings.
   - **Allocation**: zero allocations and deallocations over 1000+ blocks for the same configurations, through both the Rust and C paths.
-- [ ] T041 [P] [US3] Add `default_agc` to the release-mode timing test in `crates/rr_dr60_harness/tests/timing.rs`, keeping max/min ≤ 3.0 (SC-006 ≥ 20× real time at 48 kHz).
-- [ ] T042 [US3] Run the US3 tests and the ignored matrix in release mode (`cargo test -p rr_dr60_harness --release -- --ignored`) and fix until green.
+- [X] T041 [P] [US3] Add `default_agc` to the release-mode timing test in `crates/rr_dr60_harness/tests/timing.rs`, keeping max/min ≤ 3.0 (SC-006 ≥ 20× real time at 48 kHz).
+- [X] T042 [US3] Run the US3 tests and the ignored matrix in release mode (`cargo test -p rr_dr60_harness --release -- --ignored`) and fix until green.
 
 **Checkpoint (US3)**: `cargo test --all-features` and the ignored release-mode tests pass, and the report lists every 002 FR with its IDs. All three stories have now been validated independently.
 

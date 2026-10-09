@@ -75,8 +75,21 @@ fn processing_never_touches_the_heap() {
     let sizes: Vec<usize> = (0..1000).map(|_| rng.below(1025) as usize).collect();
 
     for rate in configs::all_rates() {
-        for config in configs::CONFIGS {
-            let settings = configs::settings(config, rate);
+        // Spec 001 configurations (AGC bypassed), the spec 002 AGC configurations, and the AGC
+        // at its extreme settings (002 SC-004).
+        let mut cases: Vec<(String, rr_dr60::Settings)> = configs::CONFIGS
+            .iter()
+            .chain(&configs::AGC_CONFIGS)
+            .map(|c| (c.to_string(), configs::settings(c, rate)))
+            .collect();
+        let mut attack_min = configs::settings("default_agc", rate);
+        attack_min.agc.attack_ms = 1.0;
+        let mut release_max = configs::settings("default_agc", rate);
+        release_max.agc.release_ms = 10_000.0;
+        release_max.agc.max_gain_db = 60.0;
+        cases.push(("agc attack min".into(), attack_min));
+        cases.push(("agc release max, gain max".into(), release_max));
+        for (config, settings) in cases {
             let mut p = Pipeline::new(settings).unwrap();
             let c_settings = configs::c_settings(&settings);
             let mut handle: *mut RrDr60Pipeline = std::ptr::null_mut();
