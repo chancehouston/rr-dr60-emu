@@ -21,6 +21,8 @@ By participating you agree to follow our [Code of Conduct](CODE_OF_CONDUCT.md).
    cargo fmt --all -- --check
    cargo clippy --all-targets --all-features -- -D warnings
    cargo test --all-features
+   # coverage (one-time setup: cargo install cargo-llvm-cov; rustup component add llvm-tools-preview)
+   cargo llvm-cov --all-features --workspace --fail-under-lines 80
    ```
 
 ## Workflow: spec first
@@ -31,6 +33,8 @@ Ground rules (from the [constitution](.specify/memory/constitution.md)):
 
 - **Traceability.** Every modeled behavior cites a source (`S-###`) or a registered assumption (`A-###`). No unexplained magic numbers.
 - **Measured tests.** DSP changes come with measurement tests (tones, sweeps, noise) and stated tolerances.
+- **Independently testable.** Each feature, user story, and stage is testable on its own, without unbuilt or unrelated features.
+- **Coverage.** Workspace line coverage stays at or above 80%, and a PR may not lower it by more than 1 point.
 - **Determinism.** Same input + config + seed = identical output on every platform.
 - **Real-time safety.** No allocation, locks, or I/O in the per-block processing path.
 - **Neutral tone.** Docs describe signal processing only, with no claims about paranormal phenomena.

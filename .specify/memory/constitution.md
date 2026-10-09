@@ -40,8 +40,16 @@ thing that makes the emulator trustworthy and improvable as evidence arrives.
 - Golden-file regression tests MUST guard against unintended output changes. Golden files are only
   updated on purpose, with a CHANGELOG entry.
 - `cargo fmt --check`, `cargo clippy -D warnings`, and the full test suite MUST pass before merge.
+- Workspace line coverage, measured with `cargo-llvm-cov`, MUST stay at or above **80%**. No pull
+  request may lower it by more than 1 percentage point. CI enforces the gate as soon as the Cargo
+  workspace exists.
+- Excluded from coverage: test code, benchmarks, generated code (e.g. the cbindgen header), and
+  examples. Any other exclusion (e.g. an unreachable FFI panic guard) MUST be marked in code with
+  a justification comment.
 
-Rationale: "sounds right" can't be reviewed or kept from regressing. Measurements can.
+Rationale: "sounds right" can't be reviewed or kept from regressing. Measurements can. Coverage is a
+backstop that finds untested code. It is not proof of correctness, which the measurement tests
+provide.
 
 ### IV. Deterministic & Real-Time Safe
 
@@ -77,6 +85,20 @@ and let users pick exactly the character they want.
 Rationale: credibility with audiophiles, app developers, and investigators alike depends on
 neutrality and honesty.
 
+### VII. Independently Testable Features
+
+- Every feature MUST be deliverable and verifiable on its own. Its spec MUST define acceptance
+  criteria that can be tested without features that are unbuilt or unrelated.
+- Every user story within a feature MUST be independently testable. The P1 story alone MUST form a
+  working, demonstrable increment.
+- Tests for a stage or feature MUST NOT depend on other stages' behavior. Any other stage in the
+  chain is bypassed, or replaced with a defined test double or synthetic input.
+- Tasks MUST include a checkpoint that validates each story independently before the next story
+  begins.
+
+Rationale: when features and stages are proven in isolation, new hardware evidence can change one
+part without hiding regressions in another. It also keeps every merged increment shippable.
+
 ## Public Repository Standards
 
 - License: MIT. Community files are maintained: README, CONTRIBUTING, CODE_OF_CONDUCT (Contributor
@@ -108,4 +130,4 @@ neutrality and honesty.
 - Every spec, plan, and pull request MUST be checked for compliance (the plan's Constitution Check
   and the PR checklist). Deviations MUST be justified in Complexity Tracking or rejected.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-08 | **Last Amended**: 2026-10-08
+**Version**: 1.1.0 | **Ratified**: 2026-10-08 | **Last Amended**: 2026-10-08

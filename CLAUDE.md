@@ -46,6 +46,8 @@ Each stage should be independently configurable, bypassable, and testable. Expos
 - **Deterministic:** same input + same config + same seed ⇒ bit-identical output on every platform. Noise sources use a seeded PRNG. Never use wall-clock time or OS randomness in DSP.
 - **Sample-rate agnostic I/O:** accept common host rates (44.1/48 kHz, etc.). Internally model the device's native rate (assumed 8 kHz) with resampling at the boundaries.
 - **Test-first with measurable tolerances:** DSP behavior is verified by measurement tests (sweeps, tones, impulses, noise), with tolerances stated in the spec. Golden-file regression tests guard against unintended changes.
+- **Independently testable:** every feature, user story, and stage can be tested on its own. Other stages are bypassed or replaced with test doubles or synthetic input.
+- **Coverage:** at least 80% workspace line coverage (`cargo llvm-cov`), and no PR may lower it by more than 1 point. Coverage is a backstop; the measurement tests prove correctness.
 - **Simplicity:** model what's audible or measurable. Don't simulate circuits at SPICE level unless a spec justifies it.
 
 ## Workflow: Spec-Driven Development (GitHub Spec-Kit)
@@ -65,7 +67,7 @@ All features go through Spec-Kit. The project principles live in [.specify/memor
 - Community files: [README.md](README.md), [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) (Contributor Covenant), [SECURITY.md](SECURITY.md) (GitHub private vulnerability reporting, no email published), [CHANGELOG.md](CHANGELOG.md) (Keep a Changelog), and issue/PR templates in `.github/`.
 - **Semantic Versioning.** The C API and the Rust public API are both versioned surfaces.
 - **Conventional Commits** for commit messages (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, `ci:`).
-- Before declaring work done, run: `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-features`.
+- Before declaring work done, run: `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-features`, and (once set up) `cargo llvm-cov --all-features --workspace --fail-under-lines 80`.
 - Public items need rustdoc comments. Avoid `unsafe` outside the FFI layer, and give every `unsafe` block a `// SAFETY:` comment.
 - Don't commit large audio files. Keep reference audio small, or document how to generate it.
 
@@ -77,7 +79,8 @@ All features go through Spec-Kit. The project principles live in [.specify/memor
 ## Current status
 
 - 2026-10-08: Repo bootstrapped. Spec-Kit initialized, community files added, hardware research started. **No Rust code yet**: the Cargo workspace is created by the first feature's plan/implement.
-- Not yet done: GitHub remote / publishing, CI workflow (add once the Cargo workspace exists: fmt, clippy, test on Linux/macOS/Windows, plus an iOS target build check).
+- Published at https://github.com/chancehouston/rr-dr60-emu (public). Constitution amended to v1.1.0 (independently testable features, 80% coverage gate).
+- Not yet done: CI workflow. Add it once the Cargo workspace exists: fmt, clippy, test on Linux/macOS/Windows, an iOS target build check, and the `cargo llvm-cov` coverage gate.
 
 ## Open decisions (resolve via specs/plan)
 
