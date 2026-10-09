@@ -226,7 +226,7 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
   - Behind `#[cfg(feature = "ffi-test-panic")]`, add a `#[doc(hidden)] extern "C" fn rr_dr60__test_force_panic(p)` that makes the next process call panic.
   - Run `cargo llvm-cov --workspace --all-features` locally and confirm the total is ≥ 80%. The panic arm is reached once T054 lands.
 
-- [ ] T039a [US1] Ship the MVP. Once the checkpoint below holds:
+- [X] T039a [US1] Ship the MVP. Once the checkpoint below holds:
   - Add a `CHANGELOG.md` `[Unreleased]` entry: "Added: pipeline skeleton MVP — default record + playback voice-band chain (stages 4 and 10) at 8/16/44.1/48/88.2/96 kHz, latency reporting, minimal C API; assumptions A-014–A-016".
   - Add a short "Status: MVP" note with the Rust and C snippets to `README.md`.
   - Mark the draft PR ready for review, get it green, and merge it to `main` with a merge commit (the repo convention). Afterwards, keep working on `001-pipeline-skeleton`: `git fetch && git merge origin/main`.
