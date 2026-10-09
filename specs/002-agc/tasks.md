@@ -195,29 +195,29 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
 
 ### Tests for User Story 2 (write first, must fail)
 
-- [ ] T027 [P] [US2] Write `crates/rr_dr60_harness/tests/us2_agc_settings.rs`, covering spec US2 AS1–AS5:
+- [X] T027 [P] [US2] Write `crates/rr_dr60_harness/tests/us2_agc_settings.rs`, covering spec US2 AS1–AS5:
   - **AS1**: regenerate 001's golden entries (`golden::generate` with the 001 configs, AGC bypassed) and compare them with `golden::committed()`. Zero differences.
   - **AS2 and FR-003**: `agc_tap_stages_on`, `agc_isolated_after_playback` and `agc_only` give bit-identical output on the step stimulus at every rate.
   - **AS3**: `release_ms = 3000.0` gives a measured release of 3 s ± 20 % at 8 kHz, by the exact trajectory.
   - **AS4**: `target_dbfs = -20.0` with a −30 dBFS tone gives −21 dBFS ± 1 dB.
   - **AS5**: for each AGC field, an out-of-range value returns `Error::InvalidSetting` naming it, from both `new` and `reconfigure`, and a failed `reconfigure` leaves the pipeline unchanged.
-- [ ] T028 [P] [US2] Extend `crates/rr_dr60_harness/tests/ffi_parity.rs` (US2 AS5, AS6, FR-014, contracts/c-api.md):
+- [X] T028 [P] [US2] Extend `crates/rr_dr60_harness/tests/ffi_parity.rs` (US2 AS5, AS6, FR-014, contracts/c-api.md):
   - **Parity**: C and Rust output are bit-identical for `default_agc`, `agc_only`, `agc_tap_stages_on`, and each extreme setting (the minimum and maximum of every field).
   - **Invalid field**: `agc_attack_ms = 0` makes `rr_dr60_create` return `RR_DR60_STATUS_INVALID_SETTING`, and `rr_dr60_settings_validate` returns the same status with field `AGC_ATTACK_MS`.
   - **Old struct size**: `struct_size = 24` gives `INVALID_ARGUMENT` / `STRUCT_SIZE`.
   - **Agreement**: with several bad fields at once (bad struct size and bad tap; bad rate and bad attack), the status from `validate` equals the status from `create`, and the named field follows the documented order (struct size → tap → host rate → AGC fields).
   - **NULL**: a NULL `settings` gives `NULL_POINTER`, and a NULL `out_field` is accepted.
   - **reconfigure**: invalid AGC settings leave the handle unchanged.
-- [ ] T029 [P] [US2] Extend the C smoke test in `crates/rr_dr60_ffi/tests/c/`:
+- [X] T029 [P] [US2] Extend the C smoke test in `crates/rr_dr60_ffi/tests/c/`:
   - set `agc_release_ms = 3000`, create, process and destroy;
   - set `agc_attack_ms = 0` and check `INVALID_SETTING` plus the field from `rr_dr60_settings_validate`;
   - use `RR_DR60_TAP_AFTER_AGC`.
   - Print `smoke: OK`.
-- [ ] T030 [P] [US2] Add a rustdoc doc-test on `AgcSettings` in `crates/rr_dr60/src/settings.rs` that bypasses the AGC, sets `release_ms = 3000.0`, sets `Tap::AfterAgc`, and builds a pipeline (SC-001).
+- [X] T030 [P] [US2] Add a rustdoc doc-test on `AgcSettings` in `crates/rr_dr60/src/settings.rs` that bypasses the AGC, sets `release_ms = 3000.0`, sets `Tap::AfterAgc`, and builds a pipeline (SC-001).
 
 ### Implementation for User Story 2
 
-- [ ] T031 [US2] Implement the C validation in `crates/rr_dr60_ffi/src/lib.rs` (contracts/c-api.md, research.md R-09):
+- [X] T031 [US2] Implement the C validation in `crates/rr_dr60_ffi/src/lib.rs` (contracts/c-api.md, research.md R-09):
   - `RrDr60Status::InvalidSetting = 5`.
   - `#[repr(u32)] RrDr60SettingField`: `NONE` 0, `HOST_RATE` 1, `TAP` 2, `STRUCT_SIZE` 3, `AGC_TARGET_DBFS` 4, `AGC_MAX_GAIN_DB` 5, `AGC_MAX_ATTENUATION_DB` 6, `AGC_ATTACK_MS` 7, `AGC_RELEASE_MS` 8.
   - One internal function, `validate_c(&RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60SettingField)>`: struct size, then tap, then `to_settings`, then the core validator. The core `Error::InvalidSetting { setting }` maps to the matching field and `InvalidSetting`. `UnsupportedHostRate` maps to `HOST_RATE`.
@@ -226,13 +226,13 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
   - Regenerate the header and confirm the CI header-drift check passes locally.
 
   Makes T028 and T029 pass.
-- [ ] T032 [P] [US2] Add an "AGC (signal-chain stage 3)" section to `README.md`:
+- [X] T032 [P] [US2] Add an "AGC (signal-chain stage 3)" section to `README.md`:
   - **Content**: what it does, "modeled on an assumed AGC (A-017–A-020)", and the defaults table.
   - **Rust and C snippets**: bypass, change the release, tap after the AGC.
   - **Overshoot warning**: up to +40 dB at the defaults and +60 dB at most; limit or clip before converting to 16-bit.
   - **Inputs above 0 dBFS** are valid.
   - No EVP claims either way (Principle VI).
-- [ ] T033 [US2] Run `us2_agc_settings`, `ffi_parity` and `crates/rr_dr60_ffi/tests/c/run_smoke.sh`, and fix until green.
+- [X] T033 [US2] Run `us2_agc_settings`, `ffi_parity` and `crates/rr_dr60_ffi/tests/c/run_smoke.sh`, and fix until green.
 
 **Checkpoint (US2)**: `us1_agc`, `us2_agc_settings` and `ffi_parity` pass, and the smoke test prints `smoke: OK`. US2 is validated independently of US3.
 

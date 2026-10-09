@@ -151,6 +151,18 @@ impl Settings {
             agc: AgcSettings::DEVICE, // A-017, A-018, A-020
         }
     }
+
+    /// Checks these settings without creating a pipeline: the host rate first (FR-002), then
+    /// every AGC field (spec 002 FR-011). [`Pipeline::new`](crate::Pipeline::new) runs the
+    /// same check. Never allocates.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::UnsupportedHostRate`](crate::Error::UnsupportedHostRate) or
+    /// [`Error::InvalidSetting`](crate::Error::InvalidSetting).
+    pub fn validate(&self) -> Result<(), crate::Error> {
+        crate::validate::validate(self)
+    }
 }
 
 #[cfg(test)]

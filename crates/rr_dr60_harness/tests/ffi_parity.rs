@@ -81,6 +81,9 @@ fn c_api_matches_rust_api_with_agc() {
     }
 }
 
+/// A C settings field and a way to put it out of range.
+type BreakCase = (RrDr60SettingField, fn(&mut RrDr60Settings));
+
 /// Validates through the C API and returns (status, field).
 fn validate(s: &RrDr60Settings) -> (RrDr60Status, RrDr60SettingField) {
     let mut field = RrDr60SettingField::AgcReleaseMs; // overwritten on every call
@@ -93,12 +96,20 @@ fn validate(s: &RrDr60Settings) -> (RrDr60Status, RrDr60SettingField) {
 /// INVALID_SETTING, and `rr_dr60_settings_validate` names the field.
 #[test]
 fn c_api_names_invalid_agc_settings() {
-    let cases: [(RrDr60SettingField, fn(&mut RrDr60Settings)); 5] = [
-        (RrDr60SettingField::AgcTargetDbfs, |s| s.agc_target_dbfs = 1.0),
-        (RrDr60SettingField::AgcMaxGainDb, |s| s.agc_max_gain_db = f32::NAN),
-        (RrDr60SettingField::AgcMaxAttenuationDb, |s| s.agc_max_attenuation_db = 41.0),
+    let cases: [BreakCase; 5] = [
+        (RrDr60SettingField::AgcTargetDbfs, |s| {
+            s.agc_target_dbfs = 1.0
+        }),
+        (RrDr60SettingField::AgcMaxGainDb, |s| {
+            s.agc_max_gain_db = f32::NAN
+        }),
+        (RrDr60SettingField::AgcMaxAttenuationDb, |s| {
+            s.agc_max_attenuation_db = 41.0
+        }),
         (RrDr60SettingField::AgcAttackMs, |s| s.agc_attack_ms = 0.0),
-        (RrDr60SettingField::AgcReleaseMs, |s| s.agc_release_ms = f32::INFINITY),
+        (RrDr60SettingField::AgcReleaseMs, |s| {
+            s.agc_release_ms = f32::INFINITY
+        }),
     ];
     let sentinel = std::ptr::NonNull::<RrDr60Pipeline>::dangling().as_ptr();
     for (field, break_it) in cases {
@@ -107,7 +118,10 @@ fn c_api_names_invalid_agc_settings() {
         assert_eq!(validate(&s), (RrDr60Status::InvalidSetting, field));
         let mut out = sentinel;
         // SAFETY: valid pointers.
-        assert_eq!(unsafe { rr_dr60_create(&s, &mut out) }, RrDr60Status::InvalidSetting);
+        assert_eq!(
+            unsafe { rr_dr60_create(&s, &mut out) },
+            RrDr60Status::InvalidSetting
+        );
         assert_eq!(out, sentinel, "*out touched on error");
     }
     assert_eq!(
@@ -121,18 +135,56 @@ fn c_api_names_invalid_agc_settings() {
 #[test]
 fn c_api_validate_agrees_with_create() {
     let base = rr_dr60_settings_default(48_000);
-    let old_layout = RrDr60Settings { struct_size: 24, ..base };
-    let bad_size_and_tap = RrDr60Settings { struct_size: 24, tap: 9, ..base };
-    let bad_tap_and_rate = RrDr60Settings { tap: 9, host_rate_hz: 22_050, ..base };
-    let bad_rate_and_attack = RrDr60Settings { host_rate_hz: 22_050, agc_attack_ms: 0.0, ..base };
-    let bad_target_and_release =
-        RrDr60Settings { agc_target_dbfs: 5.0, agc_release_ms: 1.0, ..base };
+    let old_layout = RrDr60Settings {
+        struct_size: 24,
+        ..base
+    };
+    let bad_size_and_tap = RrDr60Settings {
+        struct_size: 24,
+        tap: 9,
+        ..base
+    };
+    let bad_tap_and_rate = RrDr60Settings {
+        tap: 9,
+        host_rate_hz: 22_050,
+        ..base
+    };
+    let bad_rate_and_attack = RrDr60Settings {
+        host_rate_hz: 22_050,
+        agc_attack_ms: 0.0,
+        ..base
+    };
+    let bad_target_and_release = RrDr60Settings {
+        agc_target_dbfs: 5.0,
+        agc_release_ms: 1.0,
+        ..base
+    };
     let expected = [
-        (old_layout, RrDr60Status::InvalidArgument, RrDr60SettingField::StructSize),
-        (bad_size_and_tap, RrDr60Status::InvalidArgument, RrDr60SettingField::StructSize),
-        (bad_tap_and_rate, RrDr60Status::InvalidArgument, RrDr60SettingField::Tap),
-        (bad_rate_and_attack, RrDr60Status::UnsupportedHostRate, RrDr60SettingField::HostRate),
-        (bad_target_and_release, RrDr60Status::InvalidSetting, RrDr60SettingField::AgcTargetDbfs),
+        (
+            old_layout,
+            RrDr60Status::InvalidArgument,
+            RrDr60SettingField::StructSize,
+        ),
+        (
+            bad_size_and_tap,
+            RrDr60Status::InvalidArgument,
+            RrDr60SettingField::StructSize,
+        ),
+        (
+            bad_tap_and_rate,
+            RrDr60Status::InvalidArgument,
+            RrDr60SettingField::Tap,
+        ),
+        (
+            bad_rate_and_attack,
+            RrDr60Status::UnsupportedHostRate,
+            RrDr60SettingField::HostRate,
+        ),
+        (
+            bad_target_and_release,
+            RrDr60Status::InvalidSetting,
+            RrDr60SettingField::AgcTargetDbfs,
+        ),
     ];
     for (s, status, field) in expected {
         assert_eq!(validate(&s), (status, field), "{s:?}");
@@ -165,12 +217,24 @@ fn c_api_reconfigure_rejects_invalid_agc_and_keeps_state() {
     bad.agc_attack_ms = 0.0;
     // SAFETY: live handles; valid buffers and settings.
     unsafe {
-        assert_eq!(rr_dr60_process(p, x.as_ptr(), scratch.as_mut_ptr(), x.len()), RrDr60Status::Ok);
-        assert_eq!(rr_dr60_process(q, x.as_ptr(), scratch.as_mut_ptr(), x.len()), RrDr60Status::Ok);
+        assert_eq!(
+            rr_dr60_process(p, x.as_ptr(), scratch.as_mut_ptr(), x.len()),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_process(q, x.as_ptr(), scratch.as_mut_ptr(), x.len()),
+            RrDr60Status::Ok
+        );
         assert_eq!(rr_dr60_reconfigure(p, &bad), RrDr60Status::InvalidSetting);
         let (mut a, mut b) = (vec![0.0f32; x.len()], vec![0.0f32; x.len()]);
-        assert_eq!(rr_dr60_process(p, x.as_ptr(), a.as_mut_ptr(), x.len()), RrDr60Status::Ok);
-        assert_eq!(rr_dr60_process(q, x.as_ptr(), b.as_mut_ptr(), x.len()), RrDr60Status::Ok);
+        assert_eq!(
+            rr_dr60_process(p, x.as_ptr(), a.as_mut_ptr(), x.len()),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_process(q, x.as_ptr(), b.as_mut_ptr(), x.len()),
+            RrDr60Status::Ok
+        );
         assert_eq!(a, b, "failed reconfigure changed the handle");
         rr_dr60_destroy(p);
         rr_dr60_destroy(q);

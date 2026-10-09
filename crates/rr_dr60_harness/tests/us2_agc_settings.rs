@@ -4,6 +4,9 @@ use rr_dr60::{Error, Pipeline, SUPPORTED_HOST_RATES, Setting, Settings};
 use rr_dr60_harness::analysis::{db, gain_trajectory_exact, single_bin};
 use rr_dr60_harness::{configs, golden, stimulus};
 
+/// An AGC field and a way to put it out of range.
+type BreakCase = (Setting, fn(&mut Settings));
+
 fn process(settings: Settings, x: &[f32]) -> Vec<f32> {
     let mut y = vec![0.0; x.len()];
     Pipeline::new(settings).unwrap().process(x, &mut y).unwrap();
@@ -15,7 +18,10 @@ fn process(settings: Settings, x: &[f32]) -> Vec<f32> {
 #[test]
 fn as1_bypassed_agc_reproduces_spec_001_golden_file() {
     let actual = golden::generate(&|s| {
-        assert!(!s.agc.enabled, "spec 001 configurations must have the AGC bypassed");
+        assert!(
+            !s.agc.enabled,
+            "spec 001 configurations must have the AGC bypassed"
+        );
         Pipeline::new(s).unwrap()
     });
     golden::compare(&golden::committed(), &actual).unwrap();
@@ -31,7 +37,10 @@ fn as2_tap_after_agc_ignores_stage_settings() {
         let isolated = process(configs::settings("agc_only", rate), &x);
         let stages_on = process(configs::settings("agc_tap_stages_on", rate), &x);
         let after_playback = process(configs::settings("agc_isolated_after_playback", rate), &x);
-        assert_eq!(stages_on, isolated, "{rate} Hz: stage settings changed AfterAgc output");
+        assert_eq!(
+            stages_on, isolated,
+            "{rate} Hz: stage settings changed AfterAgc output"
+        );
         assert_eq!(after_playback, isolated, "{rate} Hz");
     }
 }
@@ -82,10 +91,12 @@ fn as4_target_minus_20() {
 /// `reconfigure`, naming the field; a failed reconfigure leaves the pipeline unchanged.
 #[test]
 fn as5_invalid_settings_are_named_and_rejected() {
-    let cases: [(Setting, fn(&mut Settings)); 5] = [
+    let cases: [BreakCase; 5] = [
         (Setting::AgcTargetDbfs, |s| s.agc.target_dbfs = 0.5),
         (Setting::AgcMaxGainDb, |s| s.agc.max_gain_db = 61.0),
-        (Setting::AgcMaxAttenuationDb, |s| s.agc.max_attenuation_db = -1.0),
+        (Setting::AgcMaxAttenuationDb, |s| {
+            s.agc.max_attenuation_db = -1.0
+        }),
         (Setting::AgcAttackMs, |s| s.agc.attack_ms = 0.0),
         (Setting::AgcReleaseMs, |s| s.agc.release_ms = 10_001.0),
     ];

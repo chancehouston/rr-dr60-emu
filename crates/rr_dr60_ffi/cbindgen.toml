@@ -25,7 +25,8 @@ header = """
  *     independent.
  *  5. RrDr60Settings only grows at the end; always start from rr_dr60_settings_default().
  *
- * Real-time safe: rr_dr60_process, rr_dr60_reset, rr_dr60_latency_samples.
+ * Real-time safe: rr_dr60_process, rr_dr60_reset, rr_dr60_latency_samples,
+ *   rr_dr60_settings_validate.
  * Not real-time safe (allocate): rr_dr60_create, rr_dr60_destroy.
  *
  * SPDX-License-Identifier: MIT

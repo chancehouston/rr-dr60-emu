@@ -21,7 +21,7 @@
 use std::ffi::c_char;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use rr_dr60::{Error, Pipeline, Settings, Tap};
+use rr_dr60::{Error, Pipeline, Setting, Settings, Tap};
 
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
@@ -44,6 +44,33 @@ pub enum RrDr60Status {
     InvalidArgument = 3,
     /// An internal error (a caught panic). The handle is poisoned until `rr_dr60_reset`.
     InternalError = 4,
+    /// An AGC setting is out of range or not finite (spec 002 FR-011).
+    /// `rr_dr60_settings_validate` names it.
+    InvalidSetting = 5,
+}
+
+/// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RrDr60SettingField {
+    /// The settings are valid.
+    None = 0,
+    /// `host_rate_hz` is not a supported rate.
+    HostRate = 1,
+    /// `tap` is not an `RrDr60Tap` value.
+    Tap = 2,
+    /// `struct_size` is smaller than `sizeof(RrDr60Settings)` of this library version.
+    StructSize = 3,
+    /// `agc_target_dbfs` is outside -30 to 0, or not finite.
+    AgcTargetDbfs = 4,
+    /// `agc_max_gain_db` is outside 0 to 60, or not finite.
+    AgcMaxGainDb = 5,
+    /// `agc_max_attenuation_db` is outside 0 to 40, or not finite.
+    AgcMaxAttenuationDb = 6,
+    /// `agc_attack_ms` is outside 1 to 100, or not finite.
+    AgcAttackMs = 7,
+    /// `agc_release_ms` is outside 50 to 10000, or not finite.
+    AgcReleaseMs = 8,
 }
 
 /// Output tap point, passed as `uint32_t` in [`RrDr60Settings::tap`].
@@ -116,10 +143,44 @@ fn panic_to_status(pipeline: Option<&mut RrDr60Pipeline>) -> RrDr60Status {
 }
 
 fn status_from_error(e: Error) -> RrDr60Status {
+    error_to_status_and_field(e).0
+}
+
+/// Maps a core error to the C status and the field it names (spec 002 R-09).
+fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
     match e {
-        Error::UnsupportedHostRate { .. } => RrDr60Status::UnsupportedHostRate,
-        _ => RrDr60Status::InvalidArgument,
+        Error::UnsupportedHostRate { .. } => (
+            RrDr60Status::UnsupportedHostRate,
+            RrDr60SettingField::HostRate,
+        ),
+        Error::InvalidSetting { setting } => {
+            let field = match setting {
+                Setting::AgcTargetDbfs => RrDr60SettingField::AgcTargetDbfs,
+                Setting::AgcMaxGainDb => RrDr60SettingField::AgcMaxGainDb,
+                Setting::AgcMaxAttenuationDb => RrDr60SettingField::AgcMaxAttenuationDb,
+                Setting::AgcAttackMs => RrDr60SettingField::AgcAttackMs,
+                Setting::AgcReleaseMs => RrDr60SettingField::AgcReleaseMs,
+                _ => RrDr60SettingField::None,
+            };
+            (RrDr60Status::InvalidSetting, field)
+        }
+        _ => (RrDr60Status::InvalidArgument, RrDr60SettingField::None),
     }
+}
+
+/// The one validator behind `rr_dr60_create`, `rr_dr60_reconfigure` and
+/// `rr_dr60_settings_validate`, so their status and named field always agree (spec 002 R-09).
+/// Order: struct size → tap → host rate → AGC fields in struct order.
+fn validate_c(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60SettingField)> {
+    if s.struct_size < SETTINGS_SIZE {
+        return Err((
+            RrDr60Status::InvalidArgument,
+            RrDr60SettingField::StructSize,
+        ));
+    }
+    let settings = to_settings(s).map_err(|status| (status, RrDr60SettingField::Tap))?;
+    settings.validate().map_err(error_to_status_and_field)?;
+    Ok(settings)
 }
 
 /// Converts C settings to Rust settings, validating `struct_size` and `tap`.
@@ -186,7 +247,7 @@ pub unsafe extern "C" fn rr_dr60_create(
     // SAFETY: checked non-null above; the caller guarantees it points to a valid struct.
     let settings = unsafe { &*settings };
     let result = catch_unwind(|| {
-        let s = to_settings(settings)?;
+        let s = validate_c(settings).map_err(|(status, _)| status)?;
         let inner = Pipeline::new(s).map_err(status_from_error)?;
         Ok(Box::new(RrDr60Pipeline {
             inner,
@@ -352,7 +413,7 @@ pub unsafe extern "C" fn rr_dr60_reconfigure(
     // SAFETY: both non-null; the caller guarantees a live handle and a valid struct.
     let (p, settings) = unsafe { (&mut *pipeline, &*settings) };
     let result = catch_unwind(AssertUnwindSafe(|| {
-        let s = to_settings(settings)?;
+        let s = validate_c(settings).map_err(|(status, _)| status)?;
         p.inner.reconfigure(s).map_err(status_from_error)
     }));
     match result {
@@ -363,6 +424,37 @@ pub unsafe extern "C" fn rr_dr60_reconfigure(
         Ok(Err(status)) => status,
         Err(_) => panic_to_status(Some(p)),
     }
+}
+
+/// Checks `settings` without creating a pipeline. Returns exactly the status
+/// `rr_dr60_create` would return for them and, if `out_field` is not NULL, writes the field
+/// at fault there (`RR_DR60_SETTING_FIELD_NONE` when the status is OK). Fields are checked in
+/// the order struct size, tap, host rate, then the AGC fields. Never allocates; real-time safe.
+///
+/// # Safety
+///
+/// `settings` must be NULL or point to a valid `RrDr60Settings`. `out_field` must be NULL or
+/// writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_settings_validate(
+    settings: *const RrDr60Settings,
+    out_field: *mut RrDr60SettingField,
+) -> RrDr60Status {
+    if settings.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: checked non-null above; the caller guarantees it points to a valid struct.
+    let settings = unsafe { &*settings };
+    let (status, field) = match catch_unwind(|| validate_c(settings)) {
+        Ok(Ok(_)) => (RrDr60Status::Ok, RrDr60SettingField::None),
+        Ok(Err(fault)) => fault,
+        Err(_) => (panic_to_status(None), RrDr60SettingField::None),
+    };
+    if !out_field.is_null() {
+        // SAFETY: out_field is non-null and writable (caller contract).
+        unsafe { *out_field = field };
+    }
+    status
 }
 
 /// The library version as a static NUL-terminated string, e.g. `"0.1.0"`. Never NULL; do not
