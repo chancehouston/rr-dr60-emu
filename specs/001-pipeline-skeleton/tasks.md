@@ -68,7 +68,7 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
 
   A `coverage` job on ubuntu-latest installs cargo-llvm-cov and runs `cargo llvm-cov --all-features --workspace --fail-under-lines 80` from day one (Constitution III). Because CI runs only on PRs to `main` and pushes to `main`, the gate applies whenever the branch merges, which requires the branch to be green. Add a comment that the cross-platform matrix is added in Phase 6.
 - [X] T011 Verify the skeleton: `cargo build --workspace`, `cargo clippy --all-targets --all-features -- -D warnings` and `cargo test --workspace` all succeed (with no tests yet). Commit as `chore: scaffold cargo workspace, design tool, basic CI`.
-- [ ] T011a Push `001-pipeline-skeleton` to `origin` and open a **draft** PR to `main` titled `feat: 001 pipeline skeleton — US1 (MVP)`. The body links spec.md, plan.md and tasks.md and says the PR merges at the US1 checkpoint (T039a). Draft PRs trigger the `pull_request` CI from T010. Every later push re-runs CI.
+- [X] T011a Push `001-pipeline-skeleton` to `origin` and open a **draft** PR to `main` titled `feat: 001 pipeline skeleton — US1 (MVP)`. The body links spec.md, plan.md and tasks.md and says the PR merges at the US1 checkpoint (T039a). Draft PRs trigger the `pull_request` CI from T010. Every later push re-runs CI.
 
 **Checkpoint**: The workspace builds, the draft PR exists, the CI `check` jobs are green (the coverage job is expected to stay red until the Phase 2 code and tests land), the design tool runs (`uv run tools/filter-design/design_voiceband.py --check` passes), and the placeholder coefficient file exists.
 
