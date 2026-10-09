@@ -94,6 +94,8 @@ Be a rigorous, adversarial reviewer. Read the whole artifact plus the artifacts 
 
 **Tasks (`tasks.md`)**
 - FRs or stories with no tasks, and tasks that trace to nothing.
+- Stories that can't be validated on their own: a missing per-story checkpoint, or tests that need unbuilt or unrelated stages (constitution VII).
+- No tasks for the tests needed to keep coverage at or above 80% (constitution III), or missing CI coverage-gate setup once the Cargo workspace exists.
 - Wrong ordering or dependencies, and `[P]` markers on tasks that touch the same file.
 - Tasks too vague to execute ("implement recorder"), and no checkpoint for validating each story independently.
 
