@@ -84,6 +84,26 @@ mod tests {
     }
 
     #[test]
+    fn agc_defaults_cite_a017_a018_a020() {
+        // 002 T004 / data-model.md › AgcSettings.
+        let d = AgcSettings::DEVICE;
+        assert!(d.enabled); // A-020
+        assert_eq!(d.target_dbfs, -10.0); // A-017
+        assert_eq!(d.max_gain_db, 40.0); // A-017
+        assert_eq!(d.max_attenuation_db, 20.0); // A-017
+        assert_eq!(d.attack_ms, 10.0); // A-018
+        assert_eq!(d.release_ms, 1000.0); // A-018
+        assert_eq!(AgcSettings::default(), AgcSettings::DEVICE);
+        assert_eq!(Settings::new(48_000).agc, AgcSettings::DEVICE);
+    }
+
+    #[test]
+    fn tap_after_agc_exists_and_default_is_unchanged() {
+        assert_ne!(Tap::AfterAgc, Tap::AfterPlayback);
+        assert_eq!(Tap::default(), Tap::AfterPlayback);
+    }
+
+    #[test]
     fn new_does_not_validate() {
         // Validation happens in Pipeline::new / reconfigure (data-model.md).
         assert_eq!(Settings::new(22_050).host_rate_hz, 22_050);

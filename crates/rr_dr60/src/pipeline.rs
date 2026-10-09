@@ -234,6 +234,53 @@ fn latency_samples(plan: &RatePlan, settings: &Settings, chain: &DeviceChain) ->
     (total + 0.5) as u32
 }
 
+#[cfg(test)]
+mod validation_tests {
+    extern crate std;
+    use super::*;
+    use crate::error::Setting;
+    use std::vec::Vec;
+
+    /// 002 T006: AGC settings are validated on creation (FR-011).
+    #[test]
+    fn new_rejects_invalid_agc_setting() {
+        let mut s = Settings::new(48_000);
+        s.agc.attack_ms = 0.0;
+        assert_eq!(
+            Pipeline::new(s).err(),
+            Some(Error::InvalidSetting {
+                setting: Setting::AgcAttackMs
+            })
+        );
+    }
+
+    /// 002 T006: a failed reconfigure leaves settings, latency and state unchanged (FR-011,
+    /// 001 FR-008).
+    #[test]
+    fn failed_reconfigure_leaves_pipeline_unchanged() {
+        let x: Vec<f32> = (0..4800).map(|n| if n % 50 == 0 { 0.5 } else { 0.0 }).collect();
+        let mut p = Pipeline::new(Settings::new(48_000)).unwrap();
+        let mut warm = x.clone();
+        p.process_in_place(&mut warm);
+        let mut untouched = p.clone();
+
+        let mut bad = Settings::new(48_000);
+        bad.agc.release_ms = f32::NAN;
+        assert_eq!(
+            p.reconfigure(bad),
+            Err(Error::InvalidSetting {
+                setting: Setting::AgcReleaseMs
+            })
+        );
+        assert_eq!(p.settings(), untouched.settings());
+        assert_eq!(p.latency_samples(), untouched.latency_samples());
+        let (mut a, mut b) = (x.clone(), x);
+        p.process_in_place(&mut a);
+        untouched.process_in_place(&mut b);
+        assert_eq!(a, b);
+    }
+}
+
 #[cfg(all(test, feature = "op-count"))]
 mod op_count_tests {
     extern crate std;

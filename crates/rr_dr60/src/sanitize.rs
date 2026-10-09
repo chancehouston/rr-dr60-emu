@@ -42,6 +42,17 @@ pub(crate) fn flush_state(x: f64) -> f64 {
 mod tests {
     use super::*;
 
+    /// 002 T007 / research.md R-07: with up to +60 dB of AGC gain, huge finite inputs must not
+    /// become ±Inf on narrowing; they saturate to ±f32::MAX.
+    #[test]
+    fn narrow_out_saturates_instead_of_overflowing() {
+        assert_eq!(narrow_out(1e300).to_bits(), f32::MAX.to_bits());
+        assert_eq!(narrow_out(-1e300).to_bits(), f32::MIN.to_bits());
+        assert_eq!(narrow_out(f64::from(f32::MAX) * 2.0).to_bits(), f32::MAX.to_bits());
+        assert_eq!(narrow_out(0.25).to_bits(), 0.25f32.to_bits());
+        assert_eq!(narrow_out(1e-40).to_bits(), 0.0f32.to_bits());
+    }
+
     #[test]
     fn sanitize_in_zeroes_non_finite_and_subnormal() {
         for x in [

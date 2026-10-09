@@ -187,6 +187,42 @@ mod tests {
         assert_ne!(a, noise(0x0D61, 10_000));
     }
 
+    /// 002 T009: level steps have exact segment lengths and amplitudes.
+    #[test]
+    fn step_lengths_and_levels() {
+        let fs = 8000.0;
+        let x = step(1000.0, &[-40.0, -10.0], &[0.5, 0.25], fs);
+        assert_eq!(x.len(), 4000 + 2000);
+        let peak = |s: &[f32]| s.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+        assert!((f64::from(peak(&x[..4000])) - 0.01).abs() < 1e-6);
+        assert!((f64::from(peak(&x[4000..])) - 0.316_227_766).abs() < 1e-6);
+        assert_eq!(x, step(1000.0, &[-40.0, -10.0], &[0.5, 0.25], fs));
+    }
+
+    /// 002 T009: bursts are on/off with exact counts.
+    #[test]
+    fn tone_burst_layout() {
+        let x = tone_bursts(1000.0, -10.0, 0.1, 0.4, 2, 8000.0);
+        assert_eq!(x.len(), 2 * (800 + 3200));
+        assert!(x[800..4000].iter().all(|&v| v == 0.0));
+        assert!(x[..800].iter().any(|&v| v != 0.0));
+        assert!(x[4800..].iter().all(|&v| v == 0.0));
+    }
+
+    /// 002 T009: band-limited noise hits its AES17 level and is bit-reproducible.
+    #[test]
+    fn bandlimited_noise_level_and_determinism() {
+        let fs = 48_000.0;
+        let a = bandlimited_noise(0x0D60, 48_000, fs, -70.0);
+        assert_eq!(a.len(), 48_000);
+        let mean_square =
+            a.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / a.len() as f64;
+        // AES17: level = 20·log10(RMS·√2) = 10·log10(2·mean square).
+        let level = 10.0 * rr_dr60_detmath::ln(2.0 * mean_square) / rr_dr60_detmath::ln(10.0);
+        assert!((level + 70.0).abs() < 0.05, "level {level}");
+        assert_eq!(a, bandlimited_noise(0x0D60, 48_000, fs, -70.0));
+    }
+
     #[test]
     fn log_sweep_phase_and_instantaneous_frequency() {
         let (f0, f1, fs, n) = (20.0, 21_600.0, 48_000.0, 48_000);

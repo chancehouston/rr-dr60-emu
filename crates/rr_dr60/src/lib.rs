@@ -38,6 +38,7 @@ mod settings;
 mod stages;
 #[cfg(test)]
 mod test_util;
+mod validate;
 
 pub use error::Error;
 pub use pipeline::Pipeline;
