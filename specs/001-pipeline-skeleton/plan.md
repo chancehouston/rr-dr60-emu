@@ -103,7 +103,7 @@ crates/
 ├── rr_dr60/                       # core: no_std + alloc, forbid(unsafe_code)
 │   ├── Cargo.toml
 │   └── src/
-│       ├── lib.rs                 # crate docs, re-exports
+│       ├── lib.rs                 # crate docs, re-exports; hidden `__test_hooks` (feature `__test-hooks`, R-13)
 │       ├── settings.rs            # Settings, Tap, SUPPORTED_HOST_RATES (A-001 defaults)
 │       ├── error.rs               # Error enum
 │       ├── pipeline.rs            # Pipeline: per-sample engine, latency, reset, reconfigure
@@ -154,6 +154,9 @@ crates/
 tools/filter-design/
 ├── design_voiceband.py            # uv inline-script: design, verify, emit voiceband_coeffs.rs
 └── README.md                      # how to regenerate; the CHANGELOG requirement
+
+tools/detmath-refs/
+└── gen_refs.py                    # added in implementation: mpmath references for the detmath tests (R-06)
 
 scripts/
 ├── ios-sim-runner.sh              # cargo runner: xcrun simctl spawn booted <bin>

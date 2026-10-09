@@ -18,8 +18,6 @@ rr_dr60_ffi = { path = "crates/rr_dr60_ffi", version = "0.1.0" }
 [workspace.lints.rust]
 missing_docs = "deny"
 unsafe_op_in_unsafe_fn = "deny"
-# `cargo llvm-cov` sets cfg(coverage); see crates/rr_dr60_harness/tests/alloc_free.rs.
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)", "cfg(coverage_nightly)"] }
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }

@@ -56,7 +56,7 @@ pub enum Error {
 impl core::fmt::Display for Error { /* … */ }
 impl core::error::Error for Error {}
 
-/// One emulator instance. `Send`, not `Sync`.
+/// One emulator instance. `Send + Sync` (asserted at compile time); processing takes `&mut self`.
 pub struct Pipeline { /* private */ }
 
 impl Pipeline {
@@ -100,3 +100,5 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 | `reconfigure(s)` gives the same state as `new(s)`; on error nothing changes | FR-008 | `us2_bypass_tap` |
 | Different `seed` values give identical output | FR-009 | `determinism` |
 | No heap activity inside `process` / `process_in_place` / `reset` | FR-015, FR-017 | `alloc_free` |
+| `Pipeline: Send + Sync` | contract | compile-time assertion in `pipeline.rs` |
+| Each pipeline retains ≤ 1 MiB of heap | plan: memory constraint | `memory` |

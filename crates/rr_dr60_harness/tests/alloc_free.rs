@@ -96,21 +96,6 @@ fn processing_never_touches_the_heap() {
                 RrDr60Status::Ok
             );
 
-            // Coverage builds only (`cargo llvm-cov` sets cfg(coverage)): the instrumentation runtime
-            // can make a few one-time allocations the first time code paths run (seen on Linux CI:
-            // 4 allocations in the first window only). Warm both paths up once outside the window.
-            // Normal builds measure with no warm-up at all, so first-call allocations in our own
-            // code would still fail this test in the `check` jobs.
-            if cfg!(coverage) {
-                p.process(&input, &mut output).unwrap();
-                // SAFETY: live handle; buffers valid for input.len() floats and non-overlapping.
-                let _ = unsafe {
-                    rr_dr60_process(handle, input.as_ptr(), output.as_mut_ptr(), input.len())
-                };
-                p.reset();
-                // SAFETY: live handle.
-                let _ = unsafe { rr_dr60_reset(handle) };
-            }
             let before = counts();
             for &n in &sizes {
                 p.process(&input[..n], &mut output[..n]).unwrap();
