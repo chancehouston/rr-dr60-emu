@@ -265,7 +265,7 @@ pub fn check_fr004_regulation(rate: u32, case: &Case, make: Make<'_>) -> Vec<Mea
                 format!("{}: 1 kHz {input:.1} dBFS", case.label),
                 got - want,
                 "dB",
-                Tolerance::Range(-1.0, 1.0),
+                Tolerance::Range(-1.0, 1.0), // engineering target (002 FR-015); A-017
             )
         })
         .collect()
@@ -300,7 +300,7 @@ pub fn check_fr005_limits(rate: u32, case: &Case, make: Make<'_>) -> Vec<Measure
             format!("{}: 1 kHz {l:.1} dBFS", case.label),
             gain - want,
             "dB",
-            Tolerance::Range(-1.0, 1.0),
+            Tolerance::Range(-1.0, 1.0), // engineering target (002 FR-015); A-017
         ));
         l += 5.0;
     }
@@ -348,7 +348,7 @@ pub fn check_fr006_timing(rate: u32, case: &Case, make: Make<'_>) -> Vec<Measure
             stim(),
             t.midpoint,
             "fraction",
-            Tolerance::Range(0.35, 0.65),
+            Tolerance::Range(0.35, 0.65), // engineering target (002 FR-006 shape check)
         ),
     ]
 }
@@ -386,19 +386,19 @@ pub fn check_ratio_self_test(rate: u32, make: Make<'_>) -> Vec<MeasurementResult
             "attack: ratio − exact",
             (ratio.attack_s - exact.attack_s) * 1000.0,
             "ms",
-            Tolerance::Range(-0.25, 0.25),
+            Tolerance::Range(-0.25, 0.25), // engineering target (002 R-15)
         ),
         r(
             "release: ratio / exact − 1",
             ratio.release_s / exact.release_s - 1.0,
             "fraction",
-            Tolerance::Range(-0.01, 0.01),
+            Tolerance::Range(-0.01, 0.01), // engineering target (002 R-15)
         ),
         r(
             "steady gain: ratio − exact",
             ratio.high_gain_db - exact.high_gain_db,
             "dB",
-            Tolerance::Range(-0.1, 0.1),
+            Tolerance::Range(-0.1, 0.1), // engineering target (002 R-15)
         ),
     ]
 }
@@ -437,7 +437,7 @@ pub fn check_fr007_silence(rate: u32, case: &Case, make: Make<'_>) -> Vec<Measur
             format!("{}: 0.5 s silence", case.label),
             nonzero as f64,
             "samples",
-            Tolerance::Exact(0.0),
+            Tolerance::Exact(0.0), // 002 FR-007: exact digital silence
         ),
         MeasurementResult::new(
             "002/FR-007",
@@ -451,7 +451,7 @@ pub fn check_fr007_silence(rate: u32, case: &Case, make: Make<'_>) -> Vec<Measur
             ),
             probe_gain - f64::from(case.agc.max_gain_db),
             "dB",
-            Tolerance::Range(-0.1, 0.1),
+            Tolerance::Range(-0.1, 0.1), // engineering target (002 R-15)
         ),
     ]
 }
@@ -502,7 +502,7 @@ pub fn check_fr008_frequency_thdn(rate: u32, make: Make<'_>) -> Vec<MeasurementR
                     stim.clone(),
                     lvl - ref_level,
                     "dB",
-                    Tolerance::Range(-0.5, 0.5),
+                    Tolerance::Range(-0.5, 0.5), // engineering target (002 FR-015)
                 ));
                 out.push(MeasurementResult::new(
                     "002/FR-008",
@@ -513,7 +513,7 @@ pub fn check_fr008_frequency_thdn(rate: u32, make: Make<'_>) -> Vec<MeasurementR
                     stim,
                     thdn,
                     "dB",
-                    Tolerance::AtMost(-40.0),
+                    Tolerance::AtMost(-40.0), // engineering target (002 FR-015): 1 %
                 ));
             }
         }
@@ -558,7 +558,7 @@ pub fn check_fr009_noise_rise(rate: u32, make: Make<'_>) -> Vec<MeasurementResul
             format!("noise -70 dBFS + bursts, pause {}", cycle + 1),
             pause_end,
             "dBFS",
-            Tolerance::Range(-32.0, -28.0),
+            Tolerance::Range(-32.0, -28.0), // engineering target (002 FR-015); A-017
         ));
         out.push(MeasurementResult::new(
             "002/FR-009",
@@ -569,7 +569,7 @@ pub fn check_fr009_noise_rise(rate: u32, make: Make<'_>) -> Vec<MeasurementResul
             format!("noise -70 dBFS + bursts, pause {}", cycle + 1),
             pause_end - after_burst,
             "dB",
-            Tolerance::AtLeast(20.0),
+            Tolerance::AtLeast(20.0), // engineering target (002 FR-015)
         ));
     }
     out
@@ -595,7 +595,7 @@ pub fn check_fr010_latency(rate: u32) -> Vec<MeasurementResult> {
                 format!("{tap:?}"),
                 diff,
                 "samples",
-                Tolerance::Exact(0.0),
+                Tolerance::Exact(0.0), // 002 FR-010: no added latency
             )
         })
         .collect()

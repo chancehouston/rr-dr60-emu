@@ -294,11 +294,11 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
 
 ## Phase 6: CI and cross-platform golden files (SC-003)
 
-- [ ] T043 Update `.github/workflows/ci.yml`:
+- [X] T043 Update `.github/workflows/ci.yml`:
   - **`check` job**: add `--test golden_agc` next to `--test golden`, and add `cargo test -p rr_dr60_harness --release --test agc_matrix --test agc_edge_cases -- --ignored` after the timing step.
   - **`golden-matrix` and `ios` jobs**: add `--test golden_agc` to the test commands.
   - Update the header comment.
-- [ ] T044 [P] Add `--test golden_agc` to the dinghy command in `scripts/ios-device-golden.sh`. In `docs/release-checklist.md`, note that the iOS-device run now covers both golden files.
+- [X] T044 [P] Add `--test golden_agc` to the dinghy command in `scripts/ios-device-golden.sh`. In `docs/release-checklist.md`, note that the iOS-device run now covers both golden files.
 - [ ] T045 Push `002-agc` and open a **draft PR**, only after asking the user. Confirm every CI job is green, including `golden_agc` on the desktop targets and the iOS simulator.
 
 **Checkpoint**: CI is green on every automated target. The iOS-device check stays a manual release gate.
