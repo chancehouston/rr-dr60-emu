@@ -45,6 +45,33 @@ pub enum Tap {
 /// Levels use the AES17 convention: a sine with peak amplitude 1.0 is 0 dBFS. Ranges are
 /// inclusive; values outside them, NaN and ±Inf are rejected by
 /// [`Pipeline::new`](crate::Pipeline::new) (spec 002 FR-011), even when the AGC is bypassed.
+///
+/// # Example
+///
+/// ```
+/// use rr_dr60::{Error, Pipeline, Setting, Settings, Tap};
+///
+/// // Bypass the AGC (the spec 001 sound: band-limiting only).
+/// let mut s = Settings::new(48_000);
+/// s.agc.enabled = false;
+/// Pipeline::new(s)?;
+///
+/// // Keep the AGC, but recover more slowly after loud sounds, and hear only the AGC.
+/// let mut s = Settings::new(48_000);
+/// s.agc.release_ms = 3000.0;
+/// s.tap = Tap::AfterAgc;
+/// let mut p = Pipeline::new(s)?;
+/// let mut buffer = vec![0.0f32; 512];
+/// p.process_in_place(&mut buffer);
+///
+/// // Out-of-range values are rejected, naming the setting.
+/// s.agc.attack_ms = 0.0;
+/// assert_eq!(
+///     Pipeline::new(s).err(),
+///     Some(Error::InvalidSetting { setting: Setting::AgcAttackMs })
+/// );
+/// # Ok::<(), rr_dr60::Error>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct AgcSettings {

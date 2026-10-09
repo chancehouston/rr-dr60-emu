@@ -95,6 +95,24 @@ int main(void) {
   CHECK(rr_dr60_latency_samples(p, &latency_after) == RR_DR60_STATUS_OK && latency_after < latency,
         "bypass_all latency %u should be below default %u", latency_after, latency);
 
+  /* Spec 002 AGC (US2 AS5, AS6; contracts/c-api.md). */
+  RrDr60Settings agc = rr_dr60_settings_default(FS);
+  agc.agc_release_ms = 3000.0f;
+  agc.tap = RR_DR60_TAP_AFTER_AGC;
+  RrDr60SettingField field = RR_DR60_SETTING_FIELD_TAP;
+  CHECK(rr_dr60_settings_validate(&agc, &field) == RR_DR60_STATUS_OK &&
+            field == RR_DR60_SETTING_FIELD_NONE,
+        "validate(AGC release 3000 ms, tap after AGC)");
+  CHECK(rr_dr60_reconfigure(p, &agc) == RR_DR60_STATUS_OK, "reconfigure to AGC settings");
+  CHECK(rr_dr60_process(p, in, out, N) == RR_DR60_STATUS_OK, "process with AGC");
+  agc.agc_attack_ms = 0.0f;
+  CHECK(rr_dr60_settings_validate(&agc, &field) == RR_DR60_STATUS_INVALID_SETTING &&
+            field == RR_DR60_SETTING_FIELD_AGC_ATTACK_MS,
+        "validate(attack 0 ms) names the field");
+  q = sentinel;
+  CHECK(rr_dr60_create(&agc, &q) == RR_DR60_STATUS_INVALID_SETTING && q == sentinel,
+        "create(attack 0 ms)");
+
   CHECK(rr_dr60_version_string() != NULL && strlen(rr_dr60_version_string()) > 0, "version");
   rr_dr60_destroy(p);
   rr_dr60_destroy(NULL);
