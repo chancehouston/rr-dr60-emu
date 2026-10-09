@@ -2,7 +2,6 @@
 //!
 //! Used by the per-sample engine (data-model.md steps 1 and 3) and by every filter state
 //! update. All three functions are deterministic compare-and-store operations (R-04).
-#![cfg_attr(not(test), allow(dead_code))] // Wired into the pipeline in tasks.md T029–T035.
 
 /// Filter state values with magnitude below this are set to exactly 0.0 (R-05).
 ///

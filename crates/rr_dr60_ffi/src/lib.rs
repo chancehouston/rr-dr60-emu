@@ -7,3 +7,343 @@
 //! This is the only crate in the workspace that may use `unsafe`. Every
 //! `unsafe` block carries a `// SAFETY:` comment, and every entry point catches
 //! panics so that none unwinds into the host.
+//!
+//! # Rules (contracts/c-api.md)
+//!
+//! 1. Errors are values. No function aborts or unwinds into C. A caught panic returns
+//!    [`RrDr60Status::InternalError`] and poisons the handle until `rr_dr60_reset` succeeds.
+//! 2. A failed call changes nothing: out-parameters are left untouched and pipeline state is
+//!    unchanged, apart from poisoning.
+//! 3. The caller owns all buffers. The library never keeps a pointer after a call returns.
+//! 4. A handle must not be used by two threads at the same time.
+//! 5. `RrDr60Settings` only grows at the end. Callers set `struct_size`.
+
+use std::ffi::c_char;
+use std::panic::{AssertUnwindSafe, catch_unwind};
+
+use rr_dr60::{Error, Pipeline, Settings, Tap};
+
+/// Library major version (equal to the Rust crate's).
+pub const RR_DR60_VERSION_MAJOR: u32 = 0;
+/// Library minor version.
+pub const RR_DR60_VERSION_MINOR: u32 = 1;
+/// Library patch version.
+pub const RR_DR60_VERSION_PATCH: u32 = 0;
+
+/// Result of every fallible C API call.
+#[repr(i32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RrDr60Status {
+    /// Success.
+    Ok = 0,
+    /// A required pointer was NULL.
+    NullPointer = 1,
+    /// `host_rate_hz` is not a supported host rate.
+    UnsupportedHostRate = 2,
+    /// Invalid tap value, too-small `struct_size`, or partially overlapping buffers.
+    InvalidArgument = 3,
+    /// An internal error (a caught panic). The handle is poisoned until `rr_dr60_reset`.
+    InternalError = 4,
+}
+
+/// Output tap point, passed as `uint32_t` in [`RrDr60Settings::tap`].
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RrDr60Tap {
+    /// After signal-chain stage 4 (record band-limit).
+    AfterRecord = 0,
+    /// After signal-chain stage 10 (playback band-limit). The default.
+    AfterPlayback = 1,
+}
+
+/// Pipeline settings. Start from `rr_dr60_settings_default` and change fields as needed.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RrDr60Settings {
+    /// Must be `sizeof(RrDr60Settings)`. Lets the struct grow in later versions.
+    pub struct_size: u32,
+    /// Host sample rate in Hz: 8000, 16000, 44100, 48000, 88200 or 96000.
+    pub host_rate_hz: u32,
+    /// Signal-chain stage 4 on (true, default) or bypassed.
+    pub record_stage_enabled: bool,
+    /// Signal-chain stage 10 on (true, default) or bypassed.
+    pub playback_stage_enabled: bool,
+    /// An `RrDr60Tap` value.
+    pub tap: u32,
+    /// Seed for stochastic stages. No effect on output in this version.
+    pub seed: u64,
+}
+
+/// Opaque pipeline handle.
+pub struct RrDr60Pipeline {
+    inner: Pipeline,
+    poisoned: bool,
+    #[cfg(feature = "ffi-test-panic")]
+    force_panic: bool,
+}
+
+const SETTINGS_SIZE: u32 = size_of::<RrDr60Settings>() as u32;
+
+/// Maps a caught panic to a status (contract rule 1). Every entry point routes its panic
+/// arm through here; the `ffi-test-panic` tests exercise it.
+fn panic_to_status(pipeline: Option<&mut RrDr60Pipeline>) -> RrDr60Status {
+    if let Some(p) = pipeline {
+        p.poisoned = true;
+    }
+    RrDr60Status::InternalError
+}
+
+fn status_from_error(e: Error) -> RrDr60Status {
+    match e {
+        Error::UnsupportedHostRate { .. } => RrDr60Status::UnsupportedHostRate,
+        _ => RrDr60Status::InvalidArgument,
+    }
+}
+
+/// Converts C settings to Rust settings, validating `struct_size` and `tap`.
+fn to_settings(s: &RrDr60Settings) -> Result<Settings, RrDr60Status> {
+    if s.struct_size < SETTINGS_SIZE {
+        return Err(RrDr60Status::InvalidArgument);
+    }
+    let tap = match s.tap {
+        0 => Tap::AfterRecord,
+        1 => Tap::AfterPlayback,
+        _ => return Err(RrDr60Status::InvalidArgument),
+    };
+    let mut out = Settings::new(s.host_rate_hz);
+    out.record_stage_enabled = s.record_stage_enabled;
+    out.playback_stage_enabled = s.playback_stage_enabled;
+    out.tap = tap;
+    out.seed = s.seed;
+    Ok(out)
+}
+
+/// Default settings for `host_rate_hz` (not validated): both stages on, tap after playback,
+/// seed 0. Never fails.
+#[unsafe(no_mangle)]
+pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings {
+    RrDr60Settings {
+        struct_size: SETTINGS_SIZE,
+        host_rate_hz,
+        record_stage_enabled: true,
+        playback_stage_enabled: true,
+        tap: RrDr60Tap::AfterPlayback as u32,
+        seed: 0,
+    }
+}
+
+/// Creates a pipeline. On success, writes the new handle to `*out_pipeline`. Not real-time
+/// safe (allocates).
+///
+/// # Safety
+///
+/// `settings` must be NULL or point to a valid `RrDr60Settings`. `out_pipeline` must be NULL
+/// or point to writable storage for one pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_create(
+    settings: *const RrDr60Settings,
+    out_pipeline: *mut *mut RrDr60Pipeline,
+) -> RrDr60Status {
+    if settings.is_null() || out_pipeline.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: checked non-null above; the caller guarantees it points to a valid struct.
+    let settings = unsafe { &*settings };
+    let result = catch_unwind(|| {
+        let s = to_settings(settings)?;
+        let inner = Pipeline::new(s).map_err(status_from_error)?;
+        Ok(Box::new(RrDr60Pipeline {
+            inner,
+            poisoned: false,
+            #[cfg(feature = "ffi-test-panic")]
+            force_panic: false,
+        }))
+    });
+    match result {
+        Ok(Ok(handle)) => {
+            // SAFETY: out_pipeline is non-null and writable (caller contract).
+            unsafe { *out_pipeline = Box::into_raw(handle) };
+            RrDr60Status::Ok
+        }
+        Ok(Err(status)) => status,
+        Err(_) => panic_to_status(None),
+    }
+}
+
+/// Destroys a pipeline. NULL is a no-op.
+///
+/// # Safety
+///
+/// `pipeline` must be NULL or a handle from `rr_dr60_create` that has not been destroyed.
+/// It must not be used afterwards.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_destroy(pipeline: *mut RrDr60Pipeline) {
+    if !pipeline.is_null() {
+        // SAFETY: the handle came from Box::into_raw in rr_dr60_create (caller contract).
+        drop(unsafe { Box::from_raw(pipeline) });
+    }
+}
+
+/// Processes `frames` samples from `input` into `output`. Real-time safe.
+///
+/// `input == output` processes in place. Any other overlap returns
+/// [`RrDr60Status::InvalidArgument`]. With `frames == 0`, both buffers may be NULL.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. When `frames > 0`, `input` must be readable and
+/// `output` writable for `frames` floats.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_process(
+    pipeline: *mut RrDr60Pipeline,
+    input: *const f32,
+    output: *mut f32,
+    frames: usize,
+) -> RrDr60Status {
+    if pipeline.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: non-null live handle (caller contract); no other reference exists during the call.
+    let p = unsafe { &mut *pipeline };
+    if p.poisoned {
+        return RrDr60Status::InternalError;
+    }
+    if frames == 0 {
+        return RrDr60Status::Ok;
+    }
+    if input.is_null() || output.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let (in_start, out_start) = (input as usize, output as usize);
+    let bytes = frames.saturating_mul(size_of::<f32>());
+    let in_place = in_start == out_start;
+    if !in_place
+        && in_start < out_start.saturating_add(bytes)
+        && out_start < in_start.saturating_add(bytes)
+    {
+        return RrDr60Status::InvalidArgument;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        #[cfg(feature = "ffi-test-panic")]
+        if p.force_panic {
+            p.force_panic = false;
+            panic!("rr_dr60__test_force_panic");
+        }
+        if in_place {
+            // SAFETY: output is non-null and writable for `frames` floats; it is the only
+            // reference to that memory during the call.
+            let buf = unsafe { std::slice::from_raw_parts_mut(output, frames) };
+            p.inner.process_in_place(buf);
+        } else {
+            // SAFETY: both are non-null, valid for `frames` floats, and checked not to overlap.
+            let (x, y) = unsafe {
+                (
+                    std::slice::from_raw_parts(input, frames),
+                    std::slice::from_raw_parts_mut(output, frames),
+                )
+            };
+            // Lengths are equal by construction, so this cannot fail.
+            let _ = p.inner.process(x, y);
+        }
+    }));
+    match result {
+        Ok(()) => RrDr60Status::Ok,
+        Err(_) => panic_to_status(Some(p)),
+    }
+}
+
+/// Writes the pipeline's fixed latency, in host-rate samples, to `*out_samples`.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_samples` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_latency_samples(
+    pipeline: *const RrDr60Pipeline,
+    out_samples: *mut u32,
+) -> RrDr60Status {
+    if pipeline.is_null() || out_samples.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: non-null live handle (caller contract).
+    let p = unsafe { &*pipeline };
+    if p.poisoned {
+        return RrDr60Status::InternalError;
+    }
+    // SAFETY: out_samples is non-null and writable (caller contract).
+    unsafe { *out_samples = p.inner.latency_samples() };
+    RrDr60Status::Ok
+}
+
+/// Returns the pipeline to its freshly created state and clears a poisoned handle.
+/// Real-time safe.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_reset(pipeline: *mut RrDr60Pipeline) -> RrDr60Status {
+    if pipeline.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: non-null live handle (caller contract).
+    let p = unsafe { &mut *pipeline };
+    match catch_unwind(AssertUnwindSafe(|| p.inner.reset())) {
+        Ok(()) => {
+            p.poisoned = false;
+            RrDr60Status::Ok
+        }
+        Err(_) => panic_to_status(Some(p)),
+    }
+}
+
+/// The library version as a static NUL-terminated string, e.g. `"0.1.0"`. Never NULL; do not
+/// free.
+#[unsafe(no_mangle)]
+pub extern "C" fn rr_dr60_version_string() -> *const c_char {
+    concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast()
+}
+
+/// Test-only: makes the next `rr_dr60_process` call on `pipeline` panic, to exercise panic
+/// catching and poisoning (FR-024; tasks.md T054). Only built with the `ffi-test-panic` feature.
+///
+/// # Safety
+///
+/// `pipeline` must be NULL or a live handle.
+#[cfg(feature = "ffi-test-panic")]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60__test_force_panic(pipeline: *mut RrDr60Pipeline) {
+    if !pipeline.is_null() {
+        // SAFETY: non-null live handle (caller contract).
+        unsafe { (*pipeline).force_panic = true };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_constants_match_crate_version() {
+        let v = format!("{RR_DR60_VERSION_MAJOR}.{RR_DR60_VERSION_MINOR}.{RR_DR60_VERSION_PATCH}");
+        assert_eq!(v, env!("CARGO_PKG_VERSION"));
+        assert_eq!(v, rr_dr60::VERSION);
+        // SAFETY: the version string is a static NUL-terminated string.
+        let s = unsafe { std::ffi::CStr::from_ptr(rr_dr60_version_string()) };
+        assert_eq!(s.to_str().unwrap(), v);
+    }
+
+    #[test]
+    fn settings_validation() {
+        let mut s = rr_dr60_settings_default(48_000);
+        assert_eq!(s.struct_size as usize, size_of::<RrDr60Settings>());
+        assert!(to_settings(&s).is_ok());
+        s.tap = 7;
+        assert_eq!(to_settings(&s), Err(RrDr60Status::InvalidArgument));
+        s.tap = RrDr60Tap::AfterRecord as u32;
+        assert_eq!(to_settings(&s).unwrap().tap, Tap::AfterRecord);
+        s.struct_size = 4;
+        assert_eq!(to_settings(&s), Err(RrDr60Status::InvalidArgument));
+    }
+}

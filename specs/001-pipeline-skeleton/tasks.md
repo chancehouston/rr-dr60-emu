@@ -162,21 +162,21 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
   - The impulse response of a known section (b = [0.5, 0.25, 0], a1 = −0.5, a2 = 0) matches values computed by hand for 8 samples.
   - After input stops, the voiceband cascade output is below −120 dBFS within 4,000 samples (0.5 s at 8 kHz, spec Edge Cases), and exactly 0.0 within 20,000 samples (R-05).
   - `reset()` zeroes the state.
-- [ ] T025 [P] [US1] Resampler tests in `crates/rr_dr60/src/resample/mod.rs` (`#[cfg(test)]`) for host rates **48000 and 44100**:
+- [X] T025 [P] [US1] Resampler tests in `crates/rr_dr60/src/resample/mod.rs` (`#[cfg(test)]`) for host rates **48000 and 44100**:
   - `RatePlan` gives L/M = 1/6 and 80/441.
   - The converter delays `d_down` and `d_up` are integers in host samples.
   - Down→up round trip (stages absent) of tones at 50, 1000 and 3600 Hz: gain within ±0.1 dB (FR-005), with the steady-state DFT after a settling time of `d_down + d_up` plus 1000 samples.
   - Tones at 4000, 4600, 8000 and 20000 Hz: total output power ≥ 60 dB below the input (FR-005, engineering target).
   - For 1 kHz in, alias and image energy outside a ±5 Hz band around 1 kHz is ≥ 60 dB down.
   - Design-level: the Kaiser prototype passband ripple is ≤ 0.01 dB up to 3600 Hz and the stopband ≥ 70 dB from 4000 Hz, measured from the taps with a direct DFT.
-- [ ] T026 [P] [US1] Extend the resampler tests in `crates/rr_dr60/src/resample/mod.rs` to host rates **16000, 88200 and 96000** (L/M = 1/2, 40/441, 1/12), using the same assertions as T025. Also test that **8000** gives `RatePlan::Identity` with zero delay.
-- [ ] T027 [US1] US1 acceptance tests in `crates/rr_dr60_harness/tests/us1_voiceband.rs`, using only `stimulus` and `analysis` from Foundational:
+- [X] T026 [P] [US1] Extend the resampler tests in `crates/rr_dr60/src/resample/mod.rs` to host rates **16000, 88200 and 96000** (L/M = 1/2, 40/441, 1/12), using the same assertions as T025. Also test that **8000** gives `RatePlan::Identity` with zero delay.
+- [X] T027 [US1] US1 acceptance tests in `crates/rr_dr60_harness/tests/us1_voiceband.rs`, using only `stimulus` and `analysis` from Foundational:
   - **AS1**: default pipeline at 48 kHz, 1 kHz tone at −20 dBFS. The steady-state output level is −20 dBFS ± 0.2 dB (A-015).
   - **AS2**: default pipeline at 44.1 kHz. A 50 Hz tone and a 3800 Hz tone each come out at least 20 dB below the input level (A-002, A-014).
   - **AS3**: at each of the 6 rates, blocks of length 0, 1, 7, 64, 4096 and 48,000 each return exactly that many output samples. `process` with mismatched lengths returns `Err(LengthMismatch)` and leaves the state unchanged (the next output equals that of a fresh pipeline).
   - **AS4**: a fresh pipeline fed 2 s of silence outputs only exact `0.0`.
   - Also: `Pipeline::new(Settings::new(22050))` returns `Err(UnsupportedHostRate { requested: 22050 })`.
-- [ ] T028 [US1] US1 AS5 test in `crates/rr_dr60_harness/tests/us1_voiceband.rs`, using the C API through the `rr_dr60_ffi` rlib's `extern "C"` functions:
+- [X] T028 [US1] US1 AS5 test in `crates/rr_dr60_harness/tests/us1_voiceband.rs`, using the C API through the `rr_dr60_ffi` rlib's `extern "C"` functions:
   - `rr_dr60_settings_default(48000)`, then `rr_dr60_create`, then process a 1 kHz tone with `rr_dr60_process` (copy mode and in-place mode), then `rr_dr60_latency_samples`, `rr_dr60_reset` and `rr_dr60_destroy`.
   - The output is bit-identical to `Pipeline::process` on the same input.
   - The latency equals `Pipeline::latency_samples()`.
@@ -191,15 +191,15 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
   - `pub(crate) fn group_delay_1k_samples() -> f64`: the analytic group delay at 1 kHz summed over the sections, using `detmath`.
   - Under `#[cfg(feature = "__test-hooks")]`, `#[doc(hidden)] pub fn with_sos(sos: [[f64; 5]; 6])` for SC-008 mutation tests.
   - Make T023 pass.
-- [ ] T031 [US1] Implement `crates/rr_dr60/src/resample/design.rs` (R-08): `kaiser_beta(atten_db = 70.0)` (0.1102·(A − 8.7)) and `kaiser_lowpass(num_taps, cutoff_norm, beta) -> Vec<f64>` (windowed sinc via `detmath::{sin, bessel_i0, sqrt}`). Also implement `polyphase_split(taps, phases) -> Box<[f64]>`, with each branch normalized so its DC sum equals 1.0 for the down-converter and the interpolation gain is exact for the up-converter.
-- [ ] T032 [US1] Implement `crates/rr_dr60/src/rate.rs`:
+- [X] T031 [US1] Implement `crates/rr_dr60/src/resample/design.rs` (R-08): `kaiser_beta(atten_db = 70.0)` (0.1102·(A − 8.7)) and `kaiser_lowpass(num_taps, cutoff_norm, beta) -> Vec<f64>` (windowed sinc via `detmath::{sin, bessel_i0, sqrt}`). Also implement `polyphase_split(taps, phases) -> Box<[f64]>`, with each branch normalized so its DC sum equals 1.0 for the down-converter and the interpolation gain is exact for the up-converter.
+- [X] T032 [US1] Implement `crates/rr_dr60/src/rate.rs`:
   - `RatePlan::for_host(host_hz) -> Result<RatePlan, Error>` with L/M from the R-08 table.
   - `num_taps` chosen as the smallest value meeting the 400 Hz transition at A = 70 dB (Kaiser estimate (A − 8)/(2.285·Δω)) and adjusted upward so that (N−1)/2 at the prototype rate is a whole number of host samples. A comment cites FR-005 as an engineering target.
   - `d_down`, `d_up` (host samples).
   - Identity for 8000.
-- [ ] T033 [US1] Implement the polyphase decimator `crates/rr_dr60/src/resample/down.rs`. `PolyphaseDown { phases, taps_per_phase, history: ring buffer of f64 with fixed capacity allocated in new, write index, phase_acc: u32 }`. `push(x) -> Option<f64>` emits a device-rate sample when due. It runs per sample, does not allocate, and flushes state with `flush_state`. Implement `reset()`.
-- [ ] T034 [US1] Implement the polyphase interpolator `crates/rr_dr60/src/resample/up.rs`. `PolyphaseUp { … }` provides `push_device(d)` and `next_host() -> f64`, which returns exactly one host sample per call (R-09). It is causal and aligned so that `next_host` never needs a device sample that hasn't arrived. Implement `reset()`. Then wire both into `crates/rr_dr60/src/resample/mod.rs`. Make T025 pass (48 k and 44.1 k first, as plan.md says, because 80/441 is the biggest risk), then T026.
-- [ ] T035 [US1] Implement `crates/rr_dr60/src/pipeline.rs` for the default configuration, following the per-sample engine in [data-model.md](data-model.md) (steps 1–3, invariants I1–I4):
+- [X] T033 [US1] Implement the polyphase decimator `crates/rr_dr60/src/resample/down.rs`. `PolyphaseDown { phases, taps_per_phase, history: ring buffer of f64 with fixed capacity allocated in new, write index, phase_acc: u32 }`. `push(x) -> Option<f64>` emits a device-rate sample when due. It runs per sample, does not allocate, and flushes state with `flush_state`. Implement `reset()`.
+- [X] T034 [US1] Implement the polyphase interpolator `crates/rr_dr60/src/resample/up.rs`. `PolyphaseUp { … }` provides `push_device(d)` and `next_host() -> f64`, which returns exactly one host sample per call (R-09). It is causal and aligned so that `next_host` never needs a device sample that hasn't arrived. Implement `reset()`. Then wire both into `crates/rr_dr60/src/resample/mod.rs`. Make T025 pass (48 k and 44.1 k first, as plan.md says, because 80/441 is the biggest risk), then T026.
+- [X] T035 [US1] Implement `crates/rr_dr60/src/pipeline.rs` for the default configuration, following the per-sample engine in [data-model.md](data-model.md) (steps 1–3, invariants I1–I4):
   - `Pipeline::new(settings)`: validate the rate, build the `RatePlan`, the converters (absent at 8 kHz) and two `VoiceBandStage`s.
   - `process(&mut self, input, output) -> Result<(), Error>`: check the lengths first, then run a per-sample loop.
   - `process_in_place(&mut self, buffer)`.
@@ -208,7 +208,7 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
   - `settings()`.
   - Public rustdoc as in contracts/rust-api.md, marking real-time-safe methods. Re-export `Pipeline` from `lib.rs`.
   - Make T027 pass.
-- [ ] T036 [US1] Implement the C API core in `crates/rr_dr60_ffi/src/lib.rs`, exactly per [contracts/c-api.md](contracts/c-api.md):
+- [X] T036 [US1] Implement the C API core in `crates/rr_dr60_ffi/src/lib.rs`, exactly per [contracts/c-api.md](contracts/c-api.md):
   - `#[repr(i32)] RrDr60Status` (OK = 0, NULL_POINTER = 1, UNSUPPORTED_HOST_RATE = 2, INVALID_ARGUMENT = 3, INTERNAL_ERROR = 4) and `#[repr(u32)] RrDr60Tap`.
   - `#[repr(C)] RrDr60Settings { struct_size: u32, host_rate_hz: u32, record_stage_enabled: bool, playback_stage_enabled: bool, tap: u32, seed: u64 }`.
   - An opaque `RrDr60Pipeline` wrapping `rr_dr60::Pipeline` and a `poisoned: bool`.
@@ -219,9 +219,9 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
   - On error, `*out` parameters are untouched.
   - Every `unsafe` block has a `// SAFETY:` comment.
   - Make T028 pass.
-- [ ] T037 [US1] Add `crates/rr_dr60_ffi/cbindgen.toml` (language C, include guard `RR_DR60_H`, `cpp_compat = true`, `RR_DR60_VERSION_{MAJOR,MINOR,PATCH}` defines, enum prefixing `RR_DR60_STATUS_*` / `RR_DR60_TAP_*`, and a doc header with the ownership, threading and real-time notes from contracts/c-api.md Rules 1–5). Install the pinned cbindgen (`cargo install cbindgen --locked --version 0.29.0`, or the latest at implementation time, with the pin recorded in ci.yml later). Generate and commit `crates/rr_dr60_ffi/include/rr_dr60.h`. Check it matches the normative shape in contracts/c-api.md.
-- [ ] T038 [US1] Write the C smoke test `crates/rr_dr60_ffi/tests/c/smoke.c`. It creates a 48 kHz default pipeline, processes 0.5 s of a 1 kHz tone at −20 dBFS, checks the RMS level after settling is within ±0.2 dB, checks the latency is non-zero and ≤ 960 (20 ms), exercises every row of the contracts/c-api.md error table that doesn't need reconfigure, destroys the pipeline, prints `smoke: OK` and returns 0. Add a `smoke` step (build the staticlib, `cc … && ./target/smoke`) to the ubuntu and macos jobs in `.github/workflows/ci.yml`.
-- [ ] T039 [US1] Coverage hygiene for US1. In `crates/rr_dr60_ffi/src/lib.rs`:
+- [X] T037 [US1] Add `crates/rr_dr60_ffi/cbindgen.toml` (language C, include guard `RR_DR60_H`, `cpp_compat = true`, `RR_DR60_VERSION_{MAJOR,MINOR,PATCH}` defines, enum prefixing `RR_DR60_STATUS_*` / `RR_DR60_TAP_*`, and a doc header with the ownership, threading and real-time notes from contracts/c-api.md Rules 1–5). Install the pinned cbindgen (`cargo install cbindgen --locked --version 0.29.0`, or the latest at implementation time, with the pin recorded in ci.yml later). Generate and commit `crates/rr_dr60_ffi/include/rr_dr60.h`. Check it matches the normative shape in contracts/c-api.md.
+- [X] T038 [US1] Write the C smoke test `crates/rr_dr60_ffi/tests/c/smoke.c`. It creates a 48 kHz default pipeline, processes 0.5 s of a 1 kHz tone at −20 dBFS, checks the RMS level after settling is within ±0.2 dB, checks the latency is non-zero and ≤ 960 (20 ms), exercises every row of the contracts/c-api.md error table that doesn't need reconfigure, destroys the pipeline, prints `smoke: OK` and returns 0. Add a `smoke` step (build the staticlib, `cc … && ./target/smoke`) to the ubuntu and macos jobs in `.github/workflows/ci.yml`.
+- [X] T039 [US1] Coverage hygiene for US1. In `crates/rr_dr60_ffi/src/lib.rs`:
   - Use **no coverage exclusions**. Route every `catch_unwind` panic arm through one small `fn panic_to_status()`. The `ffi-test-panic` tests (T054) execute it under `--all-features`, which the coverage job uses. Add a justification comment (Constitution III) only if a measured arm still shows as uncovered.
   - Behind `#[cfg(feature = "ffi-test-panic")]`, add a `#[doc(hidden)] extern "C" fn rr_dr60__test_force_panic(p)` that makes the next process call panic.
   - Run `cargo llvm-cov --workspace --all-features` locally and confirm the total is ≥ 80%. The panic arm is reached once T054 lands.

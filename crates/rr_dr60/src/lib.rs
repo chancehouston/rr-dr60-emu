@@ -36,8 +36,11 @@ mod resample;
 mod sanitize;
 mod settings;
 mod stages;
+#[cfg(test)]
+mod test_util;
 
 pub use error::Error;
+pub use pipeline::Pipeline;
 pub use settings::{DEVICE_RATE_HZ, SUPPORTED_HOST_RATES, Settings, Tap};
 
 /// Crate version, e.g. `"0.1.0"`.

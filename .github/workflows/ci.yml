@@ -40,6 +40,8 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Test
         run: cargo test --all-features
+      - name: C smoke test (FR-023, FR-024)
+        run: crates/rr_dr60_ffi/tests/c/run_smoke.sh
 
   coverage:
     # Constitution III: workspace line coverage >= 80%, enforced as soon as the workspace exists.
