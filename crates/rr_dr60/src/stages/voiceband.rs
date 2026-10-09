@@ -41,6 +41,12 @@ impl VoiceBandStage {
         y
     }
 
+    /// Multiply-adds performed by all sections (test-only; tasks.md T059).
+    #[cfg(all(test, feature = "op-count"))]
+    pub(crate) fn ops(&self) -> u64 {
+        self.sections.iter().map(|s| s.ops).sum()
+    }
+
     /// Clears all state. No allocation (FR-017).
     pub(crate) fn reset(&mut self) {
         for s in &mut self.sections {

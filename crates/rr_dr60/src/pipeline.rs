@@ -193,6 +193,25 @@ impl Pipeline {
     }
 }
 
+#[cfg(feature = "__test-hooks")]
+impl Pipeline {
+    /// Test-only (hidden): a pipeline whose voice-band stages use `sos` instead of the
+    /// committed coefficients. Used by the SC-008 mutation test (tasks.md T057).
+    ///
+    /// # Errors
+    ///
+    /// As [`Pipeline::new`].
+    #[doc(hidden)]
+    pub fn __with_stage_sos(settings: Settings, sos: [[f64; 5]; 6]) -> Result<Self, Error> {
+        let mut p = Self::new(settings)?;
+        p.chain.record = VoiceBandStage::with_sos(sos);
+        p.chain.playback = VoiceBandStage::with_sos(sos);
+        let plan = RatePlan::for_host(settings.host_rate_hz)?;
+        p.latency = latency_samples(&plan, &settings, &p.chain);
+        Ok(p)
+    }
+}
+
 /// R-10: round(D_down + D_up + (τ_rec + τ_play) · host / 8000). A bypassed stage contributes
 /// 0, and with the tap after the record stage τ_play is not included.
 fn latency_samples(plan: &RatePlan, settings: &Settings, chain: &DeviceChain) -> u32 {
@@ -200,4 +219,58 @@ fn latency_samples(plan: &RatePlan, settings: &Settings, chain: &DeviceChain) ->
     let total = 2.0 * f64::from(plan.delay_host_samples())
         + stages * f64::from(settings.host_rate_hz) / f64::from(DEVICE_RATE_HZ);
     (total + 0.5) as u32
+}
+
+#[cfg(all(test, feature = "op-count"))]
+mod op_count_tests {
+    extern crate std;
+    use super::*;
+    use std::vec::Vec;
+
+    impl Pipeline {
+        fn ops(&self) -> u64 {
+            let conv = self.converters.as_ref().map_or(0, |(d, u)| d.ops + u.ops);
+            conv + self.chain.record.ops() + self.chain.playback.ops()
+        }
+
+        fn taps(&self) -> (u64, u64) {
+            self.converters
+                .as_ref()
+                .map_or((0, 0), |(d, u)| (d.taps() as u64, u.taps() as u64))
+        }
+    }
+
+    /// FR-015 bounded work: no host sample costs more than one full decimator branch, one
+    /// interpolator branch and both stages (2 × 6 sections × 5 multiply-adds), and the total is
+    /// independent of how the input is split into blocks.
+    #[test]
+    fn per_sample_work_is_bounded_and_block_independent() {
+        for rate in crate::SUPPORTED_HOST_RATES {
+            let x: Vec<f32> = (0..rate as usize / 4)
+                .map(|n| if n % 97 == 0 { 0.5 } else { -0.01 })
+                .collect();
+            let mut one = Pipeline::new(Settings::new(rate)).unwrap();
+            let (taps_down, taps_up) = one.taps();
+            let bound = taps_down + taps_up + 60;
+            let mut worst = 0;
+            for &v in &x {
+                let before = one.ops();
+                one.process_in_place(&mut [v]);
+                worst = worst.max(one.ops() - before);
+            }
+            assert!(
+                worst <= bound,
+                "{rate} Hz: {worst} multiply-adds in one sample > bound {bound}"
+            );
+            assert!(worst > 0);
+            let mut block = Pipeline::new(Settings::new(rate)).unwrap();
+            let mut buf = x.clone();
+            block.process_in_place(&mut buf);
+            assert_eq!(
+                block.ops(),
+                one.ops(),
+                "{rate} Hz: work depends on block size"
+            );
+        }
+    }
 }

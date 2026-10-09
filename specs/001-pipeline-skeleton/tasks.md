@@ -271,19 +271,19 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
 
 ### Tests and harness components for User Story 3 (write first; the checks must fail against a deliberately broken stage) ⚠️
 
-- [ ] T045 [P] [US3] Implement `crates/rr_dr60_harness/src/configs.rs`: the named configurations `default`, `record_only`, `playback_only`, `tap_after_record` and `bypass_all`, exactly as in the data-model.md table, and `all_rates()` returning the 6 supported rates. Unit-test that each config maps to the right `Settings`.
-- [ ] T046 [P] [US3] Implement `crates/rr_dr60_harness/src/report.rs`: format `MeasurementResult`s as an aligned table (requirement, property, trace, rate, config, measured, tolerance, PASS/FAIL), as in quickstart.md §2. Print it on success with `--nocapture`, and always on failure. Unit-test the formatting.
-- [ ] T047 [US3] Add the minimum-phase reconstruction to `crates/rr_dr60_harness/src/analysis.rs`: FFT (`rustfft`, N = 65536) of an impulse response, a cepstral minimum-phase phase computed from log|H|, and `phase_deviation_deg(measured, minphase, f_lo, f_hi)`. Unit-test it: a known minimum-phase biquad cascade gives ≤ 0.5° deviation, and a known linear-phase FIR gives > 5°.
-- [ ] T048 [US3] Implement the check functions in `crates/rr_dr60_harness/src/checks.rs`. Each one returns a `Vec<MeasurementResult>` with the requirement and trace filled in:
+- [X] T045 [P] [US3] Implement `crates/rr_dr60_harness/src/configs.rs`: the named configurations `default`, `record_only`, `playback_only`, `tap_after_record` and `bypass_all`, exactly as in the data-model.md table, and `all_rates()` returning the 6 supported rates. Unit-test that each config maps to the right `Settings`.
+- [X] T046 [P] [US3] Implement `crates/rr_dr60_harness/src/report.rs`: format `MeasurementResult`s as an aligned table (requirement, property, trace, rate, config, measured, tolerance, PASS/FAIL), as in quickstart.md §2. Print it on success with `--nocapture`, and always on failure. Unit-test the formatting.
+- [X] T047 [US3] Add the minimum-phase reconstruction to `crates/rr_dr60_harness/src/analysis.rs`: FFT (`rustfft`, N = 65536) of an impulse response, a cepstral minimum-phase phase computed from log|H|, and `phase_deviation_deg(measured, minphase, f_lo, f_hi)`. Unit-test it: a known minimum-phase biquad cascade gives ≤ 0.5° deviation, and a known linear-phase FIR gives > 5°.
+- [X] T048 [US3] Implement the check functions in `crates/rr_dr60_harness/src/checks.rs`. Each one returns a `Vec<MeasurementResult>` with the requirement and trace filled in:
   - `check_fr005_boundary(rate)`: on `bypass_all`, flatness ±0.1 dB over 50–3600 Hz, ≥ 60 dB rejection from 4000 Hz up to Nyquist, alias and image products ≥ 60 dB. All values are labeled "engineering target". Checks at or above host Nyquist are skipped; at 8 kHz that means 4000 Hz and above.
   - `check_fr010_stage(rate, stage)`: via `R_cfg − R_base`. The 1 kHz gain is absolute; −3 dB points, ripple, ≤ 60 Hz, DC (≥ 40 dB), 4000 Hz (skipped at 8 kHz), ≥ 4600 Hz total power, group delay at 1 kHz ≤ 2 ms, and group delay at 400 and 3200 Hz greater than at 1 kHz. Trace: A-002, A-014, A-015, A-016.
   - `check_fr010_minphase()`: at the 8 kHz host rate only, per the spec. Impulse response of `record_only` and `playback_only`, phase within ±5° of minimum phase over 400–3200 Hz (A-016; ±5° is an engineering target).
   - `check_fr011_cascade(rate)`: at every test frequency from 100 to 3900 Hz (log grid, ≥ 40 points), `R_default` equals `R_rec + R_play − R_base` within ±0.3 dB wherever the value is above −40 dB; the 1 kHz gain is 0 ± 0.2 dB.
   - `check_fr012_latency(rate, config)`: reported latency equals the measured 1 kHz group delay within ±1 sample.
   - `check_fr013_latency(rate)`: default latency ≤ 20 ms.
-- [ ] T049 [US3] Write `crates/rr_dr60_harness/tests/response_matrix.rs`: run `check_fr005_boundary`, `check_fr010_stage` (both stages), `check_fr010_minphase` and `check_fr011_cascade` over all 6 rates, call `report::print`, then `assert_all` (FR-019, FR-020, SC-002).
-- [ ] T050 [P] [US3] Write `crates/rr_dr60_harness/tests/latency.rs`: `check_fr012_latency` for 6 rates × 5 configurations, and `check_fr013_latency` for 6 rates (SC-005).
-- [ ] T051 [P] [US3] Write `crates/rr_dr60_harness/tests/edge_cases.rs`, one test per spec edge case:
+- [X] T049 [US3] Write `crates/rr_dr60_harness/tests/response_matrix.rs`: run `check_fr005_boundary`, `check_fr010_stage` (both stages), `check_fr010_minphase` and `check_fr011_cascade` over all 6 rates, call `report::print`, then `assert_all` (FR-019, FR-020, SC-002).
+- [X] T050 [P] [US3] Write `crates/rr_dr60_harness/tests/latency.rs`: `check_fr012_latency` for 6 rates × 5 configurations, and `check_fr013_latency` for 6 rates (SC-005).
+- [X] T051 [P] [US3] Write `crates/rr_dr60_harness/tests/edge_cases.rs`, one test per spec edge case:
   - A block of size 0 is a no-op: the state is unchanged, so the following output equals the reference.
   - One block of 30 s at 48 kHz is bit-identical to 4096-sample blocks. The 10-minute single-block case lives in `timing.rs` (T058, release mode).
   - NaN and ±Inf inputs are treated as 0.0: the output is all finite, contains no subnormals, and needs no reset.
@@ -292,19 +292,19 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
   - Tail: after a 0 dBFS sweep stops, every output sample more than 0.5 s later is below −120 dBFS, and eventually exactly 0.0.
   - `reset()` followed by X equals a new pipeline followed by X.
   - Unsupported-rate errors name the supported rates.
-- [ ] T052 [P] [US3] Write `crates/rr_dr60_harness/tests/determinism.rs`:
+- [X] T052 [P] [US3] Write `crates/rr_dr60_harness/tests/determinism.rs`:
   - One-block output equals the partitioned output, bit for bit (FR-014, SC-003), with partitions from `Pcg32` seed 0x0D60, block sizes 0–8192, always including at least one block of size 0 and one of size 1:
     - **100** random partitions for each of the 4 golden stimuli in `default` at 48 kHz, which is what SC-003 requires.
     - **10** random partitions for every other configuration × rate combination.
   - `process_in_place` equals `process`.
   - `seed = 0` vs `seed = u64::MAX` gives identical output (FR-009).
-- [ ] T053 [P] [US3] Write `crates/rr_dr60_harness/tests/alloc_free.rs`. Install a counting `#[global_allocator]` (wrapping `std::alloc::System`, with atomic alloc/dealloc/realloc counters). For each of 6 rates × 5 configurations: create the pipeline, reset the counters, then process ≥ 1000 blocks of seeded random size 0–1024 with `process`, `process_in_place` and `reset`, plus the same through `rr_dr60_process`. Assert all counters are 0 (FR-015, FR-022, SC-004). Pre-allocate the input and output buffers before resetting the counters.
-- [ ] T054 [P] [US3] Write `crates/rr_dr60_harness/tests/ffi_parity.rs`:
+- [X] T053 [P] [US3] Write `crates/rr_dr60_harness/tests/alloc_free.rs`. Install a counting `#[global_allocator]` (wrapping `std::alloc::System`, with atomic alloc/dealloc/realloc counters). For each of 6 rates × 5 configurations: create the pipeline, reset the counters, then process ≥ 1000 blocks of seeded random size 0–1024 with `process`, `process_in_place` and `reset`, plus the same through `rr_dr60_process`. Assert all counters are 0 (FR-015, FR-022, SC-004). Pre-allocate the input and output buffers before resetting the counters.
+- [X] T054 [P] [US3] Write `crates/rr_dr60_harness/tests/ffi_parity.rs`:
   - Parity of `rr_dr60_process` with `Pipeline::process` for every configuration × rate on the sweep (FR-023).
   - Every row of the contracts/c-api.md error table, asserting the exact status and that `*out` is untouched (FR-024).
   - `rr_dr60_version_string()` equals `rr_dr60::VERSION`.
   - With feature `ffi-test-panic`: forcing a panic gives INTERNAL_ERROR, and then process and latency also give INTERNAL_ERROR (poisoned). `rr_dr60_reset` restores normal processing, and so does `rr_dr60_reconfigure` in a separate case (FR-024, recoverable).
-- [ ] T055 [US3] Implement `crates/rr_dr60_harness/src/golden.rs` per [contracts/golden-format.md](contracts/golden-format.md):
+- [X] T055 [US3] Implement `crates/rr_dr60_harness/src/golden.rs` per [contracts/golden-format.md](contracts/golden-format.md):
   - The `GoldenFile` and `GoldenEntry` serde types (`format = "rr_dr60-golden"`, `version = 1`, `library_version`, entries sorted by (stimulus, config, host_rate_hz)).
   - `sha256` over each `f32::to_bits().to_le_bytes()`.
   - `head` holds 16 lowercase 8-digit hex values.
@@ -313,14 +313,14 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
   - `compare()`, which reports the key, the first differing head index and the RMS values old → new, and also fails on missing or extra entries.
   - `bless()`, which writes the file when `RR_DR60_BLESS=1`.
   - Unit-test the hash and head formatting on a 4-sample vector.
-- [ ] T056 [US3] Write `crates/rr_dr60_harness/tests/golden.rs`. Generate all 96 entries (4 stimuli × 4 configs × 6 rates), processed in one block. If `RR_DR60_BLESS=1`, bless; otherwise compare against `crates/rr_dr60_harness/golden/golden-v1.json` (FR-021). Run `RR_DR60_BLESS=1 cargo test -p rr_dr60_harness --test golden` once and commit `golden-v1.json`. Check it is under 100 KB.
-- [ ] T057 [US3] SC-008 mutation test in `crates/rr_dr60_harness/tests/golden.rs` (or a separate file `crates/rr_dr60_harness/tests/mutation.rs`). Using `rr_dr60` feature `__test-hooks` and `VoiceBandStage::with_sos`, build a pipeline whose stage coefficients are shifted by 100 Hz. Embed a second coefficient set as a test fixture `crates/rr_dr60_harness/tests/fixtures/shifted_100hz_sos.rs`, generated with `design_voiceband.py --shift-hz 100 --emit-fixture` (add that flag to the tool). Expose the hook through a `#[doc(hidden)] Pipeline::__with_stage_sos` under the same feature. Assert that `check_fr010_stage` reports at least one FAIL (an upper −3 dB point outside 3400 ± 50 Hz) and that the golden comparison for `default`/`sweep_log`/48000 fails.
-- [ ] T058 [P] [US3] Write `crates/rr_dr60_harness/tests/timing.rs` (`#[ignore]`, release mode only; skip with a message if `cfg!(debug_assertions)`):
+- [X] T056 [US3] Write `crates/rr_dr60_harness/tests/golden.rs`. Generate all 96 entries (4 stimuli × 4 configs × 6 rates), processed in one block. If `RR_DR60_BLESS=1`, bless; otherwise compare against `crates/rr_dr60_harness/golden/golden-v1.json` (FR-021). Run `RR_DR60_BLESS=1 cargo test -p rr_dr60_harness --test golden` once and commit `golden-v1.json`. Check it is under 100 KB.
+- [X] T057 [US3] SC-008 mutation test in `crates/rr_dr60_harness/tests/golden.rs` (or a separate file `crates/rr_dr60_harness/tests/mutation.rs`). Using `rr_dr60` feature `__test-hooks` and `VoiceBandStage::with_sos`, build a pipeline whose stage coefficients are shifted by 100 Hz. Embed a second coefficient set as a test fixture `crates/rr_dr60_harness/tests/fixtures/shifted_100hz_sos.rs`, generated with `design_voiceband.py --shift-hz 100 --emit-fixture` (add that flag to the tool). Expose the hook through a `#[doc(hidden)] Pipeline::__with_stage_sos` under the same feature. Assert that `check_fr010_stage` reports at least one FAIL (an upper −3 dB point outside 3400 ± 50 Hz) and that the golden comparison for `default`/`sweep_log`/48000 fails.
+- [X] T058 [P] [US3] Write `crates/rr_dr60_harness/tests/timing.rs` (`#[ignore]`, release mode only; skip with a message if `cfg!(debug_assertions)`):
   - The median ns/sample over 9 runs at block sizes {1, 64, 4096, 2^20}, plus after a 60 s stream at 48 kHz, has max/min ≤ 3.0 (bounded work, FR-015, FR-022).
   - 60 s of 48 kHz audio processes at ≥ 20× real time (SC-006, engineering target).
   - A single 10-minute block at 48 kHz is bit-identical to 4096-sample blocks (spec Edge Cases, very large blocks).
-- [ ] T059 [US3] Add a per-sample operation-count test in `crates/rr_dr60/src/pipeline.rs` (`#[cfg(all(test, feature = "op-count"))]`). An `op-count`-gated counter increments once per multiply-add in the biquad and polyphase inner loops. Assert that for each rate the per-sample count is ≤ `taps_down/M + taps_up/L + 6·5` + a constant, independent of block size (FR-015 bounded work).
-- [ ] T060 [US3] Add CI steps to `.github/workflows/ci.yml` in the ubuntu job:
+- [X] T059 [US3] Add a per-sample operation-count test in `crates/rr_dr60/src/pipeline.rs` (`#[cfg(all(test, feature = "op-count"))]`). An `op-count`-gated counter increments once per multiply-add in the biquad and polyphase inner loops. Assert that for each rate the per-sample count is ≤ `taps_down/M + taps_up/L + 6·5` + a constant, independent of block size (FR-015 bounded work).
+- [X] T060 [US3] Add CI steps to `.github/workflows/ci.yml` in the ubuntu job:
   - A header drift check: install pinned cbindgen, regenerate, then `git diff --exit-code crates/rr_dr60_ffi/include/rr_dr60.h`.
   - `cargo test -p rr_dr60_harness --all-features` (including `ffi-test-panic`).
   - `cargo test -p rr_dr60_harness --release --test timing -- --ignored`.

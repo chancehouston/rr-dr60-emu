@@ -20,6 +20,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  CBINDGEN_VERSION: 0.29.4
 
 jobs:
   check:
@@ -42,6 +43,22 @@ jobs:
         run: cargo test --all-features
       - name: C smoke test (FR-023, FR-024)
         run: crates/rr_dr60_ffi/tests/c/run_smoke.sh
+      - name: Golden files with default features (shipped configuration, no op-count)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test -p rr_dr60_harness --test golden
+      - name: Timing checks (release; FR-015 bounded work, SC-006)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test -p rr_dr60_harness --release --test timing -- --ignored --nocapture
+      - name: Install pinned cbindgen
+        if: matrix.os == 'ubuntu-latest'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cbindgen@${{ env.CBINDGEN_VERSION }}
+      - name: C header is up to date
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cbindgen --config crates/rr_dr60_ffi/cbindgen.toml --crate rr_dr60_ffi --output crates/rr_dr60_ffi/include/rr_dr60.h
+          git diff --exit-code crates/rr_dr60_ffi/include/rr_dr60.h
 
   coverage:
     # Constitution III: workspace line coverage >= 80%, enforced as soon as the workspace exists.
