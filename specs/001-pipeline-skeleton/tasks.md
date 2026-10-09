@@ -243,21 +243,21 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
 
 ### Tests for User Story 2 (write first, must fail) ⚠️
 
-- [ ] T040 [P] [US2] US2 acceptance tests in `crates/rr_dr60_harness/tests/us2_bypass_tap.rs`, at 48 kHz and 8 kHz:
+- [X] T040 [P] [US2] US2 acceptance tests in `crates/rr_dr60_harness/tests/us2_bypass_tap.rs`, at 48 kHz and 8 kHz:
   - **AS1**: `record_only` (playback bypassed). At 300, 1000, 3200 and 3400 Hz, `R_cfg − R_base` is within FR-010 tolerances of the analytic stage response: ±0.3 dB (engineering target), with the stage's 1 kHz gain at 0 ± 0.1 dB absolute.
   - **AS2**: `tap_after_record` output is bit-identical to `record_only` output for the log sweep, whether `playback_stage_enabled` is true or false.
   - **AS3**: `bypass_all` at 48 kHz is flat within ±0.1 dB from 50 to 3600 Hz. At 8 kHz, `bypass_all` output equals the input exactly (`to_bits` equality), except that injected NaN, Inf and subnormal samples become 0.0 (FR-002).
   - **AS4**: for each of the 5 named configurations, `latency_samples()` equals the measured 1 kHz group delay within ±1 sample (engineering target).
-- [ ] T041 [P] [US2] Reconfigure tests in `crates/rr_dr60_harness/tests/us2_bypass_tap.rs`:
+- [X] T041 [P] [US2] Reconfigure tests in `crates/rr_dr60_harness/tests/us2_bypass_tap.rs`:
   - `reconfigure(s)` followed by input X gives output bit-identical to `Pipeline::new(s)` followed by X, across rate changes (48k → 44.1k → 8k) and flag changes. The latency updates.
   - `reconfigure(Settings::new(22050))` returns `Err(UnsupportedHostRate)` and leaves the settings, latency and subsequent output unchanged (the strong guarantee, data-model.md).
   - C API: `rr_dr60_reconfigure` with tap = 7 gives INVALID_ARGUMENT and the old configuration still processes. With a valid change, the result matches the Rust output.
 
 ### Implementation for User Story 2
 
-- [ ] T042 [US2] Extend the per-sample engine in `crates/rr_dr60/src/pipeline.rs`. Honour `record_stage_enabled`, `playback_stage_enabled` and `tap`: a bypassed stage passes the sample through bit-exactly (no arithmetic); with tap `AfterRecord`, stage 10 is not run (data-model.md › Tap). Update the R-10 latency computation: a bypassed stage contributes 0, and `AfterRecord` excludes τ_play. Make T040 pass.
-- [ ] T043 [US2] Implement `Pipeline::reconfigure(&mut self, settings) -> Result<(), Error>` in `crates/rr_dr60/src/pipeline.rs`. Build a complete new `Pipeline` first, then swap it in, so that on error nothing changes. Document it as "may allocate; not real-time safe (FR-008)".
-- [ ] T044 [US2] Implement `rr_dr60_reconfigure` in `crates/rr_dr60_ffi/src/lib.rs`: the same validation as create, a successful call clears `poisoned`, and `catch_unwind` is used. Regenerate `crates/rr_dr60_ffi/include/rr_dr60.h` with cbindgen. Add the reconfigure rows from the contracts/c-api.md error table to `crates/rr_dr60_ffi/tests/c/smoke.c`. Make T041 pass.
+- [X] T042 [US2] Extend the per-sample engine in `crates/rr_dr60/src/pipeline.rs`. Honour `record_stage_enabled`, `playback_stage_enabled` and `tap`: a bypassed stage passes the sample through bit-exactly (no arithmetic); with tap `AfterRecord`, stage 10 is not run (data-model.md › Tap). Update the R-10 latency computation: a bypassed stage contributes 0, and `AfterRecord` excludes τ_play. Make T040 pass.
+- [X] T043 [US2] Implement `Pipeline::reconfigure(&mut self, settings) -> Result<(), Error>` in `crates/rr_dr60/src/pipeline.rs`. Build a complete new `Pipeline` first, then swap it in, so that on error nothing changes. Document it as "may allocate; not real-time safe (FR-008)".
+- [X] T044 [US2] Implement `rr_dr60_reconfigure` in `crates/rr_dr60_ffi/src/lib.rs`: the same validation as create, a successful call clears `poisoned`, and `catch_unwind` is used. Regenerate `crates/rr_dr60_ffi/include/rr_dr60.h` with cbindgen. Add the reconfigure rows from the contracts/c-api.md error table to `crates/rr_dr60_ffi/tests/c/smoke.c`. Make T041 pass.
 
 **Checkpoint (US2)**: `us1_voiceband` and `us2_bypass_tap` both pass, and the C smoke test still passes.
 

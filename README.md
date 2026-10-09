@@ -44,7 +44,9 @@ What exists today ([spec 001](specs/001-pipeline-skeleton/spec.md)):
 - Deterministic and real-time safe: no allocation, locks or I/O while processing, and bit-identical output for any block size.
 - A C API with a generated header ([`rr_dr60.h`](crates/rr_dr60_ffi/include/rr_dr60.h)).
 
-Not yet: bypassing individual stages and taking the output after the record stage (the settings exist, but they don't take effect until the next feature), and every stage beyond the codec filters.
+- Each stage can be **bypassed**, the output can be **tapped after the record stage** ("what the device recorded"), and the reported latency follows the configuration. `reconfigure` changes settings between streams.
+
+Not yet: every stage beyond the codec filters.
 
 ### Rust
 

@@ -297,6 +297,38 @@ pub unsafe extern "C" fn rr_dr60_reset(pipeline: *mut RrDr60Pipeline) -> RrDr60S
     }
 }
 
+/// Applies new settings and resets all state, as if the pipeline were created anew. On
+/// success a poisoned handle becomes usable again. On error the pipeline is unchanged. Not
+/// real-time safe (allocates).
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `settings` must be NULL or point to a valid
+/// `RrDr60Settings`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_reconfigure(
+    pipeline: *mut RrDr60Pipeline,
+    settings: *const RrDr60Settings,
+) -> RrDr60Status {
+    if pipeline.is_null() || settings.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: both non-null; the caller guarantees a live handle and a valid struct.
+    let (p, settings) = unsafe { (&mut *pipeline, &*settings) };
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let s = to_settings(settings)?;
+        p.inner.reconfigure(s).map_err(status_from_error)
+    }));
+    match result {
+        Ok(Ok(())) => {
+            p.poisoned = false;
+            RrDr60Status::Ok
+        }
+        Ok(Err(status)) => status,
+        Err(_) => panic_to_status(Some(p)),
+    }
+}
+
 /// The library version as a static NUL-terminated string, e.g. `"0.1.0"`. Never NULL; do not
 /// free.
 #[unsafe(no_mangle)]
