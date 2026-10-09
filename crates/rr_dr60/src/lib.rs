@@ -36,3 +36,9 @@ mod resample;
 mod sanitize;
 mod settings;
 mod stages;
+
+pub use error::Error;
+pub use settings::{DEVICE_RATE_HZ, SUPPORTED_HOST_RATES, Settings, Tap};
+
+/// Crate version, e.g. `"0.1.0"`.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");

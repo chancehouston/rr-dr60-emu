@@ -82,30 +82,30 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
 
 ### Tests (write first, must fail)
 
-- [ ] T012 [P] Write unit tests in `crates/rr_dr60_detmath/src/lib.rs` (`#[cfg(test)]`):
+- [X] T012 [P] Write unit tests in `crates/rr_dr60_detmath/src/lib.rs` (`#[cfg(test)]`):
   - `sin`/`cos` against a table of at least 64 high-precision reference values (hard-coded decimal literals from a 50-digit source) for x in [−1e4, 1e4], including multiples of π/2 ± tiny. Tolerance: ≤ 2 ulp.
   - `bessel_i0` at x ∈ {0, 0.5, 1, 2, 5, 6.76, 10, 20} against reference values. Tolerance: relative error ≤ 1e-14.
   - Identities sin² + cos² within 4e-16 over 10,000 points.
   - `exp` and `ln` within 2 ulp of high-precision reference values at 64 points each (exp over [−700, 700], ln over [1e-300, 1e300]).
   - `sqrt` is bit-equal to the correctly rounded `f64::sqrt` at 10,000 seeded points. Test code is allowed to call `f64::sqrt` (`#[allow(clippy::disallowed_methods)]` on the test module only).
-- [ ] T013 [P] Write unit tests in `crates/rr_dr60/src/settings.rs` and `crates/rr_dr60/src/error.rs` (`#[cfg(test)]`):
+- [X] T013 [P] Write unit tests in `crates/rr_dr60/src/settings.rs` and `crates/rr_dr60/src/error.rs` (`#[cfg(test)]`):
   - `Settings::new(48000)` has defaults `record_stage_enabled: true`, `playback_stage_enabled: true`, `tap: Tap::AfterPlayback`, `seed: 0`.
   - `SUPPORTED_HOST_RATES == [8000, 16000, 44100, 48000, 88200, 96000]`.
   - `DEVICE_RATE_HZ == 8000` (A-001).
   - `Error::UnsupportedHostRate { requested: 22050 }` displays text listing all six supported rates.
   - `Error::LengthMismatch` displays both lengths.
-- [ ] T014 [P] Write unit tests in `crates/rr_dr60/src/sanitize.rs` (`#[cfg(test)]`):
+- [X] T014 [P] Write unit tests in `crates/rr_dr60/src/sanitize.rs` (`#[cfg(test)]`):
   - `sanitize_in`: NaN, +Inf, −Inf and f32 subnormals (e.g. `f32::from_bits(1)`) map to 0.0. Finite normal values, including |x| > 1.0, map to the exact same value as f64.
   - `narrow_out`: f64 values that round to an f32 subnormal map to 0.0; normal values round to nearest.
   - `flush_state(x)`: |x| < 1e-30 gives 0.0, otherwise x is unchanged (R-05).
-- [ ] T015 [P] Write unit tests in `crates/rr_dr60_harness/src/stimulus.rs` (`#[cfg(test)]`):
+- [X] T015 [P] Write unit tests in `crates/rr_dr60_harness/src/stimulus.rs` (`#[cfg(test)]`):
   - The tone has the requested length and its peak is within 1e-12 of the requested amplitude.
   - The impulse is 1.0 at n = 0 and zero elsewhere.
   - Silence and DC have constant values.
   - PCG32 (seed 0x0D60, stream 0): the first 4 `u32` outputs equal the values from the PCG reference algorithm (`pcg32_random_r`), computed in the test from the published constants.
   - Noise lies in [−0.5, 0.5).
   - The log sweep starts at phase 0 and its instantaneous frequency at the start and end is within 1% of the requested start and end frequencies.
-- [ ] T016 [P] Write unit tests in `crates/rr_dr60_harness/src/analysis.rs` (`#[cfg(test)]`):
+- [X] T016 [P] Write unit tests in `crates/rr_dr60_harness/src/analysis.rs` (`#[cfg(test)]`):
   - The single-bin DFT of a synthetic sinusoid with known amplitude and phase recovers both, within 1e-9 relative and 1e-9 rad.
   - Group delay of a synthetic pure delay of 37 samples is measured as 37.0 ± 0.01.
   - The power ratio of x vs 0.5·x is −6.0206 dB ± 1e-6.
@@ -113,17 +113,17 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
 
 ### Implementation
 
-- [ ] T017 Implement `crates/rr_dr60_detmath/src/lib.rs` (R-06), using only basic operations and no `core::f64` intrinsic methods:
+- [X] T017 Implement `crates/rr_dr60_detmath/src/lib.rs` (R-06), using only basic operations and no `core::f64` intrinsic methods:
   - `pub fn sin(x: f64) -> f64`, `pub fn cos(x: f64) -> f64`: Cody-Waite reduction by π/2 with a 3-part split of π/2, then minimax polynomials on [−π/4, π/4] (degree 13 for sin and 14 for cos, from the published fdlibm `__kernel_sin`/`__kernel_cos` coefficients, cited in a comment).
   - `pub fn bessel_i0(x: f64) -> f64`: power series, stopping when the term is below 1e-17·sum or after 64 terms.
   - `pub fn exp(x: f64) -> f64`: Cody-Waite reduction by ln 2, then a polynomial (fdlibm `e_exp` coefficients). `pub fn ln(x: f64) -> f64`: reduce the argument to [√½, √2], then an atanh series (fdlibm `e_log` coefficients). `pub fn sqrt(x: f64) -> f64`: Newton iteration from a bit-level initial guess, with a final correction step so it rounds correctly.
   - Keep Sun's fdlibm copyright and permission notice in a comment at the top of `crates/rr_dr60_detmath/src/lib.rs`, and add `THIRD_PARTY.md` at the repository root listing fdlibm and its notice (MIT compatibility).
   - `pub const PI`, `pub const TAU`.
   - Make T012 pass.
-- [ ] T018 [P] Implement `crates/rr_dr60/src/settings.rs` and `crates/rr_dr60/src/error.rs` exactly per [contracts/rust-api.md](contracts/rust-api.md). Implement `SUPPORTED_HOST_RATES`, `DEVICE_RATE_HZ` (doc cites A-001), `Tap` (`#[non_exhaustive]`, `#[default] AfterPlayback`), `Settings` (`#[non_exhaustive]`, `const fn new(host_rate_hz)`, defaults citing A-002 for both stages enabled and FR-009 for the seed), and `Error` (`#[non_exhaustive]`, `Display`, `core::error::Error`). Data-model constraint, quoted verbatim: "`host_rate_hz` … Must be one of `SUPPORTED_HOST_RATES = [8000, 16000, 44100, 48000, 88200, 96000]`, otherwise `Error::UnsupportedHostRate`". Validation happens in `Pipeline::new` / `reconfigure`, not in `Settings::new`. Re-export from `crates/rr_dr60/src/lib.rs`, along with `pub const VERSION`. Make T013 pass.
-- [ ] T019 [P] Implement `crates/rr_dr60/src/sanitize.rs`: `#[inline] pub(crate) fn sanitize_in(x: f32) -> f64`, `narrow_out(y: f64) -> f32` and `flush_state(x: f64) -> f64`, with threshold constant `STATE_FLUSH: f64 = 1e-30` (commented R-05). Make T014 pass.
-- [ ] T020 [P] Implement `crates/rr_dr60_harness/src/stimulus.rs`: `tone(freq_hz, amp, fs, n)` (phase accumulated in f64, `detmath::sin`), `impulse(n)`, `silence(n)`, `dc(level, n)`, `log_sweep(f0, f1, amp, fs, n)` (exponential sweep; phase in closed form using `detmath::{exp, ln, sin}`), `Pcg32::new(seed, stream)` / `next_u32()`, and `noise(seed, n)`. All outputs are `Vec<f32>`. All stimulus math MUST use `rr_dr60_detmath` only, because stimuli feed the golden files (FR-014). `stimulus.rs` stays under the clippy R-04 ban. Make T015 pass.
-- [ ] T021 [P] Implement `crates/rr_dr60_harness/src/analysis.rs`:
+- [X] T018 [P] Implement `crates/rr_dr60/src/settings.rs` and `crates/rr_dr60/src/error.rs` exactly per [contracts/rust-api.md](contracts/rust-api.md). Implement `SUPPORTED_HOST_RATES`, `DEVICE_RATE_HZ` (doc cites A-001), `Tap` (`#[non_exhaustive]`, `#[default] AfterPlayback`), `Settings` (`#[non_exhaustive]`, `const fn new(host_rate_hz)`, defaults citing A-002 for both stages enabled and FR-009 for the seed), and `Error` (`#[non_exhaustive]`, `Display`, `core::error::Error`). Data-model constraint, quoted verbatim: "`host_rate_hz` … Must be one of `SUPPORTED_HOST_RATES = [8000, 16000, 44100, 48000, 88200, 96000]`, otherwise `Error::UnsupportedHostRate`". Validation happens in `Pipeline::new` / `reconfigure`, not in `Settings::new`. Re-export from `crates/rr_dr60/src/lib.rs`, along with `pub const VERSION`. Make T013 pass.
+- [X] T019 [P] Implement `crates/rr_dr60/src/sanitize.rs`: `#[inline] pub(crate) fn sanitize_in(x: f32) -> f64`, `narrow_out(y: f64) -> f32` and `flush_state(x: f64) -> f64`, with threshold constant `STATE_FLUSH: f64 = 1e-30` (commented R-05). Make T014 pass.
+- [X] T020 [P] Implement `crates/rr_dr60_harness/src/stimulus.rs`: `tone(freq_hz, amp, fs, n)` (phase accumulated in f64, `detmath::sin`), `impulse(n)`, `silence(n)`, `dc(level, n)`, `log_sweep(f0, f1, amp, fs, n)` (exponential sweep; phase in closed form using `detmath::{exp, ln, sin}`), `Pcg32::new(seed, stream)` / `next_u32()`, and `noise(seed, n)`. All outputs are `Vec<f32>`. All stimulus math MUST use `rr_dr60_detmath` only, because stimuli feed the golden files (FR-014). `stimulus.rs` stays under the clippy R-04 ban. Make T015 pass.
+- [X] T021 [P] Implement `crates/rr_dr60_harness/src/analysis.rs`:
   - `single_bin(signal, freq, fs, start, cycles) -> Complex`, a DFT over a whole number of cycles.
   - `gain_db_and_phase(input, output, freq, fs, settle)`.
   - `group_delay_samples(measure_fn, freq, fs)`: central difference ±1 Hz, unwrapped.
@@ -131,7 +131,7 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
   - `db` / `from_db`.
 
   The harness may use std `f64` math (analysis is tolerance-based, not bit-critical), so the R-04 clippy ban is overridden with a documented `#![allow(clippy::disallowed_methods)]` at the top of `analysis.rs` **only**, never crate-wide. `stimulus.rs`, `golden.rs` and `configs.rs` stay under the ban. Make T016 pass.
-- [ ] T022 Implement the `MeasurementResult` and `Tolerance` types in `crates/rr_dr60_harness/src/checks.rs`, per [data-model.md](data-model.md) › Measurement result:
+- [X] T022 Implement the `MeasurementResult` and `Tolerance` types in `crates/rr_dr60_harness/src/checks.rs`, per [data-model.md](data-model.md) › Measurement result:
   - Fields `requirement`, `property`, `trace`, `host_rate_hz`, `config`, `stimulus`, `measured`, `unit`, `tolerance`, `passed`.
   - `Tolerance::{Range, AtLeast, AtMost, Exact}` with `contains()`.
   - Helper `assert_all(results)` panics with a formatted table of the failures.
