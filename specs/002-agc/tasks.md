@@ -299,7 +299,7 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
   - **`golden-matrix` and `ios` jobs**: add `--test golden_agc` to the test commands.
   - Update the header comment.
 - [X] T044 [P] Add `--test golden_agc` to the dinghy command in `scripts/ios-device-golden.sh`. In `docs/release-checklist.md`, note that the iOS-device run now covers both golden files.
-- [ ] T045 Push `002-agc` and open a **draft PR**, only after asking the user. Confirm every CI job is green, including `golden_agc` on the desktop targets and the iOS simulator.
+- [X] T045 Push `002-agc` and open a **draft PR**, only after asking the user. Confirm every CI job is green, including `golden_agc` on the desktop targets and the iOS simulator.
 
 **Checkpoint**: CI is green on every automated target. The iOS-device check stays a manual release gate.
 
