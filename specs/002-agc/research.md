@@ -31,7 +31,7 @@ Decisions for feature 002. They build on [spec 001's research](../001-pipeline-s
 
 ## R-03 Hilbert filter design (R-02; A-019)
 
-- **Decision**: Equiripple type-III Hilbert FIR, 63 taps, passband 250–3750 Hz at 8 kHz, designed offline with `scipy.signal.remez(type="hilbert")` by a new script, `tools/filter-design/design_hilbert.py`. The script verifies the design and fails if magnitude is outside ±0.01 dB from 300 to 3400 Hz. It writes `crates/rr_dr60/src/stages/agc_hilbert_coeffs.rs`, with each coefficient stored as an exact bit pattern, as 001 R-07 does for the voice-band filter. Only the 32 odd-index taps are non-zero, so the filter costs 32 multiply-adds per device sample.
+- **Decision**: Equiripple type-III Hilbert FIR, 63 taps, passband 250–3750 Hz at 8 kHz, designed offline with `scipy.signal.remez(type="hilbert")` by a new script, `tools/filter-design/design_hilbert.py`. The script verifies the design and fails if magnitude is outside ±0.01 dB from 300 to 3400 Hz. It writes `crates/rr_dr60/src/stages/agc_hilbert_coeffs.rs`, with each coefficient stored as an exact bit pattern, as 001 R-07 does for the voice-band filter. Only the 32 even-index taps are non-zero (every odd-index tap, including the centre h[31], is zero), so the filter costs 32 multiply-adds per device sample.
 - **Sizing** (prototype, worst magnitude error at 300, 500, 1000, 2000, 2667 and 3400 Hz):
 
   | Taps | Detector delay | Max error |

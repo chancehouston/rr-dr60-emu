@@ -39,17 +39,17 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
 
 **Purpose**: Version bump and the generated Hilbert coefficients that the AGC detector needs.
 
-- [ ] T001 Bump the workspace version to 0.2.0:
+- [X] T001 Bump the workspace version to 0.2.0:
   - `version = "0.2.0"` in `[workspace.package]` and in the three internal dependency entries of `Cargo.toml`.
   - `RR_DR60_VERSION_MINOR = 2` in `crates/rr_dr60_ffi/src/lib.rs`.
   - Regenerate `crates/rr_dr60_ffi/include/rr_dr60.h` (see `crates/rr_dr60_ffi/cbindgen.toml`).
   - Golden comparison ignores `library_version`, so the 001 golden test must still pass.
-- [ ] T002 [P] Create `tools/filter-design/design_hilbert.py`, modeled on `design_voiceband.py`: a `uv` inline-script header (numpy, scipy), `--check` mode, and a non-zero exit on failure.
+- [X] T002 [P] Create `tools/filter-design/design_hilbert.py`, modeled on `design_voiceband.py`: a `uv` inline-script header (numpy, scipy), `--check` mode, and a non-zero exit on failure.
   - **Design**: `scipy.signal.remez(63, [250, 3750], [1], type="hilbert", fs=8000)`.
-  - **Checks**: the taps are antisymmetric, and every even-index tap is exactly 0. |H| is within ±0.01 dB at every 10 Hz step from 300 to 3400 Hz.
+  - **Checks**: the taps are antisymmetric, and every odd-index tap (including the centre, h[31]) is exactly 0. |H| is within ±0.01 dB at every 10 Hz step from 300 to 3400 Hz.
   - **Output**: `crates/rr_dr60/src/stages/agc_hilbert_coeffs.rs`, containing `pub(crate) const AGC_HILBERT: [f64; 63]` as `f64::from_bits(0x…)` literals.
   - **Header comment**: cites A-019, research.md R-03 and R-15, and the regeneration command.
-- [ ] T003 Run `uv run tools/filter-design/design_hilbert.py` and commit the generated `crates/rr_dr60/src/stages/agc_hilbert_coeffs.rs`. Declare it in `crates/rr_dr60/src/stages/mod.rs`; until US1 uses it, add `#[allow(dead_code)]` with a comment pointing to T023.
+- [X] T003 Run `uv run tools/filter-design/design_hilbert.py` and commit the generated `crates/rr_dr60/src/stages/agc_hilbert_coeffs.rs`. Declare it in `crates/rr_dr60/src/stages/mod.rs`; until US1 uses it, add `#[allow(dead_code)]` with a comment pointing to T023.
 
 **Checkpoint**: the workspace builds at 0.2.0, and `uv run tools/filter-design/design_hilbert.py --check` passes.
 
@@ -86,7 +86,7 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
   - Existing behavior for normal values and subnormals is unchanged.
 - [ ] T008 [P] Hilbert coefficient tests in `crates/rr_dr60/src/stages/agc_hilbert_coeffs.rs`, in a `#[cfg(test)]` module that the generator writes or that is appended next to it in `stages/mod.rs`:
   - Evaluate the frequency response analytically, with detmath `sin`/`cos`, at 300, 500, 1000, 2000, 8000/3 and 3400 Hz. |H| must be within ±0.01 dB (engineering target, 002 R-15).
-  - Antisymmetry: h[k] = −h[62−k]. Even-index taps are exactly 0.
+  - Antisymmetry: h[k] = −h[62−k]. Odd-index taps, including the centre h[31], are exactly 0.
 - [ ] T009 [P] Harness helper tests in `crates/rr_dr60_harness/src/analysis.rs` and `crates/rr_dr60_harness/src/stimulus.rs` test modules:
   - `analytic_envelope` recovers a constant 0.5 amplitude for a 1 kHz sine to within 0.01 dB away from the ends.
   - `settle_index(trajectory, final, excursion)` returns the last index outside 2/27 of the excursion. Check it on a synthetic exponential with a known τ, where the answer is τ·ln 13.5 ± 1 sample.
@@ -164,7 +164,7 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
 
 - [ ] T022 [US1] Implement `AgcStage` in `crates/rr_dr60/src/stages/agc.rs`, following data-model.md › Per-sample processing exactly:
   - **State**: a ring of the last 63 samples.
-  - **e²** = max(the peak hold over k = 0…31 of x[n−k]², x[n−31]² + h[n]², 1e-20), with h from `AGC_HILBERT`'s 32 odd taps.
+  - **e²** = max(the peak hold over k = 0…31 of x[n−k]², x[n−31]² + h[n]², 1e-20), with h from `AGC_HILBERT`'s 32 non-zero even-index taps.
   - **L** = (10 / LN_10) · `detmath::ln(e²)`.
   - **G<sub>t</sub>** = clamp(−0.9·(L − T), −A<sub>max</sub>, +G<sub>max</sub>).
   - **Smoother**: one-pole with α<sub>a</sub> or α<sub>r</sub>, where α = 1 − `detmath::exp`(−1 / (τ·8000)), τ<sub>a</sub> = attack / ln 13.5 and τ<sub>r</sub> = (release − 31/8000 s) / ln 13.5, computed at construction. Then G ← `flush_state(G)`.
