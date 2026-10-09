@@ -149,7 +149,7 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
 
 ### Tests for User Story 1 (write first, must fail) ⚠️
 
-- [ ] T023 [P] [US1] Analytic stage tests in `crates/rr_dr60/src/stages/voiceband.rs` (`#[cfg(test)]`). Evaluate H(e^jω) of the committed `VOICEBAND_SOS` with `detmath::{sin,cos}` on a 1 Hz grid from 0 to 4000 Hz, including exactly 4000 Hz (z = −1). Assert every FR-010 bound:
+- [X] T023 [P] [US1] Analytic stage tests in `crates/rr_dr60/src/stages/voiceband.rs` (`#[cfg(test)]`). Evaluate H(e^jω) of the committed `VOICEBAND_SOS` with `detmath::{sin,cos}` on a 1 Hz grid from 0 to 4000 Hz, including exactly 4000 Hz (z = −1). Assert every FR-010 bound:
   - |H(1 kHz)| = 0 dB ± 0.1 (A-015).
   - Lower −3 dB at 300 ± 50 Hz; upper −3 dB at 3400 ± 50 Hz.
   - Ripple ±0.5 dB from 400 to 3200 Hz.
@@ -158,7 +158,7 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
   - All section poles strictly inside the unit circle and zeros on or inside it (A-016).
 
   Also assert `group_delay_1k_samples()` matches the grid value within 1e-9.
-- [ ] T024 [P] [US1] Biquad tests in `crates/rr_dr60/src/stages/biquad.rs` (`#[cfg(test)]`):
+- [X] T024 [P] [US1] Biquad tests in `crates/rr_dr60/src/stages/biquad.rs` (`#[cfg(test)]`):
   - The impulse response of a known section (b = [0.5, 0.25, 0], a1 = −0.5, a2 = 0) matches values computed by hand for 8 samples.
   - After input stops, the voiceband cascade output is below −120 dBFS within 4,000 samples (0.5 s at 8 kHz, spec Edge Cases), and exactly 0.0 within 20,000 samples (R-05).
   - `reset()` zeroes the state.
@@ -184,9 +184,9 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
 
 ### Implementation for User Story 1
 
-- [ ] T029 [P] [US1] Implement `crates/rr_dr60/src/stages/biquad.rs`: `pub(crate) struct Biquad { b0, b1, b2, a1, a2, s1, s2: f64 }`, transposed direct form II (`y = b0·x + s1; s1 = b1·x − a1·y + s2; s2 = b2·x − a2·y`), applying `flush_state` to s1 and s2 after each update (R-05), with `const fn from_sos([f64; 5])` and `reset()`. Make T024 pass.
-- [ ] T029a [US1] Run `cargo test -p rr_dr60 stages::voiceband` and confirm T023 **fails** against the placeholder coefficients. Then run `uv run tools/filter-design/design_voiceband.py`, review its margin table, commit the generated `crates/rr_dr60/src/stages/voiceband_coeffs.rs` (A-002, A-014, A-015, A-016), and confirm the analytic part of T023 that tests the coefficient file passes.
-- [ ] T030 [US1] Implement `crates/rr_dr60/src/stages/voiceband.rs`: `pub(crate) struct VoiceBandStage { sections: [Biquad; 6] }` built from `VOICEBAND_SOS`. Doc comment: "Models signal-chain stage 4 (record anti-alias + ADC) and stage 10 (DAC + reconstruction) of the MSM7702 voice-band codec — assumed G.712-like (A-002, A-014), unity gain (A-015), minimum-phase (A-016)".
+- [X] T029 [P] [US1] Implement `crates/rr_dr60/src/stages/biquad.rs`: `pub(crate) struct Biquad { b0, b1, b2, a1, a2, s1, s2: f64 }`, transposed direct form II (`y = b0·x + s1; s1 = b1·x − a1·y + s2; s2 = b2·x − a2·y`), applying `flush_state` to s1 and s2 after each update (R-05), with `const fn from_sos([f64; 5])` and `reset()`. Make T024 pass.
+- [X] T029a [US1] Run `cargo test -p rr_dr60 stages::voiceband` and confirm T023 **fails** against the placeholder coefficients. Then run `uv run tools/filter-design/design_voiceband.py`, review its margin table, commit the generated `crates/rr_dr60/src/stages/voiceband_coeffs.rs` (A-002, A-014, A-015, A-016), and confirm the analytic part of T023 that tests the coefficient file passes.
+- [X] T030 [US1] Implement `crates/rr_dr60/src/stages/voiceband.rs`: `pub(crate) struct VoiceBandStage { sections: [Biquad; 6] }` built from `VOICEBAND_SOS`. Doc comment: "Models signal-chain stage 4 (record anti-alias + ADC) and stage 10 (DAC + reconstruction) of the MSM7702 voice-band codec — assumed G.712-like (A-002, A-014), unity gain (A-015), minimum-phase (A-016)".
   - `process(x: f64) -> f64` and `reset()`.
   - `pub(crate) fn group_delay_1k_samples() -> f64`: the analytic group delay at 1 kHz summed over the sections, using `detmath`.
   - Under `#[cfg(feature = "__test-hooks")]`, `#[doc(hidden)] pub fn with_sos(sos: [[f64; 5]; 6])` for SC-008 mutation tests.
