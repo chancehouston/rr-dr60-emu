@@ -43,5 +43,17 @@ pub use error::Error;
 pub use pipeline::Pipeline;
 pub use settings::{DEVICE_RATE_HZ, SUPPORTED_HOST_RATES, Settings, Tap};
 
+/// Test-only hooks for the measurement harness. Not part of the public API; enabled only by
+/// the `__test-hooks` feature.
+#[cfg(feature = "__test-hooks")]
+#[doc(hidden)]
+pub mod __test_hooks {
+    /// The committed voice-band stage coefficients, `[b0, b1, b2, a1, a2]` per section, so the
+    /// harness can compare measured responses with the analytic one (tasks.md T040, T048).
+    pub fn voiceband_sos() -> [[f64; 5]; 6] {
+        crate::stages::voiceband_coeffs::VOICEBAND_SOS
+    }
+}
+
 /// Crate version, e.g. `"0.1.0"`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

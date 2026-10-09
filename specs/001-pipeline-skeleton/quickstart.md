@@ -60,9 +60,15 @@ p.process_in_place(&mut buffer);                     // any block length
 ## 5. Use it from C / Swift
 
 ```sh
-cargo build -p rr_dr60_ffi --release                 # target/release/librr_dr60_ffi.{a,dylib,so} / .lib/.dll
-cc crates/rr_dr60_ffi/tests/c/smoke.c -Icrates/rr_dr60_ffi/include \
-   target/release/librr_dr60_ffi.a -o target/smoke && ./target/smoke
+crates/rr_dr60_ffi/tests/c/run_smoke.sh   # builds librr_dr60_ffi.a, compiles smoke.c against it, runs it
+```
+
+To link the static library into your own C program, add the native libraries Rust needs on your
+platform. `run_smoke.sh` shows how to get them:
+
+```sh
+cargo rustc --color never -p rr_dr60_ffi --release --lib --crate-type staticlib -- --print native-static-libs
+cc your_app.c -I crates/rr_dr60_ffi/include target/release/librr_dr60_ffi.a <native libs> -lm
 ```
 
 **Expected**: `smoke: OK` and exit code 0. The smoke test creates a 48 kHz pipeline, processes a 1 kHz tone, checks the level and latency, exercises the error paths from the contract table, and destroys the pipeline.

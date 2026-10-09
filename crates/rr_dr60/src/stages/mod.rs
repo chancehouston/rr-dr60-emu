@@ -2,4 +2,4 @@
 
 mod biquad;
 pub(crate) mod voiceband;
-mod voiceband_coeffs;
+pub(crate) mod voiceband_coeffs;

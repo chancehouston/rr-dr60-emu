@@ -1,7 +1,14 @@
 name: CI
 
-# Basic CI (spec 001, tasks.md T010). The cross-platform golden matrix (8 targets, FR-014),
-# the iOS jobs, the MSRV job and the release timing job are added in Phase 6 (T061–T065).
+# CI for spec 001.
+#   check         fmt, clippy, tests, C smoke test (ubuntu + macos); golden with default
+#                 features, release timing, C header drift (ubuntu)          — T010, T038, T060
+#   coverage      >= 80% line coverage (Constitution III)                   — T010
+#   golden-matrix golden + determinism tests on 6 desktop targets (FR-014)    — T061
+#   ios           golden + determinism in the iOS simulator; iOS builds       — T063
+#   msrv          full test suite on Rust 1.85                                — T065
+# The 8th FR-014 target, a physical iOS device, is a release-time manual gate
+# (scripts/ios-device-golden.sh, docs/release-checklist.md).
 #
 # Triggers: pull requests and pushes to main only. Test-first commits that are deliberately
 # red stay on feature branches until the branch is ready (tasks.md "Conventions").
@@ -20,6 +27,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  CBINDGEN_VERSION: 0.29.4
 
 jobs:
   check:
@@ -42,6 +50,25 @@ jobs:
         run: cargo test --all-features
       - name: C smoke test (FR-023, FR-024)
         run: crates/rr_dr60_ffi/tests/c/run_smoke.sh
+      - name: Traceability audit (FR-018, SC-007)
+        if: matrix.os == 'ubuntu-latest'
+        run: scripts/check-traceability.sh
+      - name: Golden files with default features (shipped configuration, no op-count)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test -p rr_dr60_harness --test golden
+      - name: Timing checks (release; FR-015 bounded work, SC-006)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test -p rr_dr60_harness --release --test timing -- --ignored --nocapture
+      - name: Install pinned cbindgen
+        if: matrix.os == 'ubuntu-latest'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cbindgen@${{ env.CBINDGEN_VERSION }}
+      - name: C header is up to date
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cbindgen --config crates/rr_dr60_ffi/cbindgen.toml --crate rr_dr60_ffi --output crates/rr_dr60_ffi/include/rr_dr60.h
+          git diff --exit-code crates/rr_dr60_ffi/include/rr_dr60.h
 
   coverage:
     # Constitution III: workspace line coverage >= 80%, enforced as soon as the workspace exists.
@@ -57,3 +84,58 @@ jobs:
           tool: cargo-llvm-cov
       - name: Coverage gate (>= 80% lines)
         run: cargo llvm-cov --all-features --workspace --fail-under-lines 80
+
+  golden-matrix:
+    # FR-014 / SC-003: one golden file must match bit-for-bit on every target. One set of
+    # golden references serves all of them; per-platform golden files are not allowed.
+    name: golden (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          # Intel macOS. Fallback if this image is retired: run on macos-latest with
+          # `--target x86_64-apple-darwin` (executes under Rosetta 2).
+          - { os: macos-15-intel, target: x86_64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+          # Windows on ARM64. If this hosted runner is unavailable, remove it here: a
+          # continue-on-error job does not satisfy FR-014. The target then moves to the
+          # release-time manual gate (docs/release-checklist.md).
+          - { os: windows-11-arm, target: aarch64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Golden files and determinism
+        run: cargo test -p rr_dr60_harness --all-features --target ${{ matrix.target }} --test golden --test determinism
+
+  ios:
+    name: ios (simulator + builds)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Golden files and determinism in the iOS simulator
+        # .cargo/config.toml routes aarch64-apple-ios-sim binaries through scripts/ios-sim-runner.sh.
+        run: cargo test -p rr_dr60_harness --target aarch64-apple-ios-sim --test golden --test determinism
+      - name: Build the C API library for iOS device and Intel simulator
+        run: |
+          cargo build -p rr_dr60_ffi --release --target aarch64-apple-ios
+          cargo build -p rr_dr60_ffi --release --target x86_64-apple-ios
+
+  msrv:
+    name: msrv (Rust 1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust 1.85
+        run: rustup toolchain install 1.85 --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - name: Test on the minimum supported Rust version
+        run: cargo +1.85 test --workspace --all-features

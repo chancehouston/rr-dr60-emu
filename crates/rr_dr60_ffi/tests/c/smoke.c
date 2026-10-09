@@ -76,6 +76,21 @@ int main(void) {
   CHECK(rr_dr60_process(p, buf, buf, N) == RR_DR60_STATUS_OK, "in place");
   CHECK(memcmp(buf, out, sizeof out) == 0, "in-place output differs from copy mode");
 
+  /* Reconfigure rows (contracts/c-api.md): errors leave the old configuration working. */
+  bad = rr_dr60_settings_default(22050);
+  CHECK(rr_dr60_reconfigure(p, &bad) == RR_DR60_STATUS_UNSUPPORTED_HOST_RATE, "reconfigure 22050 Hz");
+  uint32_t latency_after = 0;
+  CHECK(rr_dr60_latency_samples(p, &latency_after) == RR_DR60_STATUS_OK && latency_after == latency,
+        "failed reconfigure changed latency (%u -> %u)", latency, latency_after);
+  CHECK(rr_dr60_process(p, in, out, 64) == RR_DR60_STATUS_OK, "process after failed reconfigure");
+  CHECK(rr_dr60_reconfigure(p, NULL) == RR_DR60_STATUS_NULL_POINTER, "reconfigure(NULL)");
+  RrDr60Settings bypass = rr_dr60_settings_default(FS);
+  bypass.record_stage_enabled = false;
+  bypass.playback_stage_enabled = false;
+  CHECK(rr_dr60_reconfigure(p, &bypass) == RR_DR60_STATUS_OK, "reconfigure to bypass_all");
+  CHECK(rr_dr60_latency_samples(p, &latency_after) == RR_DR60_STATUS_OK && latency_after < latency,
+        "bypass_all latency %u should be below default %u", latency_after, latency);
+
   CHECK(rr_dr60_version_string() != NULL && strlen(rr_dr60_version_string()) > 0, "version");
   rr_dr60_destroy(p);
   rr_dr60_destroy(NULL);

@@ -7,7 +7,7 @@ use crate::sanitize::flush_state;
 ///
 /// y = b0·x + s1;  s1 ← b1·x − a1·y + s2;  s2 ← b2·x − a2·y
 ///
-/// Both state values are flushed to exactly 0.0 below 1e-30 after each update (R-05). Only
+/// Both state values are flushed to exactly 0.0 together once both are below 1e-30 (R-05). Only
 /// basic IEEE operations are used, so results are bit-identical on every platform (R-04).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Biquad {
@@ -18,6 +18,9 @@ pub(crate) struct Biquad {
     a2: f64,
     s1: f64,
     s2: f64,
+    /// Multiply-adds performed (test-only, FR-015 bounded work; tasks.md T059).
+    #[cfg(feature = "op-count")]
+    pub(crate) ops: u64,
 }
 
 impl Biquad {
@@ -31,15 +34,31 @@ impl Biquad {
             a2: c[4],
             s1: 0.0,
             s2: 0.0,
+            #[cfg(feature = "op-count")]
+            ops: 0,
         }
     }
 
     /// Processes one sample.
     #[inline]
     pub(crate) fn process(&mut self, x: f64) -> f64 {
+        #[cfg(feature = "op-count")]
+        {
+            self.ops += 5;
+        }
         let y = self.b0 * x + self.s1;
-        self.s1 = flush_state(self.b1 * x - self.a1 * y + self.s2);
-        self.s2 = flush_state(self.b2 * x - self.a2 * y);
+        let s1 = self.b1 * x - self.a1 * y + self.s2;
+        let s2 = self.b2 * x - self.a2 * y;
+        // Flush both states together, and only when both are tiny (R-05). Flushing them one
+        // at a time breaks the cancellation between s1 and s2 in sections with poles near
+        // z = 1, which can sustain a ~1e-30 limit cycle forever.
+        if flush_state(s1) == 0.0 && flush_state(s2) == 0.0 {
+            self.s1 = 0.0;
+            self.s2 = 0.0;
+        } else {
+            self.s1 = s1;
+            self.s2 = s2;
+        }
         y
     }
 
@@ -72,12 +91,47 @@ mod tests {
     }
 
     #[test]
+    fn cascade_tail_reaches_exact_zero_without_a_limit_cycle() {
+        // Regression (found by the US3 tail edge-case test): flushing s1 and s2 separately let
+        // the two-stage cascade sustain a ~1.9e-30 oscillation forever after a full-scale sweep.
+        let mut cascade: [Biquad; 12] =
+            core::array::from_fn(|i| Biquad::from_sos(VOICEBAND_SOS[i % 6]));
+        let mut phase = 0.0f64;
+        for n in 0..8000 {
+            // Exponential chirp 20 Hz -> 3600 Hz at 8 kHz, amplitude 1 (basic ops only).
+            let f = 20.0 * (1.0 + 179.0 * n as f64 / 8000.0);
+            phase += f / 8000.0;
+            phase -= (phase as i64) as f64;
+            let x = if phase < 0.5 {
+                4.0 * phase - 1.0
+            } else {
+                3.0 - 4.0 * phase
+            }; // triangle
+            cascade.iter_mut().fold(x, |v, s| s.process(v));
+        }
+        let mut last_nonzero = 0;
+        for n in 0..160_000 {
+            if cascade.iter_mut().fold(0.0, |v, s| s.process(v)) != 0.0 {
+                last_nonzero = n;
+            }
+        }
+        assert!(
+            cascade.iter().all(|s| s.s1 == 0.0 && s.s2 == 0.0),
+            "state never reached exact zero"
+        );
+        assert!(
+            last_nonzero < 40_000,
+            "output nonzero until sample {last_nonzero} (5 s)"
+        );
+    }
+
+    #[test]
     fn reset_zeroes_state() {
         let mut b = Biquad::from_sos([0.5, 0.25, 0.1, -0.5, 0.1]);
         b.process(1.0);
         b.reset();
         assert_eq!(b.process(0.0), 0.0);
-        assert_eq!(b, Biquad::from_sos([0.5, 0.25, 0.1, -0.5, 0.1]));
+        assert_eq!((b.s1, b.s2), (0.0, 0.0));
     }
 
     #[test]

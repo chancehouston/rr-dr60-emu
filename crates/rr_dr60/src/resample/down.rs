@@ -14,6 +14,9 @@ pub(crate) struct PolyphaseDown {
     m: u32,
     history: Box<[f64]>,
     mask: usize,
+    /// Multiply-adds performed (test-only, FR-015 bounded work; tasks.md T059).
+    #[cfg(feature = "op-count")]
+    pub(crate) ops: u64,
     /// Host samples consumed.
     n: u64,
     /// Phase of the next device sample: (k · m) mod l.
@@ -36,6 +39,8 @@ impl PolyphaseDown {
             n: 0,
             phase: 0,
             due: 0,
+            #[cfg(feature = "op-count")]
+            ops: 0,
         }
     }
 
@@ -51,6 +56,10 @@ impl PolyphaseDown {
         let start = self.phase as usize * self.taps;
         let branch = &self.branches[start..start + self.taps];
         let mut acc = 0.0;
+        #[cfg(feature = "op-count")]
+        {
+            self.ops += self.taps as u64;
+        }
         for (i, &c) in branch.iter().enumerate() {
             acc += c * self.history[n.wrapping_sub(i as u64) as usize & self.mask];
         }
@@ -58,6 +67,12 @@ impl PolyphaseDown {
         self.due += u64::from(next / self.l);
         self.phase = next % self.l;
         Some(acc)
+    }
+
+    /// Taps per polyphase branch.
+    #[cfg(all(test, feature = "op-count"))]
+    pub(crate) fn taps(&self) -> usize {
+        self.taps
     }
 
     /// Returns to the freshly created state. No allocation.

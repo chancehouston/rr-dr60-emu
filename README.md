@@ -34,17 +34,20 @@ Exact specifications for the RR-DR60 aren't fully public. Where they're unknown,
 
 **Own a working RR-DR60?** Recordings of test signals from a real unit are the most valuable contribution you can make. Open a [Hardware evidence](https://github.com/chancehouston/rr-dr60-emu/issues/new/choose) issue.
 
-## Status: MVP
+## Using the library
 
 What exists today ([spec 001](specs/001-pipeline-skeleton/spec.md)):
 
 - Mono audio at **8, 16, 44.1, 48, 88.2 or 96 kHz** goes in, in blocks of any size, and the same number of samples comes out at the same rate.
 - Inside, the audio is converted to the device's internal 8 kHz rate and passes through two band-limiting stages. They model the record and playback filters of the recorder's MSM7702 voice-band codec, *assumed* to follow a telephone-style 300–3400 Hz band. They're designed to the spec's tolerances but haven't been measured against a real unit ([A-002, A-014–A-016](docs/hardware/assumptions.md)).
-- Fixed, reported latency: about 11.3 ms at 48 kHz.
-- Deterministic and real-time safe: no allocation, locks or I/O while processing, and bit-identical output for any block size.
+- Fixed, reported latency: 541 samples (about 11.3 ms) at 48 kHz in the default configuration. It is under 20 ms at every supported rate, and each configuration reports its own.
+- **Real-time safe:** `process`, `process_in_place` and `reset` never allocate, lock or do I/O. Processing runs at about 230× real time at 48 kHz on a laptop. `Pipeline::new` and `reconfigure` allocate, so call them outside the audio callback.
+- **Deterministic:** the same input and settings give bit-identical output for any block size, and on every supported platform. One golden file is checked on Linux, macOS and Windows (x86-64 and ARM64) and on iOS.
 - A C API with a generated header ([`rr_dr60.h`](crates/rr_dr60_ffi/include/rr_dr60.h)).
 
-Not yet: bypassing individual stages and taking the output after the record stage (the settings exist, but they don't take effect until the next feature), and every stage beyond the codec filters.
+- Each stage can be **bypassed**, the output can be **tapped after the record stage** ("what the device recorded"), and the reported latency follows the configuration. `reconfigure` changes settings between streams.
+
+Not yet: every stage beyond the codec filters.
 
 ### Rust
 
@@ -69,6 +72,10 @@ rr_dr60_destroy(p);
 ```
 
 Build the static library with `cargo build -p rr_dr60_ffi --release`. `crates/rr_dr60_ffi/tests/c/run_smoke.sh` shows a complete build and link. From Swift, import `rr_dr60.h` through a bridging header or module map.
+
+### Accuracy of this slice
+
+The two stages are **modeled on** the MSM7702 codec's *assumed* telephone-band filters. A [measurement harness](specs/001-pipeline-skeleton/quickstart.md) checks 212 properties against the spec's tolerances (band edges, ripple, rejection, latency) at every supported rate. That proves the emulator does what the spec says. It does **not** prove that the spec matches a real RR-DR60, because no real-unit recordings exist yet. See [Accuracy](#accuracy) above for how to help.
 
 ## Planned features
 

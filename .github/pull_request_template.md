@@ -15,3 +15,6 @@ Closes #
 - [ ] `cargo fmt`, `cargo clippy -D warnings`, and `cargo test` pass
 - [ ] Public API documented; C API changes reflected in the generated header
 - [ ] CHANGELOG.md updated (Unreleased) for user-visible changes
+- [ ] Golden files: unchanged, **or** re-blessed on purpose (`RR_DR60_BLESS=1 cargo test -p rr_dr60_harness --test golden`) with a CHANGELOG entry explaining why the output changed
+- [ ] C header regenerated with cbindgen if the C API changed (CI checks for drift)
+- [ ] Every new or changed numeric default or tolerance cites an `A-###`/`S-###` ID or is labeled "engineering target" (`scripts/check-traceability.sh`)

@@ -153,6 +153,17 @@ RrDr60Status rr_dr60_latency_samples(const struct RrDr60Pipeline *pipeline, uint
 // `pipeline` must be a live handle.
 RrDr60Status rr_dr60_reset(struct RrDr60Pipeline *pipeline);
 
+// Applies new settings and resets all state, as if the pipeline were created anew. On
+// success a poisoned handle becomes usable again. On error the pipeline is unchanged. Not
+// real-time safe (allocates).
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `settings` must be NULL or point to a valid
+// `RrDr60Settings`.
+RrDr60Status rr_dr60_reconfigure(struct RrDr60Pipeline *pipeline,
+                                 const struct RrDr60Settings *settings);
+
 // The library version as a static NUL-terminated string, e.g. `"0.1.0"`. Never NULL; do not
 // free.
 const char *rr_dr60_version_string(void);

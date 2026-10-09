@@ -41,7 +41,7 @@ Each entry gives a **Decision**, its **Rationale**, and the **Alternatives consi
 
 - **Decision**:
   - On input, any non-finite sample becomes `0.0`, and any `f32` subnormal becomes `0.0` (in `sanitize_in`).
-  - Each biquad and FIR state value whose magnitude is below `1e-30` is set to `0.0` after each update. This is a deterministic compare-and-store.
+  - After each update, a biquad's two state values are set to `0.0` **together** once both are below `1e-30` in magnitude. This is a deterministic compare-and-store. (Amended during US3: flushing each state value on its own let sections with poles near z = 1 sustain a ~1e-30 limit cycle, which the harness's tail test caught.)
   - On output, any `f32` result whose magnitude is below `f32::MIN_POSITIVE` becomes `0.0`.
   - No clipping is applied anywhere.
 - **Rationale**: This meets the spec's edge cases and FR-002 (exact pass-through at 8 kHz except for these substitutions). The 1e-30 flush makes the IIR tails reach exact zero, which satisfies the tail rule (below −120 dBFS within 0.5 s, then digital silence) and US1 AS4. It also keeps processing time constant, avoiding subnormal slowdowns.

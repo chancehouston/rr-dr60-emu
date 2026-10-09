@@ -1,0 +1,4 @@
+# Run iOS-simulator test binaries inside a simulator (tasks.md T062).
+# The path is relative to the directory that contains this .cargo directory.
+[target.aarch64-apple-ios-sim]
+runner = "scripts/ios-sim-runner.sh"

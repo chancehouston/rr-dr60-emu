@@ -152,3 +152,233 @@ mod tests {
         assert!((g + 20.0).abs() < 1e-9 && ph.abs() < 1e-9);
     }
 }
+
+/// Complex frequency response of the impulse response `ir` at exactly `freq_hz` (direct DTFT).
+pub fn dtft<T: Copy + Into<f64>>(ir: &[T], freq_hz: f64, fs: f64) -> Complex64 {
+    let w = TAU * freq_hz / fs;
+    ir.iter()
+        .enumerate()
+        .fold(Complex64::new(0.0, 0.0), |acc, (n, &v)| {
+            let v: f64 = v.into();
+            acc + Complex64::from_polar(v, -w * n as f64)
+        })
+}
+
+/// Frequency response from an impulse response, on an FFT grid (tasks.md T047, T048).
+#[derive(Clone, Debug)]
+pub struct Spectrum {
+    /// Sample rate of the impulse response, in Hz.
+    pub fs: f64,
+    /// FFT bins 0..n (bin k is at k·fs/n Hz).
+    pub bins: Vec<Complex64>,
+}
+
+impl Spectrum {
+    /// FFT of `ir`, zero-padded or truncated to `n` (a power of two).
+    pub fn from_impulse_response<T: Copy + Into<f64>>(ir: &[T], fs: f64, n: usize) -> Self {
+        let mut bins: Vec<Complex64> = (0..n)
+            .map(|i| Complex64::new(ir.get(i).map_or(0.0, |&v| v.into()), 0.0))
+            .collect();
+        rustfft::FftPlanner::new()
+            .plan_fft_forward(n)
+            .process(&mut bins);
+        Self { fs, bins }
+    }
+
+    /// Bin spacing in Hz.
+    pub fn resolution(&self) -> f64 {
+        self.fs / self.bins.len() as f64
+    }
+
+    /// Frequency of bin `k`, in Hz.
+    pub fn freq(&self, k: usize) -> f64 {
+        k as f64 * self.resolution()
+    }
+
+    /// Bins from `f_lo` to `f_hi` Hz inclusive, up to (and excluding) Nyquist.
+    pub fn range(&self, f_lo: f64, f_hi: f64) -> std::ops::RangeInclusive<usize> {
+        let r = self.resolution();
+        let hi = ((f_hi / r).floor() as usize).min(self.bins.len() / 2 - 1);
+        ((f_lo / r).ceil() as usize)..=hi
+    }
+
+    /// This spectrum divided bin by bin by `other` (e.g. a configuration over the bypassed
+    /// baseline, FR-010).
+    pub fn divide(&self, other: &Spectrum) -> Spectrum {
+        Spectrum {
+            fs: self.fs,
+            bins: self
+                .bins
+                .iter()
+                .zip(&other.bins)
+                .map(|(a, b)| a / b)
+                .collect(),
+        }
+    }
+
+    /// Group delay in samples near `freq_hz`, from the phase difference of adjacent bins.
+    pub fn group_delay_samples(&self, freq_hz: f64) -> f64 {
+        let k = (freq_hz / self.resolution()).round() as usize;
+        let dphi = (self.bins[k + 1] / self.bins[k]).arg();
+        -dphi / (TAU / self.bins.len() as f64)
+    }
+}
+
+/// Minimum-phase phase (radians) for every FFT bin, reconstructed from the magnitude of
+/// `spectrum` by the real-cepstrum method. Magnitudes are floored at 1e-30 (−600 dB) so exact
+/// zeros on the unit circle stay finite. A higher floor (e.g. 1e-12) visibly distorts the
+/// reconstruction near such zeros (0.54° instead of 0.11° on the voice-band cascade).
+pub fn minimum_phase(spectrum: &Spectrum) -> Vec<f64> {
+    let n = spectrum.bins.len();
+    let mut planner = rustfft::FftPlanner::new();
+    let mut c: Vec<Complex64> = spectrum
+        .bins
+        .iter()
+        .map(|h| Complex64::new(h.norm().max(1e-30).ln(), 0.0))
+        .collect();
+    planner.plan_fft_inverse(n).process(&mut c);
+    for (i, v) in c.iter_mut().enumerate() {
+        let fold = if i == 0 || i == n / 2 {
+            1.0
+        } else if i < n / 2 {
+            2.0
+        } else {
+            0.0
+        };
+        *v = Complex64::new(v.re / n as f64 * fold, 0.0);
+    }
+    planner.plan_fft_forward(n).process(&mut c);
+    c.iter().map(|v| v.im).collect()
+}
+
+/// Largest phase difference, in degrees, between `spectrum` and its minimum-phase
+/// reconstruction over `f_lo..=f_hi` Hz (FR-010 phase check, A-016).
+pub fn phase_deviation_deg(spectrum: &Spectrum, f_lo: f64, f_hi: f64) -> f64 {
+    let minphase = minimum_phase(spectrum);
+    spectrum
+        .range(f_lo, f_hi)
+        .map(|k| {
+            let d = spectrum.bins[k].arg() - minphase[k];
+            let wrapped = (d + std::f64::consts::PI).rem_euclid(TAU) - std::f64::consts::PI;
+            wrapped.abs().to_degrees()
+        })
+        .fold(0.0, f64::max)
+}
+
+/// Power of everything in `output` except the sinusoid at `freq_hz`, relative to the power of
+/// `input`, in dB, over `settle..` (alias and image products, FR-005). Uses an unwindowed
+/// least-squares fit, so the fitted tone is removed exactly.
+pub fn residual_power_db<T: Copy + Into<f64>, U: Copy + Into<f64>>(
+    input: &[T],
+    output: &[U],
+    freq_hz: f64,
+    fs: f64,
+    settle: usize,
+) -> f64 {
+    let y: Vec<f64> = output[settle..].iter().map(|&v| v.into()).collect();
+    let w = TAU * freq_hz / fs;
+    let (mut scc, mut sss, mut scs, mut syc, mut sys) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for (n, &v) in y.iter().enumerate() {
+        let (s, c) = (w * n as f64).sin_cos();
+        scc += c * c;
+        sss += s * s;
+        scs += c * s;
+        syc += v * c;
+        sys += v * s;
+    }
+    let det = scc * sss - scs * scs;
+    let (a, b) = ((syc * sss - sys * scs) / det, (sys * scc - syc * scs) / det);
+    let residual: f64 = y
+        .iter()
+        .enumerate()
+        .map(|(n, &v)| {
+            let (s, c) = (w * n as f64).sin_cos();
+            let r = v - (a * c + b * s);
+            r * r
+        })
+        .sum();
+    let pin: f64 = input[settle..].iter().map(|&v| v.into() * v.into()).sum();
+    10.0 * (residual / pin).log10()
+}
+
+#[cfg(test)]
+mod spectrum_tests {
+    use super::*;
+
+    fn filter(sos: &[[f64; 5]], x: &[f64]) -> Vec<f64> {
+        let mut y = x.to_vec();
+        for &[b0, b1, b2, a1, a2] in sos {
+            let (mut s1, mut s2) = (0.0, 0.0);
+            for v in &mut y {
+                let out = b0 * *v + s1;
+                s1 = b1 * *v - a1 * out + s2;
+                s2 = b2 * *v - a2 * out;
+                *v = out;
+            }
+        }
+        y
+    }
+
+    fn impulse(n: usize) -> Vec<f64> {
+        let mut x = vec![0.0; n];
+        x[0] = 1.0;
+        x
+    }
+
+    #[test]
+    fn minimum_phase_cascade_has_small_deviation() {
+        let ir = filter(&rr_dr60::__test_hooks::voiceband_sos(), &impulse(65_536));
+        let s = Spectrum::from_impulse_response(&ir, 8000.0, 65_536);
+        let d = phase_deviation_deg(&s, 400.0, 3200.0);
+        assert!(d <= 0.5, "min-phase cascade deviates {d:.3} deg");
+    }
+
+    #[test]
+    fn linear_phase_fir_has_large_deviation() {
+        // 31-tap symmetric (linear-phase) Hann-windowed low-pass at 2 kHz.
+        let taps: Vec<f64> = (0..31)
+            .map(|k| {
+                let t = k as f64 - 15.0;
+                let sinc = if t == 0.0 {
+                    0.5
+                } else {
+                    (std::f64::consts::PI * 0.5 * t).sin() / (std::f64::consts::PI * t)
+                };
+                sinc * (0.5 - 0.5 * (TAU * k as f64 / 30.0).cos())
+            })
+            .collect();
+        let s = Spectrum::from_impulse_response(&taps, 8000.0, 65_536);
+        let d = phase_deviation_deg(&s, 400.0, 1600.0);
+        assert!(d > 5.0, "linear-phase FIR deviates only {d:.3} deg");
+    }
+
+    #[test]
+    fn spectrum_helpers() {
+        // A pure 10-sample delay: unit magnitude, group delay 10, dtft agrees with the FFT.
+        let mut ir = vec![0.0; 64];
+        ir[10] = 1.0;
+        let s = Spectrum::from_impulse_response(&ir, 8000.0, 1024);
+        assert!((s.group_delay_samples(1000.0) - 10.0).abs() < 1e-9);
+        assert!((s.bins[128] - dtft(&ir, s.freq(128), 8000.0)).norm() < 1e-9);
+        assert_eq!(s.range(0.0, 8000.0), 0..=511);
+        let flat = s.divide(&s);
+        assert!(
+            flat.bins
+                .iter()
+                .all(|b| (b - Complex64::new(1.0, 0.0)).norm() < 1e-12)
+        );
+    }
+
+    #[test]
+    fn residual_of_pure_tone_is_tiny() {
+        let x: Vec<f64> = (0..48_000)
+            .map(|n| (TAU * 1000.0 * n as f64 / 48_000.0).sin())
+            .collect();
+        let mut y = x.clone();
+        for (n, v) in y.iter_mut().enumerate() {
+            *v += 1e-4 * (TAU * 3000.0 * n as f64 / 48_000.0).sin(); // a -80 dB "alias"
+        }
+        let r = residual_power_db(&x, &y, 1000.0, 48_000.0, 0);
+        assert!((r + 80.0).abs() < 0.1, "residual {r:.2} dB");
+    }
+}

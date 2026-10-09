@@ -7,7 +7,7 @@
 ///
 /// This makes IIR tails reach digital silence, keeps processing time constant (no subnormal
 /// slowdowns), and keeps results independent of the host's FTZ/DAZ settings.
-pub(crate) const STATE_FLUSH: f64 = 1e-30;
+pub(crate) const STATE_FLUSH: f64 = 1e-30; // engineering target (R-05)
 
 /// Input sample to the internal f64 domain. Non-finite and f32-subnormal samples become 0.0
 /// (spec Edge Cases, FR-002). Normal values, including those beyond ±1.0, are kept exactly.
