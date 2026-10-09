@@ -1,0 +1,24 @@
+# R-04 (research.md): cross-platform bit-identity. Platform libm differs between OSes and
+# mul_add may compile to a fused multiply-add. Use rr_dr60_detmath or basic IEEE operations.
+disallowed-methods = [
+    { path = "f64::sin", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f64::cos", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f64::tan", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f64::exp", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f64::ln", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f64::log10", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f64::powf", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f64::powi", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f64::mul_add", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f64::sqrt", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f32::sin", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f32::cos", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f32::tan", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f32::exp", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f32::ln", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f32::log10", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f32::powf", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f32::powi", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f32::mul_add", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+    { path = "f32::sqrt", reason = "R-04: not bit-identical across platforms; use rr_dr60_detmath or basic ops" },
+]

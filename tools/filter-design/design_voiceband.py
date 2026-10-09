@@ -1,0 +1,177 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["numpy", "scipy"]
+# ///
+"""Design and verify the RR-DR60 voice-band stage filter (signal-chain stages 4 and 10).
+
+Design (research.md R-07), at the 8 kHz device rate (A-001):
+  * high-pass: Butterworth, 5th order, -3 dB at 300 Hz
+  * low-pass: elliptic, 6th order, 0.1 dB ripple, 40 dB stopband, edge 3380 Hz
+  * gain normalized to exactly 0 dB at 1 kHz (A-015)
+  * minimum-phase by construction (A-016); same shape for both stages (A-014)
+
+The script verifies every FR-010 bound analytically and exits non-zero on any failure.
+The emitted Rust file stores each coefficient as an exact bit pattern, so the Rust
+build never depends on this script's floating-point environment (R-04).
+
+Usage (from the repository root):
+  uv run tools/filter-design/design_voiceband.py            # design, verify, write coefficients
+  uv run tools/filter-design/design_voiceband.py --check    # design and verify only
+  uv run tools/filter-design/design_voiceband.py --shift-hz 100 --emit-fixture PATH
+      # design with both band edges shifted by 100 Hz and write a test fixture (SC-008, T057)
+"""
+
+from __future__ import annotations
+
+import argparse
+import struct
+import sys
+from pathlib import Path
+
+import numpy as np
+from scipy import signal
+
+FS = 8000.0  # A-001: device rate
+HP_ORDER, HP_FC = 5, 300.0  # R-07
+LP_ORDER, LP_RP, LP_RS, LP_FC = 6, 0.1, 40.0, 3380.0  # R-07
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+OUTPUT = REPO_ROOT / "crates/rr_dr60/src/stages/voiceband_coeffs.rs"
+
+
+def design(shift_hz: float = 0.0) -> np.ndarray:
+    """Return the cascade as an (6, 6) SOS array [b0, b1, b2, a0, a1, a2], 0 dB at 1 kHz."""
+    hp = signal.butter(HP_ORDER, HP_FC + shift_hz, "highpass", fs=FS, output="sos")
+    lp = signal.ellip(LP_ORDER, LP_RP, LP_RS, LP_FC + shift_hz, "lowpass", fs=FS, output="sos")
+    sos = np.vstack([hp, lp])
+    _, h1k = signal.sosfreqz(sos, worN=[1000.0], fs=FS)
+    sos[0, :3] /= abs(h1k[0])  # A-015: unity gain at 1 kHz
+    assert sos.shape == (6, 6) and np.allclose(sos[:, 3], 1.0)
+    return sos
+
+
+def response_db(sos: np.ndarray, freqs: np.ndarray) -> np.ndarray:
+    _, h = signal.sosfreqz(sos, worN=freqs, fs=FS)
+    return 20.0 * np.log10(np.maximum(np.abs(h), 1e-300))
+
+
+def group_delay_ms(sos: np.ndarray, f: float) -> float:
+    _, h = signal.sosfreqz(sos, worN=[f - 0.5, f + 0.5], fs=FS)
+    dphi = np.unwrap(np.angle(h))
+    return -(dphi[1] - dphi[0]) / (2.0 * np.pi * 1.0) * 1000.0
+
+
+def verify(sos: np.ndarray) -> list[tuple[str, str, str, bool]]:
+    """Check every FR-010 bound. Returns rows of (property, target, measured, ok)."""
+    rows = []
+    f = np.linspace(0.5, 3999.5, 79991)
+    rel = response_db(sos, f)
+    g1k = float(response_db(sos, np.array([1000.0]))[0])
+    rows.append(("gain at 1 kHz", "0 dB ± 0.1", f"{g1k:+.4f} dB", abs(g1k) <= 0.1))
+
+    lo3 = float(f[(rel < g1k - 3.0) & (f < 1000.0)].max())
+    hi3 = float(f[(rel < g1k - 3.0) & (f > 1000.0)].min())
+    rows.append(("lower -3 dB point", "300 ± 50 Hz", f"{lo3:.1f} Hz", abs(lo3 - 300.0) <= 50.0))
+    rows.append(("upper -3 dB point", "3400 ± 50 Hz", f"{hi3:.1f} Hz", abs(hi3 - 3400.0) <= 50.0))
+
+    pb = (f >= 400.0) & (f <= 3200.0)
+    ripple = float(np.max(np.abs(rel[pb] - g1k)))
+    rows.append(("ripple 400-3200 Hz", "≤ ±0.5 dB", f"±{ripple:.3f} dB", ripple <= 0.5))
+
+    a60 = float(g1k - rel[f <= 60.0].max())
+    rows.append(("attenuation ≤ 60 Hz", "≥ 20 dB", f"{a60:.1f} dB", a60 >= 20.0))
+
+    adc = float(g1k - response_db(sos, np.array([0.0]))[0])
+    rows.append(("attenuation at DC", "≥ 40 dB", f"{min(adc, 999.0):.1f} dB", adc >= 40.0))
+
+    a4k = float(g1k - response_db(sos, np.array([4000.0]))[0])
+    rows.append(("attenuation at 4000 Hz", "≥ 14 dB", f"{min(a4k, 999.0):.1f} dB", a4k >= 14.0))
+
+    gd400, gd1k, gd3200 = (group_delay_ms(sos, x) for x in (400.0, 1000.0, 3200.0))
+    rows.append(("group delay at 1 kHz", "≤ 2 ms", f"{gd1k:.3f} ms", gd1k <= 2.0))
+    rows.append(("group delay 400 Hz > 1 kHz", "yes", f"{gd400:.3f} ms", gd400 > gd1k))
+    rows.append(("group delay 3200 Hz > 1 kHz", "yes", f"{gd3200:.3f} ms", gd3200 > gd1k))
+
+    z, p, _ = signal.sos2zpk(sos)
+    pmax = float(np.max(np.abs(p)))
+    zmax = float(np.max(np.abs(z)))
+    rows.append(("max |pole| (min-phase)", "< 1", f"{pmax:.6f}", pmax < 1.0))
+    rows.append(("max |zero| (min-phase)", "≤ 1 (+1e-6)", f"{zmax:.9f}", zmax <= 1.0 + 1e-6))  # zeros on |z| = 1 are found with ~1e-8 root-finding error
+    return rows
+
+
+def hexbits(x: float) -> str:
+    return "0x" + struct.pack(">d", float(x)).hex()
+
+
+def render(sos: np.ndarray, const_name: str, visibility: str, title: str, shift_hz: float) -> str:
+    names = ["b0", "b1", "b2", "a1", "a2"]
+    kinds = ["high-pass"] * 3 + ["low-pass"] * 3
+    cmd = "uv run tools/filter-design/design_voiceband.py"
+    if shift_hz:
+        cmd += f" --shift-hz {shift_hz:g} --emit-fixture <path>"
+    lines = [
+        f"//! {title}",
+        "//!",
+        "//! GENERATED by tools/filter-design/design_voiceband.py — do not edit.",
+        f"//! Regenerate with: `{cmd}`",
+        "//!",
+        "//! Design (research.md R-07), at the 8 kHz device rate (A-001):",
+        f"//! - high-pass: Butterworth, order {HP_ORDER}, -3 dB at {HP_FC + shift_hz:g} Hz",
+        f"//! - low-pass: elliptic, order {LP_ORDER}, {LP_RP:g} dB ripple, {LP_RS:g} dB stopband, edge {LP_FC + shift_hz:g} Hz",
+        "//! - gain normalized to 0 dB at 1 kHz (A-015); minimum-phase (A-016)",
+        "//! - G.712-like voice-band template, shared by stages 4 and 10 (A-002, A-014)",
+        "//!",
+        "//! Each section is `[b0, b1, b2, a1, a2]` with `a0 = 1`, stored as exact bit patterns",
+        "//! so the coefficients are identical on every platform (R-04).",
+        "",
+        "/// Second-order sections of the voice-band stage filter, applied in order.",
+        "#[rustfmt::skip]",
+        f"{visibility}const {const_name}: [[f64; 5]; 6] = [",
+    ]
+    for i, row in enumerate(sos):
+        coeffs = [row[0], row[1], row[2], row[4], row[5]]
+        lines.append(f"    // section {i}: {kinds[i]}")
+        lines.append("    [")
+        for n, c in zip(names, coeffs):
+            lines.append(f"        f64::from_bits({hexbits(c)}), // {n} = {c:.17e}")
+        lines.append("    ],")
+    lines.append("];")
+    return "\n".join(lines) + "\n"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--check", action="store_true", help="design and verify only; write nothing")
+    ap.add_argument("--shift-hz", type=float, default=0.0, help="shift both band edges (test fixtures only)")
+    ap.add_argument("--emit-fixture", type=Path, help="write a test fixture instead of the coefficient file")
+    args = ap.parse_args()
+
+    if args.shift_hz and not (args.emit_fixture or args.check):
+        ap.error("--shift-hz is only allowed with --emit-fixture or --check")
+
+    sos = design(args.shift_hz)
+    rows = verify(sos)
+    width = max(len(r[0]) for r in rows)
+    print(f"Voice-band stage filter (shift {args.shift_hz:+g} Hz) — FR-010 verification")
+    for prop, target, measured, ok in rows:
+        print(f"  {prop:<{width}}  {target:<14} {measured:<14} {'PASS' if ok else 'FAIL'}")
+    failed = [r for r in rows if not r[3]]
+
+    if args.emit_fixture:
+        text = render(sos, "SHIFTED_SOS", "pub ", f"Test fixture: voice-band filter with band edges shifted by {args.shift_hz:+g} Hz (SC-008).", args.shift_hz)
+        args.emit_fixture.write_text(text)
+        print(f"wrote fixture {args.emit_fixture}")
+        return 0  # a shifted design is expected to fail FR-010
+
+    if failed:
+        print(f"FAILED: {len(failed)} FR-010 bound(s) not met; nothing written.", file=sys.stderr)
+        return 1
+    if not args.check:
+        OUTPUT.write_text(render(sos, "VOICEBAND_SOS", "pub(crate) ", "Voice-band stage filter coefficients (signal-chain stages 4 and 10).", 0.0))
+        print(f"wrote {OUTPUT.relative_to(REPO_ROOT)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
