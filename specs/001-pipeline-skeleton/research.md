@@ -57,6 +57,8 @@ Each entry gives a **Decision**, its **Rationale**, and the **Alternatives consi
   - Sun's fdlibm notice is kept in the source and in `THIRD_PARTY.md`.
   - `PI` constants.
 
+  - **Reference values** for its unit tests come from `tools/detmath-refs/gen_refs.py` (mpmath at 60 digits), committed as `src/test_refs.rs`. This was added during implementation so the 2-ulp tests have a reproducible source.
+
   It is used only at construction (Kaiser taps), in the harness (stimulus generation; the harness's clippy exemption covers `analysis.rs` only), and in tests. Unit tests compare against high-precision reference values with tolerances. The cross-platform golden suite verifies that the results are bit-stable.
 - **Rationale**: This removes the last platform-dependent math from anything that affects output bits, including the golden stimuli themselves. A separate crate lets the harness reuse it without widening `rr_dr60`'s public API.
 - **Alternatives**: Precomputing all resampler taps as committed tables (rejected because 44.1/88.2 kHz prototypes run to ~35k–70k taps each, multi-MB generated source). Exposing math from `rr_dr60` (rejected because it pollutes the semver surface).
@@ -179,6 +181,11 @@ Each entry gives a **Decision**, its **Rationale**, and the **Alternatives consi
   - **(a)** A direct analytic evaluation of the committed coefficients in `rr_dr60` unit tests, on a dense grid that includes exactly 4000 Hz (z = −1). This is fast, exact, and covers the cases the spec skips at 8 kHz.
   - **(b)** Measured checks at every host rate via `R_cfg − R_base` (FR-010).
   - **(c)** The minimum-phase ±5° test, on the impulse response at the 8 kHz host rate. There the boundary is the identity, so the stage response is observed directly over 0–4 kHz. The same coefficients run at every rate, which (b) confirms.
+- **Test-only hooks** (added during implementation): with the `__test-hooks` feature, which only the harness enables, `rr_dr60` exposes two hidden items:
+  - `__test_hooks::voiceband_sos()`, the committed coefficients, so measured stage responses can be compared with the analytic response (US2 AS1, the analysis unit tests).
+  - `Pipeline::__with_stage_sos`, for the SC-008 mutation test.
+
+  Neither touches the processing path, and neither is part of the semver surface.
 - **Rationale**: Each check traces 1:1 to a requirement ID. Stimuli are bit-reproducible (detmath plus an integer PRNG), so they can feed the golden files. `rustfft` is used only for analysis, which has tolerances, so its determinism does not matter.
 - **Alternatives**: Putting the harness inside `rr_dr60/tests` (it couldn't be reused by later specs as a library). Python-based analysis (adds a second runtime to CI; the scipy design tool is offline only).
 

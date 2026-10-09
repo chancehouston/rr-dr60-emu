@@ -23,6 +23,12 @@ use crate::stages::voiceband::VoiceBandStage;
 /// bit-identical for any way of splitting the input into blocks (FR-014).
 /// [`new`](Self::new) allocates and is not real-time safe.
 ///
+/// # Threads
+///
+/// `Pipeline` is `Send + Sync`. It can move to the audio thread, and `&Pipeline` (for
+/// [`latency_samples`](Self::latency_samples) or [`settings`](Self::settings)) can be shared.
+/// Processing takes `&mut self`, so only one thread processes at a time.
+///
 /// # Example
 ///
 /// ```
@@ -41,6 +47,13 @@ pub struct Pipeline {
     chain: DeviceChain,
     latency: u32,
 }
+
+// Contract (contracts/rust-api.md): `Pipeline` is Send + Sync. Fails to compile if a future
+// field (e.g. an Rc or Cell) would silently break that.
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Pipeline>();
+};
 
 /// The device-rate part of the chain (stages 4 and 10) and which parts of it run.
 #[derive(Clone, Debug)]
