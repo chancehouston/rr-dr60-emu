@@ -269,6 +269,7 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
   - **Reset and reconfigure**: after a loud tone, `reset()` and `reconfigure(same settings)` each give output bit-identical to a fresh pipeline.
   - **Zero gain range**: max gain = max attenuation = 0 gives output = input within ±0.01 dB at −60, −10 and +10 dBFS.
   - **10-minute flush**, in release mode as `#[ignore]`: through the pipeline at 8 kHz with `max_attenuation_db = 0` and a 0 dBFS tone. Once the gain has flushed to 0, output equals input bit for bit, and there are never any subnormals.
+  - **Long silence** (in the same ignored test): 10 minutes of digital silence after a loud tone, at defaults. Output is exactly 0.0 throughout, the gain sits at `max_gain_db` within 1e-9 dB, and no subnormal appears in the output or the gain state.
   - **DC**: a = 0.1 gives steady output a · 10^(9/20) ± 1 dB (G<sub>t</sub> = 9 dB at defaults).
   - **Low frequency**: a 50 Hz tone at −20 dBFS gives a mean gain at least 20 dB below the silence gain.
   - **Above 4 kHz**, at 48 kHz: 1 kHz at −40 alone vs. plus 6 kHz at −10. The 1 kHz output level agrees within 0.1 dB.
@@ -318,6 +319,7 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
 - [ ] T047 [P] Update `docs/hardware/signal-chain.md`: in row 3, add "**Modeled in [spec 002](../../specs/002-agc/spec.md): A-017–A-020.**". Leave the A-017 to A-020 status in `docs/hardware/assumptions.md` as `assumed`.
 - [ ] T048 [P] Add a note to `specs/001-pipeline-skeleton/research.md` R-06: "Amended by spec 002 R-06: `ln`/`exp` also run on the processing path."
 - [ ] T049 [P] Update the "Current status" section of `CLAUDE.md` with feature 002, the new test names (`agc_matrix`, `agc_edge_cases`, `golden_agc`), and the AGC bless command.
+- [ ] T049a Traceability audit (SC-007, FR-015): list every numeric literal in the code and tests added by this feature. Check each one has an A-/S- ID or an engineering-target comment (`// engineering target (002 FR-015)` or `(002 R-15)`), and fix any that don't. Record the check in the PR description. Search: `git diff main -- crates/ tools/ | grep -E '^\+.*[0-9]+\.[0-9]+|^\+.*\b[0-9]{2,}\b' | grep -v -E 'A-0|S-0|engineering target|FR-0|R-[0-9]'`
 - [ ] T050 Run every step of `specs/002-agc/quickstart.md` § 1–6 and the coverage gate `cargo llvm-cov --all-features --workspace --fail-under-lines 80`. Fix anything that fails.
 - [ ] T051 Ask the speckit-coach for a final review, then ask the user before merging the PR.
 
@@ -358,6 +360,7 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
 | T039 | T034, T038 |
 | T043 | T038 |
 | T045 | T043, and the user's go-ahead |
+| T050 | T049a |
 
 ### Within each story
 
