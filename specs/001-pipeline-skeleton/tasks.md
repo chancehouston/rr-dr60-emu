@@ -68,8 +68,9 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
 
   A `coverage` job on ubuntu-latest installs cargo-llvm-cov and runs `cargo llvm-cov --all-features --workspace --fail-under-lines 80` from day one (Constitution III). Because CI runs only on PRs to `main` and pushes to `main`, the gate applies whenever the branch merges, which requires the branch to be green. Add a comment that the cross-platform matrix is added in Phase 6.
 - [ ] T011 Verify the skeleton: `cargo build --workspace`, `cargo clippy --all-targets --all-features -- -D warnings` and `cargo test --workspace` all succeed (with no tests yet). Commit as `chore: scaffold cargo workspace, design tool, basic CI`.
+- [ ] T011a Push `001-pipeline-skeleton` to `origin` and open a **draft** PR to `main` titled `feat: 001 pipeline skeleton — US1 (MVP)`. The body links spec.md, plan.md and tasks.md and says the PR merges at the US1 checkpoint (T039a). Draft PRs trigger the `pull_request` CI from T010. Every later push re-runs CI.
 
-**Checkpoint**: The workspace builds, CI is green, the design tool runs (`uv run tools/filter-design/design_voiceband.py --check` passes), and the placeholder coefficient file exists.
+**Checkpoint**: The workspace builds, the draft PR exists, the CI `check` jobs are green (the coverage job is expected to stay red until the Phase 2 code and tests land), the design tool runs (`uv run tools/filter-design/design_voiceband.py --check` passes), and the placeholder coefficient file exists.
 
 ---
 
@@ -225,7 +226,12 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
   - Behind `#[cfg(feature = "ffi-test-panic")]`, add a `#[doc(hidden)] extern "C" fn rr_dr60__test_force_panic(p)` that makes the next process call panic.
   - Run `cargo llvm-cov --workspace --all-features` locally and confirm the total is ≥ 80%. The panic arm is reached once T054 lands.
 
-**Checkpoint (US1 / MVP)**: `cargo test -p rr_dr60_harness --test us1_voiceband` passes, the C smoke test prints `smoke: OK`, CI is green on ubuntu and macos, and coverage is ≥ 80%. Stop and demo. This is the MVP.
+- [ ] T039a [US1] Ship the MVP. Once the checkpoint below holds:
+  - Add a `CHANGELOG.md` `[Unreleased]` entry: "Added: pipeline skeleton MVP — default record + playback voice-band chain (stages 4 and 10) at 8/16/44.1/48/88.2/96 kHz, latency reporting, minimal C API; assumptions A-014–A-016".
+  - Add a short "Status: MVP" note with the Rust and C snippets to `README.md`.
+  - Mark the draft PR ready for review, get it green, and merge it to `main` with a merge commit (the repo convention). Afterwards, keep working on `001-pipeline-skeleton`: `git fetch && git merge origin/main`.
+
+**Checkpoint (US1 / MVP)**: `cargo test -p rr_dr60_harness --test us1_voiceband` passes, the C smoke test prints `smoke: OK`, CI is green on ubuntu and macos (coverage ≥ 80% included), and the PR is merged. Stop and demo. This is the MVP.
 
 ---
 
@@ -380,7 +386,7 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
   - Exempts `voiceband_coeffs.rs`, because its header cites the IDs.
 
   Add it as a step in the ubuntu CI job. Fix every hit.
-- [ ] T073 Final gate: `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-features` and `cargo llvm-cov --all-features --workspace --fail-under-lines 80` all pass. Then open a PR from `001-pipeline-skeleton` to `main`.
+- [ ] T073 Final gate: `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-features` and `cargo llvm-cov --all-features --workspace --fail-under-lines 80` all pass. Then open the follow-up PR from `001-pipeline-skeleton` to `main` (US2, US3, the CI matrix and polish), titled `feat: 001 pipeline skeleton — US2, US3, CI matrix`. Extend the US1 CHANGELOG entry rather than duplicating it.
 
 ---
 
@@ -422,6 +428,8 @@ description: "Task list for 001 Minimal End-to-End Pipeline Skeleton"
 | T036 | T028, T035 |
 | T037, T038 | T036 |
 | T039 | T036 |
+| T039a | T037, T038, T039 |
+| T011a | T011 |
 | T042 | T040, T035 |
 | T043 | T041, T035 |
 | T044 | T041, T036, T043 |
@@ -495,6 +503,9 @@ T062 sim runner || T064 device script || T065 msrv/timing jobs  → T061/T063 ma
 4. **Stop and validate**: `cargo test -p rr_dr60_harness --test us1_voiceband`, plus `smoke: OK`. Demo it to an app developer (SC-001).
 
 ### Incremental delivery
+
+There are two PRs from the same branch, `001-pipeline-skeleton`. PR 1 is the draft opened in T011a and merged at T039a (Setup, Foundational and US1). PR 2 is opened in T073 (US2, US3, Phase 6 and Phase 7).
+
 
 1. US1: telephone-band audio from Rust and C (MVP).
 2. US2: bypass, tap, per-configuration latency and reconfigure.
