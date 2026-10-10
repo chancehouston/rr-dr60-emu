@@ -13,7 +13,7 @@
 
 The Panasonic RR-DR60 is a mid-1990s pocket IC voice recorder. Long after it was discontinued, it became legendary among paranormal investigators as an "EVP recorder", and working units are now sought after on the second-hand market.
 
-`rr-dr60-emu` recreates that recorder's sound in software. Audio goes in, and you get back what an RR-DR60 would have recorded and played back. The emulator models each stage of the device:
+`rr-dr60-emu` aims to recreate that recorder's sound in software: audio goes in, and the goal is to get back what an RR-DR60 would have recorded and played back. The emulator models each stage of the device:
 
 microphone → preamp → automatic gain control → voice-band codec (A/D) → voice-activated recording (VAS) → speech compression → storage → decompression → codec (D/A) → amplifier → speaker
 
@@ -33,6 +33,22 @@ This project is **neutral and technical**. It emulates what the recorder's elect
 Exact specifications for the RR-DR60 aren't fully public. Where they're unknown, we make **reasonable, documented assumptions** and record each one in the [assumption register](docs/hardware/assumptions.md) along with the [sources](docs/hardware/sources.md) behind it. The v1 goal is a **measured character match**: frequency response, noise, AGC and VAS behavior, and codec artifacts within stated tolerances. Bit-exact reproduction isn't a goal.
 
 **Own a working RR-DR60?** Recordings of test signals from a real unit are the most valuable contribution you can make. Open a [Hardware evidence](https://github.com/chancehouston/rr-dr60-emu/issues/new/choose) issue.
+
+### Fidelity status by stage
+
+What each modeled stage rests on today. "Documented" means the behavior is taken from the device's own documentation (service manual, datasheets); "assumed" means an educated guess registered in the assumption register; nothing is **verified** against a real unit yet.
+
+| Stage | Built? | Basis | Notes |
+|---|---|---|---|
+| Codec band-limiting (record and playback filters) | yes | assumed (A-014), to be revised | The service manual, read 2026-10-10, gives a **6 kHz** sampling rate and the codec family's datasheet gives a flatter, narrower-topped response than the current model (A-026, A-027). The current filters run at 8 kHz with 300–3400 Hz edges. |
+| AGC | yes | assumed (A-017–A-019), to be revised | The schematic shows a limiter at the codec's full scale with a ~10 s release, not the wide-range compressor modeled now (A-028). |
+| VAS (voice-activated pausing) | in progress ([spec 003](specs/003-vas/spec.md)) | documented behavior (owner's manual), assumed values registered by spec 003 | Threshold, hang and onset times are guesses until captures exist. |
+| Microphone and mic amp | no | documented topology (A-005, A-006, A-029) | Gain and noise are estimates from the circuit. |
+| µ-law quantization | no | documented (A-003) | |
+| CELP speech codec, 4 kbit/s | no | documented bitrate and type (A-004); the exact codec is unknown | The stage most responsible for the device's sound; the hardest to get right. |
+| Speaker amp, speaker, earphone path | no | documented topology (A-031, A-032); speaker acoustics assumed (A-010) | |
+
+Nothing in this table claims the emulator sounds like a real RR-DR60 yet. It claims that each stage is built to a stated, traceable description, and that the harness checks the build against that description.
 
 ## Using the library
 

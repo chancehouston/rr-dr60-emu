@@ -8,12 +8,15 @@ body:
         Real-unit evidence is the most valuable contribution to this project — it lets us verify or correct
         our [assumptions](https://github.com/chancehouston/rr-dr60-emu/blob/main/docs/hardware/assumptions.md).
 
-        **Most useful captures** (play the signal into the RR-DR60's mic, then record its playback):
-        - 1 kHz sine tone at a few loudness levels (quiet / normal / loud)
-        - A slow sine sweep 50 Hz → 10 kHz
-        - Silence in a quiet room (noise floor), with and without VAS enabled
-        - Tone bursts with gaps (AGC and VAS timing)
-        - Normal speech
+        **Most useful captures** (play the signal into the RR-DR60's mic from a speaker at a fixed distance, then record the RR-DR60's playback, preferably from the **earphone jack** into an audio interface at 48 kHz / 24-bit; a measurement microphone 10 cm from the speaker is a useful second capture). Unedited files please, and note the battery state, the MIC SENS level and the volume setting:
+        - **Level steps:** a 1 kHz tone at loudness levels about 5 dB apart over a 40 dB range (an SPL reading at the recorder helps): shows the AGC's knee and whether the sensitivity setting changes the recorded level.
+        - **Sweep:** a slow sine sweep 50 Hz → 8 kHz at a medium level: the codec's band edges.
+        - **Bursts and gaps:** 1 s tone bursts separated by gaps of 0.3, 1, 2 and 5 s, at a quiet, a normal and a loud level: VAS hang and onset times, and the AGC's recovery.
+        - **A clap after 10 s of silence:** the AGC's attack and any clipped onset.
+        - **A loud burst followed by a quiet tone:** how long the gain stays reduced (the schematic suggests several seconds).
+        - **Quiet room, 60 s, at each MIC SENS level:** noise floor, and whether the VAS pauses.
+        - **Pink noise at a low level:** how the speech codec renders non-speech sound.
+        - **Normal speech.**
 
         Please describe how you captured it (earphone jack vs. microphone at the speaker, interface, sample rate).
   - type: textarea
