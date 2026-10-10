@@ -159,7 +159,7 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
 
 ### Tests for User Story 1 (write first, must fail)
 
-- [ ] T017 [P] [US1] Unit tests in the `#[cfg(test)]` module of the new `crates/rr_dr60/src/stages/vas.rs`. They drive `VasStage` directly at 8 kHz with detmath tones at −8 dBFS (threshold + 10 dB) and digital silence. Each case states its expected decision counts:
+- [X] T017 [P] [US1] Unit tests in the `#[cfg(test)]` module of the new `crates/rr_dr60/src/stages/vas.rs`. They drive `VasStage` directly at 8 kHz with detmath tones at −8 dBFS (threshold + 10 dB) and digital silence. Each case states its expected decision counts:
   - **Threshold** (FR-006, A-022): a steady 1 kHz tone at −15 dBFS (+3 dB) is kept for 10 s with no pause. At −21 dBFS (−3 dB), exactly H = 8000 samples are kept, then all are dropped. At 300 and 3400 Hz, the lowest kept level is within ±1 dB of the 1 kHz value.
   - **Sensitivity** (FR-007): the effective threshold at levels 1 and 5 is −12 and −24 dBFS (±0.05 dB, by bisection at 1 kHz phase 0).
   - **Hang** (FR-008, A-023): with silent gaps of H − 40, H, H + 1 and H + 40 samples, the kept gap is min(gap, H), with no pause for gap ≤ H.
@@ -171,12 +171,12 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
   - **W bridge** (R-02): a 300 Hz tone at the threshold + 3 dB, after a pause, resumes after exactly O + 1 samples from its first sound sample. A burst train with a 33-sample gap restarts the run.
   - **Start, reset** (A-025): a fresh stage keeps H samples of silence, then pauses. `reset()` makes the next decisions identical to a fresh stage.
   - **Counters** (plan review finding 16): 10 minutes of silence leaves `since_sound` at W + 1, with no overflow.
-- [ ] T018 [P] [US1] Pipeline event tests in the test module of `crates/rr_dr60/src/pipeline.rs`, with `vas_only`-equivalent settings built inline:
+- [X] T018 [P] [US1] Pipeline event tests in the test module of `crates/rr_dr60/src/pipeline.rs`, with `vas_only`-equivalent settings built inline:
   - **8 kHz**: for burst 1 s, gap 5 s, burst 1 s, `produced` sums to 8000 + 8000 + 8000 − 160, with one event at `output_position` 16000 and `input_length` 32160 (40000 − 8000 dropped gap + 160 onset).
   - **48 kHz**: the same event has `input_length` = 6 × the 8 kHz value. The sum of removed lengths plus total output equals total input exactly (m/l is an integer).
   - **`process_with_events`**: with a too-short slice (length 0), `BlockInfo.events` still counts 1, and nothing is written. `max_events(frames)` ≥ the events of any block in a 60 s seeded burst-gap run at every rate with `hang_ms = 50` (hundreds of splices; kept short for the R-12 budget).
   - **`paused`**: true at the end of a block that ends in a dropped stretch.
-- [ ] T019 [P] [US1] Write `crates/rr_dr60_harness/tests/us1_vas.rs`, covering spec US1 AS1–AS5 at 48 kHz with `configs::settings("vas_only", 48_000)`, the Phase 2 stimuli and plain assertions (no `vas_checks`):
+- [X] T019 [P] [US1] Write `crates/rr_dr60_harness/tests/us1_vas.rs`, covering spec US1 AS1–AS5 at 48 kHz with `configs::settings("vas_only", 48_000)`, the Phase 2 stimuli and plain assertions (no `vas_checks`):
   - **AS1**: a 1 kHz tone at −15 dBFS for 10 s. `produced` equals the input length, with no event.
   - **AS2**: for burst 1 s, gap 5 s, burst 1 s, the output length is (2 s + 1.0 s − 20 ms) × 48 000 ± 48 samples, with exactly one splice.
   - **AS3**: a gap of 0.9 s. Output length equals input, with no event.
@@ -186,13 +186,13 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
 
 ### Implementation for User Story 1
 
-- [ ] T020 [US1] Implement `VasStage` in `crates/rr_dr60/src/stages/vas.rs`, following data-model.md › Per-sample processing exactly, including `if sound and run ≥ O + 1` for resume and `since_sound` saturating at W + 1:
+- [X] T020 [US1] Implement `VasStage` in `crates/rr_dr60/src/stages/vas.rs`, following data-model.md › Per-sample processing exactly, including `if sound and run ≥ O + 1` for resume and `since_sound` saturating at W + 1:
   - **Interface**: `fn process(&mut self, x: f64) -> VasDecision`, where `VasDecision` is `Keep`, `Drop` or `Resume` (the first kept sample after a pause).
   - **Derived at construction**: A<sub>thr</sub> = `detmath::exp`((threshold_dbfs + 3·(3 − sensitivity)) · LN_10 / 20), H = round(hang_ms · 8), O = round(onset_ms · 8). Each cites A-022 – A-024.
   - **Constants**: W = 32, labeled `// engineering target (003 R-15)`.
   - **Declare** the module in `crates/rr_dr60/src/stages/mod.rs`.
   - Makes T017 pass.
-- [ ] T021 [US1] Integrate the stage in `crates/rr_dr60/src/pipeline.rs` (research R-05, R-06):
+- [X] T021 [US1] Integrate the stage in `crates/rr_dr60/src/pipeline.rs` (research R-05, R-06):
   - **Chain**: `DeviceChain` gets `vas: VasStage`, which runs after stage 4 when `run_vas`. Dropped samples never reach stage 10 or the interpolator, and the AGC runs on every sample (FR-016).
   - **Bookkeeping** with stream counters:
     - on `Resume`, compute the splice position as the first output n with ⌊n·l/m⌋ ≥ the kept index;
@@ -201,15 +201,15 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
   - **`BlockInfo`**: set `paused` at the end of each block.
   - **`reset` and `reconfigure`**: reset VAS and all counters.
   - **Remove** any placeholder gating from T012.
-- [ ] T022 [US1] Implement `process_with_events` and `max_events` in `crates/rr_dr60/src/pipeline.rs` (contracts/rust-api.md):
+- [X] T022 [US1] Implement `process_with_events` and `max_events` in `crates/rr_dr60/src/pipeline.rs` (contracts/rust-api.md):
   - **Events**: write the first `events.len()` events in order, and count all of them.
   - **`max_events`**: = ⌊frames·l/m⌋ / (H + 2) + 2, computed in u128 and labeled `// engineering target (003 R-15)`.
   - **Delegation**: `process` and `process_in_place` call the same core with an empty event slice.
   - **`Pipeline` rustdoc**: list stage 5, state that by default the output can be shorter than the input, and update the example to read `produced` (moved here from T024, so `pipeline.rs` is edited by one task at a time).
   - Makes T018 pass.
-- [ ] T023 [US1] Update the `op-count` test in `crates/rr_dr60/src/pipeline.rs`: add a fixed VAS term per device sample and the emission compare per host sample. Assert that work is still independent of block partition, with VAS on in a burst-gap run.
-- [ ] T024 [P] [US1] Update the crate docs in `crates/rr_dr60/src/lib.rs` (this file only; the `Pipeline` rustdoc is part of T022). List stage 5 as "modeled on the owner's manual and assumed values (A-008, A-021 – A-025)", with no EVP claims either way, and state that by default the output can be shorter than the input.
-- [ ] T025 [US1] Run `cargo test -p rr_dr60 stages::vas` and `cargo test -p rr_dr60_harness --test us1_vas`, and fix until green. Confirm every 001 and 002 test and both golden guards are still green.
+- [X] T023 [US1] Update the `op-count` test in `crates/rr_dr60/src/pipeline.rs`: add a fixed VAS term per device sample and the emission compare per host sample. Assert that work is still independent of block partition, with VAS on in a burst-gap run.
+- [X] T024 [P] [US1] Update the crate docs in `crates/rr_dr60/src/lib.rs` (this file only; the `Pipeline` rustdoc is part of T022). List stage 5 as "modeled on the owner's manual and assumed values (A-008, A-021 – A-025)", with no EVP claims either way, and state that by default the output can be shorter than the input.
+- [X] T025 [US1] Run `cargo test -p rr_dr60 stages::vas` and `cargo test -p rr_dr60_harness --test us1_vas`, and fix until green. Confirm every 001 and 002 test and both golden guards are still green.
 
 **Checkpoint (US1 / MVP)**: T017–T019 pass, all 001 and 002 tests pass unchanged, and the default pipeline now drops pauses. Stop and demo with a burst-gap stimulus (quickstart § 2). This is the MVP.
 
