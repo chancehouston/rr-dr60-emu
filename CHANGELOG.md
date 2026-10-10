@@ -8,6 +8,10 @@ Changes to assumed hardware values ([assumption register](docs/hardware/assumpti
 
 ## [Unreleased]
 
+### Documentation
+
+- Hardware evidence pass (2026-10-10): the RR-DR60 service manual (S-002) and the OKI codec family datasheet (S-005) were read in full. The register now records the device's **6 kHz sampling rate**, **4 kbit/s CELP** codec and 16 Mbit flash, the µ-law coding law (A-003 verified), the discrete mic amp and the **limiter-type AGC** with a ~10 s release (A-028), the codec's PLL-clocked filters and levels (A-027, A-030), the earphone path that bypasses the power amp (A-032), and that the sensitivity setting and the VAS are DSP firmware functions after the AGC (A-033). A-001 is superseded by A-026; A-014, A-017 and A-018 are marked for revision. **Emulator output is unchanged**: the code still models an 8 kHz, 300–3400 Hz codec and the spec 002 AGC until a feature adopts the new values, and that change will be recorded here. README gains a per-stage fidelity table.
+
 ### Added
 
 - Project bootstrap: Spec-Kit setup, project constitution, community files (README, CONTRIBUTING, Code of Conduct, Security policy), issue and PR templates.
