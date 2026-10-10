@@ -55,12 +55,12 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
 
 ### Tests (write first, must fail)
 
-- [ ] T003 [P] Settings tests in the `#[cfg(test)]` module of `crates/rr_dr60/src/settings.rs`. Assert:
+- [X] T003 [P] Settings tests in the `#[cfg(test)]` module of `crates/rr_dr60/src/settings.rs`. Assert:
   - **Defaults**: `VasSettings::DEVICE` and `VasSettings::default()` are `enabled: true` (S-001, A-008), `mode: VasMode::Drop`, `sensitivity: 3` (S-001, A-021), `threshold_dbfs: -18.0` (A-022), `hang_ms: 1000.0` (A-023) and `onset_ms: 20.0` (A-024).
   - `VasMode::default()` is `Drop`.
   - `Settings::new(48_000).vas == VasSettings::DEVICE`.
   - `Tap::AfterVas` exists, and `Tap::default()` is still `AfterPlayback`.
-- [ ] T004 [P] Validation tests in the test module of `crates/rr_dr60/src/validate.rs`. For each VAS field, use the data-model ranges quoted verbatim:
+- [X] T004 [P] Validation tests in the test module of `crates/rr_dr60/src/validate.rs`. For each VAS field, use the data-model ranges quoted verbatim:
   - `sensitivity` "1 … 5"
   - `threshold_dbfs` "−60.0 … 0.0"
   - `hang_ms` "50.0 … 10000.0"
@@ -72,24 +72,24 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
   - **Order**: host rate, then the AGC fields, then the VAS fields in struct order (`sensitivity`, `threshold_dbfs`, `hang_ms`, `onset_ms`).
   - **Combinations**: an onset longer than the hang (onset 200, hang 50) is accepted.
   - **Display**: each new `Setting` `Display` contains the field name (e.g. `vas.hang_ms`) and its range.
-- [ ] T005 [P] Pipeline tests in the test module of `crates/rr_dr60/src/pipeline.rs`:
+- [X] T005 [P] Pipeline tests in the test module of `crates/rr_dr60/src/pipeline.rs`:
   - `Pipeline::new` with `vas.sensitivity = 6` returns `Err(Error::InvalidSetting { setting: Setting::VasSensitivity })`.
   - `reconfigure` with an invalid VAS setting returns the error and leaves `settings()`, `latency_samples()` and the processing state unchanged. Check by comparing output with an un-reconfigured clone.
   - **`BlockInfo` without a VAS stage**: for every tap and rate, `process` and `process_in_place` return `produced == input.len()`, `events == 0` and `paused == false`.
   - **Stage gating**: with `Tap::AfterVas` and stage 10 enabled, output equals the stage-10-bypassed output.
-- [ ] T006 [P] Emission-schedule tests in the test module of `crates/rr_dr60/src/resample/up.rs` (research R-05). Drive the decimator and interpolator directly at all five non-identity plans:
+- [X] T006 [P] Emission-schedule tests in the test module of `crates/rr_dr60/src/resample/up.rs` (research R-05). Drive the decimator and interpolator directly at all five non-identity plans:
   - **No drops**: feeding every device sample, the new emission rule emits exactly one host sample per input step, with values bit-identical to the current `next_host` path, over 200 000 steps.
   - **With drops**: with seeded random pauses (some one device sample long), no step emits more than one sample. Over the run, input length − output length = ⌊dropped·m/l⌋ within ±1 (exact at 16, 48 and 96 kHz).
   - **Ring buffer**: the writer never leads the newest-read index by more than today's maximum (1 for l = 1, 2 at 44.1 and 88.2 kHz).
   - **Partition independence**: the emission times don't depend on any block split, because the rule is per step.
-- [ ] T007 [P] Harness stimulus tests in `crates/rr_dr60_harness/src/stimulus.rs`:
+- [X] T007 [P] Harness stimulus tests in `crates/rr_dr60_harness/src/stimulus.rs`:
   - `burst_gap(freq, level_dbfs, segments: &[(on: bool, secs)], fs)` and `short_bursts(...)` produce the exact sample counts requested.
   - Their bursts start at phase 0 and are digital silence (+0.0) in gaps.
   - Two calls give identical bits.
 
 ### Implementation
 
-- [ ] T008 Implement in `crates/rr_dr60/src/settings.rs` (contracts/rust-api.md):
+- [X] T008 Implement in `crates/rr_dr60/src/settings.rs` (contracts/rust-api.md):
   - **Types**:
     - `#[non_exhaustive] pub enum VasMode { #[default] Drop, Mute }`;
     - `#[non_exhaustive] pub struct VasSettings { enabled, mode, sensitivity: u8, threshold_dbfs, hang_ms, onset_ms }`, deriving `Clone, Copy, Debug, PartialEq`, with `pub const DEVICE` and `Default`;
@@ -97,12 +97,12 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
     - `Tap::AfterVas`.
   - **Rustdoc**: cites S-001, A-008 and A-021 – A-025. It says mute mode is an emulator option, not device behavior, and that in drop mode the output can be shorter than the input, so hosts must read `BlockInfo::produced`.
   - Makes T003 pass.
-- [ ] T009 Implement in `crates/rr_dr60/src/error.rs` and `crates/rr_dr60/src/validate.rs`:
+- [X] T009 Implement in `crates/rr_dr60/src/error.rs` and `crates/rr_dr60/src/validate.rs`:
   - **New `Setting` variants**: `VasSensitivity`, `VasThresholdDbfs`, `VasHangMs` and `VasOnsetMs`, with ranges and `Display` names as in T004, each commented `// engineering target (003 FR-012)`.
   - **Validator**: checks the VAS fields after the AGC fields, with inclusive ranges and non-finite values rejected.
   - **Re-exports**: `VasSettings` and `VasMode` from `crates/rr_dr60/src/lib.rs`.
   - Makes T004 and the validation parts of T005 pass.
-- [ ] T010 Add `BlockInfo` and `VasEvent` to `crates/rr_dr60/src/pipeline.rs` and re-export both from `lib.rs` (contracts/rust-api.md).
+- [X] T010 Add `BlockInfo` and `VasEvent` to `crates/rr_dr60/src/pipeline.rs` and re-export both from `lib.rs` (contracts/rust-api.md).
   - **`BlockInfo`**: `#[must_use] #[non_exhaustive] pub struct BlockInfo { produced: usize, events: usize, paused: bool }`.
   - **`VasEvent`**: `#[non_exhaustive] pub struct VasEvent { output_position: u64, input_length: u64 }`.
   - **Signatures**: change `process` to return `Result<BlockInfo, Error>` and `process_in_place` to return `BlockInfo`. Both still produce one sample per input here.
@@ -115,15 +115,15 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
 
     Harness helpers that size output by input length must truncate to `produced` (e.g. `y.truncate(info.produced)`), so later VAS tests can reuse them. `clippy -D warnings` must be clean.
   - Makes the `BlockInfo` part of T005 pass.
-- [ ] T011 Implement the emission schedule in `crates/rr_dr60/src/resample/up.rs` (research R-05, data-model › Emission schedule state):
+- [X] T011 Implement the emission schedule in `crates/rr_dr60/src/resample/up.rs` (research R-05, data-model › Emission schedule state):
   - **Counters**: add `kept` and `emitted` counters and `fn try_next_host(&mut self) -> Option<f64>`. It emits only when `kept ≥ ⌊emitted·l/m⌋ + 1`, computed with integer phase bookkeeping.
   - **Pipeline**: change `Pipeline::tick` in `crates/rr_dr60/src/pipeline.rs` to write output only when a sample is emitted, and to count `produced`.
   - **Identity plan**: emits each kept device sample immediately.
   - **Reset**: `reset()` clears the counters.
   - **Constraint**: no output may change. Every 001 and 002 test and golden file must stay green.
   - Makes T006 pass.
-- [ ] T012 Update `DeviceChain::new` in `crates/rr_dr60/src/pipeline.rs` with the stage gating from research R-01: `run_vas = vas.enabled && tap ∈ {AfterVas, AfterPlayback}` and `run_playback = playback_stage_enabled && tap == AfterPlayback`. The VAS stage itself arrives in T023; until then `run_vas` gates nothing. Latency is unchanged (FR-011). Makes the gating part of T005 pass.
-- [ ] T013 [P] Implement the stimuli that T007 tests in `crates/rr_dr60_harness/src/stimulus.rs`: `burst_gap` and `short_bursts`, using detmath tones only. These are Foundational (plan › Story boundaries).
+- [X] T012 Update `DeviceChain::new` in `crates/rr_dr60/src/pipeline.rs` with the stage gating from research R-01: `run_vas = vas.enabled && tap ∈ {AfterVas, AfterPlayback}` and `run_playback = playback_stage_enabled && tap == AfterPlayback`. The VAS stage itself arrives in T023; until then `run_vas` gates nothing. Latency is unchanged (FR-011). Makes the gating part of T005 pass.
+- [X] T013 [P] Implement the stimuli that T007 tests in `crates/rr_dr60_harness/src/stimulus.rs`: `burst_gap` and `short_bursts`, using detmath tones only. These are Foundational (plan › Story boundaries).
 - [ ] T014 Move every spec 001 and 002 harness configuration onto VAS-bypassed settings in `crates/rr_dr60_harness/src/configs.rs`:
   - **Existing names**: `settings()` sets `s.vas.enabled = false` for every 001 name and every 002 name, including `default_agc`, which is built from `Settings::new`. Add a doc comment: each means "the spec 001/002 configuration with VAS bypassed (spec 003 FR-020)".
   - **New names**: `vas_only` (VAS on in drop mode, AGC off, stages 4 and 10 off, `Tap::AfterVas`), `vas_mute` (as `vas_only`, mode `Mute`) and `default_vas` (`Settings::new`).

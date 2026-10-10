@@ -80,7 +80,11 @@ fn agc_only(rate: u32, agc: &AgcSettings) -> Settings {
 
 fn run(make: Make<'_>, settings: Settings, x: &[f32]) -> Vec<f32> {
     let mut y = vec![0.0; x.len()];
-    make(settings).process(x, &mut y).expect("equal lengths");
+    let produced = make(settings)
+        .process(x, &mut y)
+        .expect("equal lengths")
+        .produced;
+    y.truncate(produced);
     y
 }
 

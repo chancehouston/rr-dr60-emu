@@ -19,7 +19,8 @@ fn c_api_matches_rust_api_everywhere() {
             let s = configs::settings(config, rate);
             let mut want = vec![0.0; x.len()];
             let mut rust = Pipeline::new(s).unwrap();
-            rust.process(&x, &mut want).unwrap();
+            let produced = rust.process(&x, &mut want).unwrap().produced;
+            want.truncate(produced);
             let p = create(&configs::c_settings(&s));
             let mut got = vec![0.0f32; x.len()];
             // SAFETY: live handle; valid non-overlapping buffers.
@@ -67,7 +68,12 @@ fn c_api_matches_rust_api_with_agc() {
     }
     for s in cases {
         let mut want = vec![0.0; x.len()];
-        Pipeline::new(s).unwrap().process(&x, &mut want).unwrap();
+        let produced = Pipeline::new(s)
+            .unwrap()
+            .process(&x, &mut want)
+            .unwrap()
+            .produced;
+        want.truncate(produced);
         let p = create(&configs::c_settings(&s));
         let mut got = vec![0.0f32; x.len()];
         // SAFETY: live handle; valid non-overlapping buffers of x.len() floats.

@@ -20,12 +20,12 @@ fn ns_per_sample(config: &str, x: &[f32], block: usize, warm: Option<&[f32]>) ->
         .map(|_| {
             let mut p = Pipeline::new(configs::settings(config, 48_000)).unwrap();
             if let Some(w) = warm {
-                p.process_in_place(&mut w.to_vec());
+                let _ = p.process_in_place(&mut w.to_vec());
             }
             let mut buf = x.to_vec();
             let t = Instant::now();
             for chunk in buf.chunks_mut(block) {
-                p.process_in_place(chunk);
+                let _ = p.process_in_place(chunk);
             }
             t.elapsed().as_nanos() as f64 / x.len() as f64
         })
@@ -71,7 +71,7 @@ fn per_sample_time_is_flat_and_fast() {
         let mut buf = long_stream.clone();
         let t = Instant::now();
         for chunk in buf.chunks_mut(512) {
-            p.process_in_place(chunk);
+            let _ = p.process_in_place(chunk);
         }
         let speed = 60.0 / t.elapsed().as_secs_f64();
         println!("speed: {speed:.0}x real time at 48 kHz");
@@ -90,13 +90,13 @@ fn ten_minute_block_equals_small_blocks() {
     }
     let x = stimulus::noise(0x0D60, 10 * 60 * 48_000);
     let mut whole = x.clone();
-    Pipeline::new(configs::settings("default", 48_000))
+    let _ = Pipeline::new(configs::settings("default", 48_000))
         .unwrap()
         .process_in_place(&mut whole);
     let mut p = Pipeline::new(configs::settings("default", 48_000)).unwrap();
     let mut pieces = x.clone();
     for chunk in pieces.chunks_mut(4096) {
-        p.process_in_place(chunk);
+        let _ = p.process_in_place(chunk);
     }
     assert!(
         whole == pieces,

@@ -65,12 +65,46 @@ const _: fn() = || {
     assert_send_sync::<Pipeline>();
 };
 
-/// The device-rate part of the chain (stages 3, 4 and 10) and which parts of it run.
+/// The result of one processing call (spec 003 FR-004, FR-005; contracts/rust-api.md).
+///
+/// With the VAS in drop mode (the default), a block can produce fewer output samples than it
+/// consumed, or none: only `output[..produced]` holds the block's output.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[must_use = "read `produced`: with the VAS in drop mode, only output[..produced] is output"]
+#[non_exhaustive]
+pub struct BlockInfo {
+    /// Output samples written to the start of the output buffer. Never more than the input
+    /// length; equal to it when the VAS is bypassed, not reached by the tap, or in mute mode.
+    pub produced: usize,
+    /// VAS events this block generated: splices in drop mode, muted regions in mute mode.
+    pub events: usize,
+    /// The VAS is paused at the end of the block.
+    pub paused: bool,
+}
+
+/// A VAS splice (drop mode) or muted region (mute mode) (spec 003 FR-005).
+///
+/// Positions count output samples from the start of the stream (creation, reset or
+/// reconfigure), so they don't depend on how the input was split into blocks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct VasEvent {
+    /// Drop mode: output index of the first sample after the splice. Mute mode: output index of
+    /// the region's first muted sample.
+    pub output_position: u64,
+    /// Drop mode: host input samples removed at this splice. Mute mode: the region's length.
+    pub input_length: u64,
+}
+
+/// The device-rate part of the chain (stages 3, 4, 5 and 10) and which parts of it run.
 #[derive(Clone, Debug)]
 struct DeviceChain {
     agc: AgcStage,
     /// Stage 3 runs: the AGC is enabled (spec 002 FR-002).
     run_agc: bool,
+    /// Stage 5 runs: the VAS is enabled and the tap is after it (spec 003 FR-003; research R-01).
+    #[allow(dead_code)] // gates the VAS stage from 003 T021
+    run_vas: bool,
     record: VoiceBandStage,
     playback: VoiceBandStage,
     /// Stage 4 runs: enabled and the tap is not after the AGC (FR-007; spec 002 FR-003).
@@ -84,6 +118,8 @@ impl DeviceChain {
         Self {
             agc: AgcStage::new(&settings.agc),
             run_agc: settings.agc.enabled,
+            run_vas: settings.vas.enabled
+                && matches!(settings.tap, Tap::AfterVas | Tap::AfterPlayback),
             record: VoiceBandStage::new(),
             playback: VoiceBandStage::new(),
             run_record: settings.record_stage_enabled && settings.tap != Tap::AfterAgc,
@@ -151,26 +187,46 @@ impl Pipeline {
     /// Processes one block. `input` and `output` must have the same length, which may be
     /// any length including 0. Real-time safe.
     ///
+    /// Only `output[..produced]` is written (see [`BlockInfo`]); the rest is left unchanged.
+    ///
     /// # Errors
     ///
     /// [`Error::LengthMismatch`] if the lengths differ. The pipeline state is not changed.
-    pub fn process(&mut self, input: &[f32], output: &mut [f32]) -> Result<(), Error> {
+    pub fn process(&mut self, input: &[f32], output: &mut [f32]) -> Result<BlockInfo, Error> {
         if input.len() != output.len() {
             return Err(Error::LengthMismatch {
                 input: input.len(),
                 output: output.len(),
             });
         }
-        for (x, y) in input.iter().zip(output.iter_mut()) {
-            *y = self.tick(*x);
+        let mut produced = 0;
+        for &x in input {
+            if let Some(y) = self.tick(x) {
+                output[produced] = y;
+                produced += 1;
+            }
         }
-        Ok(())
+        Ok(BlockInfo {
+            produced,
+            ..BlockInfo::default()
+        })
     }
 
     /// Processes one block in place. Real-time safe.
-    pub fn process_in_place(&mut self, buffer: &mut [f32]) {
-        for v in buffer.iter_mut() {
-            *v = self.tick(*v);
+    ///
+    /// The block's output is `buffer[..produced]` (see [`BlockInfo`]); samples past `produced`
+    /// are unspecified. Output index never exceeds input index, so in-place processing is safe.
+    pub fn process_in_place(&mut self, buffer: &mut [f32]) -> BlockInfo {
+        let mut produced = 0;
+        for i in 0..buffer.len() {
+            if let Some(y) = self.tick(buffer[i]) {
+                buffer[produced] = y;
+                produced += 1;
+            }
+        }
+        BlockInfo {
+            produced,
+            ..BlockInfo::default()
         }
     }
 
@@ -212,9 +268,10 @@ impl Pipeline {
         &self.settings
     }
 
-    /// One host sample through the engine (data-model.md steps 1–3).
+    /// One host sample through the engine (data-model.md steps 1–3). Returns the host sample
+    /// emitted at this step, if any (spec 003 research R-05).
     #[inline]
-    fn tick(&mut self, x: f32) -> f32 {
+    fn tick(&mut self, x: f32) -> Option<f32> {
         let x = sanitize_in(x);
         let y = match &mut self.converters {
             None => self.chain.process(x),
@@ -222,10 +279,10 @@ impl Pipeline {
                 if let Some(d) = down.push(x) {
                     up.push_device(self.chain.process(d));
                 }
-                up.next_host()
+                up.try_next_host()?
             }
         };
-        narrow_out(y)
+        Some(narrow_out(y))
     }
 }
 
@@ -273,7 +330,7 @@ mod validation_tests {
             .collect();
         let run = |s: Settings| {
             let mut y = x.clone();
-            Pipeline::new(s).unwrap().process_in_place(&mut y);
+            let _ = Pipeline::new(s).unwrap().process_in_place(&mut y);
             y
         };
         for rate in crate::SUPPORTED_HOST_RATES {
@@ -314,7 +371,7 @@ mod validation_tests {
             .collect();
         let mut p = Pipeline::new(Settings::new(48_000)).unwrap();
         let mut warm = x.clone();
-        p.process_in_place(&mut warm);
+        let _ = p.process_in_place(&mut warm);
         let mut untouched = p.clone();
 
         let mut bad = Settings::new(48_000);
@@ -328,9 +385,109 @@ mod validation_tests {
         assert_eq!(p.settings(), untouched.settings());
         assert_eq!(p.latency_samples(), untouched.latency_samples());
         let (mut a, mut b) = (x.clone(), x);
-        p.process_in_place(&mut a);
-        untouched.process_in_place(&mut b);
+        let _ = p.process_in_place(&mut a);
+        let _ = untouched.process_in_place(&mut b);
         assert_eq!(a, b);
+    }
+
+    /// 003 T005: VAS settings are validated on creation (spec 003 FR-012).
+    #[test]
+    fn new_rejects_invalid_vas_setting() {
+        let mut s = Settings::new(48_000);
+        s.vas.sensitivity = 6;
+        assert_eq!(
+            Pipeline::new(s).err(),
+            Some(Error::InvalidSetting {
+                setting: Setting::VasSensitivity
+            })
+        );
+    }
+
+    /// 003 T005: a failed reconfigure with a bad VAS setting changes nothing (FR-012).
+    #[test]
+    fn failed_vas_reconfigure_leaves_pipeline_unchanged() {
+        let x: Vec<f32> = (0..4800)
+            .map(|n| if n % 50 == 0 { 0.5 } else { 0.0 })
+            .collect();
+        let mut p = Pipeline::new(Settings::new(48_000)).unwrap();
+        let mut warm = x.clone();
+        let _ = p.process_in_place(&mut warm);
+        let mut untouched = p.clone();
+        let mut bad = Settings::new(48_000);
+        bad.vas.onset_ms = f32::INFINITY;
+        assert_eq!(
+            p.reconfigure(bad),
+            Err(Error::InvalidSetting {
+                setting: Setting::VasOnsetMs
+            })
+        );
+        assert_eq!(p.settings(), untouched.settings());
+        assert_eq!(p.latency_samples(), untouched.latency_samples());
+        let (mut a, mut b) = (x.clone(), x);
+        let ia = p.process_in_place(&mut a);
+        let ib = untouched.process_in_place(&mut b);
+        assert_eq!((a, ia), (b, ib));
+    }
+
+    /// 003 T005: VAS bypassed (and before T020, absent), every block produces exactly as many
+    /// samples as it consumes, with no events and never paused, for every tap and rate
+    /// (spec 003 FR-002, FR-004).
+    #[test]
+    fn block_info_is_one_in_one_out_without_vas() {
+        let x: Vec<f32> = (0..2400)
+            .map(|n| if n % 31 == 0 { 0.4 } else { 0.0 })
+            .collect();
+        for rate in crate::SUPPORTED_HOST_RATES {
+            for tap in [
+                Tap::AfterAgc,
+                Tap::AfterRecord,
+                Tap::AfterVas,
+                Tap::AfterPlayback,
+            ] {
+                let mut s = Settings::new(rate);
+                s.vas.enabled = false;
+                s.tap = tap;
+                let mut p = Pipeline::new(s).unwrap();
+                let mut y = std::vec![0.0f32; 333];
+                let info = p.process(&x[..333], &mut y).unwrap();
+                assert_eq!(
+                    (info.produced, info.events, info.paused),
+                    (333, 0, false),
+                    "{rate} Hz {tap:?}"
+                );
+                let mut buf = x.clone();
+                let info = p.process_in_place(&mut buf);
+                assert_eq!((info.produced, info.events, info.paused), (2400, 0, false));
+                let info = p.process(&[], &mut []).unwrap();
+                assert_eq!(info.produced, 0);
+            }
+        }
+    }
+
+    /// 003 T005: with the tap after VAS, stage 10 does not run (spec 003 FR-003; research R-01).
+    #[test]
+    fn tap_after_vas_skips_the_playback_stage() {
+        let x: Vec<f32> = (0..9600)
+            .map(|n| if n % 97 == 0 { 0.5 } else { -0.01 })
+            .collect();
+        let run = |s: Settings| {
+            let mut y = x.clone();
+            let _ = Pipeline::new(s).unwrap().process_in_place(&mut y);
+            y
+        };
+        for rate in crate::SUPPORTED_HOST_RATES {
+            let mut tap_vas = Settings::new(rate);
+            tap_vas.vas.enabled = false; // isolate the tap logic from the VAS stage
+            tap_vas.tap = Tap::AfterVas;
+            let mut no_playback = tap_vas;
+            no_playback.tap = Tap::AfterPlayback;
+            no_playback.playback_stage_enabled = false;
+            assert_eq!(run(tap_vas), run(no_playback), "{rate} Hz");
+            assert_eq!(
+                Pipeline::new(tap_vas).unwrap().latency_samples(),
+                Pipeline::new(no_playback).unwrap().latency_samples()
+            );
+        }
     }
 }
 
@@ -371,7 +528,7 @@ mod op_count_tests {
             let mut worst = 0;
             for &v in &x {
                 let before = one.ops();
-                one.process_in_place(&mut [v]);
+                let _ = one.process_in_place(&mut [v]);
                 worst = worst.max(one.ops() - before);
             }
             assert!(
@@ -381,7 +538,8 @@ mod op_count_tests {
             assert!(worst > 0);
             let mut block = Pipeline::new(Settings::new(rate)).unwrap();
             let mut buf = x.clone();
-            block.process_in_place(&mut buf);
+            let produced = block.process_in_place(&mut buf).produced;
+            buf.truncate(produced);
             assert_eq!(
                 block.ops(),
                 one.ops(),

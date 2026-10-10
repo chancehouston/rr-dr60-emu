@@ -133,7 +133,8 @@ fn generate_set(stimuli: &[&str], config_names: &[&str], make: Make<'_>) -> Gold
                 let x = stimulus(s, rate);
                 let mut p = make(configs::settings(c, rate));
                 let mut y = vec![0.0; x.len()];
-                p.process(&x, &mut y).expect("equal lengths");
+                let produced = p.process(&x, &mut y).expect("equal lengths").produced;
+                y.truncate(produced);
                 entries.push(entry(s, c, rate, &y));
             }
         }

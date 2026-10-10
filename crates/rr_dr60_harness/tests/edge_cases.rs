@@ -5,7 +5,8 @@ use rr_dr60_harness::{analysis, configs, stimulus};
 
 fn run(p: &mut Pipeline, x: &[f32]) -> Vec<f32> {
     let mut y = vec![0.0; x.len()];
-    p.process(x, &mut y).unwrap();
+    let produced = p.process(x, &mut y).unwrap().produced;
+    y.truncate(produced);
     y
 }
 
@@ -18,8 +19,8 @@ fn block_of_size_zero_is_a_no_op() {
     let x = stimulus::noise(7, 4800);
     let mut p = fresh(44_100);
     let mut empty: [f32; 0] = [];
-    p.process(&[], &mut empty).unwrap();
-    p.process_in_place(&mut empty);
+    assert_eq!(p.process(&[], &mut empty).unwrap().produced, 0);
+    assert_eq!(p.process_in_place(&mut empty).produced, 0);
     assert_eq!(run(&mut p, &x), run(&mut fresh(44_100), &x));
 }
 

@@ -11,7 +11,12 @@ const FS: u32 = 48_000;
 
 fn process(settings: Settings, x: &[f32]) -> Vec<f32> {
     let mut y = vec![0.0; x.len()];
-    Pipeline::new(settings).unwrap().process(x, &mut y).unwrap();
+    let produced = Pipeline::new(settings)
+        .unwrap()
+        .process(x, &mut y)
+        .unwrap()
+        .produced;
+    y.truncate(produced);
     y
 }
 

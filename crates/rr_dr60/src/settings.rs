@@ -18,8 +18,11 @@ pub enum Tap {
     /// After signal-chain stage 3 (AGC). Stages 4 and 10 are not run, whatever their settings
     /// (spec 002 FR-003).
     AfterAgc,
-    /// After signal-chain stage 4 (record band-limit). Stage 10 is not run.
+    /// After signal-chain stage 4 (record band-limit). Stages 5 (VAS) and 10 are not run.
     AfterRecord,
+    /// After signal-chain stage 5 (VAS). Stage 10 is not run, whatever its setting
+    /// (spec 003 FR-003). In drop mode the output can be shorter than the input.
+    AfterVas,
     /// After signal-chain stage 10 (playback band-limit). The default, because the device
     /// band-limits on both record and playback (A-002).
     #[default]
@@ -111,6 +114,76 @@ impl Default for AgcSettings {
     }
 }
 
+/// What happens to audio while the VAS is paused (spec 003 FR-004).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum VasMode {
+    /// Removed from the output, so the output gets shorter. This is what the device does
+    /// (S-001, A-008).
+    #[default]
+    Drop,
+    /// Replaced by digital silence, so the output keeps the input's length. An emulator option
+    /// for real-time hosts that must output one sample per input sample; not a device behavior.
+    Mute,
+}
+
+/// Voice Activated System, signal-chain stage 5 (spec 003).
+///
+/// The owner's manual (S-001) says: "Recording automatically pauses when no sound is detected."
+/// The device has no VAS switch and no VAS sensitivity control of its own; its threshold follows
+/// the five-level microphone sensitivity setting (A-008, A-021). The emulator models this with
+/// assumed values (A-022 – A-025) until captures from a real unit exist: a peak-level threshold,
+/// a hang time before pausing, and an onset time that is lost when recording resumes.
+///
+/// # Output length
+///
+/// In [`VasMode::Drop`] (the default), paused audio is removed, so **a block can produce fewer
+/// output samples than it consumed, or none**. Always use
+/// [`BlockInfo::produced`](crate::BlockInfo::produced). [`VasMode::Mute`] keeps the length
+/// and replaces paused audio with silence.
+///
+/// Ranges are inclusive; values outside them, NaN and ±Inf are rejected by
+/// [`Pipeline::new`](crate::Pipeline::new) (spec 003 FR-012), even when the VAS is bypassed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct VasSettings {
+    /// On (`true`, default) or bypassed. S-001, A-008: the device has no VAS switch.
+    pub enabled: bool,
+    /// [`VasMode::Drop`] (default) or [`VasMode::Mute`].
+    pub mode: VasMode,
+    /// Microphone sensitivity level, 1 to 5. Default 3 (S-001, A-021). In this version it moves
+    /// only the VAS threshold: 3 dB per level, and higher levels record quieter sounds (A-022).
+    pub sensitivity: u8,
+    /// VAS threshold at sensitivity level 3, in dBFS (sine peak, AES17). Default −18.0 (A-022).
+    /// Range −60.0 to 0.0.
+    pub threshold_dbfs: f32,
+    /// Hang time in ms: how long the input must stay below the threshold before recording
+    /// pauses. Default 1000.0 (A-023). Range 50.0 to 10000.0.
+    pub hang_ms: f32,
+    /// Onset time in ms: how long a sound must last before a paused recording resumes; this
+    /// much of the sound is lost. Default 20.0 (A-024). Range 0.0 to 200.0.
+    pub onset_ms: f32,
+}
+
+impl VasSettings {
+    /// The assumed device values (S-001, A-008, A-021 – A-024).
+    pub const DEVICE: Self = Self {
+        enabled: true,         // S-001, A-008
+        mode: VasMode::Drop,   // S-001, A-008
+        sensitivity: 3,        // S-001, A-021
+        threshold_dbfs: -18.0, // A-022
+        hang_ms: 1000.0,       // A-023
+        onset_ms: 20.0,        // A-024
+    };
+}
+
+impl Default for VasSettings {
+    /// [`VasSettings::DEVICE`].
+    fn default() -> Self {
+        Self::DEVICE
+    }
+}
+
 /// Pipeline configuration (data-model.md › Settings).
 ///
 /// Settings are fixed for the life of a configuration. To change them, call
@@ -134,10 +207,12 @@ pub struct Settings {
     pub seed: u64,
     /// Signal-chain stage 3 (AGC) settings. Default [`AgcSettings::DEVICE`] (spec 002).
     pub agc: AgcSettings,
+    /// Signal-chain stage 5 (VAS) settings. Default [`VasSettings::DEVICE`] (spec 003).
+    pub vas: VasSettings,
 }
 
 impl Settings {
-    /// Default settings for the given host rate: AGC on with the device values, both
+    /// Default settings for the given host rate: AGC and VAS on with the device values, both
     /// band-limit stages on, tap after playback, seed 0.
     ///
     /// The rate is not validated here. [`Pipeline::new`](crate::Pipeline::new) validates it.
@@ -149,11 +224,12 @@ impl Settings {
             tap: Tap::AfterPlayback,
             seed: 0,                  // FR-009
             agc: AgcSettings::DEVICE, // A-017, A-018, A-020
+            vas: VasSettings::DEVICE, // S-001, A-008, A-021 – A-024
         }
     }
 
     /// Checks these settings without creating a pipeline: the host rate first (FR-002), then
-    /// every AGC field (spec 002 FR-011). [`Pipeline::new`](crate::Pipeline::new) runs the
+    /// every AGC field (spec 002 FR-011), then every VAS field (spec 003 FR-012). [`Pipeline::new`](crate::Pipeline::new) runs the
     /// same check. Never allocates.
     ///
     /// # Errors
@@ -206,6 +282,27 @@ mod tests {
     #[test]
     fn tap_after_agc_exists_and_default_is_unchanged() {
         assert_ne!(Tap::AfterAgc, Tap::AfterPlayback);
+        assert_eq!(Tap::default(), Tap::AfterPlayback);
+    }
+
+    #[test]
+    fn vas_defaults_cite_s001_a008_a021_to_a024() {
+        // 003 T003 / data-model.md › VasSettings.
+        let d = VasSettings::DEVICE;
+        assert!(d.enabled); // S-001, A-008: no VAS switch on the device
+        assert_eq!(d.mode, VasMode::Drop); // S-001, A-008
+        assert_eq!(d.sensitivity, 3); // S-001, A-021
+        assert_eq!(d.threshold_dbfs, -18.0); // A-022
+        assert_eq!(d.hang_ms, 1000.0); // A-023
+        assert_eq!(d.onset_ms, 20.0); // A-024
+        assert_eq!(VasSettings::default(), VasSettings::DEVICE);
+        assert_eq!(VasMode::default(), VasMode::Drop);
+        assert_eq!(Settings::new(48_000).vas, VasSettings::DEVICE);
+    }
+
+    #[test]
+    fn tap_after_vas_exists_and_default_is_unchanged() {
+        assert_ne!(Tap::AfterVas, Tap::AfterPlayback);
         assert_eq!(Tap::default(), Tap::AfterPlayback);
     }
 

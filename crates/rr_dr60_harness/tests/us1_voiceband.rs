@@ -13,7 +13,8 @@ use rr_dr60_harness::{analysis, configs, stimulus};
 fn run(host: u32, input: &[f32]) -> Vec<f32> {
     let mut p = Pipeline::new(configs::settings("default", host)).expect("supported rate");
     let mut out = vec![0.0; input.len()];
-    p.process(input, &mut out).expect("equal lengths");
+    let produced = p.process(input, &mut out).expect("equal lengths").produced;
+    out.truncate(produced);
     out
 }
 
@@ -46,7 +47,8 @@ fn as3_n_samples_in_n_samples_out_at_every_rate() {
         for n in [0usize, 1, 7, 64, 4096, 48_000] {
             let x = stimulus::noise(0x0D60, n);
             let mut y = vec![f32::NAN; n];
-            p.process(&x, &mut y).unwrap();
+            let produced = p.process(&x, &mut y).unwrap().produced;
+            y.truncate(produced);
             assert_eq!(y.len(), n);
             assert!(y.iter().all(|v| v.is_finite()), "{host} Hz, block {n}");
         }
@@ -66,7 +68,8 @@ fn as3_length_mismatch_is_rejected_without_changing_state() {
         })
     );
     let mut y = vec![0.0; x.len()];
-    p.process(&x, &mut y).unwrap();
+    let produced = p.process(&x, &mut y).unwrap().produced;
+    y.truncate(produced);
     assert_eq!(y, run(48_000, &x), "state changed by a rejected call");
 }
 

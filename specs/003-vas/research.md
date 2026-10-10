@@ -90,7 +90,8 @@ Decisions for feature 003. They build on [spec 001's research](../001-pipeline-s
   - **8 kHz host rate**: identity plan, so each kept sample is emitted immediately and a dropped one produces nothing.
 - **Prototype** (200 000 host steps, random pauses, all five non-identity rates):
   - with no drops, the emission times equal 0, 1, 2, … exactly;
-  - with drops, input length − output length equals dropped device samples × m/l within 0.95 samples;
+  - with drops, input length − output length equals dropped device samples × m/l within 0.95 samples at the end of a stream that ends while recording;
+  - **settling** (found while implementing T006): when a pause starts, the output keeps flowing for the rest of the last kept device sample's host-rate slots, so at any moment the difference can be up to one device sample (m/l host samples, ≤ 12). Once recording has continued for ⌈m/l⌉ + 1 host samples after a pause, it is back within ±1 (exact when m/l is an integer). Spec FR-004 and FR-005 state this;
   - output never exceeded input in any step, and the interpolator never needed more look-back than today.
 - **Rationale**: it is a per-sample rule on integer counters, so it is independent of block boundaries, allocation-free, and adds constant work per sample. `process_in_place` stays valid, because output index ≤ input index at every step.
 - **Alternatives**:

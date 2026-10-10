@@ -9,7 +9,12 @@ type BreakCase = (Setting, fn(&mut Settings));
 
 fn process(settings: Settings, x: &[f32]) -> Vec<f32> {
     let mut y = vec![0.0; x.len()];
-    Pipeline::new(settings).unwrap().process(x, &mut y).unwrap();
+    let produced = Pipeline::new(settings)
+        .unwrap()
+        .process(x, &mut y)
+        .unwrap()
+        .produced;
+    y.truncate(produced);
     y
 }
 
@@ -110,13 +115,16 @@ fn as5_invalid_settings_are_named_and_rejected() {
 
         let mut p = Pipeline::new(Settings::new(48_000)).unwrap();
         let mut warm = x.clone();
-        p.process_in_place(&mut warm);
+        let produced = p.process_in_place(&mut warm).produced;
+        warm.truncate(produced);
         let mut control = p.clone();
         assert_eq!(p.reconfigure(bad), Err(want));
         assert_eq!(p.settings(), control.settings());
         let (mut a, mut b) = (x.clone(), x.clone());
-        p.process_in_place(&mut a);
-        control.process_in_place(&mut b);
+        let produced = p.process_in_place(&mut a).produced;
+        a.truncate(produced);
+        let produced = control.process_in_place(&mut b).produced;
+        b.truncate(produced);
         assert_eq!(a, b, "{setting:?}: failed reconfigure changed the pipeline");
     }
 }

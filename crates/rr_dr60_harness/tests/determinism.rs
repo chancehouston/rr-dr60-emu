@@ -8,7 +8,8 @@ use rr_dr60_harness::{configs, golden};
 fn one_block(s: rr_dr60::Settings, x: &[f32]) -> Vec<f32> {
     let mut p = Pipeline::new(s).unwrap();
     let mut y = vec![0.0; x.len()];
-    p.process(x, &mut y).unwrap();
+    let produced = p.process(x, &mut y).unwrap().produced;
+    y.truncate(produced);
     y
 }
 
@@ -23,7 +24,8 @@ fn partitioned(s: rr_dr60::Settings, x: &[f32], rng: &mut Pcg32) -> Vec<f32> {
         let n = if pos == 0 && !first { 1 } else { n };
         first = false;
         let mut y = vec![0.0; n];
-        p.process(&x[pos..pos + n], &mut y).unwrap();
+        let produced = p.process(&x[pos..pos + n], &mut y).unwrap().produced;
+        y.truncate(produced);
         out.extend(y);
         pos += n;
     }
@@ -73,7 +75,8 @@ fn in_place_equals_copy() {
         let x = golden::stimulus("sweep_log", rate);
         let mut p = Pipeline::new(configs::settings("default", rate)).unwrap();
         let mut buf = x.clone();
-        p.process_in_place(&mut buf);
+        let produced = p.process_in_place(&mut buf).produced;
+        buf.truncate(produced);
         assert_eq!(
             buf,
             one_block(configs::settings("default", rate), &x),

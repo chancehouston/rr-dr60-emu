@@ -101,9 +101,9 @@ fn processing_never_touches_the_heap() {
 
             let before = counts();
             for &n in &sizes {
-                p.process(&input[..n], &mut output[..n]).unwrap();
+                let _ = p.process(&input[..n], &mut output[..n]).unwrap();
                 in_place[..n].copy_from_slice(&input[..n]);
-                p.process_in_place(&mut in_place[..n]);
+                let _ = p.process_in_place(&mut in_place[..n]);
                 // SAFETY: live handle; buffers valid for n floats and non-overlapping.
                 let status =
                     unsafe { rr_dr60_process(handle, input.as_ptr(), output.as_mut_ptr(), n) };

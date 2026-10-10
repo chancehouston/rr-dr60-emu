@@ -42,7 +42,8 @@ const CONFIGS: [&str; 5] = [
 fn run(settings: Settings, input: &[f32]) -> Vec<f32> {
     let mut p = Pipeline::new(settings).unwrap();
     let mut out = vec![0.0; input.len()];
-    p.process(input, &mut out).unwrap();
+    let produced = p.process(input, &mut out).unwrap().produced;
+    out.truncate(produced);
     out
 }
 
@@ -164,7 +165,11 @@ fn reconfigure_equals_new() {
     let x = stimulus::log_sweep(20.0, 3900.0, 0.25, 8000.0, 8000);
     let mut p = Pipeline::new(config("default", 48_000)).unwrap();
     let mut scratch = vec![0.0; 4800];
-    p.process(&stimulus::noise(1, 4800), &mut scratch).unwrap(); // dirty the state first
+    let produced = p
+        .process(&stimulus::noise(1, 4800), &mut scratch)
+        .unwrap()
+        .produced; // dirty the state first
+    scratch.truncate(produced);
     for s in [
         config("default", 44_100),
         config("record_only", 8000),
@@ -176,7 +181,8 @@ fn reconfigure_equals_new() {
         let fresh = Pipeline::new(s).unwrap();
         assert_eq!(p.latency_samples(), fresh.latency_samples(), "{s:?}");
         let mut y = vec![0.0; x.len()];
-        p.process(&x, &mut y).unwrap();
+        let produced = p.process(&x, &mut y).unwrap().produced;
+        y.truncate(produced);
         assert_eq!(y, run(s, &x), "reconfigure({s:?}) differs from new()");
     }
 }
@@ -186,7 +192,8 @@ fn failed_reconfigure_changes_nothing() {
     let x = stimulus::tone(1000.0, 0.25, 48_000.0, 4800);
     let mut p = Pipeline::new(config("record_only", 48_000)).unwrap();
     let mut first = vec![0.0; x.len()];
-    p.process(&x, &mut first).unwrap();
+    let produced = p.process(&x, &mut first).unwrap().produced;
+    first.truncate(produced);
     let before = (*p.settings(), p.latency_samples());
     assert_eq!(
         p.reconfigure(Settings::new(22_050)),
@@ -195,10 +202,12 @@ fn failed_reconfigure_changes_nothing() {
     assert_eq!((*p.settings(), p.latency_samples()), before);
     // State was kept too: the next block continues the stream exactly.
     let mut second = vec![0.0; x.len()];
-    p.process(&x, &mut second).unwrap();
+    let produced = p.process(&x, &mut second).unwrap().produced;
+    second.truncate(produced);
     let mut q = Pipeline::new(config("record_only", 48_000)).unwrap();
     let mut both = vec![0.0; 2 * x.len()];
-    q.process(&[x.clone(), x.clone()].concat(), &mut both)
+    let _ = q
+        .process(&[x.clone(), x.clone()].concat(), &mut both)
         .unwrap();
     assert_eq!([first, second].concat(), both);
 }

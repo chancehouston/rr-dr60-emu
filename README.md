@@ -71,9 +71,10 @@ Not yet: every stage beyond the AGC and the codec filters.
 ```rust
 use rr_dr60::{Pipeline, Settings};
 
-let mut p = Pipeline::new(Settings::new(48_000))?;   // AGC and both filter stages on, output after playback
+let mut p = Pipeline::new(Settings::new(48_000))?;   // device defaults: AGC, VAS and both filter stages on
 println!("latency: {} samples", p.latency_samples());
-p.process_in_place(&mut buffer);                     // in your audio callback; any block length
+let info = p.process_in_place(&mut buffer);          // in your audio callback; any block length
+let out = &buffer[..info.produced];                  // VAS drops pauses: output can be shorter
 ```
 
 ### C / Swift
@@ -84,7 +85,9 @@ p.process_in_place(&mut buffer);                     // in your audio callback; 
 RrDr60Settings s = rr_dr60_settings_default(48000);
 RrDr60Pipeline *p = NULL;
 if (rr_dr60_create(&s, &p) != RR_DR60_STATUS_OK) { /* handle the error */ }
-rr_dr60_process(p, in, out, frames);                 /* real-time safe; in == out is allowed */
+RrDr60BlockInfo info;
+rr_dr60_process(p, in, out, frames, &info);          /* real-time safe; in == out is allowed */
+/* only out[0 .. info.produced) is output: the VAS drops pauses by default */
 rr_dr60_destroy(p);
 ```
 

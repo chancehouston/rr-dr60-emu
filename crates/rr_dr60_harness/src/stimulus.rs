@@ -101,6 +101,48 @@ pub fn tone_bursts(
     out
 }
 
+/// Samples in `secs` seconds at `fs`, rounded to the nearest sample, so millisecond lengths
+/// such as 18 ms at 44.1 kHz don't lose a sample to floating-point truncation.
+fn samples(secs: f64, fs: f64) -> usize {
+    (secs * fs + 0.5) as usize
+}
+
+/// A burst-gap stimulus (spec 003 definitions): a tone at `level_dbfs` during each `(true, s)`
+/// segment ("burst") and digital silence (+0.0) during each `(false, s)` segment ("gap").
+/// Every burst starts at phase 0, so its timing doesn't depend on what came before.
+/// Foundational for spec 003 (plan › Story boundaries).
+pub fn burst_gap(freq_hz: f64, level_dbfs: f64, segments: &[(bool, f64)], fs: f64) -> Vec<f32> {
+    let amp = amplitude(level_dbfs);
+    let mut out = Vec::new();
+    for &(on, secs) in segments {
+        let n = samples(secs, fs);
+        if on {
+            out.extend((0..n).map(|k| tone_sample(freq_hz, amp, fs, k) as f32));
+        } else {
+            out.extend(std::iter::repeat_n(0.0f32, n));
+        }
+    }
+    out
+}
+
+/// `lead_s` of silence, then one burst per entry of `bursts_ms`, each followed by `gap_s` of
+/// silence (spec 003 FR-009 onset checks; `vas_short_bursts` golden stimulus).
+pub fn short_bursts(
+    freq_hz: f64,
+    level_dbfs: f64,
+    lead_s: f64,
+    bursts_ms: &[f64],
+    gap_s: f64,
+    fs: f64,
+) -> Vec<f32> {
+    let mut segments = vec![(false, lead_s)];
+    for &ms in bursts_ms {
+        segments.push((true, ms / 1000.0));
+        segments.push((false, gap_s));
+    }
+    burst_gap(freq_hz, level_dbfs, &segments, fs)
+}
+
 /// Seeded white noise band-limited to 300–3400 Hz and scaled to `level_dbfs` by the AES17
 /// convention (RMS = 10^(L/20) / √2), for spec 002 FR-009.
 ///
@@ -306,6 +348,47 @@ mod tests {
         let level = 10.0 * rr_dr60_detmath::ln(2.0 * mean_square) / rr_dr60_detmath::ln(10.0);
         assert!((level + 70.0).abs() < 0.05, "level {level}");
         assert_eq!(a, bandlimited_noise(0x0D60, 48_000, fs, -70.0));
+    }
+
+    /// 003 T007: burst-gap segments have exact (rounded) lengths, bursts start at phase 0, gaps
+    /// are digital silence (+0.0), and the result is bit-reproducible.
+    #[test]
+    fn burst_gap_layout() {
+        for fs in [8000.0, 44_100.0, 48_000.0] {
+            let seg = [(true, 1.0), (false, 0.018), (true, 0.5), (false, 2.0)];
+            let x = burst_gap(1000.0, -8.0, &seg, fs);
+            let n = |s: f64| (s * fs + 0.5) as usize;
+            assert_eq!(x.len(), n(1.0) + n(0.018) + n(0.5) + n(2.0), "{fs}");
+            let b2 = n(1.0) + n(0.018);
+            assert_eq!(x[0], 0.0);
+            assert_eq!(x[b2], 0.0, "second burst starts at phase 0");
+            assert!(x[n(1.0)..b2].iter().all(|v| v.to_bits() == 0));
+            assert!(x[b2 + n(0.5)..].iter().all(|v| v.to_bits() == 0));
+            let peak = x[..n(1.0)].iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+            assert!(
+                (f64::from(peak) - amplitude(-8.0)).abs() < 1e-3,
+                "{fs}: {peak}"
+            );
+            assert_eq!(x, burst_gap(1000.0, -8.0, &seg, fs));
+        }
+        assert_eq!(
+            burst_gap(1000.0, -8.0, &[(true, 0.018)], 44_100.0).len(),
+            794
+        );
+    }
+
+    /// 003 T007: short bursts are lead + (burst + gap) × n with exact counts.
+    #[test]
+    fn short_bursts_layout() {
+        let x = short_bursts(1000.0, -8.0, 2.0, &[10.0, 30.0, 200.0], 2.0, 8000.0);
+        assert_eq!(x.len(), 16_000 + 80 + 16_000 + 240 + 16_000 + 1600 + 16_000);
+        assert!(x[..16_000].iter().all(|&v| v == 0.0));
+        assert!(x[16_000..16_080].iter().any(|&v| v != 0.0));
+        assert!(x[16_080..32_080].iter().all(|&v| v == 0.0));
+        assert_eq!(
+            x,
+            short_bursts(1000.0, -8.0, 2.0, &[10.0, 30.0, 200.0], 2.0, 8000.0)
+        );
     }
 
     #[test]

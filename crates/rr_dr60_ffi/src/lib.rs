@@ -330,7 +330,7 @@ pub unsafe extern "C" fn rr_dr60_process(
             // SAFETY: output is non-null and writable for `frames` floats; it is the only
             // reference to that memory during the call.
             let buf = unsafe { std::slice::from_raw_parts_mut(output, frames) };
-            p.inner.process_in_place(buf);
+            let _ = p.inner.process_in_place(buf);
         } else {
             // SAFETY: both are non-null, valid for `frames` floats, and checked not to overlap.
             let (x, y) = unsafe {
