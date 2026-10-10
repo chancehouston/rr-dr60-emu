@@ -38,12 +38,12 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
 
 **Purpose**: Version bump and the guard that keeps spec 002's golden file unchanged.
 
-- [ ] T001 Bump the workspace version to 0.3.0:
+- [X] T001 Bump the workspace version to 0.3.0:
   - `version = "0.3.0"` in `[workspace.package]` and in the three internal dependency entries of `Cargo.toml`.
   - `RR_DR60_VERSION_MINOR = 3` in `crates/rr_dr60_ffi/src/lib.rs`.
   - Regenerate `crates/rr_dr60_ffi/include/rr_dr60.h` (see `crates/rr_dr60_ffi/cbindgen.toml`).
   - Golden comparison ignores `library_version`, so the 001 and 002 golden tests must still pass.
-- [ ] T002 [P] Add `golden_agc_v1_unchanged` to `crates/rr_dr60_harness/tests/golden_agc.rs`: the SHA-256 of `include_bytes!("../golden/golden-agc-v1.json")` equals a constant recorded from the file as committed on `main`, as `golden_v1_unchanged` does (FR-019, FR-020; research R-10).
+- [X] T002 [P] Add `golden_agc_v1_unchanged` to `crates/rr_dr60_harness/tests/golden_agc.rs`: the SHA-256 of `include_bytes!("../golden/golden-agc-v1.json")` equals a constant recorded from the file as committed on `main`, as `golden_v1_unchanged` does (FR-019, FR-020; research R-10).
 
 **Checkpoint**: the workspace builds at 0.3.0, and both golden-file guards pass.
 

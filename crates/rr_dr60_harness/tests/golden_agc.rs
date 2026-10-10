@@ -16,6 +16,21 @@ fn golden_v1_unchanged() {
     );
 }
 
+/// SHA-256 of `golden/golden-agc-v1.json` as committed on `main` (spec 002).
+/// Spec 003 must never change the 002 golden file (003 FR-019, FR-020; 003 research R-10).
+const GOLDEN_AGC_V1_SHA256: &str =
+    "59f68184ee2dc0988f6f4a47b186a6da4e6c08834271db7a0e6013368029df6d";
+
+#[test]
+fn golden_agc_v1_unchanged() {
+    let digest = Sha256::digest(include_bytes!("../golden/golden-agc-v1.json"));
+    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(
+        hex, GOLDEN_AGC_V1_SHA256,
+        "golden-agc-v1.json changed; spec 003 must keep the spec 002 golden file byte-identical"
+    );
+}
+
 /// Spec 002 FR-017 (contracts/golden-format.md): 36 AGC entries, bit-exact on every target.
 /// Bless on purpose only, with a CHANGELOG entry:
 /// `RR_DR60_BLESS=agc cargo test -p rr_dr60_harness --test golden_agc`
