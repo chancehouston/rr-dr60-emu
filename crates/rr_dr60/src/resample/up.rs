@@ -158,8 +158,8 @@ mod tests {
 
     /// 003 T006 (research R-05, R-06; spec FR-004): with dropped device samples, at most one
     /// sample per step; input − output stays within one device sample (⌈m/l⌉ host samples) of
-    /// ⌊dropped·m/l⌋ at every step, and within ±1 (exact when m/l is an integer) once recording
-    /// has continued for ⌈m/l⌉ + 1 steps after a pause; and the writer never leads the
+    /// ⌊dropped·m/l⌋ at every step, and within ±1 (exact when m/l is an integer) once ⌈m/l⌉ + 1
+    /// steps have passed since the step that reported the last pause; and the writer never leads the
     /// newest-read index by more than it does with no drops (ring safety).
     #[test]
     fn drops_stall_the_output_without_overrunning_the_ring() {

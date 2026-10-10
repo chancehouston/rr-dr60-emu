@@ -3,6 +3,9 @@
 //! Acceptance scenarios AS1–AS5 at 48 kHz in the VAS-isolated configuration (`vas_only`: AGC
 //! and stages 4 and 10 bypassed), plus FR-011. Plain assertions on output lengths and events
 //! only: this story does not use the US3 harness (`vas_checks`), per plan › Story boundaries.
+//! Where the VAS should change nothing, the output is compared bit for bit with a VAS-bypassed
+//! run of the same settings (research R-11: never infer latency or splice positions from an
+//! amplitude envelope).
 
 use rr_dr60::{BlockInfo, Pipeline, SUPPORTED_HOST_RATES, Settings, Tap, VasEvent};
 use rr_dr60_harness::{configs, stimulus};
@@ -22,25 +25,37 @@ fn run(settings: Settings, x: &[f32]) -> (Vec<f32>, Vec<VasEvent>, BlockInfo) {
     (y, ev, info)
 }
 
+/// The same run with the VAS bypassed: the reference for "the VAS changed nothing".
+fn run_bypassed(mut settings: Settings, x: &[f32]) -> Vec<f32> {
+    settings.vas.enabled = false;
+    run(settings, x).0
+}
+
 fn burst_gap(segments: &[(bool, f64)]) -> Vec<f32> {
     stimulus::burst_gap(1000.0, BURST_DBFS, segments, f64::from(FS))
 }
 
-/// US1 AS1 (FR-006, A-022): a 1 kHz tone 3 dB above the threshold is kept in full for 10 s.
+/// US1 AS1 (FR-006, FR-011; A-022): a 1 kHz tone 3 dB above the threshold is kept in full for
+/// 10 s, bit-identical to the VAS-bypassed run.
 #[test]
 fn as1_tone_above_threshold_is_kept() {
     let x = stimulus::step(1000.0, &[-15.0], &[10.0], f64::from(FS));
-    let (y, ev, _) = run(configs::settings("vas_only", FS), &x);
+    let settings = configs::settings("vas_only", FS);
+    let (y, ev, _) = run(settings, &x);
     assert_eq!(y.len(), x.len());
     assert!(ev.is_empty());
+    assert_eq!(y, run_bypassed(settings, &x));
 }
 
 /// US1 AS2 (FR-004, FR-008, FR-009; A-023, A-024): burst 1 s, gap 5 s, burst 1 s keeps the first
 /// burst, 1.0 s of the gap and the second burst minus 20 ms, joined at one splice (±1 ms).
+/// Before the splice the output is bit-identical to the VAS-bypassed run; after it, the kept
+/// input reappears bit-identically once the output resampler's memory of the splice has passed.
 #[test]
 fn as2_long_gap_is_cut_to_the_hang_time() {
     let x = burst_gap(&[(true, 1.0), (false, 5.0), (true, 1.0)]);
-    let (y, ev, info) = run(configs::settings("vas_only", FS), &x);
+    let settings = configs::settings("vas_only", FS);
+    let (y, ev, info) = run(settings, &x);
     let want = (2.0 + 1.0 - 0.020) * f64::from(FS);
     let tol = 0.001 * f64::from(FS); // ±1 ms, engineering target (003 FR-017)
     eprintln!(
@@ -53,16 +68,31 @@ fn as2_long_gap_is_cut_to_the_hang_time() {
     assert_eq!(ev.len(), 1);
     assert!(!info.paused);
     // The removed length accounts for everything that is missing (m/l = 6 is an integer).
-    assert_eq!(ev[0].input_length as usize + y.len(), x.len());
+    let (pos, removed) = (ev[0].output_position as usize, ev[0].input_length as usize);
+    assert_eq!(removed + y.len(), x.len());
+
+    let reference = run_bypassed(settings, &x);
+    assert_eq!(&y[..pos], &reference[..pos], "before the splice");
+    // The output resampler (stage 10 is bypassed, so the rate converter alone) carries the
+    // splice for one filter length; after that the kept input must come through unchanged.
+    let settle = 2 * Pipeline::new(settings).unwrap().latency_samples() as usize;
+    assert_eq!(
+        &y[pos + settle..],
+        &reference[pos + removed + settle..],
+        "after the splice (settle {settle})"
+    );
 }
 
-/// US1 AS3 (FR-008): a gap shorter than the hang time is kept: no splice, nothing removed.
+/// US1 AS3 (FR-008, FR-011): a gap shorter than the hang time is kept: no splice, nothing
+/// removed, output bit-identical to the VAS-bypassed run.
 #[test]
 fn as3_short_gap_is_kept() {
     let x = burst_gap(&[(true, 1.0), (false, 0.9), (true, 1.0)]);
-    let (y, ev, _) = run(configs::settings("vas_only", FS), &x);
+    let settings = configs::settings("vas_only", FS);
+    let (y, ev, _) = run(settings, &x);
     assert_eq!(y.len(), x.len());
     assert!(ev.is_empty());
+    assert_eq!(y, run_bypassed(settings, &x));
 }
 
 /// US1 AS4 (FR-007 of 002 style; A-025): digital silence gives exactly 1.0 s of zeros, then
@@ -78,8 +108,8 @@ fn as4_silence_keeps_one_hang_time_then_pauses() {
 }
 
 /// US1 AS5 (FR-004, FR-005, FR-014): in random block sizes (including 0 and 1), no block
-/// produces more than it consumed, and the concatenated output and events equal the one-block
-/// run, bit for bit.
+/// produces more than it consumed, every event reported by a block lies within that block's
+/// output range, and the concatenated output and events equal the one-block run, bit for bit.
 #[test]
 fn as5_blocks_report_their_output_and_splices() {
     let x = burst_gap(&[
@@ -115,6 +145,15 @@ fn as5_blocks_report_their_output_and_splices() {
             .unwrap();
         assert!(info.produced <= n);
         assert!(info.events <= slots.len());
+        for e in &slots[..info.events] {
+            let position = e.output_position as usize;
+            assert!(
+                (y.len()..=y.len() + info.produced).contains(&position),
+                "event at {position} outside the block's output {}..={}",
+                y.len(),
+                y.len() + info.produced
+            );
+        }
         y.extend_from_slice(&out[..info.produced]);
         ev.extend_from_slice(&slots[..info.events]);
         pos += n;
@@ -123,7 +162,8 @@ fn as5_blocks_report_their_output_and_splices() {
     assert_eq!(ev, want_ev);
 }
 
-/// 003 FR-011: the VAS adds no latency, for every tap at every rate.
+/// 003 FR-011: the VAS adds no latency, for every tap at every rate: the reported latency is
+/// equal with VAS on and bypassed (and AS1/AS3 show the output itself is bit-identical).
 #[test]
 fn fr011_no_added_latency() {
     for rate in SUPPORTED_HOST_RATES {

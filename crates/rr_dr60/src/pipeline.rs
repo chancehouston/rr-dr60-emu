@@ -720,10 +720,17 @@ mod vas_event_tests {
         assert_eq!(info.events, 1);
         assert!(!info.paused);
         assert_eq!(ev[0].input_length as usize + y.len(), x.len());
+        // The kept samples are the input, bit for bit: the first burst and the hang time, then
+        // the second burst minus the onset (8 kHz is the device rate; nothing else is in the path).
+        assert_eq!(&y[..16_000], &x[..16_000]);
+        assert_eq!(&y[16_000..], &x[16_000 + 32_160..]);
     }
 
     /// 003 T018: at 48 kHz (m/l = 6) the removed lengths and the output add up to the input
-    /// exactly, and the removed length is a whole number of device samples.
+    /// exactly, the removed length is a whole number of device samples and within one device
+    /// sample of 6 × the 8 kHz value (the decimator's edge smear can move the pause by one device
+    /// sample; research R-11 › Measured). The position also carries the decimator's delay, so
+    /// only its alignment is checked.
     #[test]
     fn splice_at_48k_adds_up() {
         let x = burst_gap_burst(48_000.0);
@@ -734,6 +741,13 @@ mod vas_event_tests {
         let removed: u64 = ev.iter().map(|e| e.input_length).sum();
         assert_eq!(removed as usize + y.len(), x.len());
         assert_eq!(ev[0].output_position % 6, 0);
+        let device = 6; // ± one device sample, engineering target (003 FR-017)
+        let length = i64::try_from(ev[0].input_length).unwrap();
+        assert!(
+            (length - 6 * 32_160).abs() <= device,
+            "{}",
+            ev[0].input_length
+        );
     }
 
     /// 003 T018: a too-short event slice still counts the event, and writes nothing.
