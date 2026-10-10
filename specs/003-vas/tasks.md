@@ -210,8 +210,12 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
 - [X] T023 [US1] Update the `op-count` test in `crates/rr_dr60/src/pipeline.rs`: add a fixed VAS term per device sample and the emission compare per host sample. Assert that work is still independent of block partition, with VAS on in a burst-gap run.
 - [X] T024 [P] [US1] Update the crate docs in `crates/rr_dr60/src/lib.rs` (this file only; the `Pipeline` rustdoc is part of T022). List stage 5 as "modeled on the owner's manual and assumed values (A-008, A-021 – A-025)", with no EVP claims either way, and state that by default the output can be shorter than the input.
 - [X] T025 [US1] Run `cargo test -p rr_dr60 stages::vas` and `cargo test -p rr_dr60_harness --test us1_vas`, and fix until green. Confirm every 001 and 002 test and both golden guards are still green.
+- [ ] T052 [US1] Event-capacity edge tests (added 2026-10-10, MVP review; research R-07), in the test module of `crates/rr_dr60/src/pipeline.rs`:
+  - **Worst case for `max_events`**: `onset_ms = 0`, bursts of one loud sample separated by gaps of exactly H + 1 silent device samples (the densest possible splice train), at every rate, in blocks of varied size including 1 and `frames` large enough to hold several splices; `info.events ≤ max_events(n)` for every block, and the total equals the expected splice count.
+  - **Short slices**: a block containing two splices processed with slices of length 0, 1 and 2: `info.events == 2` each time, the first `len` events are written in order, and the later ones are counted but not written.
+  - Both use plain assertions and cite FR-005 and R-07; update the `max_events` rustdoc to "+ 1 (+ 2 at 44.1 and 88.2 kHz)" while there.
 
-**Checkpoint (US1 / MVP)**: T017–T019 pass, all 001 and 002 tests pass unchanged, and the default pipeline now drops pauses. Stop and demo with a burst-gap stimulus (quickstart § 2). This is the MVP.
+**Checkpoint (US1 / MVP)**: T017–T019 pass (T052 was added after the checkpoint and runs before Phase 4), all 001 and 002 tests pass unchanged, and the default pipeline now drops pauses. Stop and demo with a burst-gap stimulus (quickstart § 2). This is the MVP.
 
 ---
 
@@ -255,8 +259,9 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
 ### Implementation for User Story 2
 
 - [ ] T030 [US2] Implement mute mode (research R-09). **Placement (MVP review, 2026-10-10)**: the change lives in `crates/rr_dr60/src/pipeline.rs`, not in `stages/vas.rs`. The stage's decisions (`Keep` / `Drop` / `Resume`) are already mode-independent; the mode decides what the pipeline does with a `Drop`.
-  - **Pipeline**: add a `DeviceOut::Mute` outcome. In mute mode a `VasDecision::Drop` becomes `DeviceOut::Mute`, which feeds +0.0 onward (through stage 10 when it runs, and into the interpolator) and counts toward `kept`, so the emission schedule stays one-in-one-out. `dropped` and `removed_reported` are untouched in mute mode.
-  - **Regions**: at the first muted sample (kept index j₀) record the region start ⌈j₀·m/l⌉; on `Resume` (kept index j₁) emit `VasEvent { output_position: start, input_length: ⌈j₁·m/l⌉ − start }` through `pending`, so each region is reported once, by the block in which it ends (data-model › VasEvent). The block's `paused` flag shows a region still open.
+  - **Pipeline**: add a `DeviceOut::Mute` outcome. `DeviceChain` stores the output mode (today it returns `DeviceOut::Drop` before stage 10 and knows no mode): in mute mode a `VasDecision::Drop` runs stage 10 on +0.0 when `run_playback` and returns `DeviceOut::Mute(d)`, which feeds onward into the interpolator and counts toward `kept`, so the emission schedule stays one-in-one-out. `dropped` and `removed_reported` are untouched in mute mode.
+  - **Regions**: `EventCounters` gains `mute_start: Option<u64>`, cleared by `reset`. At the first muted sample (kept index j₀) record the region start ⌈j₀·m/l⌉; on `Resume` (kept index j₁) emit `VasEvent { output_position: start, input_length: ⌈j₁·m/l⌉ − start }` through `pending`, so each region is reported once, by the block in which it ends (data-model › VasEvent). The block's `paused` flag shows a region still open.
+  - **Data model**: add the new field to data-model.md › Event counters (and its reset note), so the table matches the code.
   - **Stage**: no change to `stages/vas.rs`.
 - [ ] T031 [US2] Implement the C functions in `crates/rr_dr60_ffi/src/lib.rs` (contracts/c-api.md, research R-08):
   - `RrDr60VasEvent`, `rr_dr60_process_with_events` and `rr_dr60_max_events`;
@@ -372,11 +377,6 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
 - [ ] T049 Traceability audit (SC-008, FR-017): list every numeric literal in the code and tests added by this feature, **including test literals** (the `#[cfg(test)]` modules of `stages/vas.rs`, `pipeline.rs` and `resample/up.rs`, and every new file under `crates/rr_dr60_harness/tests/`; e.g. the burst lengths 80/144/159/160/161/240/8000 in T017 must say "O − 80, O − 16 (onset − 2 ms), O − 1, O, O + 1, 1.5 O, 50 O (FR-009)"). Check each one has an A-/S- ID or an engineering-target comment (`// engineering target (003 FR-017)` or `(003 R-15)`), and fix any that don't. Record the check in the PR description. Search: `git diff main -- crates/ | grep -E '^\+.*[0-9]+\.[0-9]+|^\+.*\b[0-9]{2,}\b' | grep -v -E 'A-0|S-0|engineering target|FR-0|R-[0-9]'`. Also run `scripts/check-traceability.sh`.
 - [ ] T050 Run every step of `specs/003-vas/quickstart.md` § 1–6 and the coverage gate `cargo llvm-cov --all-features --workspace --fail-under-lines 80`. Fix anything that fails.
 - [ ] T051 Ask the speckit-coach for a final review, then ask the user before merging the PR.
-- [ ] T052 [US1] Event-capacity edge tests (added 2026-10-10, MVP review; research R-07), in the test module of `crates/rr_dr60/src/pipeline.rs`:
-  - **Worst case for `max_events`**: `onset_ms = 0`, bursts of one loud sample separated by gaps of exactly H + 1 silent device samples (the densest possible splice train), at every rate, in blocks of varied size including 1 and `frames` large enough to hold several splices; `info.events ≤ max_events(n)` for every block, and the total equals the expected splice count.
-  - **Short slices**: a block containing two splices processed with slices of length 0, 1 and 2: `info.events == 2` each time, the first `len` events are written in order, and the later ones are counted but not written.
-  - Both use plain assertions and cite FR-005 and R-07; update the `max_events` rustdoc to "+ 1 (+ 2 at 44.1 and 88.2 kHz)" while there.
-
 ---
 
 ## Dependencies & Execution Order
@@ -442,7 +442,7 @@ then T015 → T016
 
 ```text
 T017 (stage unit tests) ∥ T018 (pipeline events) ∥ T019 (harness us1_vas) ∥ T024 (docs)
-then T020 → T021 → T022 → T023 → T025
+then T020 → T021 → T022 → T023 → T025 → T052
 ```
 
 ### User Story 2

@@ -146,7 +146,7 @@ crates/rr_dr60_harness/
 .github/workflows/ci.yml                 # + golden_vas in check, golden-matrix, ios; vas tests in --ignored step
 scripts/ios-device-golden.sh             # + golden_vas
 docs/hardware/signal-chain.md            # row 5 → spec 003
-docs/hardware/assumptions.md             # A-022 revised (done in planning)
+docs/hardware/assumptions.md             # A-022 revised (planning); A-021 and A-022 rationale revised 2026-10-10
 CHANGELOG.md, README.md, CLAUDE.md       # R-14
 ```
 
