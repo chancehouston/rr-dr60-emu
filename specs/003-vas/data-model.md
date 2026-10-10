@@ -81,9 +81,10 @@ All of it is fixed-size and inline (`threshold`, `hang` and `onset` are derived 
 | `kept` | Device samples fed to the interpolator since the stream started (in mute mode, muted samples count too) |
 | `dropped` | Device samples dropped since the stream started (drop mode only), for removed lengths |
 | `removed_reported` | ⌊`dropped`·m/l⌋ at the previous splice (the cumulative-floor rule) |
+| `mute_start` | Mute mode: the output position of the open muted region's first sample, `⌈j₀·m/l⌉` for its kept index j₀; `None` while recording and always in drop mode (R-09; added by T030) |
 | `pending` | The event generated at this step, if any, which the block loop writes to the caller's slice and counts |
 
-On `Resume` at kept index j: `output_position = ⌈j·m/l⌉` (the first n with ⌊n·l/m⌋ ≥ j), `input_length = ⌊dropped·m/l⌋ − removed_reported`. Computed in u128 so `kept · m` can't overflow. `reset()` clears all four counters.
+On `Resume` at kept index j: `output_position = ⌈j·m/l⌉` (the first n with ⌊n·l/m⌋ ≥ j), `input_length = ⌊dropped·m/l⌋ − removed_reported`. In mute mode the same `Resume` instead closes the region: `output_position = mute_start`, `input_length = ⌈j·m/l⌉ − mute_start`, and `dropped` / `removed_reported` are untouched. Computed in u128 so `kept · m` can't overflow. `reset()` clears all five counters.
 
 ### Per-sample processing (device rate, R-02, R-04)
 

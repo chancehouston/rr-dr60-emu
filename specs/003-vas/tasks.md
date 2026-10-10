@@ -210,7 +210,7 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
 - [X] T023 [US1] Update the `op-count` test in `crates/rr_dr60/src/pipeline.rs`: add a fixed VAS term per device sample and the emission compare per host sample. Assert that work is still independent of block partition, with VAS on in a burst-gap run.
 - [X] T024 [P] [US1] Update the crate docs in `crates/rr_dr60/src/lib.rs` (this file only; the `Pipeline` rustdoc is part of T022). List stage 5 as "modeled on the owner's manual and assumed values (A-008, A-021 – A-025)", with no EVP claims either way, and state that by default the output can be shorter than the input.
 - [X] T025 [US1] Run `cargo test -p rr_dr60 stages::vas` and `cargo test -p rr_dr60_harness --test us1_vas`, and fix until green. Confirm every 001 and 002 test and both golden guards are still green.
-- [ ] T052 [US1] Event-capacity edge tests (added 2026-10-10, MVP review; research R-07), in the test module of `crates/rr_dr60/src/pipeline.rs`:
+- [X] T052 [US1] Event-capacity edge tests (added 2026-10-10, MVP review; research R-07), in the test module of `crates/rr_dr60/src/pipeline.rs`:
   - **Worst case for `max_events`**: `onset_ms = 0`, bursts of one loud sample separated by gaps of exactly H + 1 silent device samples (the densest possible splice train), at every rate, in blocks of varied size including 1 and `frames` large enough to hold several splices; `info.events ≤ max_events(n)` for every block, and the total equals the expected splice count.
   - **Short slices**: a block containing two splices processed with slices of length 0, 1 and 2: `info.events == 2` each time, the first `len` events are written in order, and the later ones are counted but not written.
   - Both use plain assertions and cite FR-005 and R-07; update the `max_events` rustdoc to "+ 1 (+ 2 at 44.1 and 88.2 kHz)" while there.
@@ -227,7 +227,7 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
 
 ### Tests for User Story 2 (write first, must fail)
 
-- [ ] T026 [P] [US2] Write `crates/rr_dr60_harness/tests/us2_vas_settings.rs`, covering spec US2 AS1–AS6 with plain assertions:
+- [X] T026 [P] [US2] Write `crates/rr_dr60_harness/tests/us2_vas_settings.rs`, covering spec US2 AS1–AS6 with plain assertions:
   - **AS1**: regenerate 001's and 002's golden entries (`golden::generate`, `golden::generate_agc`, VAS bypassed) and compare with `golden::committed()` and `golden::committed_agc()`. Zero differences, and every block `produced == len`.
   - **AS2**: `Tap::AfterVas` with stage 10 on equals stage 10 off, sample for sample, at every rate.
   - **AS3**: at sensitivity 1 and 5, the lowest kept 1 kHz level (bisection to 0.05 dB) is −12 and −24 dBFS ± 1 dB.
@@ -238,7 +238,7 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
     - at 8 kHz, samples outside the region equal drop mode's output;
     - inside the region, samples are exactly 0.0 at 8 kHz, and at 48 kHz after the first `latency_samples() + 1` samples of the region.
   - **AS6**: for each VAS field, an out-of-range value returns `Error::InvalidSetting` naming it, from both `new` and `reconfigure`, and a failed `reconfigure` leaves the pipeline unchanged.
-- [ ] T027 [P] [US2] Extend `crates/rr_dr60_harness/tests/ffi_parity.rs` (US2 AS7, FR-015, contracts/c-api.md):
+- [X] T027 [P] [US2] Extend `crates/rr_dr60_harness/tests/ffi_parity.rs` (US2 AS7, FR-015, contracts/c-api.md):
   - **Parity**: C and Rust give bit-identical output, `BlockInfo` sequences and events for `vas_only`, `vas_mute`, `default_vas`, and the minimum and maximum of every VAS field. Use `rr_dr60_process_with_events` with capacity from `rr_dr60_max_events`.
   - **Invalid fields**:
     - `vas_sensitivity = 6` and `= 259` → `INVALID_SETTING` / `VAS_SENSITIVITY`;
@@ -248,32 +248,32 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
   - **`out_info` on early returns**: `frames == 0`, NULL buffers and a poisoned handle each give `{0, 0, paused}`.
   - **NULL events**: `events = NULL` with capacity 0 is accepted.
   - **Old struct size**: `struct_size = 48` → `INVALID_ARGUMENT` / `STRUCT_SIZE`.
-- [ ] T028 [P] [US2] Extend the C smoke test in `crates/rr_dr60_ffi/tests/c/smoke.c`:
+- [X] T028 [P] [US2] Extend the C smoke test in `crates/rr_dr60_ffi/tests/c/smoke.c`:
   - drop mode with a burst-gap buffer, reading `produced`, getting events through `rr_dr60_max_events` and `rr_dr60_process_with_events`;
   - mute mode (`produced == frames`);
   - `RR_DR60_TAP_AFTER_VAS`;
   - `vas_sensitivity = 259` reported by `rr_dr60_settings_validate`.
   - Print `smoke: OK`.
-- [ ] T029 [P] [US2] Add a rustdoc doc-test on `VasSettings` in `crates/rr_dr60/src/settings.rs` (SC-001): it bypasses VAS, switches to mute mode, sets sensitivity 5, processes a block, and reads `produced` and events with `process_with_events`.
+- [X] T029 [P] [US2] Add a rustdoc doc-test on `VasSettings` in `crates/rr_dr60/src/settings.rs` (SC-001): it bypasses VAS, switches to mute mode, sets sensitivity 5, processes a block, and reads `produced` and events with `process_with_events`.
 
 ### Implementation for User Story 2
 
-- [ ] T030 [US2] Implement mute mode (research R-09). **Placement (MVP review, 2026-10-10)**: the change lives in `crates/rr_dr60/src/pipeline.rs`, not in `stages/vas.rs`. The stage's decisions (`Keep` / `Drop` / `Resume`) are already mode-independent; the mode decides what the pipeline does with a `Drop`.
+- [X] T030 [US2] Implement mute mode (research R-09). **Placement (MVP review, 2026-10-10)**: the change lives in `crates/rr_dr60/src/pipeline.rs`, not in `stages/vas.rs`. The stage's decisions (`Keep` / `Drop` / `Resume`) are already mode-independent; the mode decides what the pipeline does with a `Drop`.
   - **Pipeline**: add a `DeviceOut::Mute` outcome. `DeviceChain` stores the output mode (today it returns `DeviceOut::Drop` before stage 10 and knows no mode): in mute mode a `VasDecision::Drop` runs stage 10 on +0.0 when `run_playback` and returns `DeviceOut::Mute(d)`, which feeds onward into the interpolator and counts toward `kept`, so the emission schedule stays one-in-one-out. `dropped` and `removed_reported` are untouched in mute mode.
   - **Regions**: `EventCounters` gains `mute_start: Option<u64>`, cleared by `reset`. At the first muted sample (kept index j₀) record the region start ⌈j₀·m/l⌉; on `Resume` (kept index j₁) emit `VasEvent { output_position: start, input_length: ⌈j₁·m/l⌉ − start }` through `pending`, so each region is reported once, by the block in which it ends (data-model › VasEvent). The block's `paused` flag shows a region still open.
   - **Data model**: add the new field to data-model.md › Event counters (and its reset note), so the table matches the code.
   - **Stage**: no change to `stages/vas.rs`.
-- [ ] T031 [US2] Implement the C functions in `crates/rr_dr60_ffi/src/lib.rs` (contracts/c-api.md, research R-08):
+- [X] T031 [US2] Implement the C functions in `crates/rr_dr60_ffi/src/lib.rs` (contracts/c-api.md, research R-08):
   - `RrDr60VasEvent`, `rr_dr60_process_with_events` and `rr_dr60_max_events`;
   - panic-guarded, with a `// SAFETY:` comment on each pointer use;
   - validation order: struct size → tap → `vas_mode` → host rate → AGC fields → VAS fields.
   - Regenerate the header and confirm the CI header-drift check passes locally.
   - Makes T027 and T028 pass.
-- [ ] T032 [P] [US2] Add a "VAS (signal-chain stage 5)" section to `README.md` (research R-14):
+- [X] T032 [P] [US2] Add a "VAS (signal-chain stage 5)" section to `README.md` (research R-14):
   - **Content**: what it does, "modeled on the owner's manual and assumed values (A-008, A-021 – A-025)", and the defaults table. Say clearly that by default the output can be **shorter than the input**, so hosts must use `produced`. Explain drop vs. mute and when to use each. State the input-referred threshold (about −58 dBFS at level 3, through the AGC's static curve; A-022) and that the default therefore pauses only on near-silence; make no claim that a quiet room pauses.
   - **Snippets**: Rust and C, for bypass, mute, sensitivity, and reading events.
   - No EVP claims either way (Principle VI).
-- [ ] T033 [US2] Run `us2_vas_settings`, `ffi_parity` and `crates/rr_dr60_ffi/tests/c/run_smoke.sh`, and fix until green.
+- [X] T033 [US2] Run `us2_vas_settings`, `ffi_parity` and `crates/rr_dr60_ffi/tests/c/run_smoke.sh`, and fix until green.
 
 **Checkpoint (US2)**: `us1_vas`, `us2_vas_settings` and `ffi_parity` pass, and the smoke test prints `smoke: OK`. US2 is validated independently of US3.
 

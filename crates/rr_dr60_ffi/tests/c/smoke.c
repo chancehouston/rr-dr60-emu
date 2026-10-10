@@ -117,6 +117,52 @@ int main(void) {
   CHECK(rr_dr60_create(&agc, &q) == RR_DR60_STATUS_INVALID_SETTING && q == sentinel,
         "create(attack 0 ms)");
 
+  /* Spec 003 VAS (US2 AS7; contracts/c-api.md rule 8): drop mode, events, mute mode, the
+   * "after VAS" tap, and an invalid sensitivity. VAS-isolated configuration: AGC and both
+   * band-limit stages off. Burst 1 s, gap 5 s, burst 1 s, 1 kHz at -8 dBFS (threshold + 10 dB). */
+  RrDr60Settings vas = rr_dr60_settings_default(FS);
+  vas.agc_enabled = false;
+  vas.record_stage_enabled = false;
+  vas.playback_stage_enabled = false;
+  vas.tap = RR_DR60_TAP_AFTER_VAS;
+  CHECK(rr_dr60_settings_validate(&vas, &field) == RR_DR60_STATUS_OK && field == RR_DR60_SETTING_FIELD_NONE,
+        "validate(tap after VAS)");
+  CHECK(rr_dr60_reconfigure(p, &vas) == RR_DR60_STATUS_OK, "reconfigure to the VAS-isolated settings");
+  CHECK(rr_dr60_latency_samples(p, &latency_after) == RR_DR60_STATUS_OK && latency_after < latency,
+        "tap after VAS skips stage 10: latency %u should be below default %u", latency_after, latency);
+  static float vin[7 * FS], vout[7 * FS];
+  for (size_t i = 0; i < 7 * FS; i++) {
+    int burst = i < (size_t)FS || i >= (size_t)(6 * FS);
+    vin[i] = burst ? (float)(0.398 * sin(2.0 * PI * 1000.0 * (double)(i % FS) / FS)) : 0.0f;
+  }
+  size_t capacity = 0;
+  CHECK(rr_dr60_max_events(p, 7 * FS, &capacity) == RR_DR60_STATUS_OK && capacity >= 1, "max_events");
+  RrDr60VasEvent *events = (RrDr60VasEvent *)malloc(capacity * sizeof *events);
+  CHECK(events != NULL, "malloc");
+  RrDr60BlockInfo info = {0, 0, false};
+  CHECK(rr_dr60_process_with_events(p, vin, vout, 7 * FS, &info, events, capacity) == RR_DR60_STATUS_OK,
+        "process_with_events");
+  /* Kept: burst + hang time (1 s) + burst minus onset (20 ms), minus the end-of-stream latency. */
+  CHECK(info.produced < 7 * (size_t)FS && info.produced > 2 * (size_t)FS,
+        "drop mode produced %zu of %d", info.produced, 7 * FS);
+  CHECK(info.events == 1 && !info.paused, "one splice (events %zu, paused %d)", info.events, (int)info.paused);
+  CHECK(info.events <= capacity && events[0].output_position < info.produced &&
+            events[0].input_length + info.produced <= 7 * (uint64_t)FS,
+        "splice at %llu removed %llu", (unsigned long long)events[0].output_position,
+        (unsigned long long)events[0].input_length);
+  free(events);
+
+  vas.vas_mode = RR_DR60_VAS_MODE_MUTE;
+  CHECK(rr_dr60_reconfigure(p, &vas) == RR_DR60_STATUS_OK, "reconfigure to mute mode");
+  CHECK(rr_dr60_process(p, vin, vout, 7 * FS, &info) == RR_DR60_STATUS_OK, "process in mute mode");
+  CHECK(info.produced == 7 * (size_t)FS && info.events == 1, "mute mode produced %zu, events %zu",
+        info.produced, info.events);
+
+  vas.vas_sensitivity = 259; /* must not wrap to a valid level */
+  CHECK(rr_dr60_settings_validate(&vas, &field) == RR_DR60_STATUS_INVALID_SETTING &&
+            field == RR_DR60_SETTING_FIELD_VAS_SENSITIVITY,
+        "validate(vas_sensitivity = 259) names the field");
+
   CHECK(rr_dr60_version_string() != NULL && strlen(rr_dr60_version_string()) > 0, "version");
   rr_dr60_destroy(p);
   rr_dr60_destroy(NULL);

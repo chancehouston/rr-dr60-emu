@@ -4,7 +4,7 @@ use crate::error::Error;
 use crate::rate::RatePlan;
 use crate::resample::{self, PolyphaseDown, PolyphaseUp};
 use crate::sanitize::{narrow_out, sanitize_in};
-use crate::settings::{DEVICE_RATE_HZ, Settings, Tap};
+use crate::settings::{DEVICE_RATE_HZ, Settings, Tap, VasMode};
 use crate::stages::agc::AgcStage;
 use crate::stages::vas::{VasDecision, VasStage};
 use crate::stages::voiceband::VoiceBandStage;
@@ -100,6 +100,9 @@ pub struct BlockInfo {
 ///
 /// Positions count output samples from the start of the stream (creation, reset or
 /// reconfigure), so they don't depend on how the input was split into blocks.
+///
+/// `repr(C)`, so the C API can hand the core a caller-provided event buffer without copying.
+#[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct VasEvent {
@@ -115,10 +118,13 @@ pub struct VasEvent {
 enum DeviceOut {
     /// Kept (recording).
     Keep(f64),
-    /// Kept, and the first sample after a pause (a splice).
+    /// Kept, and the first sample after a pause (a splice, or the end of a muted region).
     Resume(f64),
-    /// Dropped by the VAS (paused).
+    /// Dropped by the VAS (paused, drop mode).
     Drop,
+    /// Muted by the VAS (paused, mute mode): +0.0 fed onward, so the output keeps its length
+    /// (spec 003 FR-004; research R-09). Carries stage 10's output when that stage runs.
+    Mute(f64),
 }
 
 /// Stream counters that place VAS events in the output (spec 003 research R-05, R-06).
@@ -133,6 +139,8 @@ struct EventCounters {
     dropped: u64,
     /// ⌊dropped·m/l⌋ at the previous splice (the cumulative-floor rule, R-06).
     removed_reported: u64,
+    /// Mute mode: the output position of the open muted region's first sample (R-09).
+    mute_start: Option<u64>,
     /// An event generated at this step, waiting to be reported by the block loop.
     pending: Option<VasEvent>,
 }
@@ -149,6 +157,7 @@ impl EventCounters {
             kept: 0,
             dropped: 0,
             removed_reported: 0,
+            mute_start: None,
             pending: None,
         }
     }
@@ -157,7 +166,15 @@ impl EventCounters {
         self.kept = 0;
         self.dropped = 0;
         self.removed_reported = 0;
+        self.mute_start = None;
         self.pending = None;
+    }
+
+    /// The output position of the kept sample with index `kept`: the first output n with
+    /// ⌊n·l/m⌋ ≥ kept, i.e. ⌈kept·m/l⌉ (R-06).
+    #[inline]
+    fn position(&self) -> u64 {
+        (u128::from(self.kept) * u128::from(self.m)).div_ceil(u128::from(self.l)) as u64
     }
 
     /// Records one device sample's outcome; returns the sample to feed onward, if any.
@@ -172,18 +189,38 @@ impl EventCounters {
                 self.dropped += 1;
                 None
             }
+            DeviceOut::Mute(d) => {
+                // R-09: a muted sample counts as kept, so the emission schedule stays
+                // one-in-one-out. The region starts at this sample's output position.
+                if self.mute_start.is_none() {
+                    self.mute_start = Some(self.position());
+                }
+                self.kept += 1;
+                Some(d)
+            }
             DeviceOut::Resume(d) => {
                 // R-06: the splice is at the first output whose newest device sample is this one
-                // (kept index j), i.e. the first n with ⌊n·l/m⌋ ≥ j: n = ⌈j·m/l⌉. The removed
-                // length uses the cumulative floor, so the integers add up at 44.1/88.2 kHz.
-                let (l, m) = (u128::from(self.l), u128::from(self.m));
-                let position = (u128::from(self.kept) * m).div_ceil(l) as u64;
-                let removed = (u128::from(self.dropped) * m / l) as u64;
-                self.pending = Some(VasEvent {
-                    output_position: position,
-                    input_length: removed - self.removed_reported,
+                // (kept index j), i.e. the first n with ⌊n·l/m⌋ ≥ j: n = ⌈j·m/l⌉.
+                let position = self.position();
+                self.pending = Some(match self.mute_start.take() {
+                    // Mute mode: the region ends here; its length is in output samples (R-09).
+                    Some(start) => VasEvent {
+                        output_position: start,
+                        input_length: position - start,
+                    },
+                    // Drop mode: the removed length uses the cumulative floor, so the integers
+                    // add up at 44.1/88.2 kHz.
+                    None => {
+                        let removed = (u128::from(self.dropped) * u128::from(self.m)
+                            / u128::from(self.l)) as u64;
+                        let event = VasEvent {
+                            output_position: position,
+                            input_length: removed - self.removed_reported,
+                        };
+                        self.removed_reported = removed;
+                        event
+                    }
                 });
-                self.removed_reported = removed;
                 self.kept += 1;
                 Some(d)
             }
@@ -200,6 +237,8 @@ struct DeviceChain {
     vas: VasStage,
     /// Stage 5 runs: the VAS is enabled and the tap is after it (spec 003 FR-003; research R-01).
     run_vas: bool,
+    /// Stage 5 mutes paused audio instead of dropping it (spec 003 FR-004; research R-09).
+    mute: bool,
     record: VoiceBandStage,
     playback: VoiceBandStage,
     /// Stage 4 runs: enabled and the tap is not after the AGC (FR-007; spec 002 FR-003).
@@ -216,6 +255,7 @@ impl DeviceChain {
             vas: VasStage::new(&settings.vas),
             run_vas: settings.vas.enabled
                 && matches!(settings.tap, Tap::AfterVas | Tap::AfterPlayback),
+            mute: settings.vas.mode == VasMode::Mute,
             record: VoiceBandStage::new(),
             playback: VoiceBandStage::new(),
             run_record: settings.record_stage_enabled && settings.tap != Tap::AfterAgc,
@@ -225,7 +265,8 @@ impl DeviceChain {
 
     /// One device-rate sample. A bypassed stage passes the sample through bit-exactly,
     /// with no arithmetic (FR-007). The AGC runs on every sample, also while the VAS is paused
-    /// (spec 003 FR-016, A-025); a dropped sample never reaches stage 10.
+    /// (spec 003 FR-016, A-025); a dropped sample never reaches stage 10, and a muted sample
+    /// reaches it as +0.0 (spec 003 Edge Cases: its ring-out continues into the region).
     #[inline]
     fn process(&mut self, mut d: f64) -> DeviceOut {
         if self.run_agc {
@@ -240,10 +281,16 @@ impl DeviceChain {
             VasDecision::Keep
         };
         if decision == VasDecision::Drop {
-            return DeviceOut::Drop;
+            if !self.mute {
+                return DeviceOut::Drop;
+            }
+            d = 0.0;
         }
         if self.run_playback {
             d = self.playback.process(d);
+        }
+        if decision == VasDecision::Drop {
+            return DeviceOut::Mute(d);
         }
         if decision == VasDecision::Resume {
             DeviceOut::Resume(d)
@@ -351,10 +398,21 @@ impl Pipeline {
         Ok(self.run_block(Some(input), output, events))
     }
 
+    /// As [`process_in_place`](Self::process_in_place), and writes the block's VAS events to
+    /// `events` as [`process_with_events`](Self::process_with_events) does. Real-time safe.
+    pub fn process_in_place_with_events(
+        &mut self,
+        buffer: &mut [f32],
+        events: &mut [VasEvent],
+    ) -> BlockInfo {
+        self.run_block(None, buffer, events)
+    }
+
     /// An `events` length for [`process_with_events`](Self::process_with_events) that is always
     /// enough for a block of `frames` input samples with the current settings (spec 003 R-07).
     /// Splices are at least H + 2 device samples apart, and `frames` host samples hold at most
-    /// ⌊frames·l/m⌋ + 1 device samples (engineering target, 003 R-15). Never allocates.
+    /// ⌊frames·l/m⌋ + 1 device samples (+ 2 at 44.1 and 88.2 kHz); the "+ 2" also covers a
+    /// splice on the block's first device sample (engineering target, 003 R-15). Never allocates.
     pub fn max_events(&self, frames: usize) -> usize {
         let (l, m) = (u128::from(self.events.l), u128::from(self.events.m));
         let device = frames as u128 * l / m;
@@ -815,6 +873,100 @@ mod vas_event_tests {
         p.reset();
         let info = p.process(&[0.0; 10], &mut y[..10]).unwrap();
         assert!(!info.paused && info.produced == 10);
+    }
+
+    /// 003 T052 (FR-005; research R-07): the densest possible splice train. With `onset_ms = 0`
+    /// a single sound sample resumes recording, and a gap of exactly H + 1 silent device samples
+    /// pauses it again, so splices are H + 2 device samples apart: the spacing `max_events`
+    /// assumes. At 8 kHz the bursts are one device sample; at the other rates one millisecond
+    /// (8 device samples), so they survive the decimator. Every block's event count stays within
+    /// `max_events(n)`, for block sizes including 1, and the total is one splice per burst.
+    #[test]
+    fn max_events_holds_for_the_densest_splice_train() {
+        for rate in crate::SUPPORTED_HOST_RATES {
+            let fs = f64::from(rate);
+            let mut s = vas_only(rate);
+            s.vas.hang_ms = 50.0; // H = 400 device samples
+            s.vas.onset_ms = 0.0;
+            let mut p = Pipeline::new(s).unwrap();
+            let h = p.chain.vas.hang_samples() as usize;
+            // Device samples → host samples, rounded up (m/l host samples per device sample).
+            let (l, m) = (u128::from(p.events.l), u128::from(p.events.m));
+            let host = |n: usize| (n as u128 * m).div_ceil(l) as usize;
+            let identity = l == m;
+            let burst = if identity { 1 } else { host(8) }; // 1 device sample, or 1 ms
+            // H + 1 device samples (one more than the hang, FR-008); H + 2 where m/l is not an
+            // integer, so rounding can't shorten the gap.
+            let gap = host(if m % l == 0 { h + 1 } else { h + 2 });
+            let bursts = 300;
+            let cycle = [std::vec![0.0f32; gap], loud(burst, fs)].concat();
+            // The last burst must clear the conversion before the input ends (R-11 › Measurement
+            // trap): one pipeline latency plus one device sample of trailing silence.
+            let tail = p.latency_samples() as usize + host(1);
+            let x: Vec<f32> = cycle
+                .iter()
+                .copied()
+                .cycle()
+                .take(bursts * cycle.len())
+                .chain(core::iter::repeat_n(0.0, tail))
+                .collect();
+            let (mut pos, mut total) = (0, 0);
+            let sizes = [1usize, 2, 7, 64, 1000, 4 * cycle.len()];
+            let mut y = std::vec![0.0f32; 4 * cycle.len()];
+            let mut ev = std::vec![VasEvent::default(); 64];
+            let mut k = 0;
+            while pos < x.len() {
+                let n = sizes[k % sizes.len()].min(x.len() - pos);
+                k += 1;
+                let cap = p.max_events(n);
+                assert!(cap <= ev.len(), "{rate} Hz: cap {cap}");
+                let info = p
+                    .process_with_events(&x[pos..pos + n], &mut y[..n], &mut ev[..cap])
+                    .unwrap();
+                assert!(
+                    info.events <= cap,
+                    "{rate} Hz: {} > {cap} for n = {n}",
+                    info.events
+                );
+                total += info.events;
+                pos += n;
+            }
+            // Every burst follows a gap that paused recording, so every burst is a resume.
+            assert_eq!(total, bursts, "{rate} Hz");
+        }
+    }
+
+    /// 003 T052 (FR-005; research R-07): a block holding two splices, with event slices of
+    /// length 0, 1 and 2: `events` counts 2 every time, the first `len` are written in order, and
+    /// the rest are counted but not written.
+    #[test]
+    fn short_event_slices_count_every_splice() {
+        let fs = 8000.0;
+        let s = fs as usize;
+        // burst, gap, burst, gap, burst: two splices (the 8 kHz T018 geometry, twice).
+        let x = [
+            loud(s, fs),
+            std::vec![0.0; 5 * s],
+            loud(s, fs),
+            std::vec![0.0; 5 * s],
+            loud(s, fs),
+        ]
+        .concat();
+        let mut p = Pipeline::new(vas_only(8000)).unwrap();
+        let (_, want, _) = run_all(&mut p, &x);
+        assert_eq!(want.len(), 2);
+        for len in 0..=2 {
+            p.reset();
+            let mut y = std::vec![0.0f32; x.len()];
+            let sentinel = VasEvent {
+                output_position: u64::MAX,
+                input_length: u64::MAX,
+            };
+            let mut ev = std::vec![sentinel; len];
+            let info = p.process_with_events(&x, &mut y, &mut ev).unwrap();
+            assert_eq!(info.events, 2, "len {len}");
+            assert_eq!(ev, want[..len], "len {len}");
+        }
     }
 }
 

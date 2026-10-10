@@ -13,8 +13,9 @@
 //! 1. Errors are values. No function aborts or unwinds into C. A caught panic returns
 //!    [`RrDr60Status::InternalError`] and poisons the handle until `rr_dr60_reset` succeeds.
 //! 2. A failed call changes nothing: out-parameters are left untouched and pipeline state is
-//!    unchanged, apart from poisoning. The one exception is `rr_dr60_process`'s `out_info`,
-//!    which is always written when not NULL (spec 003 contracts/c-api.md).
+//!    unchanged, apart from poisoning. The one exception is `out_info` in `rr_dr60_process` and
+//!    `rr_dr60_process_with_events`, which is always written when not NULL (spec 003
+//!    contracts/c-api.md › Rule 2 amendment).
 //! 3. The caller owns all buffers. The library never keeps a pointer after a call returns.
 //! 4. A handle must not be used by two threads at the same time.
 //! 5. `RrDr60Settings` only grows at the end. Callers set `struct_size`.
@@ -22,7 +23,7 @@
 use std::ffi::c_char;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use rr_dr60::{BlockInfo, Error, Pipeline, Setting, Settings, Tap, VasMode};
+use rr_dr60::{BlockInfo, Error, Pipeline, Setting, Settings, Tap, VasEvent, VasMode};
 
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
@@ -122,6 +123,19 @@ pub struct RrDr60BlockInfo {
     pub paused: bool,
 }
 
+/// A VAS splice (drop mode) or muted region (mute mode), from `rr_dr60_process_with_events`
+/// (spec 003 FR-005).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RrDr60VasEvent {
+    /// Drop mode: stream output index of the first sample after the splice. Mute mode: stream
+    /// output index of the region's first muted sample. Counted from create, reset or
+    /// reconfigure, so it does not depend on block sizes.
+    pub output_position: u64,
+    /// Drop mode: host input samples removed at this splice. Mute mode: the region's length.
+    pub input_length: u64,
+}
+
 /// Pipeline settings. Start from `rr_dr60_settings_default` and change fields as needed.
 ///
 /// AGC levels use the AES17 convention (a full-scale sine is 0 dBFS). AGC ranges are
@@ -186,6 +200,33 @@ pub struct RrDr60Pipeline {
 }
 
 const SETTINGS_SIZE: u32 = size_of::<RrDr60Settings>() as u32;
+
+/// Checks `struct_size` before anything else is read, and only then forms a reference to the
+/// whole struct. A caller built against an older, smaller layout passes a smaller `struct_size`
+/// (contract rule 5), and the memory past its struct may not be readable, so the first field is
+/// read on its own through the raw pointer.
+///
+/// # Safety
+///
+/// `settings` must be non-null and point to at least a readable `u32` at offset 0; when that
+/// value is at least `sizeof(RrDr60Settings)`, the whole struct must be valid.
+unsafe fn check_struct_size<'a>(
+    settings: *const RrDr60Settings,
+) -> Result<&'a RrDr60Settings, (RrDr60Status, RrDr60SettingField)> {
+    // SAFETY: `struct_size` is the first field of a `repr(C)` struct, so it sits at offset 0,
+    // and the caller guarantees that much is readable. `read_unaligned` makes no alignment
+    // assumption about the caller's storage.
+    let size = unsafe { settings.cast::<u32>().read_unaligned() };
+    if size < SETTINGS_SIZE {
+        return Err((
+            RrDr60Status::InvalidArgument,
+            RrDr60SettingField::StructSize,
+        ));
+    }
+    // SAFETY: the caller's struct is at least as large as ours, and the caller guarantees it is
+    // valid; no mutable reference to it exists during the call.
+    Ok(unsafe { &*settings })
+}
 
 /// Maps a caught panic to a status (contract rule 1). Every entry point routes its panic
 /// arm through here; the `ffi-test-panic` tests exercise it.
@@ -324,8 +365,12 @@ pub unsafe extern "C" fn rr_dr60_create(
     if settings.is_null() || out_pipeline.is_null() {
         return RrDr60Status::NullPointer;
     }
-    // SAFETY: checked non-null above; the caller guarantees it points to a valid struct.
-    let settings = unsafe { &*settings };
+    // SAFETY: checked non-null above; the caller guarantees it points to a valid struct of at
+    // least its own `struct_size`.
+    let settings = match unsafe { check_struct_size(settings) } {
+        Ok(s) => s,
+        Err((status, _)) => return status,
+    };
     let result = catch_unwind(|| {
         let s = validate_c(settings).map_err(|(status, _)| status)?;
         let inner = Pipeline::new(s).map_err(status_from_error)?;
@@ -405,6 +450,94 @@ pub unsafe extern "C" fn rr_dr60_process(
     frames: usize,
     out_info: *mut RrDr60BlockInfo,
 ) -> RrDr60Status {
+    // SAFETY: the caller contract of this function is that of `process_block`, with no events.
+    unsafe {
+        process_block(
+            pipeline,
+            input,
+            output,
+            frames,
+            out_info,
+            std::ptr::null_mut(),
+            0,
+        )
+    }
+}
+
+/// As `rr_dr60_process`, and writes the block's VAS events (splices in drop mode, muted
+/// regions in mute mode) to `events`: the first `events_capacity` of them, in order.
+/// `out_info->events` counts all of them, so a count above `events_capacity` means some were
+/// not written; `rr_dr60_max_events` gives a capacity that is always enough. `events` may be
+/// NULL only when `events_capacity` is 0. Real-time safe (spec 003 FR-005, FR-014).
+///
+/// # Safety
+///
+/// As `rr_dr60_process`; additionally, when `events_capacity > 0`, `events` must be writable
+/// for that many `RrDr60VasEvent` values.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_process_with_events(
+    pipeline: *mut RrDr60Pipeline,
+    input: *const f32,
+    output: *mut f32,
+    frames: usize,
+    out_info: *mut RrDr60BlockInfo,
+    events: *mut RrDr60VasEvent,
+    events_capacity: usize,
+) -> RrDr60Status {
+    // SAFETY: the caller contract of this function is that of `process_block`.
+    unsafe {
+        process_block(
+            pipeline,
+            input,
+            output,
+            frames,
+            out_info,
+            events,
+            events_capacity,
+        )
+    }
+}
+
+/// Writes to `*out_capacity` an `events_capacity` that is always enough for a block of `frames`
+/// input samples with the pipeline's current settings (spec 003 research R-07). Never
+/// allocates; real-time safe. On a non-OK status `*out_capacity` is untouched (rule 2).
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_capacity` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_max_events(
+    pipeline: *const RrDr60Pipeline,
+    frames: usize,
+    out_capacity: *mut usize,
+) -> RrDr60Status {
+    if pipeline.is_null() || out_capacity.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: non-null live handle (caller contract).
+    let p = unsafe { &*pipeline };
+    if p.poisoned {
+        return RrDr60Status::InternalError;
+    }
+    // SAFETY: out_capacity is non-null and writable (caller contract).
+    unsafe { *out_capacity = p.inner.max_events(frames) };
+    RrDr60Status::Ok
+}
+
+/// The one block loop behind `rr_dr60_process` and `rr_dr60_process_with_events`.
+///
+/// # Safety
+///
+/// As `rr_dr60_process_with_events`.
+unsafe fn process_block(
+    pipeline: *mut RrDr60Pipeline,
+    input: *const f32,
+    output: *mut f32,
+    frames: usize,
+    out_info: *mut RrDr60BlockInfo,
+    events: *mut RrDr60VasEvent,
+    events_capacity: usize,
+) -> RrDr60Status {
     if pipeline.is_null() {
         // SAFETY: out_info is NULL or writable (caller contract).
         unsafe { put_info(out_info, RrDr60BlockInfo::default()) };
@@ -427,7 +560,7 @@ pub unsafe extern "C" fn rr_dr60_process(
     if frames == 0 {
         return early(RrDr60Status::Ok);
     }
-    if input.is_null() || output.is_null() {
+    if input.is_null() || output.is_null() || (events.is_null() && events_capacity > 0) {
         return early(RrDr60Status::NullPointer);
     }
     let (in_start, out_start) = (input as usize, output as usize);
@@ -445,11 +578,19 @@ pub unsafe extern "C" fn rr_dr60_process(
             p.force_panic = false;
             panic!("rr_dr60__test_force_panic");
         }
+        // SAFETY: `RrDr60VasEvent` and `VasEvent` are both two `u64`s in the same order, and the
+        // core type is `repr(Rust)` with two identical fields; the slice is rebuilt from the
+        // caller's storage, which is writable for `events_capacity` values (or empty).
+        let slots: &mut [VasEvent] = if events_capacity == 0 {
+            &mut []
+        } else {
+            unsafe { std::slice::from_raw_parts_mut(events.cast::<VasEvent>(), events_capacity) }
+        };
         if in_place {
             // SAFETY: output is non-null and writable for `frames` floats; it is the only
             // reference to that memory during the call.
             let buf = unsafe { std::slice::from_raw_parts_mut(output, frames) };
-            p.inner.process_in_place(buf)
+            p.inner.process_in_place_with_events(buf, slots)
         } else {
             // SAFETY: both are non-null, valid for `frames` floats, and checked not to overlap.
             let (x, y) = unsafe {
@@ -459,7 +600,7 @@ pub unsafe extern "C" fn rr_dr60_process(
                 )
             };
             // Lengths are equal by construction, so this cannot fail.
-            p.inner.process(x, y).unwrap_or_default()
+            p.inner.process_with_events(x, y, slots).unwrap_or_default()
         }
     }));
     match result {
@@ -540,8 +681,13 @@ pub unsafe extern "C" fn rr_dr60_reconfigure(
     if pipeline.is_null() || settings.is_null() {
         return RrDr60Status::NullPointer;
     }
-    // SAFETY: both non-null; the caller guarantees a live handle and a valid struct.
-    let (p, settings) = unsafe { (&mut *pipeline, &*settings) };
+    // SAFETY: non-null; the caller guarantees a valid struct of at least its own `struct_size`.
+    let settings = match unsafe { check_struct_size(settings) } {
+        Ok(s) => s,
+        Err((status, _)) => return status,
+    };
+    // SAFETY: non-null live handle (caller contract); no other reference exists during the call.
+    let p = unsafe { &mut *pipeline };
     let result = catch_unwind(AssertUnwindSafe(|| {
         let s = validate_c(settings).map_err(|(status, _)| status)?;
         p.inner.reconfigure(s).map_err(status_from_error)
@@ -574,12 +720,15 @@ pub unsafe extern "C" fn rr_dr60_settings_validate(
     if settings.is_null() {
         return RrDr60Status::NullPointer;
     }
-    // SAFETY: checked non-null above; the caller guarantees it points to a valid struct.
-    let settings = unsafe { &*settings };
-    let (status, field) = match catch_unwind(|| validate_c(settings)) {
-        Ok(Ok(_)) => (RrDr60Status::Ok, RrDr60SettingField::None),
-        Ok(Err(fault)) => fault,
-        Err(_) => (panic_to_status(None), RrDr60SettingField::None),
+    // SAFETY: checked non-null above; the caller guarantees a valid struct of at least its own
+    // `struct_size`.
+    let (status, field) = match unsafe { check_struct_size(settings) } {
+        Err(fault) => fault,
+        Ok(settings) => match catch_unwind(|| validate_c(settings)) {
+            Ok(Ok(_)) => (RrDr60Status::Ok, RrDr60SettingField::None),
+            Ok(Err(fault)) => fault,
+            Err(_) => (panic_to_status(None), RrDr60SettingField::None),
+        },
     };
     if !out_field.is_null() {
         // SAFETY: out_field is non-null and writable (caller contract).

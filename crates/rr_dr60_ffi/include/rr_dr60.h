@@ -7,15 +7,17 @@
  *     error returns RR_DR60_STATUS_INTERNAL_ERROR and poisons the handle until
  *     rr_dr60_reset (or rr_dr60_reconfigure) succeeds.
  *  2. A failed call changes nothing: out-parameters are untouched and state is unchanged.
+ *     Exception: out_info in rr_dr60_process and rr_dr60_process_with_events is always written
+ *     when not NULL, so a host that only checks `produced` never reads a stale count.
  *  3. The caller owns all buffers; the library never keeps a pointer after a call returns.
  *     Using a handle after rr_dr60_destroy is undefined behavior.
  *  4. A handle must not be used by two threads at the same time; separate handles are
  *     independent.
  *  5. RrDr60Settings only grows at the end; always start from rr_dr60_settings_default().
  *
- * Real-time safe: rr_dr60_process, rr_dr60_reset, rr_dr60_latency_samples,
- *   rr_dr60_settings_validate.
- * Not real-time safe (allocate): rr_dr60_create, rr_dr60_destroy.
+ * Real-time safe: rr_dr60_process, rr_dr60_process_with_events, rr_dr60_max_events,
+ *   rr_dr60_reset, rr_dr60_latency_samples, rr_dr60_settings_validate.
+ * Not real-time safe (allocate): rr_dr60_create, rr_dr60_destroy, rr_dr60_reconfigure.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -212,6 +214,17 @@ typedef struct RrDr60BlockInfo {
   bool paused;
 } RrDr60BlockInfo;
 
+// A VAS splice (drop mode) or muted region (mute mode), from `rr_dr60_process_with_events`
+// (spec 003 FR-005).
+typedef struct RrDr60VasEvent {
+  // Drop mode: stream output index of the first sample after the splice. Mute mode: stream
+  // output index of the region's first muted sample. Counted from create, reset or
+  // reconfigure, so it does not depend on block sizes.
+  uint64_t output_position;
+  // Drop mode: host input samples removed at this splice. Mute mode: the region's length.
+  uint64_t input_length;
+} RrDr60VasEvent;
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -258,6 +271,35 @@ RrDr60Status rr_dr60_process(struct RrDr60Pipeline *pipeline,
                              float *output,
                              uintptr_t frames,
                              struct RrDr60BlockInfo *out_info);
+
+// As `rr_dr60_process`, and writes the block's VAS events (splices in drop mode, muted
+// regions in mute mode) to `events`: the first `events_capacity` of them, in order.
+// `out_info->events` counts all of them, so a count above `events_capacity` means some were
+// not written; `rr_dr60_max_events` gives a capacity that is always enough. `events` may be
+// NULL only when `events_capacity` is 0. Real-time safe (spec 003 FR-005, FR-014).
+//
+// # Safety
+//
+// As `rr_dr60_process`; additionally, when `events_capacity > 0`, `events` must be writable
+// for that many `RrDr60VasEvent` values.
+RrDr60Status rr_dr60_process_with_events(struct RrDr60Pipeline *pipeline,
+                                         const float *input,
+                                         float *output,
+                                         uintptr_t frames,
+                                         struct RrDr60BlockInfo *out_info,
+                                         struct RrDr60VasEvent *events,
+                                         uintptr_t events_capacity);
+
+// Writes to `*out_capacity` an `events_capacity` that is always enough for a block of `frames`
+// input samples with the pipeline's current settings (spec 003 research R-07). Never
+// allocates; real-time safe. On a non-OK status `*out_capacity` is untouched (rule 2).
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_capacity` must be NULL or writable.
+RrDr60Status rr_dr60_max_events(const struct RrDr60Pipeline *pipeline,
+                                uintptr_t frames,
+                                uintptr_t *out_capacity);
 
 // Writes the pipeline's fixed latency, in host-rate samples, to `*out_samples`.
 //

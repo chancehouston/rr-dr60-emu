@@ -75,6 +75,8 @@ pub struct BlockInfo {
 }
 
 /// NEW. A splice (drop mode) or a muted region (mute mode) (spec 003 FR-005).
+/// `repr(C)` (added by T031), so the C API can pass the caller's event buffer straight through.
+#[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct VasEvent {
@@ -106,6 +108,10 @@ impl Pipeline {
     /// NEW. An events-slice length that is always enough for a block of `frames` input samples
     /// with the current settings (R-07). Computed without overflow. Never allocates.
     pub fn max_events(&self, frames: usize) -> usize;
+
+    /// NEW (added by T031). As `process_in_place`, writing events as `process_with_events`
+    /// does. Lets the C API process in place with events.
+    pub fn process_in_place_with_events(&mut self, buffer: &mut [f32], events: &mut [VasEvent]) -> BlockInfo;
 }
 
 #[non_exhaustive]

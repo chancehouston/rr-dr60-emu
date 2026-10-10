@@ -144,6 +144,35 @@ pub enum VasMode {
 ///
 /// Ranges are inclusive; values outside them, NaN and ±Inf are rejected by
 /// [`Pipeline::new`](crate::Pipeline::new) (spec 003 FR-012), even when the VAS is bypassed.
+///
+/// # Example
+///
+/// ```
+/// use rr_dr60::{Pipeline, Settings, VasEvent, VasMode};
+///
+/// // Bypass the VAS (the spec 002 sound: every block produces as many samples as it consumed).
+/// let mut s = Settings::new(48_000);
+/// s.vas.enabled = false;
+/// Pipeline::new(s)?;
+///
+/// // Keep the VAS, but replace pauses with silence instead of dropping them (fixed length),
+/// // and record quieter sounds (sensitivity 5).
+/// let mut s = Settings::new(48_000);
+/// s.vas.mode = VasMode::Mute;
+/// s.vas.sensitivity = 5;
+/// let mut p = Pipeline::new(s)?;
+///
+/// // Process one block and read what it produced and where the VAS acted.
+/// let input = vec![0.0f32; 4800];
+/// let mut output = vec![0.0f32; 4800];
+/// let mut events = vec![VasEvent::default(); p.max_events(input.len())];
+/// let info = p.process_with_events(&input, &mut output, &mut events)?;
+/// assert_eq!(info.produced, 4800);           // mute mode keeps the length
+/// for event in &events[..info.events] {       // muted regions (splices in drop mode)
+///     println!("muted {} samples at {}", event.input_length, event.output_position);
+/// }
+/// # Ok::<(), rr_dr60::Error>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct VasSettings {
