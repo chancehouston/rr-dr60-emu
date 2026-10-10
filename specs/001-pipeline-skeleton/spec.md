@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-08
 
-**Status**: Draft
+**Status**: Implemented, merged to `main` (PRs #2–#5)
 
 ## Clarifications
 

@@ -321,7 +321,7 @@ description: "Task list for 002 Automatic Gain Control (AGC) on the Record Path"
 - [X] T049 [P] Update the "Current status" section of `CLAUDE.md` with feature 002, the new test names (`agc_matrix`, `agc_edge_cases`, `golden_agc`), and the AGC bless command.
 - [X] T049a Traceability audit (SC-007, FR-015): list every numeric literal in the code and tests added by this feature. Check each one has an A-/S- ID or an engineering-target comment (`// engineering target (002 FR-015)` or `(002 R-15)`), and fix any that don't. Record the check in the PR description. Search: `git diff main -- crates/ tools/ | grep -E '^\+.*[0-9]+\.[0-9]+|^\+.*\b[0-9]{2,}\b' | grep -v -E 'A-0|S-0|engineering target|FR-0|R-[0-9]'`
 - [X] T050 Run every step of `specs/002-agc/quickstart.md` § 1–6 and the coverage gate `cargo llvm-cov --all-features --workspace --fail-under-lines 80`. Fix anything that fails.
-- [ ] T051 Ask the speckit-coach for a final review, then ask the user before merging the PR.
+- [X] T051 Ask the speckit-coach for a final review, then ask the user before merging the PR.
 
 ---
 
