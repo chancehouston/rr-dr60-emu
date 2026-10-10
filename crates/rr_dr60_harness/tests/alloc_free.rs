@@ -105,8 +105,15 @@ fn processing_never_touches_the_heap() {
                 in_place[..n].copy_from_slice(&input[..n]);
                 let _ = p.process_in_place(&mut in_place[..n]);
                 // SAFETY: live handle; buffers valid for n floats and non-overlapping.
-                let status =
-                    unsafe { rr_dr60_process(handle, input.as_ptr(), output.as_mut_ptr(), n) };
+                let status = unsafe {
+                    rr_dr60_process(
+                        handle,
+                        input.as_ptr(),
+                        output.as_mut_ptr(),
+                        n,
+                        std::ptr::null_mut(),
+                    )
+                };
                 assert!(status == RrDr60Status::Ok);
             }
             p.reset();

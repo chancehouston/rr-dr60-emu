@@ -13,10 +13,12 @@ use rr_dr60_harness::analysis::{self, Complex64};
 use rr_dr60_harness::configs::c_default_001;
 use rr_dr60_harness::stimulus;
 
-/// The five named configurations (data-model.md), with the AGC bypassed (spec 002 FR-018).
+/// The five named configurations (data-model.md), with the AGC and the VAS bypassed (spec 002
+/// FR-018, spec 003 FR-020).
 fn config(name: &str, host: u32) -> Settings {
     let mut s = Settings::new(host);
     s.agc.enabled = false;
+    s.vas.enabled = false;
     match name {
         "default" => {}
         "record_only" => s.playback_stage_enabled = false,
@@ -260,7 +262,7 @@ fn c_api_reconfigure() {
     let mut y = vec![0.0f32; x.len()];
     // SAFETY: p is live; buffers are valid and do not overlap.
     assert_eq!(
-        unsafe { rr_dr60_process(p, x.as_ptr(), y.as_mut_ptr(), x.len()) },
+        unsafe { rr_dr60_process(p, x.as_ptr(), y.as_mut_ptr(), x.len(), std::ptr::null_mut()) },
         RrDr60Status::Ok
     );
     assert_eq!(y, run(config("record_only", 44_100), &x));

@@ -118,11 +118,12 @@ fn as4_silence() {
     }
 }
 
-/// US1 AS5: the real default pipeline (AGC and both band-limit stages on) gives −13 dBFS ±
+/// US1 AS5: the spec 002 default pipeline (AGC and both band-limit stages on, VAS bypassed per
+/// spec 003 FR-020) gives −13 dBFS ±
 /// 1.2 dB for a −40 dBFS 1 kHz tone (AGC ±1 dB plus the stages' ±0.2 dB, A-015).
 #[test]
 fn as5_default_pipeline() {
-    let got = steady_level(Settings::new(FS), -40.0);
+    let got = steady_level(configs::settings("default_agc", FS), -40.0);
     eprintln!("US1 AS5: default pipeline, −40 dBFS in → {got:.3} dBFS out (want −13 ± 1.2)");
     assert!((got + 13.0).abs() <= 1.2, "default pipeline: {got:.3} dBFS");
 }
@@ -133,6 +134,7 @@ fn fr010_no_added_latency() {
     for rate in SUPPORTED_HOST_RATES {
         for tap in [Tap::AfterAgc, Tap::AfterRecord, Tap::AfterPlayback] {
             let mut on = Settings::new(rate);
+            on.vas.enabled = false; // the spec 002 default (spec 003 FR-020)
             on.tap = tap;
             let mut off = on;
             off.agc.enabled = false;

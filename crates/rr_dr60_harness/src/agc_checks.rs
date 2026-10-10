@@ -585,6 +585,7 @@ pub fn check_fr010_latency(rate: u32) -> Vec<MeasurementResult> {
         .into_iter()
         .map(|tap| {
             let mut on = Settings::new(rate);
+            on.vas.enabled = false; // the spec 002 default (spec 003 FR-020)
             on.tap = tap;
             let mut off = on;
             off.agc.enabled = false;

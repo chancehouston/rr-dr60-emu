@@ -124,12 +124,12 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
   - Makes T006 pass.
 - [X] T012 Update `DeviceChain::new` in `crates/rr_dr60/src/pipeline.rs` with the stage gating from research R-01: `run_vas = vas.enabled && tap ∈ {AfterVas, AfterPlayback}` and `run_playback = playback_stage_enabled && tap == AfterPlayback`. The VAS stage itself arrives in T023; until then `run_vas` gates nothing. Latency is unchanged (FR-011). Makes the gating part of T005 pass.
 - [X] T013 [P] Implement the stimuli that T007 tests in `crates/rr_dr60_harness/src/stimulus.rs`: `burst_gap` and `short_bursts`, using detmath tones only. These are Foundational (plan › Story boundaries).
-- [ ] T014 Move every spec 001 and 002 harness configuration onto VAS-bypassed settings in `crates/rr_dr60_harness/src/configs.rs`:
+- [X] T014 Move every spec 001 and 002 harness configuration onto VAS-bypassed settings in `crates/rr_dr60_harness/src/configs.rs`:
   - **Existing names**: `settings()` sets `s.vas.enabled = false` for every 001 name and every 002 name, including `default_agc`, which is built from `Settings::new`. Add a doc comment: each means "the spec 001/002 configuration with VAS bypassed (spec 003 FR-020)".
   - **New names**: `vas_only` (VAS on in drop mode, AGC off, stages 4 and 10 off, `Tap::AfterVas`), `vas_mute` (as `vas_only`, mode `Mute`) and `default_vas` (`Settings::new`).
   - **Lists**: keep `CONFIGS` and `AGC_CONFIGS` unchanged, and add `VAS_CONFIGS`.
   - Extend `configs_match_data_model_table`.
-- [ ] T015 Extend `RrDr60Settings` and the process call in `crates/rr_dr60_ffi/src/lib.rs` (contracts/c-api.md):
+- [X] T015 Extend `RrDr60Settings` and the process call in `crates/rr_dr60_ffi/src/lib.rs` (contracts/c-api.md):
   - **Settings fields**: append `vas_enabled: bool, vas_mode: u32, vas_sensitivity: u32, vas_threshold_dbfs: f32, vas_hang_ms: f32, vas_onset_ms: f32` at offsets 48–68, size 72. Add `const _: () = assert!(size_of::<RrDr60Settings>() == 72);`. `rr_dr60_settings_default` fills the device defaults.
   - **New types**: `RrDr60VasMode { Drop = 0, Mute = 1 }`, `RrDr60Tap::AfterVas = 3`, and `RrDr60SettingField` values 9–13 (`VAS_MODE`, `VAS_SENSITIVITY`, `VAS_THRESHOLD_DBFS`, `VAS_HANG_MS`, `VAS_ONSET_MS`).
   - **Conversion rules**:
@@ -138,7 +138,7 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
     - the core-error mapping has an arm for each of the four VAS `Setting` variants.
   - **`RrDr60BlockInfo`**: add it, and add the `out_info` parameter to `rr_dr60_process`. On every early return (error, poisoned handle, `frames == 0`), `*out_info` = `{0, 0, current paused}`, with `paused = false` for a NULL handle.
   - Regenerate the header.
-- [ ] T016 Update the 001 and 002 tests that build settings by hand so they bypass VAS, and map every tap exhaustively:
+- [X] T016 Update the 001 and 002 tests that build settings by hand so they bypass VAS, and map every tap exhaustively:
   - `crates/rr_dr60_harness/tests/ffi_parity.rs` (`c_settings`) and `crates/rr_dr60_harness/tests/alloc_free.rs`: add `Tap::AfterVas => 3` to the exhaustive `match`, and copy the VAS fields.
   - Check `us1_voiceband.rs`, `us2_bypass_tap.rs`, `edge_cases.rs`, `timing.rs`, `determinism.rs`, `memory.rs`, `mutation.rs`, `us1_agc.rs`, `us2_agc_settings.rs`, `agc_edge_cases.rs`, `crates/rr_dr60_harness/src/agc_checks.rs` and `crates/rr_dr60_ffi/tests/c/` for `Settings::new` or `rr_dr60_settings_default` used as a 001 or 002 default. Each must set VAS off (`vas_enabled = false` in C).
   - Update `crates/rr_dr60_ffi/tests/c/smoke.c` for the new `rr_dr60_process` signature.

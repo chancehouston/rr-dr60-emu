@@ -113,7 +113,7 @@ fn as5_invalid_settings_are_named_and_rejected() {
         assert_eq!(Pipeline::new(bad).err(), Some(want));
         assert!(want.to_string().contains("agc."), "{want}");
 
-        let mut p = Pipeline::new(Settings::new(48_000)).unwrap();
+        let mut p = Pipeline::new(configs::settings("default_agc", 48_000)).unwrap();
         let mut warm = x.clone();
         let produced = p.process_in_place(&mut warm).produced;
         warm.truncate(produced);

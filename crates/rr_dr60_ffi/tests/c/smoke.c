@@ -40,14 +40,16 @@ int main(void) {
   CHECK(s.struct_size == sizeof(RrDr60Settings), "struct_size %u", s.struct_size);
   CHECK(s.tap == RR_DR60_TAP_AFTER_PLAYBACK, "default tap");
   CHECK(s.agc_enabled, "AGC on by default (spec 002, A-020)");
-  /* The spec 001 checks below run with the AGC bypassed (spec 002 FR-018). */
+  CHECK(s.vas_enabled && s.vas_mode == RR_DR60_VAS_MODE_DROP, "VAS on, drop mode by default (spec 003, A-008)");
+  /* The spec 001 checks below run with the AGC and the VAS bypassed (spec 002 FR-018, 003 FR-020). */
   s.agc_enabled = false;
+  s.vas_enabled = false;
 
   RrDr60Pipeline *p = NULL;
   CHECK(rr_dr60_create(&s, &p) == RR_DR60_STATUS_OK && p != NULL, "create");
 
   /* 1 kHz at -20 dBFS keeps its level within 0.2 dB (US1 AS1, A-015). */
-  CHECK(rr_dr60_process(p, in, out, N) == RR_DR60_STATUS_OK, "process");
+  CHECK(rr_dr60_process(p, in, out, N, NULL) == RR_DR60_STATUS_OK, "process");
   double gain_db = 20.0 * log10(rms(out, N / 2, N) / rms(in, N / 2, N));
   CHECK(fabs(gain_db) <= 0.2, "1 kHz gain %.3f dB", gain_db);
 
@@ -67,16 +69,16 @@ int main(void) {
   bad = rr_dr60_settings_default(FS);
   bad.struct_size = 4;
   CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_INVALID_ARGUMENT && q == sentinel, "struct_size = 4");
-  CHECK(rr_dr60_process(NULL, in, out, 64) == RR_DR60_STATUS_NULL_POINTER, "process(NULL handle)");
-  CHECK(rr_dr60_process(p, NULL, out, 64) == RR_DR60_STATUS_NULL_POINTER, "process(NULL input)");
-  CHECK(rr_dr60_process(p, NULL, NULL, 0) == RR_DR60_STATUS_OK, "frames = 0 with NULLs");
-  CHECK(rr_dr60_process(p, in, in + 1, 64) == RR_DR60_STATUS_INVALID_ARGUMENT, "partial overlap");
+  CHECK(rr_dr60_process(NULL, in, out, 64, NULL) == RR_DR60_STATUS_NULL_POINTER, "process(NULL handle)");
+  CHECK(rr_dr60_process(p, NULL, out, 64, NULL) == RR_DR60_STATUS_NULL_POINTER, "process(NULL input)");
+  CHECK(rr_dr60_process(p, NULL, NULL, 0, NULL) == RR_DR60_STATUS_OK, "frames = 0 with NULLs");
+  CHECK(rr_dr60_process(p, in, in + 1, 64, NULL) == RR_DR60_STATUS_INVALID_ARGUMENT, "partial overlap");
 
   /* In place equals copy mode after reset. */
   static float buf[N];
   memcpy(buf, in, sizeof in);
   CHECK(rr_dr60_reset(p) == RR_DR60_STATUS_OK, "reset");
-  CHECK(rr_dr60_process(p, buf, buf, N) == RR_DR60_STATUS_OK, "in place");
+  CHECK(rr_dr60_process(p, buf, buf, N, NULL) == RR_DR60_STATUS_OK, "in place");
   CHECK(memcmp(buf, out, sizeof out) == 0, "in-place output differs from copy mode");
 
   /* Reconfigure rows (contracts/c-api.md): errors leave the old configuration working. */
@@ -85,10 +87,11 @@ int main(void) {
   uint32_t latency_after = 0;
   CHECK(rr_dr60_latency_samples(p, &latency_after) == RR_DR60_STATUS_OK && latency_after == latency,
         "failed reconfigure changed latency (%u -> %u)", latency, latency_after);
-  CHECK(rr_dr60_process(p, in, out, 64) == RR_DR60_STATUS_OK, "process after failed reconfigure");
+  CHECK(rr_dr60_process(p, in, out, 64, NULL) == RR_DR60_STATUS_OK, "process after failed reconfigure");
   CHECK(rr_dr60_reconfigure(p, NULL) == RR_DR60_STATUS_NULL_POINTER, "reconfigure(NULL)");
   RrDr60Settings bypass = rr_dr60_settings_default(FS);
   bypass.agc_enabled = false;
+  bypass.vas_enabled = false;
   bypass.record_stage_enabled = false;
   bypass.playback_stage_enabled = false;
   CHECK(rr_dr60_reconfigure(p, &bypass) == RR_DR60_STATUS_OK, "reconfigure to bypass_all");
@@ -97,6 +100,7 @@ int main(void) {
 
   /* Spec 002 AGC (US2 AS5, AS6; contracts/c-api.md). */
   RrDr60Settings agc = rr_dr60_settings_default(FS);
+  agc.vas_enabled = false; /* the spec 002 default (spec 003 FR-020) */
   agc.agc_release_ms = 3000.0f;
   agc.tap = RR_DR60_TAP_AFTER_AGC;
   RrDr60SettingField field = RR_DR60_SETTING_FIELD_TAP;
@@ -104,7 +108,7 @@ int main(void) {
             field == RR_DR60_SETTING_FIELD_NONE,
         "validate(AGC release 3000 ms, tap after AGC)");
   CHECK(rr_dr60_reconfigure(p, &agc) == RR_DR60_STATUS_OK, "reconfigure to AGC settings");
-  CHECK(rr_dr60_process(p, in, out, N) == RR_DR60_STATUS_OK, "process with AGC");
+  CHECK(rr_dr60_process(p, in, out, N, NULL) == RR_DR60_STATUS_OK, "process with AGC");
   agc.agc_attack_ms = 0.0f;
   CHECK(rr_dr60_settings_validate(&agc, &field) == RR_DR60_STATUS_INVALID_SETTING &&
             field == RR_DR60_SETTING_FIELD_AGC_ATTACK_MS,

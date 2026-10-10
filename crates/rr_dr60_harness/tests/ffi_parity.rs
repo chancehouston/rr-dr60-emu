@@ -25,7 +25,15 @@ fn c_api_matches_rust_api_everywhere() {
             let mut got = vec![0.0f32; x.len()];
             // SAFETY: live handle; valid non-overlapping buffers.
             assert_eq!(
-                unsafe { rr_dr60_process(p, x.as_ptr(), got.as_mut_ptr(), x.len()) },
+                unsafe {
+                    rr_dr60_process(
+                        p,
+                        x.as_ptr(),
+                        got.as_mut_ptr(),
+                        x.len(),
+                        std::ptr::null_mut(),
+                    )
+                },
                 RrDr60Status::Ok
             );
             assert_eq!(got, want, "{rate} Hz {config}");
@@ -78,7 +86,15 @@ fn c_api_matches_rust_api_with_agc() {
         let mut got = vec![0.0f32; x.len()];
         // SAFETY: live handle; valid non-overlapping buffers of x.len() floats.
         assert_eq!(
-            unsafe { rr_dr60_process(p, x.as_ptr(), got.as_mut_ptr(), x.len()) },
+            unsafe {
+                rr_dr60_process(
+                    p,
+                    x.as_ptr(),
+                    got.as_mut_ptr(),
+                    x.len(),
+                    std::ptr::null_mut(),
+                )
+            },
             RrDr60Status::Ok
         );
         // SAFETY: from rr_dr60_create.
@@ -224,21 +240,33 @@ fn c_api_reconfigure_rejects_invalid_agc_and_keeps_state() {
     // SAFETY: live handles; valid buffers and settings.
     unsafe {
         assert_eq!(
-            rr_dr60_process(p, x.as_ptr(), scratch.as_mut_ptr(), x.len()),
+            rr_dr60_process(
+                p,
+                x.as_ptr(),
+                scratch.as_mut_ptr(),
+                x.len(),
+                std::ptr::null_mut()
+            ),
             RrDr60Status::Ok
         );
         assert_eq!(
-            rr_dr60_process(q, x.as_ptr(), scratch.as_mut_ptr(), x.len()),
+            rr_dr60_process(
+                q,
+                x.as_ptr(),
+                scratch.as_mut_ptr(),
+                x.len(),
+                std::ptr::null_mut()
+            ),
             RrDr60Status::Ok
         );
         assert_eq!(rr_dr60_reconfigure(p, &bad), RrDr60Status::InvalidSetting);
         let (mut a, mut b) = (vec![0.0f32; x.len()], vec![0.0f32; x.len()]);
         assert_eq!(
-            rr_dr60_process(p, x.as_ptr(), a.as_mut_ptr(), x.len()),
+            rr_dr60_process(p, x.as_ptr(), a.as_mut_ptr(), x.len(), std::ptr::null_mut()),
             RrDr60Status::Ok
         );
         assert_eq!(
-            rr_dr60_process(q, x.as_ptr(), b.as_mut_ptr(), x.len()),
+            rr_dr60_process(q, x.as_ptr(), b.as_mut_ptr(), x.len(), std::ptr::null_mut()),
             RrDr60Status::Ok
         );
         assert_eq!(a, b, "failed reconfigure changed the handle");
@@ -291,27 +319,63 @@ fn error_table() {
     // SAFETY (all below): p is live; buffers are valid for their stated lengths.
     unsafe {
         assert_eq!(
-            rr_dr60_process(std::ptr::null_mut(), x.as_ptr(), y.as_mut_ptr(), 64),
+            rr_dr60_process(
+                std::ptr::null_mut(),
+                x.as_ptr(),
+                y.as_mut_ptr(),
+                64,
+                std::ptr::null_mut()
+            ),
             RrDr60Status::NullPointer
         );
         assert_eq!(
-            rr_dr60_process(p, std::ptr::null(), y.as_mut_ptr(), 64),
+            rr_dr60_process(
+                p,
+                std::ptr::null(),
+                y.as_mut_ptr(),
+                64,
+                std::ptr::null_mut()
+            ),
             RrDr60Status::NullPointer
         );
         assert_eq!(
-            rr_dr60_process(p, x.as_ptr(), std::ptr::null_mut(), 64),
+            rr_dr60_process(
+                p,
+                x.as_ptr(),
+                std::ptr::null_mut(),
+                64,
+                std::ptr::null_mut()
+            ),
             RrDr60Status::NullPointer
         );
         assert_eq!(
-            rr_dr60_process(p, std::ptr::null(), std::ptr::null_mut(), 0),
+            rr_dr60_process(
+                p,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut()
+            ),
             RrDr60Status::Ok
         );
         assert_eq!(
-            rr_dr60_process(p, y.as_ptr(), y.as_mut_ptr().add(1), 64),
+            rr_dr60_process(
+                p,
+                y.as_ptr(),
+                y.as_mut_ptr().add(1),
+                64,
+                std::ptr::null_mut()
+            ),
             RrDr60Status::InvalidArgument
         );
         assert_eq!(
-            rr_dr60_process(p, y.as_ptr().add(1), y.as_mut_ptr(), 64),
+            rr_dr60_process(
+                p,
+                y.as_ptr().add(1),
+                y.as_mut_ptr(),
+                64,
+                std::ptr::null_mut()
+            ),
             RrDr60Status::InvalidArgument
         );
         let mut lat = 7u32;
@@ -334,7 +398,7 @@ fn error_table() {
             RrDr60Status::UnsupportedHostRate
         );
         assert_eq!(
-            rr_dr60_process(p, x.as_ptr(), y.as_mut_ptr(), 256),
+            rr_dr60_process(p, x.as_ptr(), y.as_mut_ptr(), 256, std::ptr::null_mut()),
             RrDr60Status::Ok,
             "old config must still work"
         );
@@ -361,11 +425,11 @@ mod panics {
         unsafe {
             rr_dr60__test_force_panic(p);
             assert_eq!(
-                rr_dr60_process(p, x.as_ptr(), y.as_mut_ptr(), 32),
+                rr_dr60_process(p, x.as_ptr(), y.as_mut_ptr(), 32, std::ptr::null_mut()),
                 RrDr60Status::InternalError
             );
             assert_eq!(
-                rr_dr60_process(p, x.as_ptr(), y.as_mut_ptr(), 32),
+                rr_dr60_process(p, x.as_ptr(), y.as_mut_ptr(), 32, std::ptr::null_mut()),
                 RrDr60Status::InternalError,
                 "not poisoned"
             );
@@ -382,7 +446,7 @@ mod panics {
         let mut y = [0.0f32; 32];
         // SAFETY: live handle; valid buffers.
         assert_eq!(
-            unsafe { rr_dr60_process(p, x.as_ptr(), y.as_mut_ptr(), 32) },
+            unsafe { rr_dr60_process(p, x.as_ptr(), y.as_mut_ptr(), 32, std::ptr::null_mut()) },
             RrDr60Status::Ok
         );
     }

@@ -114,7 +114,7 @@ fn as5_c_api_matches_rust_api() {
     let mut y = vec![0.0f32; x.len()];
     // SAFETY: p is live; x and y are valid, non-overlapping, x.len() long.
     assert_eq!(
-        unsafe { rr_dr60_process(p, x.as_ptr(), y.as_mut_ptr(), x.len()) },
+        unsafe { rr_dr60_process(p, x.as_ptr(), y.as_mut_ptr(), x.len(), std::ptr::null_mut()) },
         RrDr60Status::Ok
     );
     assert_eq!(y, want, "C API output differs from Pipeline::process");
@@ -125,7 +125,15 @@ fn as5_c_api_matches_rust_api() {
     let mut buf = x.clone();
     // SAFETY: input == output is the documented in-place mode.
     assert_eq!(
-        unsafe { rr_dr60_process(p, buf.as_ptr(), buf.as_mut_ptr(), buf.len()) },
+        unsafe {
+            rr_dr60_process(
+                p,
+                buf.as_ptr(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                std::ptr::null_mut(),
+            )
+        },
         RrDr60Status::Ok
     );
     assert_eq!(buf, want, "in-place output differs");

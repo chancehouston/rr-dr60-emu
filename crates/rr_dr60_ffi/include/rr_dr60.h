@@ -52,7 +52,7 @@ enum RrDr60Status
   RR_DR60_STATUS_INVALID_ARGUMENT = 3,
   // An internal error (a caught panic). The handle is poisoned until `rr_dr60_reset`.
   RR_DR60_STATUS_INTERNAL_ERROR = 4,
-  // An AGC setting is out of range or not finite (spec 002 FR-011).
+  // An AGC or VAS setting is out of range or not finite (spec 002 FR-011, spec 003 FR-012).
   // `rr_dr60_settings_validate` names it.
   RR_DR60_STATUS_INVALID_SETTING = 5,
 };
@@ -74,7 +74,7 @@ enum RrDr60SettingField
   RR_DR60_SETTING_FIELD_NONE = 0,
   // `host_rate_hz` is not a supported rate.
   RR_DR60_SETTING_FIELD_HOST_RATE = 1,
-  // `tap` is not an `RrDr60Tap` value.
+  // `tap` is not an `RrDr60Tap` value (status `INVALID_ARGUMENT`).
   RR_DR60_SETTING_FIELD_TAP = 2,
   // `struct_size` is smaller than `sizeof(RrDr60Settings)` of this library version.
   RR_DR60_SETTING_FIELD_STRUCT_SIZE = 3,
@@ -88,6 +88,16 @@ enum RrDr60SettingField
   RR_DR60_SETTING_FIELD_AGC_ATTACK_MS = 7,
   // `agc_release_ms` is outside 50 to 10000, or not finite.
   RR_DR60_SETTING_FIELD_AGC_RELEASE_MS = 8,
+  // `vas_mode` is not an `RrDr60VasMode` value (status `INVALID_ARGUMENT`; spec 003).
+  RR_DR60_SETTING_FIELD_VAS_MODE = 9,
+  // `vas_sensitivity` is outside 1 to 5 (spec 003).
+  RR_DR60_SETTING_FIELD_VAS_SENSITIVITY = 10,
+  // `vas_threshold_dbfs` is outside -60 to 0, or not finite (spec 003).
+  RR_DR60_SETTING_FIELD_VAS_THRESHOLD_DBFS = 11,
+  // `vas_hang_ms` is outside 50 to 10000, or not finite (spec 003).
+  RR_DR60_SETTING_FIELD_VAS_HANG_MS = 12,
+  // `vas_onset_ms` is outside 0 to 200, or not finite (spec 003).
+  RR_DR60_SETTING_FIELD_VAS_ONSET_MS = 13,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -109,12 +119,34 @@ enum RrDr60Tap
   RR_DR60_TAP_AFTER_PLAYBACK = 1,
   // After signal-chain stage 3 (AGC). Stages 4 and 10 are not run (spec 002 FR-003).
   RR_DR60_TAP_AFTER_AGC = 2,
+  // After signal-chain stage 5 (VAS). Stage 10 is not run (spec 003 FR-003).
+  RR_DR60_TAP_AFTER_VAS = 3,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
 typedef enum RrDr60Tap RrDr60Tap;
 #else
 typedef uint32_t RrDr60Tap;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// What the VAS does with paused audio, passed as `uint32_t` in [`RrDr60Settings::vas_mode`]
+// (spec 003 FR-004).
+enum RrDr60VasMode
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+  // Removed, so the output can be shorter than the input. The default (S-001, A-008).
+  RR_DR60_VAS_MODE_DROP = 0,
+  // Replaced by silence, so the output keeps the input's length. An emulator option.
+  RR_DR60_VAS_MODE_MUTE = 1,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum RrDr60VasMode RrDr60VasMode;
+#else
+typedef uint32_t RrDr60VasMode;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -152,14 +184,40 @@ typedef struct RrDr60Settings {
   float agc_attack_ms;
   // AGC release time in ms. Default 1000 (A-018). Range 50 to 10000.
   float agc_release_ms;
+  // Signal-chain stage 5 (VAS) on (true, default; the device has no VAS switch, S-001, A-008)
+  // or bypassed.
+  bool vas_enabled;
+  // An `RrDr60VasMode` value. Default `RR_DR60_VAS_MODE_DROP`: paused audio is removed, so
+  // read `RrDr60BlockInfo.produced`.
+  uint32_t vas_mode;
+  // Microphone sensitivity level. Default 3 (S-001, A-021). Range 1 to 5. Moves only the VAS
+  // threshold in this version, 3 dB per level (A-022).
+  uint32_t vas_sensitivity;
+  // VAS threshold at sensitivity 3, dBFS (sine peak). Default -18 (A-022). Range -60 to 0.
+  float vas_threshold_dbfs;
+  // VAS hang time in ms. Default 1000 (A-023). Range 50 to 10000.
+  float vas_hang_ms;
+  // VAS onset time in ms. Default 20 (A-024). Range 0 to 200.
+  float vas_onset_ms;
 } RrDr60Settings;
+
+// The result of one `rr_dr60_process` call (spec 003 FR-004, FR-005).
+typedef struct RrDr60BlockInfo {
+  // Output samples written to `output[0 .. produced)`. Never more than `frames`. With the VAS
+  // in drop mode (the default) it can be smaller, or 0.
+  uintptr_t produced;
+  // VAS events this block generated (splices in drop mode, muted regions in mute mode).
+  uintptr_t events;
+  // The VAS is paused at the end of the block.
+  bool paused;
+} RrDr60BlockInfo;
 
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
 
-// Default settings for `host_rate_hz` (not validated): AGC on with the assumed device values,
-// both band-limit stages on, tap after playback, seed 0. Never fails.
+// Default settings for `host_rate_hz` (not validated): AGC and VAS on with the assumed device
+// values, both band-limit stages on, tap after playback, seed 0. Never fails.
 struct RrDr60Settings rr_dr60_settings_default(uint32_t host_rate_hz);
 
 // Creates a pipeline. On success, writes the new handle to `*out_pipeline`. Not real-time
@@ -182,17 +240,24 @@ void rr_dr60_destroy(struct RrDr60Pipeline *pipeline);
 
 // Processes `frames` samples from `input` into `output`. Real-time safe.
 //
+// Only `output[0 .. produced)` holds output: with the VAS in drop mode (the default), pauses
+// are removed, so `produced` can be smaller than `frames`, or 0 (spec 003 FR-004).
+// `out_info` may be NULL. When it is not, it is always written: on an error, a poisoned handle
+// or `frames == 0` it gets `produced = 0`, `events = 0` and the current `paused` value
+// (`false` for a NULL handle).
+//
 // `input == output` processes in place. Any other overlap returns
 // [`RrDr60Status::InvalidArgument`]. With `frames == 0`, both buffers may be NULL.
 //
 // # Safety
 //
 // `pipeline` must be a live handle. When `frames > 0`, `input` must be readable and
-// `output` writable for `frames` floats.
+// `output` writable for `frames` floats. `out_info` must be NULL or writable.
 RrDr60Status rr_dr60_process(struct RrDr60Pipeline *pipeline,
                              const float *input,
                              float *output,
-                             uintptr_t frames);
+                             uintptr_t frames,
+                             struct RrDr60BlockInfo *out_info);
 
 // Writes the pipeline's fixed latency, in host-rate samples, to `*out_samples`.
 //
@@ -223,7 +288,7 @@ RrDr60Status rr_dr60_reconfigure(struct RrDr60Pipeline *pipeline,
 // Checks `settings` without creating a pipeline. Returns exactly the status
 // `rr_dr60_create` would return for them and, if `out_field` is not NULL, writes the field
 // at fault there (`RR_DR60_SETTING_FIELD_NONE` when the status is OK). Fields are checked in
-// the order struct size, tap, host rate, then the AGC fields. Never allocates; real-time safe.
+// the order struct size, tap, VAS mode, host rate, the AGC fields, then the VAS fields. Never allocates; real-time safe.
 //
 // # Safety
 //

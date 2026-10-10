@@ -33,7 +33,7 @@ header = """
  */"""
 
 [export]
-include = ["RrDr60Tap"]
+include = ["RrDr60Tap", "RrDr60VasMode"]
 exclude = ["rr_dr60__test_force_panic"]
 
 [enum]
