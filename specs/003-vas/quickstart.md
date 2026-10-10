@@ -54,7 +54,7 @@ Expected: every VAS check passes at all six rates and names its `003/FR-0xx` and
 cargo test -p rr_dr60_harness --test vas_matrix interplay_report -- --nocapture
 ```
 
-Expected: a report, with no pass/fail, of how much of each −70 dBFS noise gap the default pipeline (AGC + VAS) keeps. The stimulus is 1 kHz bursts at −20 dBFS, 1 s on, then 5 s of noise, 3 cycles (research R-11).
+Expected: a report, with no pass/fail, of how much of each noise gap the default pipeline (AGC + VAS) keeps at each of the four floors (−40, −50, −60 and −70 dBFS RMS), plus a table of the input-referred threshold at each sensitivity level. The stimulus is groups of 1 kHz bursts at −20 dBFS, 300 ms on / 150 ms off, four per group, with 5 s noise gaps between groups (research R-11). Expect the −70 dBFS floor to pause and the louder floors to keep recording at level 3.
 
 ## 6. Gates
 

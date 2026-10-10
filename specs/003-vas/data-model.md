@@ -69,10 +69,21 @@ Positions count from the start of the stream (creation, reset or reconfigure), s
 | `state` | `Recording` or `Paused` |
 | `silent` | Consecutive non-sound samples while recording |
 | `run` | Length of the current sound run while paused (0 = none) |
-| `since_sound` | Samples since the last sound sample while paused (for the W bridge); saturates at W + 1 |
-| `dropped` | Cumulative dropped (or muted) device samples, for removed lengths |
+| `since_sound` | Samples since the last sound sample while paused (for the W bridge); saturates at W + 1. Starts at W + 1 ("no run"), and is set to W + 1 when a pause starts |
 
-All of it is fixed-size and inline. `reset()` returns to `Recording` with every counter at 0.
+All of it is fixed-size and inline (`threshold`, `hang` and `onset` are derived at construction). `reset()` returns to `Recording` with `silent = 0`, `run = 0` and `since_sound = W + 1`, identical to a fresh stage. The stage knows nothing about host rates, output positions or the output mode: it only returns a decision per sample. The stream counters live in the pipeline (next section), as the code does (`pipeline.rs` › `EventCounters`; corrected 2026-10-10).
+
+## Event counters (internal, pipeline; R-05, R-06)
+
+| Field | Meaning |
+|---|---|
+| `l`, `m` | The rate plan's ratio: `m / l` host samples per device sample (1 / 1 at 8 kHz) |
+| `kept` | Device samples fed to the interpolator since the stream started (in mute mode, muted samples count too) |
+| `dropped` | Device samples dropped since the stream started (drop mode only), for removed lengths |
+| `removed_reported` | ⌊`dropped`·m/l⌋ at the previous splice (the cumulative-floor rule) |
+| `pending` | The event generated at this step, if any, which the block loop writes to the caller's slice and counts |
+
+On `Resume` at kept index j: `output_position = ⌈j·m/l⌉` (the first n with ⌊n·l/m⌋ ≥ j), `input_length = ⌊dropped·m/l⌋ − removed_reported`. Computed in u128 so `kept · m` can't overflow. `reset()` clears all four counters.
 
 ### Per-sample processing (device rate, R-02, R-04)
 
@@ -96,7 +107,7 @@ Paused:
 
 ## Emission schedule state (internal, R-05)
 
-The interpolator gains two counters: `kept` (K, device samples fed to it) and `emitted` (n, host samples output). After each host input step it emits one sample when K ≥ ⌊n·l/m⌋ + 1. At the 8 kHz identity rate, each kept sample is emitted immediately.
+The interpolator gains no new counters: it reuses `written` (K, device samples pushed into it) and `latest` (⌊n·l/m⌋, the newest device sample the next host sample n reads). After each host input step, `try_next_host` emits one sample when `written > latest`, i.e. K ≥ ⌊n·l/m⌋ + 1, and nothing otherwise (corrected 2026-10-10 to match `resample/up.rs`). At the 8 kHz identity rate there is no interpolator, and each kept sample is emitted immediately.
 
 ## Golden entry (changed)
 

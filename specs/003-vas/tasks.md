@@ -173,7 +173,7 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
   - **Counters** (plan review finding 16): 10 minutes of silence leaves `since_sound` at W + 1, with no overflow.
 - [X] T018 [P] [US1] Pipeline event tests in the test module of `crates/rr_dr60/src/pipeline.rs`, with `vas_only`-equivalent settings built inline:
   - **8 kHz**: for burst 1 s, gap 5 s, burst 1 s, `produced` sums to 8000 + 8000 + 8000 − 160, with one event at `output_position` 16000 and `input_length` 32160 (40000 − 8000 dropped gap + 160 onset).
-  - **48 kHz**: the same event has `input_length` = 6 × the 8 kHz value. The sum of removed lengths plus total output equals total input exactly (m/l is an integer).
+  - **48 kHz**: the same event's `input_length` is within ± one device sample (6 host samples) of exactly 6 × the 8 kHz value, labeled an engineering target (FR-017; research R-11 › Measured: the decimator's edge smear gives 6 × 32 161, not 6 × 32 160). The sum of removed lengths plus total output equals total input exactly (m/l is an integer).
   - **`process_with_events`**: with a too-short slice (length 0), `BlockInfo.events` still counts 1, and nothing is written. `max_events(frames)` ≥ the events of any block in a 60 s seeded burst-gap run at every rate with `hang_ms = 50` (hundreds of splices; kept short for the R-12 budget).
   - **`paused`**: true at the end of a block that ends in a dropped stretch.
 - [X] T019 [P] [US1] Write `crates/rr_dr60_harness/tests/us1_vas.rs`, covering spec US1 AS1–AS5 at 48 kHz with `configs::settings("vas_only", 48_000)`, the Phase 2 stimuli and plain assertions (no `vas_checks`):
@@ -254,9 +254,10 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
 
 ### Implementation for User Story 2
 
-- [ ] T030 [US2] Implement mute mode (research R-09):
-  - **Stage**: in `crates/rr_dr60/src/stages/vas.rs`, add a `Mute` decision path: the same state machine, with paused samples replaced by +0.0.
-  - **Pipeline**: in `crates/rr_dr60/src/pipeline.rs`, mute samples are fed onward, so output stays one-in-one-out. Each muted region is reported once, when it ends, with its start position and length. The block's `paused` flag shows a region still open.
+- [ ] T030 [US2] Implement mute mode (research R-09). **Placement (MVP review, 2026-10-10)**: the change lives in `crates/rr_dr60/src/pipeline.rs`, not in `stages/vas.rs`. The stage's decisions (`Keep` / `Drop` / `Resume`) are already mode-independent; the mode decides what the pipeline does with a `Drop`.
+  - **Pipeline**: add a `DeviceOut::Mute` outcome. In mute mode a `VasDecision::Drop` becomes `DeviceOut::Mute`, which feeds +0.0 onward (through stage 10 when it runs, and into the interpolator) and counts toward `kept`, so the emission schedule stays one-in-one-out. `dropped` and `removed_reported` are untouched in mute mode.
+  - **Regions**: at the first muted sample (kept index j₀) record the region start ⌈j₀·m/l⌉; on `Resume` (kept index j₁) emit `VasEvent { output_position: start, input_length: ⌈j₁·m/l⌉ − start }` through `pending`, so each region is reported once, by the block in which it ends (data-model › VasEvent). The block's `paused` flag shows a region still open.
+  - **Stage**: no change to `stages/vas.rs`.
 - [ ] T031 [US2] Implement the C functions in `crates/rr_dr60_ffi/src/lib.rs` (contracts/c-api.md, research R-08):
   - `RrDr60VasEvent`, `rr_dr60_process_with_events` and `rr_dr60_max_events`;
   - panic-guarded, with a `// SAFETY:` comment on each pointer use;
@@ -264,7 +265,7 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
   - Regenerate the header and confirm the CI header-drift check passes locally.
   - Makes T027 and T028 pass.
 - [ ] T032 [P] [US2] Add a "VAS (signal-chain stage 5)" section to `README.md` (research R-14):
-  - **Content**: what it does, "modeled on the owner's manual and assumed values (A-008, A-021 – A-025)", and the defaults table. Say clearly that by default the output can be **shorter than the input**, so hosts must use `produced`. Explain drop vs. mute and when to use each.
+  - **Content**: what it does, "modeled on the owner's manual and assumed values (A-008, A-021 – A-025)", and the defaults table. Say clearly that by default the output can be **shorter than the input**, so hosts must use `produced`. Explain drop vs. mute and when to use each. State the input-referred threshold (about −58 dBFS at level 3, through the AGC's static curve; A-022) and that the default therefore pauses only on near-silence; make no claim that a quiet room pauses.
   - **Snippets**: Rust and C, for bypass, mute, sensitivity, and reading events.
   - No EVP claims either way (Principle VI).
 - [ ] T033 [US2] Run `us2_vas_settings`, `ffi_parity` and `crates/rr_dr60_ffi/tests/c/run_smoke.sh`, and fix until green.
@@ -303,7 +304,7 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
     - (b) every sensitivity level, and the minimum and maximum of every other setting with the rest at default, at 8 and 48 kHz;
     - "kept in full" checks use H + 1 s tones.
   - **`#[ignore]` test `full_matrix_all_rates`**: the full set at all 6 rates, for the release-mode job.
-  - **`interplay_report`** (US3 AS3): the default pipeline, 1 kHz bursts at −20 dBFS input, 1 s on / 5 s of −70 dBFS band-limited noise, 3 cycles. It prints the kept length of each gap, with no tolerance.
+  - **`interplay_report`** (US3 AS3, the floor sweep; research R-11): the default pipeline (`default_vas`), groups of 1 kHz bursts at −20 dBFS input, 300 ms on / 150 ms off, four per group, separated by 5 s gaps of band-limited noise, run once per noise floor at −40, −50, −60 and −70 dBFS RMS (engineering targets, FR-017). It prints, per floor, the kept length of each gap, and a table of the input-referred threshold at each sensitivity level implied by spec 002's static curve (A-017, A-022), with no tolerance.
   - **Runtime**: measure the normal-run and release-mode times and record them in the module docs. Each must be ≤ 60 s (R-12), or move cases to the ignored test.
   - **First run**: against a stage with resume allowed on non-sound samples, `check_fr009_onset` must fail. Record that in the PR.
 - [ ] T036 [P] [US3] Write `crates/rr_dr60_harness/tests/vas_edge_cases.rs`, covering spec Edge Cases at 8 and 48 kHz unless stated:
@@ -317,7 +318,7 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
   - **Long sound** (`#[ignore]`, release): a 10-minute 1 kHz tone at the threshold + 10 dB at 8 kHz keeps `produced == input` for every block, with no event (spec Edge Cases).
   - **Tap before VAS**: `Tap::AfterAgc` and `Tap::AfterRecord` give fixed length, and VAS settings have no effect.
   - **Mute and stage 10**: with stage 10 on, the output keeps its length, and ring-out at a region's start is allowed.
-  - **AGC runs while paused** (FR-016, A-025): with AGC and VAS on (tap "after VAS", stage 4 off), every kept sample is bit-identical to the VAS-bypassed output at its input index.
+  - **AGC runs while paused** (FR-016, A-025): with AGC and VAS on (tap "after VAS", stage 4 off), every kept sample is bit-identical to the VAS-bypassed output at its input index. **Bit-exact only at 8 kHz**, where the conversion is the identity; at the other rates the interpolator's history differs after each splice, so either run this check at 8 kHz only or compare within a stated tolerance (FR-017) at the other rates.
 - [ ] T037 [US3] Extend `crates/rr_dr60_harness/src/golden.rs` (contracts/golden-format.md):
   - **Entry field**: an optional `vas: Option<VasGolden { events: Vec<[u64; 2]>, paused_at_end: bool }>`, with `#[serde(default, skip_serializing_if = "Option::is_none")]`.
   - **Hash scope**: `n_samples` and `sha256` cover only produced samples.
@@ -361,16 +362,20 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
 - [ ] T046 [P] Update `CHANGELOG.md` `[Unreleased]`:
   - **Added**: VAS (stage 5, spec 003); `VasSettings`, `VasMode`, `Tap::AfterVas`, `BlockInfo`, `VasEvent`, `process_with_events` and `max_events`; the C VAS fields, `RrDr60VasMode`, `RR_DR60_TAP_AFTER_VAS`, `RrDr60BlockInfo`, `RrDr60VasEvent`, `rr_dr60_process_with_events` and `rr_dr60_max_events`; and `golden-vas-v1.json`.
   - **Changed**:
-    - **Default output now drops pauses**, so it can be shorter than the input.
+    - **Default output now drops pauses**, so it can be shorter than the input (the line was added on 2026-10-10; extend it, don't duplicate it). State the input-referred threshold (about −58 dBFS at level 3) and that the default pauses only on near-silence; no quiet-room claim.
     - `process` and `process_in_place` return `BlockInfo`.
     - `rr_dr60_process` takes `out_info`.
     - The C struct is 72 bytes.
   - **Assumptions**: A-021 (manual), A-022 – A-025, and A-020's correction.
 - [ ] T047 [P] Update `docs/hardware/signal-chain.md`: in row 5, add "**Modeled in [spec 003](../../specs/003-vas/spec.md): A-022 – A-025.**". Leave the A-022 to A-025 status in `docs/hardware/assumptions.md` as `assumed`.
 - [ ] T048 [P] Update the "Current status" section of `CLAUDE.md` with feature 003, the new test names (`us1_vas`, `us2_vas_settings`, `vas_matrix`, `vas_edge_cases`, `golden_vas`), the VAS bless command, and the measurement lesson: measure VAS by output length and events (003 R-11).
-- [ ] T049 Traceability audit (SC-008, FR-017): list every numeric literal in the code and tests added by this feature. Check each one has an A-/S- ID or an engineering-target comment (`// engineering target (003 FR-017)` or `(003 R-15)`), and fix any that don't. Record the check in the PR description. Search: `git diff main -- crates/ | grep -E '^\+.*[0-9]+\.[0-9]+|^\+.*\b[0-9]{2,}\b' | grep -v -E 'A-0|S-0|engineering target|FR-0|R-[0-9]'`. Also run `scripts/check-traceability.sh`.
+- [ ] T049 Traceability audit (SC-008, FR-017): list every numeric literal in the code and tests added by this feature, **including test literals** (the `#[cfg(test)]` modules of `stages/vas.rs`, `pipeline.rs` and `resample/up.rs`, and every new file under `crates/rr_dr60_harness/tests/`; e.g. the burst lengths 80/144/159/160/161/240/8000 in T017 must say "O − 80, O − 16 (onset − 2 ms), O − 1, O, O + 1, 1.5 O, 50 O (FR-009)"). Check each one has an A-/S- ID or an engineering-target comment (`// engineering target (003 FR-017)` or `(003 R-15)`), and fix any that don't. Record the check in the PR description. Search: `git diff main -- crates/ | grep -E '^\+.*[0-9]+\.[0-9]+|^\+.*\b[0-9]{2,}\b' | grep -v -E 'A-0|S-0|engineering target|FR-0|R-[0-9]'`. Also run `scripts/check-traceability.sh`.
 - [ ] T050 Run every step of `specs/003-vas/quickstart.md` § 1–6 and the coverage gate `cargo llvm-cov --all-features --workspace --fail-under-lines 80`. Fix anything that fails.
 - [ ] T051 Ask the speckit-coach for a final review, then ask the user before merging the PR.
+- [ ] T052 [US1] Event-capacity edge tests (added 2026-10-10, MVP review; research R-07), in the test module of `crates/rr_dr60/src/pipeline.rs`:
+  - **Worst case for `max_events`**: `onset_ms = 0`, bursts of one loud sample separated by gaps of exactly H + 1 silent device samples (the densest possible splice train), at every rate, in blocks of varied size including 1 and `frames` large enough to hold several splices; `info.events ≤ max_events(n)` for every block, and the total equals the expected splice count.
+  - **Short slices**: a block containing two splices processed with slices of length 0, 1 and 2: `info.events == 2` each time, the first `len` events are written in order, and the later ones are counted but not written.
+  - Both use plain assertions and cite FR-005 and R-07; update the `max_events` rustdoc to "+ 1 (+ 2 at 44.1 and 88.2 kHz)" while there.
 
 ---
 
@@ -415,6 +420,7 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
 | T043 | T038 |
 | T045 | T043, and the user's go-ahead |
 | T050 | T049 |
+| T052 | T022 |
 
 ### Within each story
 

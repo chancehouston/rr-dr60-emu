@@ -12,7 +12,7 @@ Technical approach:
 
 - **Placement**: VAS runs at the 8 kHz device rate, after stage 4 and before stage 10. The AGC keeps running while VAS is paused (R-01).
 - **Detector**: a sample-peak comparator against a sine-level threshold. A 32-sample bridge lets a sound "continue" through a waveform's troughs (R-02).
-- **Threshold**: −18 dBFS at sensitivity 3, with 3 dB per level. Planning revised the spec's first-draft −24 dBFS with 6 dB steps, which never paused on AGC-raised quiet background and made level 1 record nothing (R-03).
+- **Threshold**: −18 dBFS at sensitivity 3, with 3 dB per level. Planning revised the spec's first-draft −24 dBFS with 6 dB steps, which never paused on AGC-raised quiet background (−70 dBFS, below realistic floors; see US3 AS3) and made level 1 record nothing (R-03).
 - **State machine**: hang and onset counters in device samples. It starts in the recording state (R-04).
 - **Variable-length output**: the interpolator is fed only kept samples and emits at most one host sample per input step, when its data is available.
   - With nothing dropped, this is **identical** to today's one-in-one-out schedule, so 001 and 002 output is unchanged.
@@ -112,7 +112,7 @@ crates/rr_dr60/src/
 ├── pipeline.rs               # BlockInfo, VasEvent, process/process_in_place return BlockInfo,
 │                             #   process_with_events, max_events; chain gating; event bookkeeping
 ├── lib.rs                    # re-exports; crate docs list stage 5
-├── resample/up.rs            # emission schedule: kept/emitted counters, try_next_host (R-05)
+├── resample/up.rs            # emission schedule: try_next_host on the written/latest counters (R-05)
 └── stages/
     └── vas.rs                # NEW: detector, state machine, reset (R-02 – R-04, R-09)
 

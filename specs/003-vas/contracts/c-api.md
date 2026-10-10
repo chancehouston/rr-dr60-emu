@@ -71,6 +71,8 @@ typedef struct RrDr60VasEvent {  /* NEW */
 
 ## Rules (additions)
 
+**Rule 2 amendment** (001 rule 2, "failed calls change nothing"): `rr_dr60_process` and `rr_dr60_process_with_events` are the one exception for out-parameters. When `out_info` is not NULL it is **always written**, including on an error status, a poisoned handle and `frames == 0` (see Functions above), so a host that only checks `produced` never reads a stale count. Pipeline state is still unchanged on failure. `rr_dr60_max_events` follows rule 2 as written: on a non-OK status `*out_capacity` is left untouched.
+
 6. **Parity**: for the same settings and input, the C functions produce the same output, `BlockInfo` and events as the Rust API, bit for bit (FR-015).
 7. **Guarantees**: every new function is panic-guarded and real-time safe (no allocation, locks or I/O), and has a `// SAFETY:` comment on each pointer use.
 8. **Tests**: the C smoke test exercises drop mode (reads `produced`), mute mode, `rr_dr60_max_events` with `rr_dr60_process_with_events`, and an invalid `vas_sensitivity` reported by `rr_dr60_settings_validate`.

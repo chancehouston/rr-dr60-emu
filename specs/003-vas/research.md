@@ -43,9 +43,9 @@ Decisions for feature 003. They build on [spec 001's research](../001-pipeline-s
 
 - **Decision**: revise A-022 from the first draft's −24 dBFS with 6 dB steps to **−18 dBFS at level 3, with 3 dB steps** (level 1 = −12, level 5 = −24 dBFS). This updates spec FR-006, FR-007, FR-012, US2 AS3 and the register.
 - **Rationale** (prototype, spec 002's static curve plus Gaussian peak statistics; the noise's peak-detector reading is about +8.5 dB, 002 FR-009):
-  - **Quiet background**: input noise at −70 dBFS comes out of the AGC at −30 dBFS (maximum gain).
-    - **With −24 dBFS**: the margin is only 6 dB, so peaks cross the threshold about **38 times per second**. VAS would never pause in a quiet room, which contradicts S-001 ("pauses when no sound is detected").
-    - **With −18 dBFS**: the margin is 12 dB, so peaks cross about 1.4 × 10⁻⁴ times per second, and the room pauses.
+  - **Quiet background**: input noise at −70 dBFS comes out of the AGC at −30 dBFS (maximum gain). **Caveat (2026-10-10 hardware-emulation review)**: −70 dBFS RMS is below realistic phone-microphone floors (typically −60 to −45 dBFS). With the 10:1 curve, any floor whose peaks exceed about −58 dBFS input keeps recording at levels 2–5, so the default pauses only on near-silence. The values below are therefore tuned against an unrealistically quiet case; US3 AS3's floor sweep (−40, −50, −60, −70 dBFS RMS) documents the realistic cases without a pass/fail, and the stage-2 feature decides where the sensitivity gain acts (A-021).
+    - **With −24 dBFS**: the margin is only 6 dB, so peaks cross the threshold about **38 times per second**. VAS would never pause even on that −70 dBFS floor, which contradicts S-001 ("pauses when no sound is detected").
+    - **With −18 dBFS**: the margin is 12 dB, so peaks cross about 1.4 × 10⁻⁴ times per second, and that floor pauses.
     - Input noise at −66 dBFS and louder still keeps recording, which is the "VAS works better at lower sensitivity" character.
   - **Sensitivity steps**: a steady sine is recorded when its post-AGC level exceeds the threshold. Through the AGC's static curve, that means an input above:
 
@@ -59,7 +59,7 @@ Decisions for feature 003. They build on [spec 001's research](../001-pipeline-s
 
     The AGC compresses the input range 10:1, so the threshold steps must be small to map onto useful input levels.
   - **Speech**: speech regulated by the AGC (about −13 to −9 dBFS) stays above −18 dBFS at levels 2–5. At level 1 only louder speech is recorded.
-- **Alternatives**: keep −24 dBFS (fails the quiet-room behavior), or a VAS detector ahead of the AGC (contradicts the signal-chain order and the spec's FR-001).
+- **Alternatives**: keep −24 dBFS (fails the −70 dBFS-floor behavior), or a VAS detector ahead of the AGC or keyed from the AGC's gain state. The latter two are rejected by FR-001's decision (the detector uses the VAS input only), not by evidence; both are registered as competing hypotheses in A-021, with the captures that would discriminate them.
 
 ## R-04 State machine (FR-008, FR-009, edge cases; A-023, A-024, A-025)
 
@@ -91,7 +91,7 @@ Decisions for feature 003. They build on [spec 001's research](../001-pipeline-s
 - **Prototype** (200 000 host steps, random pauses, all five non-identity rates):
   - with no drops, the emission times equal 0, 1, 2, … exactly;
   - with drops, input length − output length equals dropped device samples × m/l within 0.95 samples at the end of a stream that ends while recording;
-  - **settling** (found while implementing T006): when a pause starts, the output keeps flowing for the rest of the last kept device sample's host-rate slots, so at any moment the difference can be up to one device sample (m/l host samples, ≤ 12). Once recording has continued for ⌈m/l⌉ + 1 host samples after a pause, it is back within ±1 (exact when m/l is an integer). Spec FR-004 and FR-005 state this;
+  - **settling** (found while implementing T006): when a pause starts, the output keeps flowing for the rest of the last kept device sample's host-rate slots, so the output can lead by up to ⌈m/l⌉ host samples (≤ 12) until the next resume lets the conversion catch up. Once ⌈m/l⌉ + 1 input samples have been processed since the step that reported the last splice, the difference is back within ±1 (exact when m/l is an integer). Spec FR-004 and FR-005 state this, and the T006 test asserts it at every step;
   - output never exceeded input in any step, and the interpolator never needed more look-back than today.
 - **Rationale**: it is a per-sample rule on integer counters, so it is independent of block boundaries, allocation-free, and adds constant work per sample. `process_in_place` stays valid, because output index ≤ input index at every step.
 - **Alternatives**:
@@ -120,7 +120,7 @@ Decisions for feature 003. They build on [spec 001's research](../001-pipeline-s
   - **`process_with_events`**: a new method that also writes `VasEvent { output_position: u64, input_length: u64 }` values into a caller-provided slice.
     - `BlockInfo.events` is the number the block generated. If the slice was too short, the extra events are counted but not written.
     - Events are written to the slice in order: the first `events.len()` of them.
-    - `Pipeline::max_events(frames)` returns a slice length that is always enough for a block of `frames` input samples: ⌊frames·l/m⌋ / (H + 2) + 2, computed in u128 so frames · l can't overflow.
+    - `Pipeline::max_events(frames)` returns a slice length that is always enough for a block of `frames` input samples: ⌊frames·l/m⌋ / (H + 2) + 2, computed in u128 so frames · l can't overflow. The bound's reasoning: splices are at least H + 2 device samples apart (a pause needs H + 1 non-sound samples, and a resume needs a sound sample), and a block of `frames` host samples lets the decimator produce at most ⌊frames·l/m⌋ + 1 device samples, or **+ 2 at 44.1 and 88.2 kHz** (001 R-09; the interpolator's two spare ring slots exist for the same reason). The "+ 2" term covers both the extra device sample and a splice that lands on the block's first device sample. The rustdoc of `max_events` should say "+ 1 (+ 2 at 44.1 and 88.2 kHz)"; a worst-case test (onset 0, gaps of exactly H + 1) and a short-slice test (two splices in one block, a slice of length 1) are listed in tasks T052.
     - **`#[must_use]` sweep**: about 40 existing call sites of `process` and `process_in_place` (harness helpers, tests, FFI, README) must be updated, because `clippy -D warnings` rejects unused results. Helpers that size output by input length must truncate to `produced` before VAS tests reuse them (plan review, finding 15).
   - **Errors**: `Error::InvalidSetting` gains four `Setting` variants: `VasSensitivity`, `VasThresholdDbfs`, `VasHangMs` and `VasOnsetMs`.
 - **Rationale**:
@@ -176,7 +176,9 @@ Decisions for feature 003. They build on [spec 001's research](../001-pipeline-s
 - **Host-rate edge effect**: the decimator smears a burst's edges.
   - **Prototype estimate**: the decimator's tail after a 1 kHz burst falls to a tenth of its amplitude within about 0.3 ms, and to a third (the threshold, for a burst at threshold + 10 dB) well within that. That's inside ±1 ms, and the effect is symmetric, so gap lengths shift by less than that.
   - **Self-test**: the harness reports the measured kept lengths at every rate, plus a self-test comparing each host rate with 8 kHz.
-- **Default-pipeline interplay (US3 AS3)**: 1 kHz bursts at −20 dBFS input, 1 s on, then 5 s of −70 dBFS band-limited noise, 3 cycles, through AGC and VAS. The test function is `interplay_report` in `vas_matrix.rs`. The harness reports the kept gap lengths with no tolerance, as documentation of the noise-rise interaction.
+  - **Measured (T018, 2026-10-10)**: for burst 1 s, gap 5 s, burst 1 s at 48 kHz, the splice's removed length is 6 × 32 161 host samples, against 32 160 device samples at 8 kHz: one device sample more, because the decimator's edge smear moves the last sound sample of the first burst (or the first of the second) by one device sample. Cross-rate comparisons of removed lengths therefore use a tolerance of **± one device sample** (engineering target, spec FR-017), not exact equality. The ±1 ms timing tolerances (FR-008, FR-009) already absorb this (one device sample is 0.125 ms).
+- **Measurement trap (end-of-stream latency)**: at resampled host rates the pipeline's output lags the input by `latency_samples()`, so the last kept samples of a stream are still inside the conversion when the input ends and the output is shorter than "input − removed" by up to that latency at the end, or appears shorter when a kept length is read from the output envelope. Measure kept lengths from the **events** (output positions and removed lengths) or against a **VAS-bypassed reference** of the same stimulus, never from an FFT or amplitude envelope of the output (the same lesson as 002 R-11). Stimuli that must end "while recording" append at least one pipeline latency plus one device sample of kept signal after the last burst.
+- **Default-pipeline interplay (US3 AS3)**: the floor sweep. Groups of 1 kHz bursts at −20 dBFS input, 300 ms on / 150 ms off, four bursts per group, with 5 s gaps of band-limited noise (002 harness FIR) between groups, at a noise floor of −40, −50, −60 and −70 dBFS RMS in turn, through AGC and VAS (`default_vas`). The test function is `interplay_report` in `vas_matrix.rs`. For each floor it reports the kept length of each gap, and it prints the input-referred threshold at each sensitivity level implied by spec 002's static curve (A-017; about −30, −55, −58, −61, −64 dBFS at levels 1–5), with no tolerance, as documentation of the noise-rise interaction and the baseline for the stage-2 feature (A-021). Expected shape: the −70 dBFS floor pauses; the −60 dBFS and louder floors keep recording at level 3.
 - **Rationale**: output length is exactly what the spec constrains, so measuring it directly avoids 002's envelope-timing pitfalls (002 R-11).
 
 ## R-12 CI time budget (coach health check, 2026-10-09)
