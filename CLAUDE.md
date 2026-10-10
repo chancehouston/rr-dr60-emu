@@ -58,6 +58,7 @@ All features go through Spec-Kit. The project principles live in [.specify/memor
 
 - Specs live in `specs/NNN-feature-name/` (sequential numbering).
 - **Coach:** use the `speckit-coach` agent ([.claude/agents/speckit-coach.md](.claude/agents/speckit-coach.md)) for "what's next?" and "poke holes in my spec".
+- **Technical reviewer:** use the `hw-emulation-reviewer` agent ([.claude/agents/hw-emulation-reviewer.md](.claude/agents/hw-emulation-reviewer.md)) for deep reviews of plans, progress and decisions: hardware plausibility, DSP correctness, measurement validity, and evidence gaps. It is read-only. The coach covers process and requirement quality; this agent covers technical substance.
 - Keep specs tech-agnostic (WHAT/WHY). Rust, crate layout, and API shapes belong in the plan.
 - A suggested first feature: a minimal end-to-end pipeline skeleton (input → device-rate band-limit → output) with the measurement test harness. Then add stages one at a time, each as its own spec.
 
