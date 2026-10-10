@@ -62,7 +62,7 @@ Technical approach:
 - **Release-mode `--ignored` run**: the full matrix × 6 rates.
 - **Golden file**: 54 new entries.
 
-There are no open NEEDS CLARIFICATION items. Planning made two spec corrections, recorded in R-03 and R-06:
+There are no open NEEDS CLARIFICATION items. The coach's plan review (2026-10-09) led to further spec corrections, recorded in the spec's Clarifications (plan review session) and in R-04, R-06, R-09, R-11 and R-12. Planning itself made two spec corrections, recorded in R-03 and R-06:
 - A-022's values: −18 dBFS with 3 dB steps.
 - FR-005: removed lengths add up within ±1 host sample (exactly at 8 kHz) for a stream that ends while recording, and each block reports whether it ends paused.
 
@@ -149,6 +149,10 @@ docs/hardware/signal-chain.md            # row 5 → spec 003
 docs/hardware/assumptions.md             # A-022 revised (done in planning)
 CHANGELOG.md, README.md, CLAUDE.md       # R-14
 ```
+
+**Story boundaries (Principle VII)**: the VAS configurations in `configs.rs` (`vas_only`, `vas_mute`, `default_vas`) and the `stimulus::burst_gap` and `stimulus::short_bursts` generators are Foundational. `us1_vas.rs` and `us2_vas_settings.rs` use plain assertions and must not import `vas_checks.rs`, which belongs to US3.
+
+**`#[must_use]` sweep**: changing `process` and `process_in_place` to return `BlockInfo` touches about 40 call sites (harness helpers, 10 test files, FFI, README). It is a Foundational task, so `clippy -D warnings` stays green (R-07).
 
 **Structure Decision**: Keep the four-crate workspace. VAS is one new stage module next to `agc.rs`. The interpolator gains the emission schedule. The harness grows by one checks module and new test files. No new crates.
 

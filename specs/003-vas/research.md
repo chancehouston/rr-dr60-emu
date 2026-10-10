@@ -70,10 +70,11 @@ Decisions for feature 003. They build on [spec 001's research](../001-pipeline-s
     - So a gap of exactly H samples is kept in full and causes no pause (spec Edge Cases).
   - **Paused**:
     - **Tracking the sound run**: a sound sample starts a run, or continues one if the previous sound sample was at most W samples earlier. A gap longer than W ends the run.
-    - **Resuming**: when the run has lasted O + 1 samples, counted from its first sound sample to the current one, the state becomes **Recording** and the current sample is **kept**. It is the first sample after the splice.
+    - **Resuming**: when the current sample is a sound sample and the run has lasted at least O + 1 samples, counted from its first sound sample to the current one, the state becomes **Recording** and the current sample is **kept**. Resume happens only on a sound sample: otherwise a burst shorter than the onset time could resume recording up to W samples into the silence after it (plan review, finding 1). It is the first sample after the splice.
     - So the first O samples of the sound are lost. With O = 0 the first sound sample is kept.
     - Every other paused sample is dropped (drop mode) or replaced by +0.0 (mute mode).
-  - **Start, reset and reconfigure**: **Recording**, with a silent count of 0 (A-025). So silence from the start keeps H samples, then pauses (spec US1 AS4).
+  - **Counters**: `since_sound` saturates at W + 1, so long silence can't overflow it (plan review, finding 16).
+- **Start, reset and reconfigure**: **Recording**, with a silent count of 0 (A-025). So silence from the start keeps H samples, then pauses (spec US1 AS4).
 - **Rationale**:
   - **Spec definitions**: it implements them directly. "Continuously below" is the silent count; "continuously above" is the sound run with W bridging troughs.
   - **Bounded state**: four integers and an enum, with constant work per sample.
@@ -84,7 +85,7 @@ Decisions for feature 003. They build on [spec 001's research](../001-pipeline-s
 
 - **Problem**: today the interpolator emits exactly one host sample per input host sample: output n at input step n, using device samples up to ⌊n·l/m⌋ (001 R-09). In drop mode, dropped device samples never reach the interpolator, so the output clock must slow down without ever producing more output than input, and the result must not depend on block boundaries.
 - **Decision**: the interpolator is fed only the device samples that VAS keeps (or mutes). After each host input step, it emits **at most one** host sample: the next sample n, if the kept-sample count K satisfies K ≥ ⌊n·l/m⌋ + 1. That is the number of device samples output n reads. Otherwise it emits nothing for that step.
-  - **No drops**: at input step t the decimator has produced exactly ⌊t·l/m⌋ + 1 device samples (001 R-09). The condition therefore holds for n = t at every step, so the schedule is **identical** to 001/002's one-in-one-out. Every pre-003 configuration and golden file is unchanged (FR-002, FR-020).
+  - **No drops**: at input step t the decimator has produced at least ⌊t·l/m⌋ + 1 device samples (001 R-09; sometimes + 2 at 44.1 and 88.2 kHz, which is why the interpolator's ring has 2 spare slots). The condition is ≥, so it holds for n = t at every step, so the schedule is **identical** to 001/002's one-in-one-out. Every pre-003 configuration and golden file is unchanged (FR-002, FR-020).
   - **With drops**: output stalls while paused, and catches up at most one sample per step afterwards. The interpolator never reads further ahead than today, so its ring buffer is unchanged.
   - **8 kHz host rate**: identity plan, so each kept sample is emitted immediately and a dropped one produces nothing.
 - **Prototype** (200 000 host steps, random pauses, all five non-identity rates):
@@ -104,6 +105,7 @@ Decisions for feature 003. They build on [spec 001's research](../001-pipeline-s
     - Over a stream that ends while recording, the removed lengths sum to ⌊D·m/l⌋, which matches input − output within ±1 (R-05 prototype).
     - At 8 kHz the sum is exact.
   - **Mute region**: the same decisions. The region starts at the first output whose newest device sample is the first muted one, and ends at the first output whose newest device sample is the resume sample. Its length is in output samples, which equals input samples in mute mode.
+    - Mute lengths come from absolute positions, while drop's removed lengths use the cumulative floor. At 44.1 and 88.2 kHz the two can differ by ±1 host sample; they are equal at 8, 16, 48 and 96 kHz, where m/l is an integer (spec FR-005; plan review, finding 2).
   - **When events are reported**: an event is reported by the block whose output contains its position. A splice's output position is emitted in the same step as the resume (R-05), so this is the block in which recording resumes. A muted region is reported when it ends.
   - **Paused at end of block**: each block reports whether VAS is paused at its end. A stream that ends paused has dropped (or muted) audio with no closing event, as spec FR-005 states.
 - **Rationale**: positions and lengths come from stream counters, so they are independent of block partition (FR-005, FR-014). The cumulative floor makes the per-splice integers add up with no drift at 44.1 and 88.2 kHz, where one device sample is 5.5125 or 11.025 host samples.
@@ -116,7 +118,9 @@ Decisions for feature 003. They build on [spec 001's research](../001-pipeline-s
   - **`process` and `process_in_place`** return a `BlockInfo { produced, events, paused }`. In drop mode, `output[..produced]` holds the block's output, and the rest of the slice is left unchanged.
   - **`process_with_events`**: a new method that also writes `VasEvent { output_position: u64, input_length: u64 }` values into a caller-provided slice.
     - `BlockInfo.events` is the number the block generated. If the slice was too short, the extra events are counted but not written.
-    - `Pipeline::max_events(frames)` returns a slice length that is always enough for a block of `frames` input samples: ⌊frames·l/m⌋ / (H + 2) + 2.
+    - Events are written to the slice in order: the first `events.len()` of them.
+    - `Pipeline::max_events(frames)` returns a slice length that is always enough for a block of `frames` input samples: ⌊frames·l/m⌋ / (H + 2) + 2, computed in u128 so frames · l can't overflow.
+    - **`#[must_use]` sweep**: about 40 existing call sites of `process` and `process_in_place` (harness helpers, tests, FFI, README) must be updated, because `clippy -D warnings` rejects unused results. Helpers that size output by input length must truncate to `produced` before VAS tests reuse them (plan review, finding 15).
   - **Errors**: `Error::InvalidSetting` gains four `Setting` variants: `VasSensitivity`, `VasThresholdDbfs`, `VasHangMs` and `VasOnsetMs`.
 - **Rationale**:
   - **Source compatibility**: changing `process`'s success type from `()` to `BlockInfo`, and `process_in_place`'s return from `()` to `BlockInfo`, keeps existing calls compiling. `p.process(x, y)?;` and `p.process_in_place(&mut b);` are both still valid statements. `BlockInfo` is `#[must_use]`, so callers get a warning to read the produced count, which they need now that VAS is on by default.
@@ -143,7 +147,7 @@ Decisions for feature 003. They build on [spec 001's research](../001-pipeline-s
 - **Decision**: the VAS state machine is shared with drop mode. A *mute* decision replaces the sample with +0.0 and still feeds it to stage 10 and the interpolator, so the emission schedule stays one-in-one-out. Muted regions are reported as events with `input_length` = the region's length.
 - **Exact zeros**:
   - With the tap "after VAS" at 8 kHz, a muted region is exactly zero.
-  - At other host rates, only the interpolator's window straddles the region's edges, so zeros are exact except within the interpolator's half-length, which is one converter delay (spec FR-004).
+  - At other host rates, a region's reported start is the first output whose newest device sample is muted, but the interpolator's window still holds kept samples for the next 2·delay_host + 1 outputs. So zeros are exact except for those first 2·delay_host + 1 outputs after the start (one pipeline latency, spec FR-004), and exact up to the region's end. A region shorter than the window may have no exact zeros (plan review, finding 5).
   - With stage 10 running, its ring-out continues into the region (spec Edge Cases).
 - **Rationale**: one decision path for both modes guarantees FR-005's "muted regions cover exactly the spans drop mode removes".
 
@@ -158,25 +162,28 @@ Decisions for feature 003. They build on [spec 001's research](../001-pipeline-s
 ## R-11 Measurement methods (FR-004 – FR-011; SC-002)
 
 - **Decision**: every timing and threshold check is measured by **output length and event positions**, not by envelopes, at every host rate:
-  - **Threshold (FR-006, FR-007)**: steady tones at the threshold ± 3 dB for 10 s.
+  - **Stimulus level**: bursts are 1 kHz at the threshold + 10 dB (spec definitions).
+  - **Threshold (FR-006, FR-007)**: steady tones at the threshold ± 3 dB, for 10 s in US1 AS1 and for H + 1 s elsewhere.
     - **+3 dB**: produced = input length and no event.
     - **−3 dB**: produced = H converted to host samples (±1 ms).
-    - **Threshold value**: for the ±1 dB checks, a 0.25 dB level search finds the lowest level that is kept in full, per frequency and per sensitivity level.
-    - **Noise**: the band-limited noise from 002 (harness FIR, not stage 4), at T − 5 dB and T − 15 dB.
+    - **Threshold value**: for the ±1 dB checks, a bisection to 0.05 dB finds the lowest level that is kept in full, per frequency and per sensitivity level. The harness reports each rate's measured 1 kHz offset. (A phase-locked 1 kHz tone can read up to 0.69 dB low, and converter ripple adds ±0.1 dB, so a coarser grid could exceed ±1 dB; plan review, finding 9.)
+    - **Noise**: the band-limited noise from 002 (harness FIR, not stage 4), at T − 5 dB and T − 15 dB, only for hang times ≥ 0.5 s (spec FR-013; at 50 ms, noise 5 dB below the threshold has sample gaps longer than H and pauses).
   - **Hang (FR-008)**: burst-gap stimuli with gaps of 0.5 H, H − 5 ms, H + 5 ms and 3 H. Kept gap length = output length minus the bursts' kept lengths. The splice count is 0 or 1 as expected.
-  - **Onset (FR-009)**: a long gap, then bursts of 0.5 O, 1.5 O and 50 O. The kept part of each burst comes from the output length and the splice position.
+  - **Onset (FR-009)**: a long gap, then bursts of 0.5 O, O − 2 ms (when O ≥ 3 ms), 1.5 O and 50 O, each followed by silence longer than H. The short bursts must leave no event and no output. The kept part of each burst comes from the output length and the splice position.
   - **Splice integrity (FR-010)**: at 8 kHz, each kept output sample is compared bit for bit with the VAS-bypassed output at the corresponding input index, which follows from the events' removed lengths.
-  - **Mute (FR-004, FR-005)**: the same stimuli in mute mode. Length = input, region spans = drop-mode spans, and samples outside regions equal drop-mode samples at 8 kHz.
+  - **Mute (FR-004, FR-005)**: the same stimuli in mute mode, in the VAS-isolated configuration. Length = input. Region lengths equal drop-mode removed lengths (±1 at 44.1 and 88.2 kHz). Samples outside regions equal drop-mode samples at 8 kHz. Zeros are exact outside the R-09 allowance.
 - **Host-rate edge effect**: the decimator smears a burst's edges.
-  - **Prototype estimate**: the decimator's tail after a 1 kHz burst at threshold + 20 dB falls below the threshold within about 0.3 ms. That's inside ±1 ms, and the effect is symmetric, so gap lengths shift by less than that.
+  - **Prototype estimate**: the decimator's tail after a 1 kHz burst falls to a tenth of its amplitude within about 0.3 ms, and to a third (the threshold, for a burst at threshold + 10 dB) well within that. That's inside ±1 ms, and the effect is symmetric, so gap lengths shift by less than that.
   - **Self-test**: the harness reports the measured kept lengths at every rate, plus a self-test comparing each host rate with 8 kHz.
-- **Default-pipeline interplay (US3 AS3)**: speech-level bursts with gaps of −70 dBFS noise, through AGC and VAS. The harness reports the kept gap lengths with no tolerance, as documentation of the noise-rise interaction.
+- **Default-pipeline interplay (US3 AS3)**: 1 kHz bursts at −20 dBFS input, 1 s on, then 5 s of −70 dBFS band-limited noise, 3 cycles, through AGC and VAS. The test function is `interplay_report` in `vas_matrix.rs`. The harness reports the kept gap lengths with no tolerance, as documentation of the noise-rise interaction.
 - **Rationale**: output length is exactly what the spec constrains, so measuring it directly avoids 002's envelope-timing pitfalls (002 R-11).
 
 ## R-12 CI time budget (coach health check, 2026-10-09)
 
 - **Decision**:
-  - **Debug budget**: the VAS tests in the normal debug suite must add **≤ 60 s** of wall time to the CI `check` job. The normal run covers: defaults at all six rates; every sensitivity level and the minimum and maximum of every other setting at 8 and 48 kHz; and stimuli no longer than 4 × the hang time.
+  - **Debug budget**: the VAS tests in the normal test suite must add **≤ 60 s** of wall time to the CI `check` job. (`profile.test` is opt-level 3, so the "debug" suite is optimized, about 230× real time.) The budget covers every VAS addition, including `determinism`, `alloc_free`, `mutation` and `golden_vas`.
+  - **What the normal run covers**: defaults at all six rates; every sensitivity level and the minimum and maximum of every other setting at 8 and 48 kHz; "kept in full" tone checks of H + 1 s (except US1 AS1's 10 s); threshold searches by bisection.
+  - **Partitions**: 100 random partitions of each VAS golden stimulus with `vas_only` at 8 and 48 kHz, and 10 partitions for the other configurations and rates.
   - **Release-mode matrix**: the full matrix (every setting × six rates, including 10 s hang times) runs in the release-mode `--ignored` step, budgeted at ≤ 60 s.
   - **Recording**: a task records the measured times in the test modules' docs, as 002 T035 did.
 - **Rationale**: the 002 PR's CI took about 10 minutes. Without a budget, every stage adds a full matrix.
@@ -205,7 +212,8 @@ These are emulator design values, not device properties. Each is labeled `// eng
 
 - **Continuity window**: W = 32 device samples (R-02).
 - **Rounding**: hang and onset times are rounded to whole device samples (R-04).
-- **Threshold search**: a 0.25 dB step in the harness (R-11).
 - **Event-slice bound**: the `max_events` formula (R-07).
+- **Threshold search**: bisection to 0.05 dB (R-11).
+- **Burst level**: the threshold + 10 dB (spec definitions).
 
 The spec's tolerances keep their labels from spec FR-017.

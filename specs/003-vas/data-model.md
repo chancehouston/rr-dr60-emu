@@ -60,7 +60,7 @@ Returned by every processing call.
 | `output_position` | u64 | Stream output index of the first sample after the splice | Stream output index of the region's first muted sample |
 | `input_length` | u64 | Host input samples removed at this splice (cumulative-floor rule, R-06) | Region length (output samples = input samples) |
 
-Positions count from the start of the stream (creation, reset or reconfigure), so they don't depend on block partition. An event is reported by the block whose output contains its position, which is the block in which recording resumed (R-05, R-06).
+Positions count from the start of the stream (creation, reset or reconfigure), so they don't depend on block partition. A splice is reported by the block in which recording resumed, which is also the block whose output contains its position (R-05, R-06). A muted region is reported once, by the block in which it ends; a region still open at the end of a block shows up as `paused`.
 
 ## VasStage state (internal)
 
@@ -69,9 +69,8 @@ Positions count from the start of the stream (creation, reset or reconfigure), s
 | `state` | `Recording` or `Paused` |
 | `silent` | Consecutive non-sound samples while recording |
 | `run` | Length of the current sound run while paused (0 = none) |
-| `since_sound` | Samples since the last sound sample while paused (for the W bridge) |
+| `since_sound` | Samples since the last sound sample while paused (for the W bridge); saturates at W + 1 |
 | `dropped` | Cumulative dropped (or muted) device samples, for removed lengths |
-| `pending` | Whether a resume happened that the interpolator has not yet placed in the output |
 
 All of it is fixed-size and inline. `reset()` returns to `Recording` with every counter at 0.
 
@@ -88,10 +87,10 @@ Paused:
     if run > 0 and since_sound ≤ W: run += 1 else: run = 1
     since_sound = 0
   else:
-    since_sound += 1
+    since_sound = min(since_sound + 1, W + 1)
     if since_sound > W: run = 0
     elif run > 0: run += 1
-  if run ≥ O + 1: state = Recording; silent = 0; KEEP x  (first sample after the splice)
+  if sound and run ≥ O + 1: state = Recording; silent = 0; KEEP x  (first sample after the splice)
   else: DROP/MUTE
 ```
 

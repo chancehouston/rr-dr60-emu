@@ -54,7 +54,7 @@ typedef struct RrDr60VasEvent {  /* NEW */
 - **CHANGED**: `RrDr60Status rr_dr60_process(RrDr60Pipeline *p, const float *input, float *output, size_t frames, RrDr60BlockInfo *out_info)`.
   - **New parameter**: `out_info`, which may be NULL. This is a deliberate compile break (R-08): in drop mode, only `output[0 .. produced)` holds output.
   - **In place**: `input == output` is still allowed.
-  - **Errors**: on any error, `*out_info` (if not NULL) is set to `produced = 0, events = 0` and the previous `paused` value.
+  - **Errors and early returns**: whenever the function returns without processing (any error, a poisoned handle, or `frames == 0`), `*out_info` (if not NULL) is set to `produced = 0, events = 0` and the pipeline's current `paused` value. With a NULL handle, `paused = false`.
 - **NEW**: `RrDr60Status rr_dr60_process_with_events(RrDr60Pipeline *p, const float *input, float *output, size_t frames, RrDr60BlockInfo *out_info, RrDr60VasEvent *events, size_t events_capacity)`.
   - **Events**: writes up to `events_capacity` events. `out_info->events` counts all of them.
   - **NULL**: `events` may be NULL only if `events_capacity == 0`.
@@ -63,6 +63,11 @@ typedef struct RrDr60VasEvent {  /* NEW */
   - **Order**: struct size → tap → `vas_mode` → host rate → AGC fields → VAS fields.
   - **Invalid `vas_mode`**: `INVALID_ARGUMENT` with field `VAS_MODE`.
   - **Out-of-range VAS field**: `INVALID_SETTING` with that field.
+  - **Conversion rules** (plan review, finding 8):
+    - `vas_sensitivity` is converted with `u8::try_from(…).unwrap_or(u8::MAX)`, so a value such as 259 can't wrap to 3; it is reported as `VAS_SENSITIVITY`.
+    - The C-to-Rust settings conversion returns the failing field, so an invalid `vas_mode` reports `VAS_MODE`, not `TAP`.
+    - The core-error-to-field mapping has an arm for each of the four VAS `Setting` variants.
+    - The smoke and parity tests include `vas_sensitivity = 259` and `vas_mode = 7`.
 
 ## Rules (additions)
 

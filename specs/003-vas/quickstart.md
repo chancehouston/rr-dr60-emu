@@ -51,10 +51,10 @@ Expected: every VAS check passes at all six rates and names its `003/FR-0xx` and
 ## 5. Default-pipeline interplay (US3 AS3)
 
 ```sh
-cargo test -p rr_dr60_harness --test vas_matrix interplay -- --nocapture
+cargo test -p rr_dr60_harness --test vas_matrix interplay_report -- --nocapture
 ```
 
-Expected: a report, with no pass/fail, of how much of each −70 dBFS noise gap the default pipeline (AGC + VAS) keeps.
+Expected: a report, with no pass/fail, of how much of each −70 dBFS noise gap the default pipeline (AGC + VAS) keeps. The stimulus is 1 kHz bursts at −20 dBFS, 1 s on, then 5 s of noise, 3 cycles (research R-11).
 
 ## 6. Gates
 
@@ -65,7 +65,3 @@ cargo test --all-features
 cargo llvm-cov --all-features --workspace --fail-under-lines 80
 scripts/check-traceability.sh
 ```
-
-## 7. Hear it (manual demo)
-
-Process any speech WAV with long pauses through the default pipeline, writing `output[..produced]` for each block. The pauses longer than 1 s shrink to 1 s, and the start of each phrase after a pause loses about 20 ms. The harness has no WAV I/O in the core (Principle I), so use any host that calls the library, or `process_in_place` in a small test binary.

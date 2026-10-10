@@ -39,7 +39,7 @@ All are bit-reproducible: detmath tones and PCG32 noise. Bursts are 1 kHz at −
 | Name | Content |
 |---|---|
 | `vas_burst_gap` | burst 1 s, gap 0.6 s (under the hang time), burst 0.5 s, gap 3 s, burst 1 s, gap 2.5 s (8.6 s; ends paused) |
-| `vas_noise_gaps` | the 002 band-limited noise (seed `0x0D60`) at −40 dBFS throughout, plus bursts: 1 s on, 3 s off, 2 cycles (8 s) |
+| `vas_noise_gaps` | the 002 band-limited noise (seed `0x0D60`) at −70 dBFS throughout, plus bursts: 1 s on, 3 s off, 2 cycles (8 s). In `default_vas` the AGC raises the noise to about −30 dBFS, below the threshold, so the gaps still pause (US3 AS3). |
 | `vas_short_bursts` | gap 2 s, then bursts of 10 ms, 30 ms and 200 ms, each followed by 2 s of silence (6.24 s) |
 
 ## Configurations (sorted)
@@ -50,7 +50,7 @@ All are bit-reproducible: detmath tones and PCG32 noise. Bursts are 1 kHz at −
 | `vas_mute` | — | — | on (mute) | — | AfterVas |
 | `vas_only` | — | — | on (drop) | — | AfterVas |
 
-That gives 3 × 3 × 6 rates = **54 entries**. Stimuli are processed in one block, as before. Partition equivalence, including events, is tested by `determinism`.
+That gives 3 × 3 × 6 rates = **54 entries**. Mute mode in the default configuration is not included: it differs from `vas_mute` only by stage 10 (spec FR-019). Stimuli are processed in one block, as before. Partition equivalence, including events, is tested by `determinism`.
 
 ## Blessing
 

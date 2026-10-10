@@ -93,8 +93,8 @@ impl Pipeline {
     /// CHANGED: returns BlockInfo instead of (). The block's output is buffer[..produced].
     pub fn process_in_place(&mut self, buffer: &mut [f32]) -> BlockInfo;
 
-    /// NEW. As `process`, and writes up to `events.len()` events. BlockInfo.events counts
-    /// all of them, so `info.events > events.len()` means some were not written.
+    /// NEW. As `process`, and writes the first `events.len()` events, in order. BlockInfo.events
+    /// counts all of them, so `info.events > events.len()` means some were not written.
     /// Real-time safe.
     pub fn process_with_events(
         &mut self,
@@ -104,7 +104,7 @@ impl Pipeline {
     ) -> Result<BlockInfo, Error>;
 
     /// NEW. An events-slice length that is always enough for a block of `frames` input samples
-    /// with the current settings (R-07). Never allocates.
+    /// with the current settings (R-07). Computed without overflow. Never allocates.
     pub fn max_events(&self, frames: usize) -> usize;
 }
 
