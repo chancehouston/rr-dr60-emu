@@ -59,7 +59,7 @@ Decisions for feature 003. They build on [spec 001's research](../001-pipeline-s
 
     The AGC compresses the input range 10:1, so the threshold steps must be small to map onto useful input levels.
   - **Speech**: speech regulated by the AGC (about −13 to −9 dBFS) stays above −18 dBFS at levels 2–5. At level 1 only louder speech is recorded.
-- **Alternatives**: keep −24 dBFS (fails the −70 dBFS-floor behavior), or a VAS detector ahead of the AGC or keyed from the AGC's gain state. The latter two are rejected by FR-001's decision (the detector uses the VAS input only), not by evidence; both are registered as competing hypotheses in A-021, with the captures that would discriminate them.
+- **Alternatives**: keep −24 dBFS (fails the −70 dBFS-floor behavior), or a VAS detector ahead of the AGC or keyed from the AGC's gain state. The latter two are rejected by FR-001's decision (the detector uses the VAS input only), not by evidence. S-002 (2026-10-10) then confirmed that the VAS and the sensitivity setting are DSP firmware after the AGC and the codec (A-033), which rules out an analog detector ahead of the AGC; a detector keyed from the AGC's gain state is also implausible, since the AGC has no output the DSP could read. The remaining open question is whether the setting changes a digital gain before the encoder, the threshold, or both.
 
 ## R-04 State machine (FR-008, FR-009, edge cases; A-023, A-024, A-025)
 
