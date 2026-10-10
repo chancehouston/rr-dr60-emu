@@ -4,9 +4,10 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
-use rr_dr60::Pipeline;
+use rr_dr60::{Pipeline, VasEvent};
 use rr_dr60_ffi::{
-    RrDr60Pipeline, RrDr60Status, rr_dr60_create, rr_dr60_destroy, rr_dr60_process, rr_dr60_reset,
+    RrDr60BlockInfo, RrDr60Pipeline, RrDr60Status, RrDr60VasEvent, rr_dr60_create, rr_dr60_destroy,
+    rr_dr60_process, rr_dr60_process_with_events, rr_dr60_reset,
 };
 use rr_dr60_harness::configs;
 use rr_dr60_harness::stimulus::{self, Pcg32};
@@ -128,5 +129,88 @@ fn processing_never_touches_the_heap() {
             // SAFETY: handle came from rr_dr60_create.
             unsafe { rr_dr60_destroy(handle) };
         }
+
+        // Spec 003 SC-004, FR-014: the VAS configurations and a 50 ms hang time, with a
+        // burst-gap input so blocks are dropped entirely and others hold several splices,
+        // through `process_with_events` and `rr_dr60_process_with_events`.
+        vas_cases(rate, &sizes);
+    }
+}
+
+/// A 1024-sample block: 900 samples of silence, then 124 samples of a 1 kHz tone at −8 dBFS
+/// (the default threshold + 10 dB). Blocks replay this buffer's prefix, so short blocks are
+/// pure silence that accumulates across blocks into pauses, and full-length blocks end with
+/// sound that resumes recording (engineering target, 003 R-15).
+fn vas_input(rate: u32) -> Vec<f32> {
+    let mut x = vec![0.0f32; 900];
+    x.extend(stimulus::tone(
+        1000.0,
+        stimulus::amplitude(-8.0),
+        f64::from(rate),
+        124,
+    ));
+    x
+}
+
+fn vas_cases(rate: u32, sizes: &[usize]) {
+    let input = vas_input(rate);
+    let mut output = vec![0.0f32; 1024];
+    let mut hang_50 = configs::settings("vas_only", rate);
+    hang_50.vas.hang_ms = 50.0; // the densest splice train (003 R-07)
+    hang_50.vas.onset_ms = 0.0; // any sound sample resumes
+    let mut cases: Vec<(String, rr_dr60::Settings)> = configs::VAS_CONFIGS
+        .iter()
+        .map(|c| (c.to_string(), configs::settings(c, rate)))
+        .collect();
+    cases.push(("vas hang 50 ms".into(), hang_50));
+    for (config, settings) in cases {
+        let mut p = Pipeline::new(settings).unwrap();
+        let mut events = vec![VasEvent::default(); p.max_events(1024)];
+        let mut c_events = vec![RrDr60VasEvent::default(); events.len()];
+        let c_settings = configs::c_settings(&settings);
+        let mut handle: *mut RrDr60Pipeline = std::ptr::null_mut();
+        // SAFETY: valid pointers.
+        assert_eq!(
+            unsafe { rr_dr60_create(&c_settings, &mut handle) },
+            RrDr60Status::Ok
+        );
+        let (mut total_events, mut empty_blocks) = (0usize, 0usize);
+        let before = counts();
+        for &n in sizes {
+            let info = p
+                .process_with_events(&input[..n], &mut output[..n], &mut events)
+                .unwrap();
+            total_events += info.events;
+            empty_blocks += usize::from(n > 0 && info.produced == 0);
+            let mut c_info = RrDr60BlockInfo::default();
+            // SAFETY: live handle; buffers valid for n floats; events valid for its length.
+            let status = unsafe {
+                rr_dr60_process_with_events(
+                    handle,
+                    input.as_ptr(),
+                    output.as_mut_ptr(),
+                    n,
+                    &mut c_info,
+                    c_events.as_mut_ptr(),
+                    c_events.len(),
+                )
+            };
+            assert!(status == RrDr60Status::Ok);
+        }
+        p.reset();
+        let after = counts();
+        assert_eq!(
+            after, before,
+            "{rate} Hz {config}: heap activity [allocs, deallocs, reallocs] while processing"
+        );
+        if config == "vas hang 50 ms" {
+            assert!(total_events > 0, "{rate} Hz {config}: no splices");
+            assert!(
+                empty_blocks > 0,
+                "{rate} Hz {config}: no block was dropped entirely"
+            );
+        }
+        // SAFETY: handle came from rr_dr60_create.
+        unsafe { rr_dr60_destroy(handle) };
     }
 }

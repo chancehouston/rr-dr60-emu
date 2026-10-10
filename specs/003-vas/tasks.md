@@ -287,7 +287,7 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
 
 ### Harness checks and tests (write first; each must fail against a deliberately wrong VAS)
 
-- [ ] T034 [US3] Create `crates/rr_dr60_harness/src/vas_checks.rs`, with one public function per requirement (research R-11). Each takes `(rate, &Case, Make)`, returns `Vec<MeasurementResult>` citing `003/FR-0xx` plus A-/S-IDs, and labels engineering targets:
+- [X] T034 [US3] Create `crates/rr_dr60_harness/src/vas_checks.rs`, with one public function per requirement (research R-11). Each takes `(rate, &Case, Make)`, returns `Vec<MeasurementResult>` citing `003/FR-0xx` plus A-/S-IDs, and labels engineering targets:
   - **`check_rate_self_test`**: kept lengths at the host rate agree with 8 kHz within the FR-008/009 tolerances.
   - **`check_fr004_length`**: output length vs. input − ⌊dropped·m/l⌋, within ±1 (exact at 8 kHz).
   - **`check_fr005_events`**:
@@ -303,7 +303,7 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
   - **`check_fr009_onset`**: bursts of 0.5 O, O − 2 ms (when O ≥ 3 ms), 1.5 O and 50 O, ±1 ms, with no resume for the short bursts.
   - **`check_fr010_splices`**: at 8 kHz, every kept sample is bit-identical to the VAS-bypassed output at its input index, which follows from the events.
   - **`check_fr011_latency`**.
-- [ ] T035 [US3] Write `crates/rr_dr60_harness/tests/vas_matrix.rs` (research R-12):
+- [X] T035 [US3] Write `crates/rr_dr60_harness/tests/vas_matrix.rs` (research R-12):
   - **Normal run**:
     - (a) defaults at all 6 rates;
     - (b) every sensitivity level, and the minimum and maximum of every other setting with the rest at default, at 8 and 48 kHz;
@@ -312,7 +312,7 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
   - **`interplay_report`** (US3 AS3, the floor sweep; research R-11): the default pipeline (`default_vas`), groups of 1 kHz bursts at −20 dBFS input, 300 ms on / 150 ms off, four per group, separated by 5 s gaps of band-limited noise, run once per noise floor at −40, −50, −60 and −70 dBFS RMS (engineering targets, FR-017). It prints, per floor, the kept length of each gap, and a table of the input-referred threshold at each sensitivity level implied by spec 002's static curve (A-017, A-022), with no tolerance.
   - **Runtime**: measure the normal-run and release-mode times and record them in the module docs. Each must be ≤ 60 s (R-12), or move cases to the ignored test.
   - **First run**: against a stage with resume allowed on non-sound samples, `check_fr009_onset` must fail. Record that in the PR.
-- [ ] T036 [P] [US3] Write `crates/rr_dr60_harness/tests/vas_edge_cases.rs`, covering spec Edge Cases at 8 and 48 kHz unless stated:
+- [X] T036 [P] [US3] Write `crates/rr_dr60_harness/tests/vas_edge_cases.rs`, covering spec Edge Cases at 8 and 48 kHz unless stated:
   - **Start and reset**: start, reset and reconfigure each keep exactly H of silence, then pause.
   - **Everything dropped**: a block entirely inside a pause gives `produced == 0`. In mute mode it gives a full block of zeros.
   - **Short sounds**: sounds shorter than the onset time leave no output, including the onset − 2 ms burst.
@@ -324,7 +324,7 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
   - **Tap before VAS**: `Tap::AfterAgc` and `Tap::AfterRecord` give fixed length, and VAS settings have no effect.
   - **Mute and stage 10**: with stage 10 on, the output keeps its length, and ring-out at a region's start is allowed.
   - **AGC runs while paused** (FR-016, A-025): with AGC and VAS on (tap "after VAS", stage 4 off), every kept sample is bit-identical to the VAS-bypassed output at its input index. **Bit-exact only at 8 kHz**, where the conversion is the identity; at the other rates the interpolator's history differs after each splice, so either run this check at 8 kHz only or compare within a stated tolerance (FR-017) at the other rates.
-- [ ] T037 [US3] Extend `crates/rr_dr60_harness/src/golden.rs` (contracts/golden-format.md):
+- [X] T037 [US3] Extend `crates/rr_dr60_harness/src/golden.rs` (contracts/golden-format.md):
   - **Entry field**: an optional `vas: Option<VasGolden { events: Vec<[u64; 2]>, paused_at_end: bool }>`, with `#[serde(default, skip_serializing_if = "Option::is_none")]`.
   - **Hash scope**: `n_samples` and `sha256` cover only produced samples.
   - **The VAS set**: stimuli `vas_burst_gap`, `vas_noise_gaps` (−70 dBFS noise) and `vas_short_bursts`, with exact durations from the contract; configs `default_vas`, `vas_mute` and `vas_only`.
@@ -332,16 +332,16 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
   - **Comparison**: fails if `events` or `paused_at_end` differ.
   - **Blessing**: `RR_DR60_BLESS=vas` rewrites only the VAS file.
   - Confirm `golden-v1.json` and `golden-agc-v1.json` still read and compare unchanged.
-- [ ] T038 [US3] Write `crates/rr_dr60_harness/tests/golden_vas.rs` with `golden_vas_matches`. Bless `crates/rr_dr60_harness/golden/golden-vas-v1.json` with `RR_DR60_BLESS=vas cargo test -p rr_dr60_harness --test golden_vas`: 54 entries. Add a CHANGELOG line for the new golden file.
-- [ ] T039 [P] [US3] Extend `crates/rr_dr60_harness/tests/mutation.rs` (SC-007) with two mutants built through `Make`, with no hidden hooks: `hang_ms × 1.2` and `threshold_dbfs + 3.0`. For each, assert that `check_fr008_hang` or `check_fr006_threshold` reports a failure, and that `golden::compare` against `committed_vas()` reports a difference.
-- [ ] T040 [P] [US3] Extend `crates/rr_dr60_harness/tests/determinism.rs` and `crates/rr_dr60_harness/tests/alloc_free.rs` (FR-014, SC-003, SC-004; research R-12):
+- [X] T038 [US3] Write `crates/rr_dr60_harness/tests/golden_vas.rs` with `golden_vas_matches`. Bless `crates/rr_dr60_harness/golden/golden-vas-v1.json` with `RR_DR60_BLESS=vas cargo test -p rr_dr60_harness --test golden_vas`: 54 entries. Add a CHANGELOG line for the new golden file.
+- [X] T039 [P] [US3] Extend `crates/rr_dr60_harness/tests/mutation.rs` (SC-007) with two mutants built through `Make`, with no hidden hooks: `hang_ms × 1.2` and `threshold_dbfs + 3.0`. For each, assert that `check_fr008_hang` or `check_fr006_threshold` reports a failure, and that `golden::compare` against `committed_vas()` reports a difference.
+- [X] T040 [P] [US3] Extend `crates/rr_dr60_harness/tests/determinism.rs` and `crates/rr_dr60_harness/tests/alloc_free.rs` (FR-014, SC-003, SC-004; research R-12):
   - **Determinism**:
     - 100 seeded random partitions (including sizes 0 and 1) of each VAS golden stimulus with `vas_only` at 8 and 48 kHz;
     - 10 partitions for `vas_mute`, `default_vas` and the other rates;
     - concatenated output, events and final `paused` are bit-identical to the one-block run.
   - **Allocation**: zero allocations over 1000+ blocks for the same configurations, including blocks that are entirely dropped and blocks with several splices (`hang_ms = 50`), through Rust `process_with_events` and C `rr_dr60_process_with_events`.
-- [ ] T041 [P] [US3] Add `default_vas` to the release-mode timing test in `crates/rr_dr60_harness/tests/timing.rs`, keeping max/min ≤ 3.0 and ≥ 20× real time at 48 kHz (SC-006).
-- [ ] T042 [US3] Run the US3 tests and the ignored matrix in release mode (`cargo test -p rr_dr60_harness --release --test vas_matrix --test vas_edge_cases -- --ignored`), and fix until green.
+- [X] T041 [P] [US3] Add `default_vas` to the release-mode timing test in `crates/rr_dr60_harness/tests/timing.rs`, keeping max/min ≤ 3.0 and ≥ 20× real time at 48 kHz (SC-006).
+- [X] T042 [US3] Run the US3 tests and the ignored matrix in release mode (`cargo test -p rr_dr60_harness --release --test vas_matrix --test vas_edge_cases -- --ignored`), and fix until green.
 
 **Checkpoint (US3)**: `cargo test --all-features` and the ignored release-mode tests pass, and the report lists every 003 FR with its IDs. All three stories have now been validated independently.
 

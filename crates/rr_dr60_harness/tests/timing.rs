@@ -42,9 +42,10 @@ fn per_sample_time_is_flat_and_fast() {
     }
     let x = stimulus::noise(0x0D60, 1 << 20);
     let long_stream = stimulus::noise(9, 60 * 48_000);
-    // The spec 001 configuration (AGC bypassed) and the real 0.2 default with the AGC on
-    // (spec 002 T041, SC-006).
-    for config in ["default", "default_agc"] {
+    // The spec 001 configuration (AGC bypassed), the 0.2 default with the AGC on (spec 002
+    // T041), and the 0.3 default with the AGC and the VAS on (spec 003 T041, SC-006). The
+    // white-noise input never pauses, so the VAS path runs at full cost.
+    for config in ["default", "default_agc", "default_vas"] {
         println!("{config}:");
         let mut times: Vec<(String, f64)> = [1usize, 64, 4096, 1 << 20]
             .iter()

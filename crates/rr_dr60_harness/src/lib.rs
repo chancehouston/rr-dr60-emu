@@ -12,3 +12,4 @@ pub mod configs;
 pub mod golden;
 pub mod report;
 pub mod stimulus;
+pub mod vas_checks;
