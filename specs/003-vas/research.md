@@ -147,7 +147,7 @@ Decisions for feature 003. They build on [spec 001's research](../001-pipeline-s
 - **Decision**: the VAS state machine is shared with drop mode. A *mute* decision replaces the sample with +0.0 and still feeds it to stage 10 and the interpolator, so the emission schedule stays one-in-one-out. Muted regions are reported as events with `input_length` = the region's length.
 - **Exact zeros**:
   - With the tap "after VAS" at 8 kHz, a muted region is exactly zero.
-  - At other host rates, a region's reported start is the first output whose newest device sample is muted, but the interpolator's window still holds kept samples for the next 2·delay_host + 1 outputs. So zeros are exact except for those first 2·delay_host + 1 outputs after the start (one pipeline latency, spec FR-004), and exact up to the region's end. A region shorter than the window may have no exact zeros (plan review, finding 5).
+  - At other host rates, a region's reported start is the first output whose newest device sample is muted, but the interpolator's window still holds kept samples for the next 2·delay_host + 1 outputs. So zeros are exact except for those first 2·delay_host + 1 outputs after the start (one pipeline latency plus one sample, spec FR-004), and exact up to the region's end. A region shorter than the window may have no exact zeros (plan review, finding 5).
   - With stage 10 running, its ring-out continues into the region (spec Edge Cases).
 - **Rationale**: one decision path for both modes guarantees FR-005's "muted regions cover exactly the spans drop mode removes".
 

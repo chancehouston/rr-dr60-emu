@@ -174,7 +174,7 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
 - [ ] T018 [P] [US1] Pipeline event tests in the test module of `crates/rr_dr60/src/pipeline.rs`, with `vas_only`-equivalent settings built inline:
   - **8 kHz**: for burst 1 s, gap 5 s, burst 1 s, `produced` sums to 8000 + 8000 + 8000 − 160, with one event at `output_position` 16000 and `input_length` 32160 (40000 − 8000 dropped gap + 160 onset).
   - **48 kHz**: the same event has `input_length` = 6 × the 8 kHz value. The sum of removed lengths plus total output equals total input exactly (m/l is an integer).
-  - **`process_with_events`**: with a too-short slice (length 0), `BlockInfo.events` still counts 1, and nothing is written. `max_events(frames)` ≥ the events of any block in a 10-minute seeded burst-gap run at every rate with `hang_ms = 50`.
+  - **`process_with_events`**: with a too-short slice (length 0), `BlockInfo.events` still counts 1, and nothing is written. `max_events(frames)` ≥ the events of any block in a 60 s seeded burst-gap run at every rate with `hang_ms = 50` (hundreds of splices; kept short for the R-12 budget).
   - **`paused`**: true at the end of a block that ends in a dropped stretch.
 - [ ] T019 [P] [US1] Write `crates/rr_dr60_harness/tests/us1_vas.rs`, covering spec US1 AS1–AS5 at 48 kHz with `configs::settings("vas_only", 48_000)`, the Phase 2 stimuli and plain assertions (no `vas_checks`):
   - **AS1**: a 1 kHz tone at −15 dBFS for 10 s. `produced` equals the input length, with no event.
@@ -205,9 +205,10 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
   - **Events**: write the first `events.len()` events in order, and count all of them.
   - **`max_events`**: = ⌊frames·l/m⌋ / (H + 2) + 2, computed in u128 and labeled `// engineering target (003 R-15)`.
   - **Delegation**: `process` and `process_in_place` call the same core with an empty event slice.
+  - **`Pipeline` rustdoc**: list stage 5, state that by default the output can be shorter than the input, and update the example to read `produced` (moved here from T024, so `pipeline.rs` is edited by one task at a time).
   - Makes T018 pass.
 - [ ] T023 [US1] Update the `op-count` test in `crates/rr_dr60/src/pipeline.rs`: add a fixed VAS term per device sample and the emission compare per host sample. Assert that work is still independent of block partition, with VAS on in a burst-gap run.
-- [ ] T024 [P] [US1] Update the crate docs in `crates/rr_dr60/src/lib.rs` and the `Pipeline` rustdoc. List stage 5 as "modeled on the owner's manual and assumed values (A-008, A-021 – A-025)", with no EVP claims either way. State that by default the output can be shorter than the input, and update the `Pipeline` example to read `produced`.
+- [ ] T024 [P] [US1] Update the crate docs in `crates/rr_dr60/src/lib.rs` (this file only; the `Pipeline` rustdoc is part of T022). List stage 5 as "modeled on the owner's manual and assumed values (A-008, A-021 – A-025)", with no EVP claims either way, and state that by default the output can be shorter than the input.
 - [ ] T025 [US1] Run `cargo test -p rr_dr60 stages::vas` and `cargo test -p rr_dr60_harness --test us1_vas`, and fix until green. Confirm every 001 and 002 test and both golden guards are still green.
 
 **Checkpoint (US1 / MVP)**: T017–T019 pass, all 001 and 002 tests pass unchanged, and the default pipeline now drops pauses. Stop and demo with a burst-gap stimulus (quickstart § 2). This is the MVP.
@@ -313,6 +314,7 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
   - **Hovering**: a tone hovering at the threshold ± 0.5 dB with random dropouts gives at most one pause per H + 2 device samples.
   - **Non-finite**: NaN, +Inf and −Inf give decisions and output identical to 0.0 in their place.
   - **Long silence** (`#[ignore]`, release): 1 hour at 8 kHz gives H zeros, then nothing, with `produced == 0` per block.
+  - **Long sound** (`#[ignore]`, release): a 10-minute 1 kHz tone at the threshold + 10 dB at 8 kHz keeps `produced == input` for every block, with no event (spec Edge Cases).
   - **Tap before VAS**: `Tap::AfterAgc` and `Tap::AfterRecord` give fixed length, and VAS settings have no effect.
   - **Mute and stage 10**: with stage 10 on, the output keeps its length, and ring-out at a region's start is allowed.
   - **AGC runs while paused** (FR-016, A-025): with AGC and VAS on (tap "after VAS", stage 4 off), every kept sample is bit-identical to the VAS-bypassed output at its input index.
