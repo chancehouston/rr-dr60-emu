@@ -328,3 +328,46 @@ fn agc_runs_while_paused() {
         }
     }
 }
+
+/// FR-005: in mute mode each region is reported once, by the block in which it ends: for every
+/// event, `output_position + input_length` lies within that block's output range.
+#[test]
+fn mute_regions_are_reported_by_the_block_that_ends_them() {
+    for rate in RATES {
+        let s = configs::settings("vas_mute", rate);
+        let x = burst_gap(
+            &[
+                (true, 1.0),
+                (false, 5.0),
+                (true, 0.5),
+                (false, 3.0),
+                (true, 0.5),
+            ],
+            rate,
+        );
+        let mut p = Pipeline::new(s).unwrap();
+        let mut rng = stimulus::Pcg32::new(0x0D60, 9);
+        let (mut pos, mut produced_before, mut total_events) = (0usize, 0usize, 0usize);
+        while pos < x.len() {
+            let n = (rng.below(4001) as usize).min(x.len() - pos);
+            let mut y = vec![0.0f32; n];
+            let mut ev = vec![VasEvent::default(); p.max_events(n)];
+            let info = p
+                .process_with_events(&x[pos..pos + n], &mut y, &mut ev)
+                .unwrap();
+            assert_eq!(info.produced, n, "{rate} Hz: mute mode keeps the length");
+            for e in &ev[..info.events] {
+                let end = (e.output_position + e.input_length) as usize;
+                assert!(
+                    end > produced_before && end <= produced_before + info.produced,
+                    "{rate} Hz: region ending at {end} reported by block {produced_before}..{}",
+                    produced_before + info.produced
+                );
+            }
+            total_events += info.events;
+            produced_before += info.produced;
+            pos += n;
+        }
+        assert_eq!(total_events, 2, "{rate} Hz");
+    }
+}

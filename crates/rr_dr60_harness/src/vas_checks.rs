@@ -452,6 +452,17 @@ pub fn check_fr006_threshold(rate: u32, case: &Case, make: Make<'_>) -> Vec<Meas
             "flag",
             Tolerance::Exact(1.0),
         ));
+        out.push(MeasurementResult::new(
+            "003/FR-006",
+            "output length for noise at threshold − 15 dB (one hang time)",
+            T_A022,
+            rate,
+            CONFIG,
+            format!("{}: band-limited noise {:.1} dBFS", case.label, t - 15.0),
+            dropped.y.len() as f64,
+            "samples",
+            ms_tolerance(h * fs, fs),
+        ));
     }
     out
 }

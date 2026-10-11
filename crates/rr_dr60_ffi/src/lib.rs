@@ -188,6 +188,12 @@ pub struct RrDr60Settings {
 
 // spec 003 contracts/c-api.md: the 0.3 layout is 72 bytes, with the VAS fields at offsets 48–68.
 const _: () = assert!(size_of::<RrDr60Settings>() == 72);
+// spec 003 contracts/c-api.md: the C event type and the core's `repr(C)` `VasEvent` share one
+// layout, so `rr_dr60_process_with_events` can pass the caller's buffer straight through.
+const _: () = assert!(
+    size_of::<VasEvent>() == size_of::<RrDr60VasEvent>()
+        && align_of::<VasEvent>() == align_of::<RrDr60VasEvent>()
+);
 
 /// Opaque pipeline handle.
 pub struct RrDr60Pipeline {
@@ -578,9 +584,10 @@ unsafe fn process_block(
             p.force_panic = false;
             panic!("rr_dr60__test_force_panic");
         }
-        // SAFETY: `RrDr60VasEvent` and `VasEvent` are both two `u64`s in the same order, and the
-        // core type is `repr(Rust)` with two identical fields; the slice is rebuilt from the
-        // caller's storage, which is writable for `events_capacity` values (or empty).
+        // SAFETY: `VasEvent` is `repr(C)` with the same two `u64` fields in the same order as
+        // `RrDr60VasEvent`, so their layouts are identical (checked by the const assert below
+        // `RrDr60Settings`); the slice is rebuilt from the caller's storage, which is writable
+        // for `events_capacity` values (or empty).
         let slots: &mut [VasEvent] = if events_capacity == 0 {
             &mut []
         } else {
