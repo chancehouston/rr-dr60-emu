@@ -13,10 +13,29 @@ name: CI
 #
 # Triggers: pull requests and pushes to main only. Test-first commits that are deliberately
 # red stay on feature branches until the branch is ready (tasks.md "Conventions").
+# Changes that touch only documentation (Markdown anywhere, docs/, specs/, the Spec-Kit and
+# agent files, the issue templates, LICENSE) skip CI: no job reads them. The traceability audit
+# checks the code's citations, not the registers. A change that mixes code and docs runs as usual.
 on:
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'specs/**'
+      - '.specify/**'
+      - '.claude/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE'
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'specs/**'
+      - '.specify/**'
+      - '.claude/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE'
 
 permissions:
   contents: read
