@@ -125,8 +125,9 @@ mod agc {
         Pipeline::new(s).unwrap()
     }
 
-    fn knee_plus_3(mut s: Settings) -> Pipeline {
-        s.agc.knee_dbfs += 3.0; // engineering target (005 SC-007)
+    /// −3 dB: +3 would land at +4 dBFS, outside FR-010's range (coach review after US1).
+    fn knee_minus_3(mut s: Settings) -> Pipeline {
+        s.agc.knee_dbfs -= 3.0; // engineering target (005 SC-007)
         Pipeline::new(s).unwrap()
     }
 
@@ -154,15 +155,16 @@ mod agc {
 
     #[test]
     fn knee_change_is_caught() {
-        // restated by 005 T035: the row name is the FR-004 ceiling row.
-        let failed = failed_properties(&agc_checks::check_fr004_static(48_000, &knee_plus_3));
+        // The ceiling rows cannot catch a knee shift (the ceiling is derived from the bisected
+        // knee); the knee row does (005 T035).
+        let failed = failed_properties(&agc_checks::check_fr004_static(48_000, &knee_minus_3));
         assert!(
-            failed.contains(&"output peak vs ceiling"),
+            failed.contains(&"knee (-1 dB gain point) by bisection"),
             "not caught; failures: {failed:?}"
         );
         let diff = golden::compare(
             &golden::committed_agc(),
-            &golden::generate_agc(&knee_plus_3),
+            &golden::generate_agc(&knee_minus_3),
         );
         assert!(diff.is_err(), "AGC golden check missed the knee change");
     }

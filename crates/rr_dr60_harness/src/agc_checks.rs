@@ -309,16 +309,25 @@ pub fn static_curve_rows_settings(
                     Tolerance::Report,
                 )
             } else {
+                // Below the knee FR-003 applies: bit-identity, asserted exactly (coach review
+                // after US1; a reported peak ratio asserted nothing).
+                let x = tone(level, STATIC_TONE_S, rate);
+                let y = run(make, settings, &x);
+                let differing = x
+                    .iter()
+                    .zip(&y)
+                    .filter(|(a, b)| a.to_bits() != b.to_bits())
+                    .count() as f64;
                 MeasurementResult::new(
-                    "005/FR-004",
-                    "gain below the knee (FR-003 covers it)",
+                    "005/FR-003",
+                    "differing samples below the knee (static-curve set)",
                     T_KNEE,
                     rate,
                     config,
-                    stim,
-                    gain,
-                    "dB",
-                    Tolerance::Report,
+                    format!("{stim}; gain {gain:+.3} dB"),
+                    differing,
+                    "samples",
+                    Tolerance::Exact(0.0), // 005 FR-003: bit-identical below the knee
                 )
             }
         })
@@ -399,7 +408,7 @@ pub fn check_fr003_passthrough(rate: u32, make: Make<'_>) -> Vec<MeasurementResu
     out.push(MeasurementResult::new(
         "005/FR-002",
         "differing samples with the limiter bypassed",
-        T_ENG,
+        &["A-020", "engineering target"],
         rate,
         CONFIG,
         "1 kHz +11 dBFS, 1 s, agc.enabled = false",
