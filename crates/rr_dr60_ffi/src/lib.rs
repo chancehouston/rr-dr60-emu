@@ -165,8 +165,9 @@ pub struct RrDr60Settings {
     /// bypassed. Below its knee the limiter is the identity; above it the output is held at the
     /// knee level after a dead time of a few ms (spec 005; modeled on the circuit, A-028).
     pub agc_enabled: bool,
-    /// The limiter's knee in dBFS: where it begins to act and the level it holds. Default 1
-    /// (A-028). Range -40 to 3. (Offset 28; was `agc_target_dbfs` in 0.4.)
+    /// The limiter's knee in dBFS: where it begins to act and the level it holds. Default -1,
+    /// just below the codec's full scale (A-028). Range -40 to 3. (Offset 28; was
+    /// `agc_target_dbfs` in 0.4.)
     pub agc_knee_dbfs: f32,
     /// Ignored; reserved since 0.5 (was `agc_max_gain_db`). Write 0.
     pub reserved_agc_1: f32,
@@ -878,7 +879,7 @@ mod tests {
         let s = rr_dr60_settings_default(48_000);
         assert_eq!(s.struct_size, 80);
         assert!(s.agc_enabled); // A-020
-        assert_eq!(s.agc_knee_dbfs, 1.0); // A-028
+        assert_eq!(s.agc_knee_dbfs, -1.0); // A-028
         assert_eq!(s.reserved_agc_1, 0.0);
         assert_eq!(s.reserved_agc_2, 0.0);
         assert_eq!(s.agc_attack_ms, 3.0); // A-034

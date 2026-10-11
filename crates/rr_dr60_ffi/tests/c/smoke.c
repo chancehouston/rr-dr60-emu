@@ -44,7 +44,7 @@ int main(void) {
   CHECK(s.struct_size == 80, "struct_size %u (must be 80 since 0.5, spec 005 contracts/c-api.md)", s.struct_size);
   CHECK(s.tap == RR_DR60_TAP_AFTER_PLAYBACK, "default tap");
   CHECK(s.agc_enabled, "limiter on by default (spec 005, A-020)");
-  CHECK(s.agc_knee_dbfs == 1.0f, "default knee %g dBFS (A-028)", (double)s.agc_knee_dbfs);
+  CHECK(s.agc_knee_dbfs == -1.0f, "default knee %g dBFS (A-028)", (double)s.agc_knee_dbfs);
   CHECK(s.agc_attack_ms == 3.0f, "default attack %g ms (A-034)", (double)s.agc_attack_ms);
   CHECK(s.agc_release_ms == 1370.0f, "default release %g ms (A-035)", (double)s.agc_release_ms);
   CHECK(s.reserved_agc_1 == 0.0f && s.reserved_agc_2 == 0.0f, "reserved AGC slots must default to 0");
@@ -104,9 +104,10 @@ int main(void) {
   CHECK(rr_dr60_latency_samples(p6, &latency6) == RR_DR60_STATUS_OK && latency6 == 0,
         "after-AGC tap latency %u samples (must be 0, 005 FR-001)", latency6);
 
-  /* Spec 005 FR-008 (A-030): a +11 dBFS tone (10 dB over the knee) through the record path at
-   * the 6 kHz identity rate, tapped after the record stage and the clamp, peaks at exactly 1.0;
-   * with the clamp bypassed it exceeds 1.0. */
+  /* Spec 005 FR-008 (A-030): a +11 dBFS tone (12 dB over the knee) through the record path at
+   * the 6 kHz identity rate, tapped after the record stage and the clamp, peaks at exactly 1.0
+   * (the clipped onset; the limiter then holds it below full scale); with the clamp bypassed the
+   * onset exceeds 1.0. */
   RrDr60Settings record_path = rr_dr60_settings_default(FS6);
   record_path.vas_enabled = false;
   record_path.tap = RR_DR60_TAP_AFTER_RECORD;

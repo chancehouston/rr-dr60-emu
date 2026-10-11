@@ -36,9 +36,10 @@
 //!
 //! **Level scale:** 0 dBFS (a sine of peak amplitude 1.0) is the codec's full scale, about
 //! 0.196 V peak at the microphone amplifier's output (A-030); speech at a conversational
-//! distance is assumed 25–35 dB below it (A-029). The limiter holds sustained loud input
-//! about 1 dB above full scale, and the clamp flat-tops it there; with the clamp bypassed the
-//! output can exceed ±1.0. The output is always finite.
+//! distance is assumed roughly 10–35 dB below it (A-029, low confidence). The limiter holds
+//! sustained loud input about 1 dB below full scale, so the clamp acts only on the dead time
+//! of a loud onset; with the clamp bypassed the output can exceed ±1.0 there. The output is
+//! always finite.
 //!
 //! **Output length:** with the VAS on in drop mode (the default), pauses are
 //! removed, so a block can produce fewer output samples than it consumed, or

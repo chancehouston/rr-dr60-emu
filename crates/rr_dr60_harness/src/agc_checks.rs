@@ -365,11 +365,12 @@ pub fn static_curve_rows(
 
 /// 005 FR-003 (A-028): input whose peaks of the sensed polarity stay 1.5 dB below the knee is
 /// returned bit for bit: a −20 dBFS tone, speech-like bursts at −30 dBFS, white noise at ±0.5
-/// and a 5 s tone at knee − 1.5 dB (−0.5 dBFS); and FR-002: a bypassed limiter passes a
-/// +11 dBFS tone bit for bit.
+/// and a 5 s tone at knee − 1.5 dB (−2.5 dBFS at the default knee); and FR-002: a bypassed
+/// limiter passes a +11 dBFS tone bit for bit.
 pub fn check_fr003_passthrough(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
     let fs = f64::from(rate);
     let settings = configs::settings(CONFIG, rate);
+    let knee = f64::from(settings.agc.knee_dbfs);
     let differing = |settings: Settings, x: &[f32]| {
         let y = run(make, settings, x);
         assert_eq!(y.len(), x.len());
@@ -389,8 +390,8 @@ pub fn check_fr003_passthrough(rate: u32, make: Make<'_>) -> Vec<MeasurementResu
             stimulus::noise(60, (2.0 * fs) as usize),
         ),
         (
-            "1 kHz -0.5 dBFS (knee - 1.5 dB), 5 s",
-            tone(-0.5, 5.0, rate), // engineering target (005 FR-003): the 1.5 dB margin
+            "1 kHz at knee - 1.5 dB, 5 s",
+            tone(knee - 1.5, 5.0, rate), // engineering target (005 FR-003): the 1.5 dB margin
         ),
     ];
     let mut out: Vec<MeasurementResult> = stimuli
@@ -428,6 +429,7 @@ pub fn check_fr003_passthrough(rate: u32, make: Make<'_>) -> Vec<MeasurementResu
 /// 005 FR-004 (A-028): the knee by bisection at +2 ± 2 dBFS, the static-curve set against the
 /// ceiling, and the 40 dB attenuation limit never exceeded.
 pub fn check_fr004_static(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
+    let knee_setting = f64::from(configs::settings(CONFIG, rate).agc.knee_dbfs);
     let knee = knee_bisection(rate, make, 0.0);
     let mut out = vec![MeasurementResult::new(
         "005/FR-004",
@@ -438,7 +440,7 @@ pub fn check_fr004_static(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
         format!("1 kHz {STATIC_TONE_S} s tones, bisection to 0.1 dB"),
         knee,
         "dBFS",
-        Tolerance::Range(0.0, 4.0), // A-028: +2 ± 2 dBFS (engineering target, 005 FR-004)
+        Tolerance::Range(knee_setting - 1.0, knee_setting + 3.0), // A-028: knee + 1 ± 2 dBFS (engineering target, 005 FR-004)
     )];
     let rows = static_curve_rows(rate, make, &static_curve_levels(), knee);
     // The deepest attenuation in the set is at +20 dBFS: gain = (peak − ceiling) + ceiling − 20.
@@ -601,6 +603,29 @@ pub fn check_fr005_attack_settings(
         "ms",
         armed_tol,
     ));
+    // The arming continuum (reported; post-implementation review B2): the same step after gaps
+    // of 1, 3, 5 and 10 s. R11·C6 = 10 s is the decay's time constant, not the duration of the
+    // fast-attack state: the model gives about 0.2 / 0.35 / 1.2 / 2.2 ms at 48 kHz against
+    // 3.2 ms from rest (005 R-04).
+    if defaults {
+        for gap in [1.0, 3.0, 5.0, 10.0] {
+            let x = step(&[loud, quiet, loud], &[0.2, gap, 0.2], rate);
+            let g = gain_trace_settings(make, settings, &x, gate);
+            let t_on = 0.2 + gap;
+            let steady_gap = steady_db(&g, fs, t_on + 0.15, t_on + 0.2);
+            out.push(MeasurementResult::new(
+                "005/FR-005",
+                "dead time, armed, versus the gap (reported)",
+                T_ATTACK,
+                rate,
+                config,
+                format!("{label}1 kHz {loud:+.0} 0.2 s, {quiet:+.0} {gap:.0} s, {loud:+.0} dBFS"),
+                dead_time_s(&g, fs, t_on, steady_gap).map_or(f64::NAN, |s| s * 1e3),
+                "ms",
+                Tolerance::Report,
+            ));
+        }
+    }
     out
 }
 
@@ -725,18 +750,19 @@ pub fn check_fr006_release_settings(
 }
 
 /// 005 FR-007 (A-036): the detector senses positive input samples. The asymmetric stimulus
-/// (peaks +0.75 / −1.5, the larger at +4 dBFS) and its negation differ in steady gain by
-/// 3 ± 0.5 dB, the attenuated one being the case whose larger peak is positive; through the
-/// record path with the clamp (6 kHz, where the device-rate output is observable) the
-/// un-sensed loud polarity reaches the clamp and the quiet polarity never does.
+/// (peaks +0.75 / −1.5, the larger at knee + 3 dB, the smaller at knee − 3 dB) and its negation
+/// differ in steady gain by 3 ± 0.5 dB, the attenuated one being the case whose larger peak is
+/// positive; through the record path with the clamp (6 kHz, where the device-rate output is
+/// observable) the un-sensed loud polarity reaches the clamp and the quiet polarity never does.
 pub fn check_fr007_polarity(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
     let fs = f64::from(rate);
     let settings = configs::settings(CONFIG, rate);
     let len = (2.0 * fs) as usize;
-    let gate = stimulus::amplitude(4.0) / 1.5 * 0.75; // the smaller peak
+    let loud = f64::from(settings.agc.knee_dbfs) + 3.0; // 005 FR-007: the larger peak 3 dB over the knee
+    let gate = stimulus::amplitude(loud) / 1.5 * 0.75; // the smaller peak
     let phase = stimulus::peak_phase(1000.0, rate); // R-08: a host sample on the 270° peak
     let steady = |sign: f64| {
-        let x = stimulus::asymmetric(4.0, sign, fs, len, phase);
+        let x = stimulus::asymmetric(loud, sign, fs, len, phase);
         let g = gain_trace_settings(make, settings, &x, gate);
         steady_db(&g, fs, 1.9, 2.0)
     };
@@ -748,7 +774,7 @@ pub fn check_fr007_polarity(rate: u32, make: Make<'_>) -> Vec<MeasurementResult>
             T_POLARITY,
             rate,
             CONFIG,
-            "asymmetric sin + 0.5 cos 2wt, larger peak +4 dBFS positive",
+            format!("asymmetric sin + 0.5 cos 2wt, larger peak {loud:+.0} dBFS positive"),
             sensed,
             "dB",
             Tolerance::Report,
@@ -759,7 +785,7 @@ pub fn check_fr007_polarity(rate: u32, make: Make<'_>) -> Vec<MeasurementResult>
             T_POLARITY,
             rate,
             CONFIG,
-            "asymmetric stimulus vs its negation, larger peak +4 dBFS",
+            format!("asymmetric stimulus vs its negation, larger peak {loud:+.0} dBFS"),
             unsensed - sensed,
             "dB",
             Tolerance::Range(2.5, 3.5), // A-036; engineering target (005 FR-007): 3 ± 0.5 dB
@@ -768,7 +794,11 @@ pub fn check_fr007_polarity(rate: u32, make: Make<'_>) -> Vec<MeasurementResult>
     // The record path with the clamp, at the device-rate tap.
     let path = configs::settings("record_path_agc", rate);
     let extremes = |sign: f64| {
-        let y = run(make, path, &stimulus::asymmetric(4.0, sign, fs, len, phase));
+        let y = run(
+            make,
+            path,
+            &stimulus::asymmetric(loud, sign, fs, len, phase),
+        );
         let tail = &y[y.len() - rate as usize..];
         let max = f64::from(tail.iter().fold(f32::MIN, |m, &v| m.max(v)));
         let min = f64::from(tail.iter().fold(f32::MAX, |m, &v| m.min(v)));
@@ -784,7 +814,7 @@ pub fn check_fr007_polarity(rate: u32, make: Make<'_>) -> Vec<MeasurementResult>
             T_POLARITY,
             rate,
             "record_path_agc",
-            "larger peak +4 dBFS negative, last 1 s",
+            format!("larger peak {loud:+.0} dBFS negative, last 1 s"),
             min_u,
             "FS",
             Tolerance::Exact(-1.0), // 005 FR-007: the un-sensed polarity reaches the clamp
@@ -795,7 +825,7 @@ pub fn check_fr007_polarity(rate: u32, make: Make<'_>) -> Vec<MeasurementResult>
             T_POLARITY,
             rate,
             "record_path_agc",
-            "larger peak +4 dBFS positive, last 1 s",
+            format!("larger peak {loud:+.0} dBFS positive, last 1 s"),
             min_s,
             "FS",
             Tolerance::Range(-0.999, 0.0), // 005 FR-007 (engineering target): never −1.0
@@ -807,7 +837,7 @@ pub fn check_fr007_polarity(rate: u32, make: Make<'_>) -> Vec<MeasurementResult>
         T_POLARITY,
         rate,
         "record_path_agc",
-        "larger peak +4 dBFS negative, last 1 s",
+        format!("larger peak {loud:+.0} dBFS negative, last 1 s"),
         max_u,
         "FS",
         Tolerance::Report,
@@ -819,7 +849,7 @@ pub fn check_fr007_polarity(rate: u32, make: Make<'_>) -> Vec<MeasurementResult>
         rate,
         "record_path_agc",
         format!(
-            "larger peak +4 dBFS positive, last 1 s; clipped duty {:.1} %",
+            "larger peak {loud:+.0} dBFS positive, last 1 s; clipped duty {:.1} %",
             100.0 * duty_s
         ),
         max_s,
@@ -829,10 +859,11 @@ pub fn check_fr007_polarity(rate: u32, make: Make<'_>) -> Vec<MeasurementResult>
     out
 }
 
-/// 005 FR-007 bandwidth (A-019 revised): at hosts of 16 kHz and above, a 6 kHz tone at +6 dBFS
-/// added to a −20 dBFS 1 kHz probe pulls the probe's level at the default output down by
-/// 5 ± 1 dB (the sum peak +6.41 dBFS against the +1.00 dBFS ceiling, 005 R-04: 5.41 dB), while
-/// the default output's 6 kHz content is at least 60 dB down (spec 004 FR-003 restated).
+/// 005 FR-007 bandwidth (A-019 revised): at hosts of 16 kHz and above, a 6 kHz tone 5 dB over
+/// the knee (+4 dBFS at the default) added to a −20 dBFS 1 kHz probe pulls the probe's level at
+/// the default output down by 5 ± 1 dB (the sum peak +4.51 dBFS against the −1.00 dBFS ceiling,
+/// 005 R-04: 5.51 dB), while the default output's 6 kHz content is at least 60 dB down (spec
+/// 004 FR-003 restated).
 pub fn check_fr007_bandwidth(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
     if rate < 16_000 {
         return Vec::new();
@@ -845,12 +876,13 @@ pub fn check_fr007_bandwidth(rate: u32, make: Make<'_>) -> Vec<MeasurementResult
         let y = run(make, settings, x);
         db(single_bin(&y, 1000.0, fs, y.len() - last, last).norm())
     };
+    let loud = f64::from(settings.agc.knee_dbfs) + 5.0; // 005 FR-007: 5 dB over the knee
     let probe = stimulus::tone(1000.0, stimulus::amplitude(-20.0), fs, len);
-    let both = stimulus::two_tone(1000.0, -20.0, 6000.0, 6.0, fs, len);
+    let both = stimulus::two_tone(1000.0, -20.0, 6000.0, loud, fs, len);
     let drop = level_1k(&probe) - level_1k(&both);
     let y = run(make, settings, &both);
     let content_6k =
-        db(single_bin(&y, 6000.0, fs, y.len() - last, last).norm() / stimulus::amplitude(6.0));
+        db(single_bin(&y, 6000.0, fs, y.len() - last, last).norm() / stimulus::amplitude(loud));
     vec![
         MeasurementResult::new(
             "005/FR-007",
@@ -858,10 +890,10 @@ pub fn check_fr007_bandwidth(rate: u32, make: Make<'_>) -> Vec<MeasurementResult
             &["A-019", "A-028", "engineering target"],
             rate,
             "default_agc",
-            "1 kHz -20 dBFS + 6 kHz +6 dBFS, 3 s, last 1 s",
+            format!("1 kHz -20 dBFS + 6 kHz {loud:+.0} dBFS, 3 s, last 1 s"),
             drop,
             "dB",
-            Tolerance::Range(4.0, 6.0), // engineering target (005 FR-007): 5 ± 1 dB; 005 R-04 5.41
+            Tolerance::Range(4.0, 6.0), // engineering target (005 FR-007): 5 ± 1 dB; 005 R-04 5.51
         ),
         MeasurementResult::new(
             "005/FR-007",
@@ -869,7 +901,7 @@ pub fn check_fr007_bandwidth(rate: u32, make: Make<'_>) -> Vec<MeasurementResult
             &["A-026", "A-027", "engineering target"],
             rate,
             "default_agc",
-            "1 kHz -20 dBFS + 6 kHz +6 dBFS, 3 s, last 1 s",
+            format!("1 kHz -20 dBFS + 6 kHz {loud:+.0} dBFS, 3 s, last 1 s"),
             content_6k,
             "dB",
             Tolerance::AtMost(-60.0), // spec 004 FR-003 restated by 005 FR-007
@@ -886,24 +918,30 @@ fn clipped_duty_percent(y: &[f32], from: usize, to: usize) -> f64 {
     100.0 * seg.iter().filter(|v| v.abs() == 1.0).count() as f64 / seg.len() as f64
 }
 
-/// 005 FR-008 (A-030): at the 6 kHz identity rate a +11 dBFS tone through the record path peaks
-/// at exactly 1.0 (and above 1.0 with the clamp off); the onset of the same tone on a fresh
-/// pipeline (20 s of sub-knee input, R-03) has ≥ 60 % of its first 2 ms at ±1.0 and ≤ 40 % of
-/// the 20–100 ms window with the limiter on, and ≥ 60 % in both with it off. At the other rates
-/// the record-path peak is reported (the up-converter interpolates between the clamped samples).
+/// 005 FR-008 (A-030): at the 6 kHz identity rate a tone 10 dB over the knee (+9 dBFS at the
+/// default) through the record path with the limiter off peaks at exactly 1.0 (and above 1.0
+/// with the clamp off); the onset of the same tone on a fresh pipeline (the discharged state,
+/// R-03) has ≥ 60 % of its first 2 ms at ±1.0 and ≤ 40 % of the 20–100 ms window with the
+/// limiter on (0 % in the model: the ceiling sits below full scale), and ≥ 60 % in both with it
+/// off. At the other rates the record-path peak is reported (the up-converter interpolates
+/// between the clamped samples).
 pub fn check_fr008_clamp(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
     let fs = f64::from(rate);
-    let x = tone(11.0, 1.0, rate);
+    let loud = f64::from(configs::settings(CONFIG, rate).agc.knee_dbfs) + 10.0; // 005 FR-008
+    let x = tone(loud, 1.0, rate);
     let record_only = run(make, configs::settings("record_only", rate), &x);
     let unclamped = run(make, configs::settings("record_only_clamp_off", rate), &x);
     if rate != rr_dr60::DEVICE_RATE_HZ {
         return vec![MeasurementResult::new(
             "005/FR-008",
-            "record path peak, +11 dBFS (interpolated; reported)",
+            "record path peak, 10 dB over the knee (interpolated; reported)",
             T_CLAMP,
             rate,
             "record_only",
-            format!("1 kHz +11 dBFS 1 s; clamp off peak {:.3}", peak(&unclamped)),
+            format!(
+                "1 kHz {loud:+.0} dBFS 1 s; clamp off peak {:.3}",
+                peak(&unclamped)
+            ),
             peak(&record_only),
             "FS",
             Tolerance::Report,
@@ -912,11 +950,11 @@ pub fn check_fr008_clamp(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
     let mut out = vec![
         MeasurementResult::new(
             "005/FR-008",
-            "largest output magnitude, +11 dBFS through the record stage",
+            "largest output magnitude, 10 dB over the knee through the record stage",
             T_CLAMP,
             rate,
             "record_only",
-            "1 kHz +11 dBFS 1 s",
+            format!("1 kHz {loud:+.0} dBFS 1 s"),
             peak(&record_only),
             "FS",
             Tolerance::Exact(1.0), // A-030: full scale
@@ -927,15 +965,15 @@ pub fn check_fr008_clamp(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
             T_CLAMP,
             rate,
             "record_only_clamp_off",
-            "1 kHz +11 dBFS 1 s",
+            format!("1 kHz {loud:+.0} dBFS 1 s"),
             peak(&unclamped),
             "FS",
             Tolerance::AtLeast(1.5), // 005 FR-008 (engineering target): exceeds full scale
         ),
     ];
-    // The clipped onset: −20 dBFS 0.1 s then +11 dBFS 0.1 s, at the device-rate tap after the
-    // record stage and the clamp, with the limiter on and off.
-    let onset = step(&[-20.0, 11.0], &[0.1, 0.1], rate);
+    // The clipped onset: −20 dBFS 0.1 s then knee + 10 dB 0.1 s, at the device-rate tap after
+    // the record stage and the clamp, with the limiter on and off.
+    let onset = step(&[-20.0, loud], &[0.1, 0.1], rate);
     let n_on = (0.1 * fs) as usize;
     for (config, limiter_on) in [("record_path_agc", true), ("tap_after_record", false)] {
         let settings = configs::settings(config, rate);
@@ -959,7 +997,7 @@ pub fn check_fr008_clamp(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
             T_CLAMP,
             rate,
             config,
-            format!("1 kHz -20 -> +11 dBFS, fresh pipeline, {label}"),
+            format!("1 kHz -20 -> {loud:+.0} dBFS, fresh pipeline, {label}"),
             early,
             "%",
             Tolerance::AtLeast(60.0), // engineering target (005 FR-008); 005 R-04: 79 % before the filter
@@ -974,11 +1012,11 @@ pub fn check_fr008_clamp(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
             T_CLAMP,
             rate,
             config,
-            format!("1 kHz -20 -> +11 dBFS, fresh pipeline, {label}"),
+            format!("1 kHz -20 -> {loud:+.0} dBFS, fresh pipeline, {label}"),
             late,
             "%",
             if limiter_on {
-                Tolerance::AtMost(40.0) // engineering target (005 FR-008); 005 R-04: 29 % steady
+                Tolerance::AtMost(40.0) // engineering target (005 FR-008); 005 R-04: 0 % steady at the −1 dBFS knee
             } else {
                 Tolerance::AtLeast(60.0) // 005 FR-008: the clamp alone clips the whole tone
             },

@@ -194,7 +194,7 @@ fn c_api_005_layout_defaults_and_reserved_fields() {
     assert_eq!(std::mem::offset_of!(RrDr60Settings, adc_clamp_enabled), 72);
     let d = rr_dr60_settings_default(48_000);
     assert_eq!(d.struct_size, 80);
-    assert_eq!(d.agc_knee_dbfs, 1.0); // A-028
+    assert_eq!(d.agc_knee_dbfs, -1.0); // A-028
     assert_eq!(d.agc_attack_ms, 3.0); // A-034
     assert_eq!(d.agc_release_ms, 1370.0); // A-035
     assert!(d.adc_clamp_enabled); // A-030

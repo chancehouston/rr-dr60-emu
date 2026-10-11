@@ -35,13 +35,13 @@ use crate::validate::validate;
 /// # Output level
 ///
 /// 0 dBFS is the codec's full scale (A-030). The limiter never amplifies: below its knee it is
-/// the identity, and sustained input above the knee is held about 1 dB over full scale, where
-/// the ADC clamp flat-tops it, so the record path (the "after record" and "after VAS" taps)
-/// never exceeds ±1.0. The playback band-limit stage reconstructs a flat-topped waveform with
-/// overshoot (the fundamental of a full-scale square wave is 4/π), so the default output can
-/// exceed ±1.0 by a few dB on clipped audio. With the clamp bypassed, or at the "after AGC"
-/// tap, the output carries the input's excess during the limiter's dead time and about 1 dB
-/// after it. The output is always finite.
+/// the identity, and sustained input above the knee is held about 1 dB below full scale; only
+/// the dead time of a loud onset reaches the ADC clamp, so the record path (the "after record"
+/// and "after VAS" taps) never exceeds ±1.0. The playback band-limit stage reconstructs a
+/// clipped onset with overshoot (the fundamental of a full-scale square wave is 4/π), so the
+/// default output can exceed ±1.0 by a few dB there. With the clamp bypassed, or at the "after
+/// AGC" tap, the output carries the input's excess during the limiter's dead time. The output
+/// is always finite.
 ///
 /// # Real-time use
 ///

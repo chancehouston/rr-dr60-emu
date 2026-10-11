@@ -15,13 +15,16 @@ body:
         - **A hand clap or a single click** at a medium level: edge ringing and the filters' transient response.
         - **Bursts and gaps:** 1 s tone bursts separated by gaps of 0.3, 1, 2 and 5 s, at a quiet, a normal and a loud level: VAS hang and onset times, and the AGC's recovery.
         - **A clap after 10 s of silence:** the AGC's attack and any clipped onset.
-        - **A loud burst followed by a quiet tone:** how long the gain stays reduced (the model says about 1–2 s, with a faster attack for the next ten seconds).
-        - **1 kHz 5 s tone bursts in 2 dB SPL steps from 70 to 110 dB SPL,** with a sound-level meter beside the recorder: the limiter's knee and ceiling in SPL terms (A-028, A-029).
-        - **A tone or clap about 10 dB above the knee after 60 s of silence, repeated 2 s and 20 s later:** the attack dead time, then the armed dead time, then the re-discharged one (A-034, A-028).
+        - **A loud burst followed by a quiet tone:** how long the gain stays reduced (the model says about 1–2 s, with a faster attack for the next few seconds).
+        - **1 kHz 5 s tone bursts in 2 dB SPL steps from 70 to 110 dB SPL (1 dB steps once the level stops rising),** with a sound-level meter beside the recorder: the limiter's knee and ceiling in SPL terms (A-028, A-029). Keep the recorded **waveform**: flat tops at a fixed level, or a clean sine held at a fixed level, decides whether the real limiter clips at full scale or holds just below it, the model's most audible open question.
+        - **A tone held for 30 s at 1–2 dB below the level where the ceiling begins:** a slow sag over seconds means a soft knee (an exponential detector); no change means the model's hard threshold is adequate (A-028).
+        - **A tone or clap about 10 dB above the knee after 60 s of silence, repeated 1, 3, 5, 10 and 20 s later:** the attack dead time, then how the faster attack decays (A-034, A-028).
+        - **Tone onsets at about 2, 5 and 10 dB above the knee, from silence:** the model predicts dead times of about 25, 4.5 and 3 ms; an ordinary RC attack would give the same time at every level (A-034).
+        - **A 1 kHz tone 20 dB below the knee plus a 6–8 kHz tone from a tweeter about 5 dB above it,** SPL metered at the recorder: the model predicts the 1 kHz level drops about 5 dB although the recording contains no 6 kHz, because the limiter's detector sees the signal before the codec's filter.
         - **A 1 s loud tone followed by the same tone 10 dB quieter for 5 s:** the release curve (A-035).
         - **Tone bursts stepped down 2 dB at each MIC SENS level until recording pauses, and a constant tone at each level:** the VAS threshold per level, and whether the level also changes the recorded level (A-022, A-033).
-        - **Any loud speech:** the flat-topped side of the waveform shows which polarity the limiter senses (A-036).
-        - **A slowly rising tone or voice:** which comes first as the level rises, flat-topping or a level ceiling (A-028: the emulator flat-tops at about 1 dB above full scale; a real unit may limit just below it).
+        - **Any loud speech:** the clipped side of a loud onset shows which polarity the limiter senses (A-036).
+        - **A slowly rising tone or voice:** which comes first as the level rises, a level ceiling or flat-topping (A-028: the emulator holds the level about 1 dB below full scale with no flat-topping; a real unit may clip at full scale instead).
         - **Quiet room, 60 s, at each MIC SENS level:** noise floor, and whether the VAS pauses.
         - **Pink noise at a low level:** how the speech codec renders non-speech sound.
         - **Normal speech.**

@@ -18,6 +18,14 @@ use sha2::Digest;
 /// An AGC field and a way to put it out of range.
 type BreakCase = (Setting, fn(&mut Settings));
 
+/// The reference model's figures at 48 kHz for the `agc_onset` stimulus at the default knee
+/// (005 research R-04, the script's "Golden `agc_onset` stimulus" section, run 2026-10-11 at
+/// knee −1 dBFS): the dead time of the +11 dBFS step (12 dB over the knee; shorter than the
+/// 10 dB-over figure because the overdrive is larger) and the −1 dB release after its 0.4 s
+/// (12 dB of attenuation, so longer than the 10 dB figure).
+const DEAD_MS: f64 = 2.417; // 005 R-04
+const REL_S: f64 = 1.475; // 005 R-04
+
 fn process(settings: Settings, x: &[f32]) -> Vec<f32> {
     let mut y = vec![0.0; x.len()];
     let produced = Pipeline::new(settings)
@@ -121,20 +129,24 @@ fn as3_tap_after_agc_is_the_limiter_output_latency_0() {
     assert_eq!(y, quiet, "the tap must return sub-knee input bit for bit");
 
     // The onset stimulus's exact gain trace at the tap: dead time and release pinned to the
-    // reference model's figures (005 research R-04: 3.17 ms at 48 kHz, 1.362 s).
+    // reference model's figures (005 research R-04 at the −1 dBFS knee: 3.19 ms at 48 kHz for
+    // the +11 dBFS step, 12 dB over; 1.361 s to −1 dB).
     let g = agc_checks::gain_trace(&standard, rate, "agc_only", &x, stimulus::amplitude(-20.0));
     let steady = agc_checks::steady_db(&g, fs, 0.45, 0.5);
     let dead_ms = agc_checks::dead_time_s(&g, fs, 0.1, steady).unwrap() * 1e3;
     let release = agc_checks::release_s(&g, fs, 0.5, -1.0).unwrap();
     eprintln!(
-        "US3 AS3: dead time {dead_ms:.3} ms (want 3.17 ± 1 sample), release {release:.4} s (want 1.362 ± 1 %)"
+        "US3 AS3: dead time {dead_ms:.3} ms (want DEAD_MS ± 1 sample), release {release:.4} s (want REL_S ± 1 %)"
     );
     let one_sample_ms = 1e3 / fs;
     assert!(
-        (dead_ms - 3.17).abs() <= one_sample_ms + 1e-9,
+        (dead_ms - DEAD_MS).abs() <= one_sample_ms + 1e-9,
         "dead time {dead_ms} ms"
     ); // R-04
-    assert!((release - 1.362).abs() <= 0.01362, "release {release} s"); // R-04
+    assert!(
+        (release - REL_S).abs() <= 0.01 * REL_S,
+        "release {release} s"
+    ); // R-04
 
     // Bit-identical for block sizes 1, 64 and 4096 (FR-014 at the tap).
     let whole = process(s, &x);

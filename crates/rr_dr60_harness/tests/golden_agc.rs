@@ -23,7 +23,7 @@ fn golden_v1_unchanged() {
 /// limiter, 005 FR-016, T044; spec 004 re-blessed it before for the 6 kHz rate). No later
 /// feature may change it without a CHANGELOG-recorded re-bless (005 FR-016; research R-10).
 const GOLDEN_AGC_V1_SHA256: &str =
-    "c49710f2e9b34a53e4d6a15b4ebb3e2c137fc9f250856ee2954cb2028339ac75";
+    "a60156dd6967764c03abea63fb2a89e72cb128f28882cd84f7bd6cc7e4d15182";
 
 #[test]
 fn golden_agc_v1_unchanged() {

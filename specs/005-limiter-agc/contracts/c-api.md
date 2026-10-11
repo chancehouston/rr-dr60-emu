@@ -13,7 +13,7 @@ Breaking (0.4 → 0.5). Rules 1–4 of spec 003 (panics never cross; buffers wri
 | 12 | `tap` | u32 | `RR_DR60_TAP_AFTER_AGC` now means the host-rate limiter output, latency 0 |
 | 16 | `seed` | u64 | — |
 | 24 | `agc_enabled` | bool | — |
-| 28 | `agc_knee_dbfs` | float | **renamed** from `agc_target_dbfs`; default 1.0; range −40 … 3 |
+| 28 | `agc_knee_dbfs` | float | **renamed** from `agc_target_dbfs`; default −1.0 (1.0 until the post-implementation review); range −40 … 3 |
 | 32 | `reserved_agc_1` | float | **renamed** from `agc_max_gain_db`; ignored; `rr_dr60_settings_default` writes 0 |
 | 36 | `reserved_agc_2` | float | **renamed** from `agc_max_attenuation_db`; ignored; default 0 |
 | 40 | `agc_attack_ms` | float | **new meaning**: dead time at 10 dB over the knee; default 3.0; range 1 … 50 |
@@ -44,8 +44,8 @@ Unchanged signatures. `rr_dr60_settings_default` fills the new defaults; `rr_dr6
 
 ## Smoke test additions (`tests/c/smoke.c`)
 
-- `struct_size == 80`; defaults: `agc_knee_dbfs == 1.0f`, `agc_attack_ms == 3.0f`, `agc_release_ms == 1370.0f`, `adc_clamp_enabled`, `vas_threshold_dbfs == -40.0f`, reserved fields 0.
+- `struct_size == 80`; defaults: `agc_knee_dbfs == -1.0f`, `agc_attack_ms == 3.0f`, `agc_release_ms == 1370.0f`, `adc_clamp_enabled`, `vas_threshold_dbfs == -40.0f`, reserved fields 0.
 - A −20 dBFS 1 kHz tone through the AGC-isolated configuration (tap after AGC) is returned bit-identical (memcmp) with latency 0.
-- A +11 dBFS tone through the default record path at 6 kHz has max |y| == 1.0f exactly; with `adc_clamp_enabled = false` it exceeds 1.0f.
+- A +11 dBFS tone through the default record path at 6 kHz has max |y| == 1.0f exactly (the clipped onset); with `adc_clamp_enabled = false` it exceeds 1.0f.
 - `agc_knee_dbfs = 4.0f` → `RR_DR60_STATUS_INVALID_SETTING` naming `RR_DR60_SETTING_FIELD_AGC_KNEE_DBFS`; a struct with `struct_size = 72` → `STRUCT_SIZE`.
 - The existing 48 kHz checks keep their meaning; the 1 kHz −20 dBFS level check now expects unity through the default pipeline within the template loss (±0.2 dB, A-015).

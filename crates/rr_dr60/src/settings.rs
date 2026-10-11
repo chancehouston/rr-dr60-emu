@@ -44,7 +44,7 @@ pub enum Tap {
 /// identity, bit for bit (quiet input is **not** raised and nothing happens in pauses); above
 /// it the output is held at a ceiling at the knee level, with a dead time of a few
 /// milliseconds on a loud onset (the whole onset passes at full level first, so the codec
-/// flat-tops it), a shorter dead time for several seconds after a loud sound, and a release of
+/// clips it), a shorter dead time for a few seconds after a loud sound, and a release of
 /// about 1.4 s. The component values are the schematic's; the transistor parameters are
 /// estimates (A-028, A-034 – A-036, `docs/hardware/assumptions.md`), so the dead time, the
 /// release and the knee carry low confidence until captures from a real unit exist. The stage
@@ -54,10 +54,12 @@ pub enum Tap {
 /// # Output level
 ///
 /// 0 dBFS (a sine of peak amplitude 1.0, AES17) is the codec's full scale (A-030). Sustained
-/// input above the knee comes out at about +1 dBFS, which the ADC clamp
-/// ([`Settings::adc_clamp_enabled`]) then flat-tops for about 30 % of each cycle. Inputs above
-/// 0 dBFS are the limiter's normal operating range: speech at a conversational distance sits
-/// about 25–35 dB below the knee (A-029), so the limiter acts on shouting and close talking.
+/// input above the knee comes out at about −1 dBFS, just below full scale, so only the dead
+/// time of a loud onset reaches the ADC clamp ([`Settings::adc_clamp_enabled`]). Inputs above
+/// 0 dBFS are within the limiter's normal operating range. Where speech sits against the knee
+/// depends on the mic chain's gain, which is the least certain number in the register (A-029:
+/// roughly 10–35 dB below full scale at a conversational distance), so the limiter acts on
+/// loud sounds and, at the high end of that estimate, on the peaks of ordinary speech.
 ///
 /// Ranges are inclusive; values outside them, NaN and ±Inf are rejected by
 /// [`Pipeline::new`](crate::Pipeline::new) (spec 002 FR-011, kept by spec 005), even when the
@@ -96,12 +98,13 @@ pub struct AgcSettings {
     /// On (`true`, default) or bypassed. A-020: the device's AGC is assumed always active.
     pub enabled: bool,
     /// The knee in dBFS: the input level at which the limiter begins to act, and the level its
-    /// output is held at above it; modeled at +1 dBFS (A-028, ±2 dB). Default 1.0. Range −40.0
+    /// output is held at above it; modeled at −1 dBFS (A-028, ±2 dB: the detector's steady-state
+    /// threshold puts the ceiling just below the codec's full scale). Default −1.0. Range −40.0
     /// to 3.0 (above about +4.7 dBFS the detector could never conduct, spec 005 research R-05).
     pub knee_dbfs: f32,
     /// Attack, in ms, as the **dead time** at 10 dB over the knee: how long a loud onset passes
     /// at full level before the limiter acts (A-034). Longer at smaller overdrives (about 16 ms
-    /// at 2 dB over the knee), shorter (≤ 0.5 ms) for several seconds after a loud sound.
+    /// at 2 dB over the knee), shorter (≤ 0.5 ms) for a few seconds after a loud sound.
     /// Default 3.0. Range 1.0 to 50.0 (the circuit floors it near 1 ms, research R-05).
     pub attack_ms: f32,
     /// Release, in ms: the time to return within 1 dB of unity from 10 dB of attenuation
@@ -114,7 +117,7 @@ impl AgcSettings {
     /// The modeled device values (A-020, A-028, A-034, A-035).
     pub const DEVICE: Self = Self {
         enabled: true,      // A-020
-        knee_dbfs: 1.0,     // A-028: the knee at about the codec's full scale
+        knee_dbfs: -1.0,    // A-028: the knee just below the codec's full scale
         attack_ms: 3.0,     // A-034: dead time at 10 dB over the knee
         release_ms: 1370.0, // A-035: to −1 dB from 10 dB of attenuation
     };
@@ -197,8 +200,8 @@ pub struct VasSettings {
     /// only the VAS threshold: 3 dB per level, and higher levels record quieter sounds (A-022).
     pub sensitivity: u8,
     /// VAS threshold at sensitivity level 3, in dBFS (sine peak, AES17). Default −40.0 (A-022,
-    /// revised by spec 005: about 35 dB below the limiter's knee, the level of quiet speech at a
-    /// conversational distance, A-029). Range −60.0 to 0.0. Below the limiter's knee the
+    /// revised by spec 005: about 40 dB below the limiter's knee, around the level of quiet
+    /// speech at a conversational distance, A-029, low confidence). Range −60.0 to 0.0. Below the limiter's knee the
     /// threshold is input-referred one to one (spec 005 FR-012).
     pub threshold_dbfs: f32,
     /// Hang time in ms: how long the input must stay below the threshold before recording
@@ -246,8 +249,9 @@ pub struct Settings {
     pub playback_stage_enabled: bool,
     /// The ADC's full-scale saturation after stage 4: output beyond ±1.0 is clamped to ±1.0
     /// (`true`, default; A-030: the codec cannot record more than full scale) or passed
-    /// unchanged. The limiter holds sustained loud input about 1 dB above full scale, so with
-    /// both on the codec flat-tops it (spec 005 FR-008). Not applied at [`Tap::AfterAgc`].
+    /// unchanged. The limiter holds sustained loud input about 1 dB below full scale, so with
+    /// both on the codec clips only the dead time of a loud onset (spec 005 FR-008). Not applied
+    /// at [`Tap::AfterAgc`].
     pub adc_clamp_enabled: bool,
     /// Output tap point. Default [`Tap::AfterPlayback`].
     pub tap: Tap,
@@ -350,7 +354,7 @@ mod tests {
     fn agc_defaults_cite_a020_a028_a034_a035() {
         let d = AgcSettings::DEVICE;
         assert!(d.enabled); // A-020
-        assert_eq!(d.knee_dbfs, 1.0); // A-028: the knee at about the codec's full scale
+        assert_eq!(d.knee_dbfs, -1.0); // A-028: the knee just below the codec's full scale
         assert_eq!(d.attack_ms, 3.0); // A-034: dead time at 10 dB over the knee
         assert_eq!(d.release_ms, 1370.0); // A-035: to −1 dB from 10 dB of attenuation
         assert_eq!(AgcSettings::default(), AgcSettings::DEVICE);

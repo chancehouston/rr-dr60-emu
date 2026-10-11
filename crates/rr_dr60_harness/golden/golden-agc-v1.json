@@ -8,7 +8,7 @@
       "config": "agc_only",
       "host_rate_hz": 6000,
       "n_samples": 15000,
-      "sha256": "803d57b8e0a969ae7c6d75b0935192794ccb7a2928180bbf08c0f51bf5383b98",
+      "sha256": "cc208e792b3c38b496c7bbc03c7ab53e45de5d7aae5831832a2e073a09ca33cf",
       "head": [
         "3d4ccccd",
         "3dcccccd",
@@ -27,14 +27,14 @@
         "3d4ccccd",
         "bd4ccccd"
       ],
-      "rms_dbfs": -9.66
+      "rms_dbfs": -11.51
     },
     {
       "stimulus": "agc_onset",
       "config": "agc_only",
       "host_rate_hz": 8000,
       "n_samples": 20000,
-      "sha256": "34098480ed6698b6d9996115700f8881c6f3000a5be98ac94d6b5efcba874309",
+      "sha256": "97166dfa67d96ac16e60ed438b646537fe2904703f049bdaffbd1fe0e9d284ef",
       "head": [
         "00000000",
         "3d90d0c3",
@@ -53,14 +53,14 @@
         "bdcccccd",
         "bd90d0c3"
       ],
-      "rms_dbfs": -9.6
+      "rms_dbfs": -11.43
     },
     {
       "stimulus": "agc_onset",
       "config": "agc_only",
       "host_rate_hz": 16000,
       "n_samples": 40000,
-      "sha256": "6a395275e0a3935d1d68a9e198fc3bcfab39fbb2c56e422695966e88c580a67d",
+      "sha256": "bc50eefda623eb2b37a693d7c378daf962edd93f30e33623a6b81b0aa8dc5ea4",
       "head": [
         "00000000",
         "3d1cbf44",
@@ -79,14 +79,14 @@
         "bd90d0c3",
         "bd1cbf44"
       ],
-      "rms_dbfs": -9.59
+      "rms_dbfs": -11.43
     },
     {
       "stimulus": "agc_onset",
       "config": "agc_only",
       "host_rate_hz": 44100,
       "n_samples": 110250,
-      "sha256": "875d661d4a7a0c31289e7779275e65c26f58fb4ad901919dccdcf01e0acc09a2",
+      "sha256": "90883565d86163ce453a08dd21ca75dd80f20fb84e8aacfcdbc9d6f88c775dfe",
       "head": [
         "39babedd",
         "3c6e6b2f",
@@ -105,14 +105,14 @@
         "3dba600d",
         "3dac6e97"
       ],
-      "rms_dbfs": -9.58
+      "rms_dbfs": -11.39
     },
     {
       "stimulus": "agc_onset",
       "config": "agc_only",
       "host_rate_hz": 48000,
       "n_samples": 120000,
-      "sha256": "bd53e7d83d586a97c410548c4424663bde840498b433fc32bd58e9b53faa7a15",
+      "sha256": "7f53f6f75d9364e353058e589a796c3798cb9a272a43936ea4363b8ecde48382",
       "head": [
         "00000000",
         "3c55daa7",
@@ -131,14 +131,14 @@
         "3dc5d255",
         "3dbd35e5"
       ],
-      "rms_dbfs": -9.58
+      "rms_dbfs": -11.39
     },
     {
       "stimulus": "agc_onset",
       "config": "agc_only",
       "host_rate_hz": 88200,
       "n_samples": 220500,
-      "sha256": "e1f113ffd0c852fa18ac13bdf226b1a2aa0301d8a128fd4cbf8f56582e7d3bca",
+      "sha256": "41a24ffbd45bd4abe2f26501da74088413a501e707db4fbc205b6e1fd389957d",
       "head": [
         "39babedd",
         "3bf4e025",
@@ -157,14 +157,14 @@
         "3dac6e97",
         "3db3dc1a"
       ],
-      "rms_dbfs": -9.57
+      "rms_dbfs": -11.39
     },
     {
       "stimulus": "agc_onset",
       "config": "agc_only",
       "host_rate_hz": 96000,
       "n_samples": 240000,
-      "sha256": "18cd49c4371ef16ae166f1e3152d8203d1919de438f2f3e8c80619d73d85293d",
+      "sha256": "4c708aedf3f47bb35c514c173b2b138fa126855f5fcda3dacb07cef3729206e5",
       "head": [
         "00000000",
         "3bd6501f",
@@ -183,14 +183,14 @@
         "3da27a90",
         "3daa48f4"
       ],
-      "rms_dbfs": -9.57
+      "rms_dbfs": -11.39
     },
     {
       "stimulus": "agc_onset",
       "config": "default_agc",
       "host_rate_hz": 6000,
       "n_samples": 15000,
-      "sha256": "1af5ce14fba8f7107e4f8b3213fb822335a598d2d9005a08dd1ed9e9aa7e734a",
+      "sha256": "60d69987b1d6f4b4c5c082552702615dc921a0e298a7460ad85b1ec1f536cf49",
       "head": [
         "3c934c98",
         "3d8261e9",
@@ -209,14 +209,14 @@
         "3d99c70c",
         "bc9a2a63"
       ],
-      "rms_dbfs": -10.46
+      "rms_dbfs": -11.77
     },
     {
       "stimulus": "agc_onset",
       "config": "default_agc",
       "host_rate_hz": 8000,
       "n_samples": 20000,
-      "sha256": "59181a7259fd63812e7e8709a0edb710e69239c04175f78e532fd1bd19094739",
+      "sha256": "026412ed3216d41763ace3a9736d26f23e4924bc76f56bac8d7d497d6e1ef188",
       "head": [
         "00000000",
         "00000000",
@@ -235,14 +235,14 @@
         "311385c9",
         "3084d847"
       ],
-      "rms_dbfs": -9.86
+      "rms_dbfs": -11.77
     },
     {
       "stimulus": "agc_onset",
       "config": "default_agc",
       "host_rate_hz": 16000,
       "n_samples": 40000,
-      "sha256": "5757beb3181a7398e5544e9c8f75e0ca253ccb99e4ad83c8944860efc68f3e69",
+      "sha256": "8b48107882e552d2f52adc444d73802d583527c28aed348f52931582e4a82425",
       "head": [
         "00000000",
         "00000000",
@@ -261,14 +261,14 @@
         "afb1fa76",
         "aebd0b43"
       ],
-      "rms_dbfs": -9.86
+      "rms_dbfs": -11.77
     },
     {
       "stimulus": "agc_onset",
       "config": "default_agc",
       "host_rate_hz": 44100,
       "n_samples": 110250,
-      "sha256": "042f90fcf34ea160a142a933004e8708dea5af8d0a0ad688be0bcefd79f0978b",
+      "sha256": "b9359de5dae577e615d9a934cc8c4e3bc33cf033d96ee03caa6a233a3de9bef9",
       "head": [
         "29eea638",
         "2a0460ee",
@@ -287,14 +287,14 @@
         "aedf2960",
         "af37a03e"
       ],
-      "rms_dbfs": -10.07
+      "rms_dbfs": -11.73
     },
     {
       "stimulus": "agc_onset",
       "config": "default_agc",
       "host_rate_hz": 48000,
       "n_samples": 120000,
-      "sha256": "3b348a12435bd070cc610a8c60bed617699e8d2139fa94dc1062ace2710fb527",
+      "sha256": "e5bb73c00d14237370b08fdf62a0847e0a6516ed3a0b9133c2a54470a0662c41",
       "head": [
         "00000000",
         "00000000",
@@ -313,14 +313,14 @@
         "ae842a78",
         "aed83c3d"
       ],
-      "rms_dbfs": -10.16
+      "rms_dbfs": -11.73
     },
     {
       "stimulus": "agc_onset",
       "config": "default_agc",
       "host_rate_hz": 88200,
       "n_samples": 220500,
-      "sha256": "84512f553eb06c1cd088f188ea5860d0d8c9b300e0c77bc1de2859dedcf1e4cf",
+      "sha256": "2147328afd58d159ff3ef0e7adaf97188584e3631ee8ec7956c97f2c4b06a034",
       "head": [
         "2978d393",
         "298097e7",
@@ -339,14 +339,14 @@
         "a9deeb6c",
         "2e4dec94"
       ],
-      "rms_dbfs": -10.2
+      "rms_dbfs": -11.72
     },
     {
       "stimulus": "agc_onset",
       "config": "default_agc",
       "host_rate_hz": 96000,
       "n_samples": 240000,
-      "sha256": "2bca1067a8baba56df0630e7afa58bdfd931ec5626554e9ee2416128b01692b0",
+      "sha256": "ddeb7da00f42bf8a6448320026ed9703c58337c25857dab79c1475cbfc0520cc",
       "head": [
         "00000000",
         "00000000",
@@ -365,92 +365,92 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -10.16
+      "rms_dbfs": -11.73
     },
     {
       "stimulus": "agc_rearm",
       "config": "agc_only",
       "host_rate_hz": 6000,
       "n_samples": 18000,
-      "sha256": "fc80f4165fbe2997a168f94f42a11b397855cf05b34bc58d7d43ecf2ee56dbd8",
+      "sha256": "b63f7b32bc55369d80a397dd0825811e6ab7f20a459f2db9e8efd4e82536d072",
       "head": [
         "3fe314a0",
         "406314a0",
-        "3fe31496",
-        "bfe313e7",
-        "c06313e7",
-        "bfe313e7",
-        "3fe313e7",
-        "406307bd",
-        "3fe23013",
-        "bfd42c2e",
-        "c0542d37",
-        "bfd42e41",
-        "3fd42f4b",
-        "400f9e4d",
-        "3f0f9e4d",
-        "bf0fa99b"
+        "3fe31491",
+        "bfe3135a",
+        "c063135a",
+        "bfe3135a",
+        "3fe3135a",
+        "4062f950",
+        "3fe0cf77",
+        "bfba9a8e",
+        "c03a9d41",
+        "bfba9ff4",
+        "3fbaa2a8",
+        "3fe42905",
+        "3ee42905",
+        "bee43ea9"
       ],
-      "rms_dbfs": -10.43
+      "rms_dbfs": -12.28
     },
     {
       "stimulus": "agc_rearm",
       "config": "agc_only",
       "host_rate_hz": 8000,
       "n_samples": 24000,
-      "sha256": "63b907cb804fea954a2bb5b19a28a57cb9e6bdc731ab45d71353b8dcee9a3294",
+      "sha256": "0b3c49c66973bde9788df4a3ddb9e2b428a21474ae570868c3f95d077cba4880",
       "head": [
         "00000000",
         "402091f9",
         "406314a0",
         "402091f7",
-        "25fa7be6",
-        "c02091ea",
-        "c063148b",
-        "c02091ea",
+        "25fa7bda",
+        "c02091e2",
+        "c063147f",
+        "c02091e2",
         "00000000",
-        "402091ea",
-        "406313e7",
-        "40208d89",
-        "25fa4010",
-        "c0206b90",
-        "c062de50",
-        "c0206b93"
+        "402091e2",
+        "4063135a",
+        "40208900",
+        "25f9f096",
+        "c020389f",
+        "c062964a",
+        "c02038a7"
       ],
-      "rms_dbfs": -10.37
+      "rms_dbfs": -12.19
     },
     {
       "stimulus": "agc_rearm",
       "config": "agc_only",
       "host_rate_hz": 16000,
       "n_samples": 48000,
-      "sha256": "8696b632fbbda362dea9f6bfeaaf870bb7fe2b0c420fc10e7371ef0d406c340a",
+      "sha256": "201d2a231231039aa7b807d61e05bfb884a74310e4e287289635cc750ae4ed5b",
       "head": [
         "00000000",
         "3fadccc9",
         "402091f9",
         "4051cb8b",
         "406314a0",
-        "4051cb8a",
-        "402091f6",
-        "3fadccc0",
-        "25fa7beb",
-        "bfadccbc",
-        "c02091ed",
-        "c051cb7b",
-        "c063148f",
-        "c051cb7b",
-        "c02091ed",
-        "bfadccbc"
+        "4051cb89",
+        "402091f5",
+        "3fadccba",
+        "25fa7bd4",
+        "bfadccac",
+        "c02091de",
+        "c051cb68",
+        "c063147a",
+        "c051cb68",
+        "c02091de",
+        "bfadccac"
       ],
-      "rms_dbfs": -10.35
+      "rms_dbfs": -12.2
     },
     {
       "stimulus": "agc_rearm",
       "config": "agc_only",
       "host_rate_hz": 44100,
       "n_samples": 132300,
-      "sha256": "bc589297e230c028fc173356f4d5f34bd310f051f4633333c6b29e64497e8ea0",
+      "sha256": "6352a9af7964d8390453ddd2f3cfacf8f554a00919144f7647cb32849aa09b9e",
       "head": [
         "3c4f0fdc",
         "3f042da8",
@@ -465,18 +465,18 @@
         "4060c798",
         "406314a0",
         "4060c797",
-        "4059ec70",
-        "404ea6b9",
-        "403f30ef"
+        "4059ec6f",
+        "404ea6b8",
+        "403f30ee"
       ],
-      "rms_dbfs": -10.35
+      "rms_dbfs": -12.16
     },
     {
       "stimulus": "agc_rearm",
       "config": "agc_only",
       "host_rate_hz": 48000,
       "n_samples": 144000,
-      "sha256": "3cec82ce0712e3efe75ca03a1a9224b7467b4d69feae7e4a873b741772abc50b",
+      "sha256": "4777b1997d0b91f11416fbd65f9625f7d49e9dff1b9b337601a852b4c8018aad",
       "head": [
         "00000000",
         "3eed1ea4",
@@ -490,19 +490,19 @@
         "4051cb8b",
         "405b57ce",
         "4061234b",
-        "406314a0",
+        "4063149f",
         "4061234a",
-        "405b57cd",
-        "4051cb89"
+        "405b57cc",
+        "4051cb88"
       ],
-      "rms_dbfs": -10.35
+      "rms_dbfs": -12.16
     },
     {
       "stimulus": "agc_rearm",
       "config": "agc_only",
       "host_rate_hz": 88200,
       "n_samples": 264600,
-      "sha256": "d9488deb6420174db6a8f696b466238477f27101db6f23d8861d9368b9118c52",
+      "sha256": "817b5d27a437aca9c180fd63e378d74dedf80b765eb49940558a583f3924db8e",
       "head": [
         "3c4f0fdc",
         "3e87c20d",
@@ -521,14 +521,14 @@
         "403f30f2",
         "40476d53"
       ],
-      "rms_dbfs": -10.34
+      "rms_dbfs": -12.16
     },
     {
       "stimulus": "agc_rearm",
       "config": "agc_only",
       "host_rate_hz": 96000,
       "n_samples": 288000,
-      "sha256": "8a0fe52658925d97f6b361af87432ef537281ff3f923b048e1082431803a802c",
+      "sha256": "4fcd4107c54e0759a9cc5833bff33cc0d8dd1f72e17a37caf89f06ae98dc174b",
       "head": [
         "00000000",
         "3e6da0e4",
@@ -547,14 +547,14 @@
         "403427b6",
         "403ccf83"
       ],
-      "rms_dbfs": -10.34
+      "rms_dbfs": -12.16
     },
     {
       "stimulus": "agc_rearm",
       "config": "default_agc",
       "host_rate_hz": 6000,
       "n_samples": 18000,
-      "sha256": "9423a281d9cb51a9f7abfb8e1a9cd379bf3fcbf8890e9bca27195c70d8d775d8",
+      "sha256": "674e25eeac24d100d377452bd091f0cf94cc3aa2974a7e4e8711c8e632291d2f",
       "head": [
         "3f217ca1",
         "3f99b80e",
@@ -570,17 +570,17 @@
         "bf7d499d",
         "3eb7f344",
         "3fa38dc1",
-        "3f4ee72d",
-        "be8ec107"
+        "3f286959",
+        "bea172fc"
       ],
-      "rms_dbfs": -11.25
+      "rms_dbfs": -12.55
     },
     {
       "stimulus": "agc_rearm",
       "config": "default_agc",
       "host_rate_hz": 8000,
       "n_samples": 24000,
-      "sha256": "933b44fa1f2deee93adb07225dcddbbbff99ba0d8ac63a3f8d622f56d46047c3",
+      "sha256": "94d8fdb366d3aeb7dc8824c6f43a05446461959b9cc1fdce72cf32159a89dc73",
       "head": [
         "00000000",
         "00000000",
@@ -588,25 +588,25 @@
         "b199c38e",
         "b1ab28b0",
         "31cd3107",
-        "afd4d169",
-        "b28d634f",
-        "32aa5c98",
-        "3215357e",
-        "b33535bc",
-        "333409d4",
-        "32687d13",
-        "b3b31c36",
-        "33a3957a",
-        "33134646"
+        "afd4d0c0",
+        "b28d6351",
+        "32aa5c96",
+        "32153584",
+        "b33535bd",
+        "333409be",
+        "32687d16",
+        "b3b31c31",
+        "33a39997",
+        "33133ec1"
       ],
-      "rms_dbfs": -10.64
+      "rms_dbfs": -12.55
     },
     {
       "stimulus": "agc_rearm",
       "config": "default_agc",
       "host_rate_hz": 16000,
       "n_samples": 48000,
-      "sha256": "8c79d6eed6104ce40b7e66e25f812afd1a06c21daea94806372506ac8f2a3d37",
+      "sha256": "62815cb1004d27f5fd539dc17ddeaca40bfbb0e67202c484c77a7a4f6b97012c",
       "head": [
         "00000000",
         "00000000",
@@ -614,25 +614,25 @@
         "316ebcaa",
         "31862621",
         "b0a0c44c",
-        "b14c2348",
+        "b14c2349",
         "b17d2bb9",
-        "b14e5e17",
-        "afd82568",
+        "b14e5e19",
+        "afd82587",
         "318f88b8",
-        "3169a365",
-        "b09400fa",
-        "b1c2b8fa",
-        "b2455753",
-        "b1519c75"
+        "3169a384",
+        "b09400b3",
+        "b1c2b8ff",
+        "b245575d",
+        "b1519c9e"
       ],
-      "rms_dbfs": -10.64
+      "rms_dbfs": -12.55
     },
     {
       "stimulus": "agc_rearm",
       "config": "default_agc",
       "host_rate_hz": 44100,
       "n_samples": 132300,
-      "sha256": "00d9ca3e38be6e566ccc44cdcca685b52cac1999cbeafbd4b4772f852d498d69",
+      "sha256": "568fc6094237df49506481f8d43a770b5132e014f5b002c3aebd9772fdee646b",
       "head": [
         "2c844e63",
         "2c92c7c4",
@@ -649,16 +649,16 @@
         "afa64b87",
         "b1079c6c",
         "b1777096",
-        "b1cb9a5c"
+        "b1cb9a5d"
       ],
-      "rms_dbfs": -10.86
+      "rms_dbfs": -12.51
     },
     {
       "stimulus": "agc_rearm",
       "config": "default_agc",
       "host_rate_hz": 48000,
       "n_samples": 144000,
-      "sha256": "54aebd34f707a8cac4d7ef0e7a7150a47d3fc4dea477db2a738917f4ed36d118",
+      "sha256": "a77a5b773458c0f2a7523e5380994c1923e48671e7c8bf865bd2249e57f47625",
       "head": [
         "00000000",
         "00000000",
@@ -677,14 +677,14 @@
         "b1128b62",
         "b16fc28b"
       ],
-      "rms_dbfs": -10.94
+      "rms_dbfs": -12.5
     },
     {
       "stimulus": "agc_rearm",
       "config": "default_agc",
       "host_rate_hz": 88200,
       "n_samples": 264600,
-      "sha256": "88d7762e73fa56dbf675a2bbe92a3ee6204c4428dd81bb66ec9f77cbb56ea914",
+      "sha256": "3cd746be1749bf632f2dbc6397b0de4826ecb7bacf23f428c9204fa871365643",
       "head": [
         "2c09f2c9",
         "2c0e9551",
@@ -703,14 +703,14 @@
         "ac772be4",
         "30e453b6"
       ],
-      "rms_dbfs": -10.98
+      "rms_dbfs": -12.5
     },
     {
       "stimulus": "agc_rearm",
       "config": "default_agc",
       "host_rate_hz": 96000,
       "n_samples": 288000,
-      "sha256": "ad6b1698066aeee8fd71e9a45721267d875a81b075f23ce4c34d782728c13b72",
+      "sha256": "ae0c093d2f57401ce72dfe0c36a5ae43174b5bd8f3c9b46fa144740f6c28d0ff",
       "head": [
         "00000000",
         "00000000",
@@ -729,14 +729,14 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -10.94
+      "rms_dbfs": -12.51
     },
     {
       "stimulus": "agc_staircase",
       "config": "agc_only",
       "host_rate_hz": 6000,
       "n_samples": 14400,
-      "sha256": "7a361647cf5144cd073778342e77fa1db86ad8264a491a477860dd4f0424536c",
+      "sha256": "160bb607f084362de0aeb10f13ba322a621d8788038aac12d010ff40c45191d9",
       "head": [
         "3d4ccccd",
         "3dcccccd",
@@ -755,14 +755,14 @@
         "3d4ccccd",
         "bd4ccccd"
       ],
-      "rms_dbfs": -2.95
+      "rms_dbfs": -4.76
     },
     {
       "stimulus": "agc_staircase",
       "config": "agc_only",
       "host_rate_hz": 8000,
       "n_samples": 19200,
-      "sha256": "df5f6c45b29ea67279b742bb9b7d9cb45ed8daea114a26fe5c89f2971a036f94",
+      "sha256": "06f61bf3dc86723d8af09035109a139d41b451b136deda1c6650683eb728fa01",
       "head": [
         "00000000",
         "3d90d0c3",
@@ -781,14 +781,14 @@
         "bdcccccd",
         "bd90d0c3"
       ],
-      "rms_dbfs": -2.95
+      "rms_dbfs": -4.75
     },
     {
       "stimulus": "agc_staircase",
       "config": "agc_only",
       "host_rate_hz": 16000,
       "n_samples": 38400,
-      "sha256": "527aafb5018b106a5262a0a0cc04c766452200f28cfb2043e867873d26fc229f",
+      "sha256": "f578993f33e6d8100ab403d4e8e731feec06bd3013d9a9d6d326425c19d30b5b",
       "head": [
         "00000000",
         "3d1cbf44",
@@ -807,14 +807,14 @@
         "bd90d0c3",
         "bd1cbf44"
       ],
-      "rms_dbfs": -2.95
+      "rms_dbfs": -4.73
     },
     {
       "stimulus": "agc_staircase",
       "config": "agc_only",
       "host_rate_hz": 44100,
       "n_samples": 105840,
-      "sha256": "3d12551d78e44a70ce9057e0cf5be99fc7f25e28c0b03c4089e5ec880d914f60",
+      "sha256": "2387445ea57215f30de61bafe9cac10037d8a193d8ce9385606116d724ee3f91",
       "head": [
         "39babedd",
         "3c6e6b2f",
@@ -833,14 +833,14 @@
         "3dba600d",
         "3dac6e97"
       ],
-      "rms_dbfs": -2.93
+      "rms_dbfs": -4.7
     },
     {
       "stimulus": "agc_staircase",
       "config": "agc_only",
       "host_rate_hz": 48000,
       "n_samples": 115200,
-      "sha256": "a819e6c083df31c65731ad08fa97c8fc0d9210e806a262ad63b40c66bf4d7528",
+      "sha256": "c22f5562b292ef42dd5ad5681d33a0f61941e73000e681e6af43fe40fb47438b",
       "head": [
         "00000000",
         "3c55daa7",
@@ -859,14 +859,14 @@
         "3dc5d255",
         "3dbd35e5"
       ],
-      "rms_dbfs": -2.93
+      "rms_dbfs": -4.7
     },
     {
       "stimulus": "agc_staircase",
       "config": "agc_only",
       "host_rate_hz": 88200,
       "n_samples": 211680,
-      "sha256": "5af530a6c6ff1d17ab5393f0856bce44d482673c3006fd9be907813f530895da",
+      "sha256": "0ea45a824e2affe407003a671197c523fce13d1774ce60140887749cd6e69a77",
       "head": [
         "39babedd",
         "3bf4e025",
@@ -885,14 +885,14 @@
         "3dac6e97",
         "3db3dc1a"
       ],
-      "rms_dbfs": -2.93
+      "rms_dbfs": -4.7
     },
     {
       "stimulus": "agc_staircase",
       "config": "agc_only",
       "host_rate_hz": 96000,
       "n_samples": 230400,
-      "sha256": "aa8eeab9f9ea2a9bb30c33a16516f691ea819d542a9ca2d1a8263e5f322d6838",
+      "sha256": "1de1ccf5127db31209a2c07b7e15b51192ba5b7372d47a3bf000d2a3323e5fdb",
       "head": [
         "00000000",
         "3bd6501f",
@@ -911,14 +911,14 @@
         "3da27a90",
         "3daa48f4"
       ],
-      "rms_dbfs": -2.93
+      "rms_dbfs": -4.7
     },
     {
       "stimulus": "agc_staircase",
       "config": "default_agc",
       "host_rate_hz": 6000,
       "n_samples": 14400,
-      "sha256": "91acbc8b2034228f477bea0243d987dc9fe441556198f22d199f97c9cea742c0",
+      "sha256": "c1c1becedd4638fffb8d5f26a0c06e1397724331909db293609d7e477cf6850d",
       "head": [
         "3c934c98",
         "3d8261e9",
@@ -937,14 +937,14 @@
         "3d99c70c",
         "bc9a2a63"
       ],
-      "rms_dbfs": -3.5
+      "rms_dbfs": -4.76
     },
     {
       "stimulus": "agc_staircase",
       "config": "default_agc",
       "host_rate_hz": 8000,
       "n_samples": 19200,
-      "sha256": "160e0440424b403227bc738eb40d45f958a25e0d3a7be5875d8f83425897d129",
+      "sha256": "26da67f363f2b844e102b06576437cb2df2b7c0672a03ce92e0057713f7be5ec",
       "head": [
         "00000000",
         "00000000",
@@ -963,14 +963,14 @@
         "311385c9",
         "3084d847"
       ],
-      "rms_dbfs": -3.0
+      "rms_dbfs": -4.77
     },
     {
       "stimulus": "agc_staircase",
       "config": "default_agc",
       "host_rate_hz": 16000,
       "n_samples": 38400,
-      "sha256": "bccf29481e9017631afd9e7b0118bef0e98ccc5d32b25b84ee2f0cd5938c6070",
+      "sha256": "1bcdd7ad2c5396129027028c9b2261dce6191939a43db24fb08aaf750fcc630a",
       "head": [
         "00000000",
         "00000000",
@@ -989,14 +989,14 @@
         "afb1fa76",
         "aebd0b43"
       ],
-      "rms_dbfs": -3.0
+      "rms_dbfs": -4.75
     },
     {
       "stimulus": "agc_staircase",
       "config": "default_agc",
       "host_rate_hz": 44100,
       "n_samples": 105840,
-      "sha256": "bd4fa872ed57cbc6e7ee28c84b65eaedcd62a9570d5987f1d6460b593889d277",
+      "sha256": "d4a928c16d52d19f1fd809b1dd95b503131bbe38313f0acc2784b6cdeb06eafc",
       "head": [
         "29eea638",
         "2a0460ee",
@@ -1015,14 +1015,14 @@
         "aedf2960",
         "af37a03e"
       ],
-      "rms_dbfs": -3.18
+      "rms_dbfs": -4.72
     },
     {
       "stimulus": "agc_staircase",
       "config": "default_agc",
       "host_rate_hz": 48000,
       "n_samples": 115200,
-      "sha256": "0476fb4d950103f28642453e9f941438afc91c93e1ed07f5e9d266bc7a7bf2d6",
+      "sha256": "4dec2770fdc826a4d43de171a061c9b2af7ac3f7cdca77eb75fa6614874de555",
       "head": [
         "00000000",
         "00000000",
@@ -1041,14 +1041,14 @@
         "ae842a78",
         "aed83c3d"
       ],
-      "rms_dbfs": -3.26
+      "rms_dbfs": -4.72
     },
     {
       "stimulus": "agc_staircase",
       "config": "default_agc",
       "host_rate_hz": 88200,
       "n_samples": 211680,
-      "sha256": "1e287e2a5bde88aeb28833d87ce4e6e64b00ff2efd0a9749ab0c236ed9625d26",
+      "sha256": "9bee6cbb5ec22b3f50b094227f67a2f2c12b1149a59bf46da178bb175cfa912c",
       "head": [
         "2978d393",
         "298097e7",
@@ -1067,14 +1067,14 @@
         "a9deeb6c",
         "2e4dec94"
       ],
-      "rms_dbfs": -3.29
+      "rms_dbfs": -4.72
     },
     {
       "stimulus": "agc_staircase",
       "config": "default_agc",
       "host_rate_hz": 96000,
       "n_samples": 230400,
-      "sha256": "c114f72f87768dcc77cce06ea1efe4d5a4b9d273f0335f3fbd6e3fddadec12a2",
+      "sha256": "4dda9a8455b94c0220caff10a45aa49350ae374e5417823f7b2f3e55b4fbee35",
       "head": [
         "00000000",
         "00000000",
@@ -1093,7 +1093,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -3.26
+      "rms_dbfs": -4.72
     }
   ]
 }

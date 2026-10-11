@@ -296,9 +296,10 @@ pub fn check_fr012_iii(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
         stim.clone(),
         agc_checks::steady_db(&trace, fs, t_burst + 0.9, t_burst + 1.0),
         "dB",
-        Tolerance::Range(-5.5, -4.5), // A-028: ceiling +1 dBFS against +6 dBFS (engineering target, 005 FR-012)
+        Tolerance::Range(-7.5, -6.5), // A-028: ceiling −1 dBFS against +6 dBFS (engineering target, 005 FR-012)
     ));
-    // The clamp: at the record-path tap the burst's peak is exactly 1.0 (6 kHz), else reported.
+    // At the record-path tap the burst's onset is clipped (its first 5 ms peak exactly 1.0 at
+    // 6 kHz, else reported) and the rest of the burst sits at the ceiling, below full scale.
     let path = configs::settings("record_path_agc", rate);
     let lat = Pipeline::new(path).unwrap().latency_samples() as usize;
     let y = {
@@ -308,26 +309,42 @@ pub fn check_fr012_iii(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
         y.truncate(produced);
         y
     };
-    let seg = &y[(n_floor + lat).min(y.len())..(n_floor + lat + n_burst).min(y.len())];
-    let peak = f64::from(seg.iter().fold(0.0f32, |m, v| m.max(v.abs())));
+    let start = (n_floor + lat).min(y.len());
+    let onset_seg = &y[start..(start + samples(0.005, fs)).min(y.len())]; // engineering target (005 FR-012): the first 5 ms
+    let onset_peak = f64::from(onset_seg.iter().fold(0.0f32, |m, v| m.max(v.abs())));
+    let tail_seg = &y[(start + samples(0.5, fs)).min(y.len())..(start + n_burst).min(y.len())];
+    let tail_peak = f64::from(tail_seg.iter().fold(0.0f32, |m, v| m.max(v.abs())));
+    let ceiling = f64::from(settings.agc.knee_dbfs); // A-028
+    let at_6k = rate == rr_dr60::DEVICE_RATE_HZ;
     out.push(MeasurementResult::new(
         "005/FR-012",
-        if rate == rr_dr60::DEVICE_RATE_HZ {
-            "burst peak at the record-path tap (clamped)"
+        if at_6k {
+            "burst onset peak at the record-path tap (clipped)"
         } else {
-            "burst peak at the record-path tap (interpolated; reported)"
+            "burst onset peak at the record-path tap (interpolated; reported)"
         },
         &["A-030", "A-028"],
         rate,
         "record_path_agc",
-        stim,
-        peak,
+        format!("{stim}; first 5 ms of the burst"),
+        onset_peak,
         "FS",
-        if rate == rr_dr60::DEVICE_RATE_HZ {
+        if at_6k {
             Tolerance::Exact(1.0) // A-030: full scale
         } else {
             Tolerance::Report
         },
+    ));
+    out.push(MeasurementResult::new(
+        "005/FR-012",
+        "burst peak at the record-path tap after the dead time, re the ceiling",
+        &["A-028", "A-030", "engineering target"],
+        rate,
+        "record_path_agc",
+        format!("{stim}; last 0.5 s of the burst"),
+        crate::analysis::db(tail_peak) - ceiling,
+        "dB",
+        Tolerance::Range(-0.5, 0.5), // 005 FR-004's ceiling tolerance (engineering target)
     ));
     out
 }

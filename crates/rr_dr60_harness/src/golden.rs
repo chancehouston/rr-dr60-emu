@@ -104,8 +104,9 @@ pub fn stimulus(name: &str, fs: u32) -> Vec<f32> {
         "noise_seed_0d60" => stimulus::noise(0x0D60, secs(0.5)),
         // Spec 005 (contracts/golden-format.md; research R-10): 1 kHz level steps at the
         // host-grid peak phase (R-08; the coach's MVP review: a phase-0 tone on the 6 kHz grid
-        // reads 1.25 dB low). Levels relative to the +1 dBFS knee (A-028): +11 dBFS is 10 dB
-        // over it (engineering target, 005 FR-016).
+        // reads 1.25 dB low). Levels are absolute (engineering target, 005 FR-016): +11 dBFS is
+        // 12 dB over the −1 dBFS knee (A-028; the levels were set for the +1 dBFS knee of the
+        // first design and kept at the second re-bless).
         // The onset: dead time, ceiling, then the release.
         "agc_onset" => stimulus::step_at_phase(
             1000.0,
@@ -123,8 +124,8 @@ pub fn stimulus(name: &str, fs: u32) -> Vec<f32> {
             stimulus::peak_phase(1000.0, fs),
             f,
         ),
-        // The knee region and the ceiling (the clamp in `default_agc`): −20, 0, +3, +5, +8,
-        // +14 dBFS for 0.4 s each. The levels were chosen for a phase-0 tone, where 0 and
+        // The knee region and the ceiling (the clipped onset in `default_agc`): −20, 0, +3, +5,
+        // +8, +14 dBFS for 0.4 s each. The levels were chosen for a phase-0 tone, where 0 and
         // +2 dBFS would both read below the +1 dBFS onset on the 6 kHz grid (plan review P12);
         // at the peak phase no level is inert at any rate, and the levels are kept.
         "agc_staircase" => stimulus::staircase(

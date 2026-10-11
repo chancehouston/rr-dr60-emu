@@ -7,11 +7,11 @@ Breaking changes (0.4 → 0.5; nothing released). Everything not listed is uncha
 ```text
 #[non_exhaustive] pub struct AgcSettings {
     pub enabled: bool,      // default true (A-020)
-    pub knee_dbfs: f32,     // default 1.0 (A-028); range -40.0 ..= 3.0 (above about +4.7 the detector cannot conduct, R-05)
+    pub knee_dbfs: f32,     // default -1.0 (A-028; +1.0 until the post-implementation review); range -40.0 ..= 3.0 (above about +4.7 the detector cannot conduct, R-05)
     pub attack_ms: f32,     // dead time at 10 dB over the knee; default 3.0 (A-034); range 1.0 ..= 50.0 (the circuit floors it near 1 ms, R-05)
     pub release_ms: f32,    // time to within 1 dB of unity from 10 dB of attenuation; default 1370.0 (A-035); range 200.0 ..= 10_000.0
 }
-impl AgcSettings { pub const DEVICE: Self; }   // the values above
+impl AgcSettings { pub const DEVICE: Self; }   // the values above: { true, -1.0, 3.0, 1370.0 }
 ```
 
 Removed: `target_dbfs`, `max_gain_db`, `max_attenuation_db`. `attack_ms` and `release_ms` keep their names with new meanings, defaults and ranges.

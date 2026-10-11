@@ -180,8 +180,9 @@ typedef struct RrDr60Settings {
   // bypassed. Below its knee the limiter is the identity; above it the output is held at the
   // knee level after a dead time of a few ms (spec 005; modeled on the circuit, A-028).
   bool agc_enabled;
-  // The limiter's knee in dBFS: where it begins to act and the level it holds. Default 1
-  // (A-028). Range -40 to 3. (Offset 28; was `agc_target_dbfs` in 0.4.)
+  // The limiter's knee in dBFS: where it begins to act and the level it holds. Default -1,
+  // just below the codec's full scale (A-028). Range -40 to 3. (Offset 28; was
+  // `agc_target_dbfs` in 0.4.)
   float agc_knee_dbfs;
   // Ignored; reserved since 0.5 (was `agc_max_gain_db`). Write 0.
   float reserved_agc_1;

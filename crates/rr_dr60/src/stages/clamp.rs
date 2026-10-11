@@ -4,9 +4,9 @@
 //! The MSM7702's A/D converter has a full-scale code (S-005); nothing larger than full scale
 //! can be recorded. The emulator's dBFS scale puts that full scale at ±1.0 (A-030: 0 dBFS =
 //! +3 dBm0 = 0.7 V peak at the codec input). This stage is the **codec's** saturation, not the
-//! limiter's: the limiter (stage 3) holds sustained loud input at about +1 dBFS (A-028), so the
-//! codec flat-tops it for part of every cycle, and during the limiter's dead time the whole
-//! onset is clipped. Modeling the two separately keeps each bypassable and lets a user hear the
+//! limiter's: the limiter (stage 3) holds sustained loud input at about −1 dBFS (A-028), just
+//! below full scale, so in steady state the codec does not clip; during the limiter's dead time
+//! the whole onset passes at full level and the codec clips it. Modeling the two separately keeps each bypassable and lets a user hear the
 //! limiter alone (tap after the AGC) or the codec's clipping alone (AGC off).
 //!
 //! The clamp is a basic IEEE operation, so it is bit-identical on every platform; a bypassed
@@ -55,7 +55,7 @@ mod tests {
         assert_eq!(clamp.process(1.0).to_bits(), 1.0f64.to_bits());
         assert_eq!(clamp.process(-1.0).to_bits(), (-1.0f64).to_bits());
         assert_eq!(clamp.process(0.0).to_bits(), 0.0f64.to_bits());
-        assert_eq!(clamp.process(3.55), 1.0); // +11 dBFS, the onset stimulus
+        assert_eq!(clamp.process(2.82), 1.0); // +9 dBFS, 10 dB over the knee: the onset stimulus
     }
 
     /// 005 T005 (FR-008): bypassed, every input is returned bit for bit, including values

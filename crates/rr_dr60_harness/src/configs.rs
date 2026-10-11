@@ -276,7 +276,7 @@ mod tests {
         assert!(c_default_001(48_000).adc_clamp_enabled);
         assert!(c_default_005(48_000).agc_enabled);
         assert!(!c_default_005(48_000).vas_enabled);
-        assert_eq!(c_default_005(48_000).agc_knee_dbfs, 1.0); // A-028
+        assert_eq!(c_default_005(48_000).agc_knee_dbfs, -1.0); // A-028
         // Spec 004 FR-002 (data-model.md › Host rates and rate plans): seven rates, 6 kHz first
         // and the identity (bypass_all reports latency 0 and passes a block unchanged).
         assert_eq!(

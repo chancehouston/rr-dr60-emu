@@ -12,7 +12,7 @@ Format unchanged (`rr_dr60-golden`, version 1; the VAS entries' `vas` field as s
 
 | Name | Content |
 |---|---|
-| `agc_onset` | −20 dBFS 0.1 s, +11 dBFS 0.4 s, −20 dBFS 2.0 s (dead time, ceiling, release) |
+| `agc_onset` | −20 dBFS 0.1 s, +11 dBFS 0.4 s, −20 dBFS 2.0 s (dead time, ceiling, release; +11 dBFS is 12 dB over the −1 dBFS knee, the levels having been set for the +1 dBFS knee and kept) |
 | `agc_rearm` | +11 dBFS 0.2 s, −20 dBFS 2.0 s, +11 dBFS 0.2 s, −20 dBFS 0.6 s (arming) |
 | `agc_staircase` | −20, 0, +3, +5, +8, +14 dBFS, 0.4 s each (the knee region and the ceiling; the clamp in `default_agc`). Levels chosen when the stimulus was planned at phase 0 (where 0 and +2 dBFS would both sit below the +1 dBFS onset on the 6 kHz grid, which reads a phase-0 1 kHz tone 1.25 dB low) and kept: at the peak phase no level is inert at any rate (research R-10) |
 
@@ -24,4 +24,4 @@ Definitions as spec 003 with the burst level at the threshold + 10 dB, now −30
 
 ## Guards and procedure
 
-`GOLDEN_V1_SHA256` unchanged (and asserted so). `GOLDEN_AGC_V1_SHA256` updated in the re-bless commit. One commit: CHANGELOG entry, `RR_DR60_BLESS=agc`, `RR_DR60_BLESS=vas`, guard update, full suite green. Any later golden change inside the feature is a defect.
+`GOLDEN_V1_SHA256` unchanged (and asserted so). `GOLDEN_AGC_V1_SHA256` updated in the re-bless commit. One commit: CHANGELOG entry, `RR_DR60_BLESS=agc`, `RR_DR60_BLESS=vas`, guard update, full suite green. Any later golden change inside the feature is a defect. (Done twice on the branch: the limiter's re-bless, then the knee move to −1 dBFS after the post-implementation review; both recorded in the CHANGELOG.)

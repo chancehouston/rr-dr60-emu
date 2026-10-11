@@ -73,17 +73,18 @@ fn tone_within_the_knee_band_is_reported_not_failed() {
     assert!(rows[0].passed);
 }
 
-/// Spec Edge Cases › Input far above the knee: +20 dBFS is held at the ceiling (within the
-/// FR-004 tolerance).
+/// Spec Edge Cases › Input far above the knee: +20 dBFS is held at the ceiling, the default
+/// knee (within the FR-004 tolerance).
 #[test]
 fn plus_20_dbfs_is_held_at_the_ceiling() {
+    let knee = f64::from(rr_dr60::AgcSettings::DEVICE.knee_dbfs); // A-028
     for rate in [6000, 48_000] {
         let x = tone(20.0, 5.0, rate);
         let y = run(configs::settings("agc_only", rate), &x);
         let tail = &y[y.len() - rate as usize..];
         let peak = db(f64::from(tail.iter().fold(0.0f32, |m, v| m.max(v.abs()))));
-        eprintln!("{rate} Hz: +20 dBFS in -> peak {peak:+.3} dBFS");
-        assert!((peak - 1.0).abs() <= 0.5, "{rate} Hz: peak {peak} dBFS"); // 005 FR-004; A-028
+        eprintln!("{rate} Hz: +20 dBFS in -> peak {peak:+.3} dBFS (ceiling {knee:+.1})");
+        assert!((peak - knee).abs() <= 0.5, "{rate} Hz: peak {peak} dBFS"); // 005 FR-004; A-028
     }
 }
 

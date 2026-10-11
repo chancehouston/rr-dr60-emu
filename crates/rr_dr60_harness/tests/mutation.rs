@@ -126,7 +126,8 @@ mod agc {
         Pipeline::new(s).unwrap()
     }
 
-    /// −3 dB: +3 would land at +4 dBFS, outside FR-010's range (coach review after US1).
+    /// −3 dB (the default is −1 dBFS; +3 would also be in range since the knee moved, but −3
+    /// stays the mutant the golden file was blessed against).
     fn knee_minus_3(mut s: Settings) -> Pipeline {
         s.agc.knee_dbfs -= 3.0; // engineering target (005 SC-007)
         Pipeline::new(s).unwrap()
