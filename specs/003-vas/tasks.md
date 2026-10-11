@@ -354,7 +354,7 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
   - **`golden-matrix` and `ios` jobs**: add `--test golden_vas` to the test commands.
   - Update the header comment.
 - [X] T044 [P] Add `--test golden_vas` to the dinghy command in `scripts/ios-device-golden.sh`. In `docs/release-checklist.md`, note that the iOS-device run now covers all three golden files.
-- [ ] T045 Push `003-vas` and open a **draft PR**, only after asking the user.
+- [X] T045 Push `003-vas` and open a **draft PR**, only after asking the user.
   - Confirm every CI job is green, including `golden_vas` on the desktop targets and the iOS simulator.
   - Record the `check` job's wall time against the 002 baseline (R-12 budget).
 
