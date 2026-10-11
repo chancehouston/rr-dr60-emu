@@ -1,0 +1,202 @@
+# Feature Specification: Limiter-Type AGC per the Schematic, ADC Full-Scale Clamp, VAS Threshold Re-anchored
+
+**Feature Branch**: `005-limiter-agc`
+
+**Created**: 2026-10-11
+
+**Status**: Draft
+
+**Input**: User description (abridged; the decisions it carried are in Clarifications): "Limiter-type record-path AGC per the service manual's schematic (signal-chain stage 3; S-002, A-028), with the ADC full-scale clamp (A-030) and the VAS threshold re-anchored (A-022 revised). Replaces the spec 002 AGC model. Spec 002 modeled an assumed wide-range compressor (target −10 dBFS, 10:1 slope, +40 dB maximum gain, attack 10 ms, release 1 s; A-017–A-019) before the schematic was read. The schematic shows a peak-detecting limiter at the codec input: a half-wave detector transistor on the codec input-amp output charges a 1 µF hold capacitor through 390 Ω; the capacitor discharges through 10 MΩ and drives, through an emitter follower, a shunt transistor that attenuates the signal ahead of the codec. Below its knee the mic chain runs at fixed gain with no regulation and no noise pumping. This is a CHANGELOG-recorded assumption change that alters the default output, re-blesses the AGC and VAS golden files once, and leaves the spec 001 golden file untouched. Version 0.5.0. Behaviors to specify with measurable tolerances: the static curve (unity below the knee, a knee near full scale, a hard ceiling above it), the attack as a charge dead time followed by limiting within a cycle and an 'arming' memory, a fast-then-slow release of about 1.3–1.7 s, a half-wave peak detector of one polarity that sees the mic amp's full bandwidth, the ADC clamp, new settings replacing the spec 002 ones, the VAS threshold re-anchored to −40 dBFS at level 3 with chain-level scenarios, the explicit retirement of the spec 002 artifacts, and determinism, real-time safety, bit-identical C output and no added latency as before. Out of scope: the mic capsule and mic amp, µ-law quantization and idle noise, the codec, playback stages, the sensitivity setting as a digital gain."
+
+## Overview
+
+Spec 002 gave the emulator an automatic gain control before the service manual's schematic had been read. The schematic (S-002, read 2026-10-10) shows a different circuit: not a compressor that raises quiet input toward a target, but a **limiter** that does nothing until the signal at the codec input reaches about full scale, and then holds its peaks there. Below that knee the microphone chain runs at a fixed gain; there is no regulation and no rise of background noise in pauses. This feature replaces the spec 002 model with the limiter (A-028 adopted; A-017 and A-018 superseded), adds the codec's full-scale saturation that gives a loud onset its clipped start (A-030), and re-anchors the VAS threshold, which spec 003 chose against the compressor's +40 dB of gain and which would otherwise pause on normal speech (A-022 revised).
+
+The limiter's behavior is derived from the circuit, not measured from a unit: every figure is an assumption with low confidence until captures exist, and the spec says "modeled on the circuit" throughout. The hardware-emulation review that preceded this spec found that two of the circuit's time constants do not describe the audible behavior: the 10 s discharge product governs how long the loop stays armed, not how long the gain stays down (the gain recovers in about 1.3–1.7 s), and the attack is a charge dead time of a few milliseconds followed by limiting within one cycle, not a 0.4 ms ramp. Those findings are the model.
+
+Three things change for every user of the default pipeline: quiet input is no longer amplified; loud input is held at full scale after a few milliseconds of clipped onset; and pauses are decided against a −40 dBFS threshold. No release has been published, so the change is recorded in the CHANGELOG and the golden references change once.
+
+Terms used in this spec (others are defined in specs 001 to 004):
+
+- **Knee**: the input level at which the limiter begins to act. Modeled at about +1 dBFS (A-028); for measurement, the input level at which the steady gain reaches −1 dB.
+- **Ceiling**: the output peak level the limiter holds above the knee, equal to the knee level within the knee's width.
+- **Dead time**: the interval after a loud onset during which the limiter has not yet acted and the signal passes at unity gain (A-034).
+- **Armed**: the state of the limiter's control for about ten seconds after a loud sound, during which a new loud onset is limited within half a millisecond (A-028, A-034).
+- **Release**: the recovery of the gain toward unity after a loud sound ends, measured to within 1 dB of unity (A-035).
+- **Sensed polarity**: the input polarity whose peaks drive the detector; the other polarity is not sensed (A-036).
+- **ADC clamp**: the codec's full-scale saturation, applied to the sampled signal after the record band-limit stage: samples beyond ±1.0 become ±1.0 (A-030).
+- **Level scale**: 0 dBFS (sine peak 1.0) is the codec's full scale, +3 dBm0, 0.7 V peak at the codec input-amp output (A-030), about 0.196 V peak at the mic-amp output (A-029). The emulator's input is the mic-amp output at its fixed gain: the signal the limiter's attenuator sees. Speech at 30 cm sits roughly 25–35 dB below full scale (A-029).
+- **Step stimulus**: a 1 kHz tone that changes level between segments, generated at the aligned phase of spec 004's rule (004 FR-012), so the detector sees its true peaks at every host rate.
+
+## Clarifications
+
+### Session 2026-10-11 (hardware-emulation review, before specification)
+
+The hardware-emulation reviewer read the schematic scan (S-002, sheet 3.1) and simulated the loop with the schematic's values before this spec was written. Its findings shaped the description; five decisions were put to the user and are recorded here so `/speckit-clarify` need not ask them again.
+
+- Q: Keep the AGC at the 6 kHz device rate after the rate conversion (spec 002 R-01), or move it before the conversion, at the host rate? → A: **Move it before the conversion** (FR-001). The real detector sees the mic amp's full bandwidth before the codec's anti-alias filter; a sample-peak detector at 6 kHz reads a 1 kHz tone up to 1.25 dB low; a per-sample control loop at 6 kHz over-attenuates (the simulation reached −33 dB on a +10 dB step); and the exact per-sample gain becomes observable at every host rate through the "after AGC" tap, which becomes a host-rate, zero-latency tap (a recorded breaking change of its meaning). The detector's bandwidth therefore depends on the host rate: a stated model property, not a defect.
+- Q: Include the codec's full-scale saturation in this feature? → A: **Yes**, as its own requirement (FR-008), traced to A-030 and S-005's full-scale code; µ-law quantization and idle noise stay out of scope. Without it the device's clipped onsets cannot exist in the emulator and a steady tone above the knee would leave the pipeline above full scale.
+- Q: VAS level-3 threshold: −40 dBFS with 3 dB per step, or 6 dB per step? → A: **−40 dBFS, 3 dB per step** (FR-012; A-022 revised). The 6 dB alternative (−28 … −52 dBFS) is recorded, not adopted; it is a one-number CHANGELOG change if evidence favors it. Threshold-only (A-033 hypothesis H2) is kept: a digital gain after a limiter pinned at full scale would clip everything above −6 or −12 dBFS at levels 4–5, which a firmware designer would avoid, while a threshold change costs nothing (low confidence; the deciding capture is in FR-019).
+- Q: Expose the detector polarity or the maximum attenuation as settings? → A: **Neither.** The polarity is a registered assumption (A-036, positive samples sensed, low confidence); the attenuation limit is a fixed 40 dB engineering target (the circuit can attenuate more, but the mic amp clips first about 7–16 dB above the knee, A-029 refinement).
+- Q: Keep the spec 002 AGC settings (ignored) or replace them? → A: **Replace them** (FR-010): a breaking change 0.4 → 0.5 recorded in the CHANGELOG. The language-neutral settings struct keeps its only-grow rule: the new fields are added at the end and the retired ones documented; how is a plan decision.
+- Finding without a decision: the 390 Ω × 1 µF product limits only the detector's peak current, and the 10 MΩ × 1 µF product governs re-arming; neither is a gain time constant. The audible attack is a dead time (A-034) and the audible release takes about 1.3–1.7 s (A-035).
+- Finding without a decision: the knee is about 1 dB wide (an exponential base–emitter law), the ratio above it is effectively unlimited, and the gain within about 1.5 dB of the knee depends on how long the tone lasts (the dead time there is 50 ms to 1 s), so that band is reported, not toleranced (FR-004).
+- Finding without a decision: the detector's 13 kHz roll-off and its 7 Hz DC block are not modeled; a host input's DC offset is seen by the half-wave detector (Edge Cases).
+
+## User Scenarios & Testing *(mandatory)*
+
+### User Story 1 - Hear the RR-DR60's limiter (Priority: P1)
+
+An app developer feeds speech and sound effects through the default pipeline and hears what the device's record path does to loud sounds: nothing at all until a sound reaches about full scale, then a hard ceiling after a few milliseconds of clipped onset, with the ceiling held for the rest of the loud sound and the gain recovering over a second or two afterwards. Quiet passages are no longer lifted and background noise no longer rises in pauses. A loud sound outside the device's band (a key click, a close sibilant) still pulls the gain down.
+
+**Why this priority**: the limiter is the most audible behavior of the record path after the band-limiting, and the spec 002 compressor sounds nothing like it: it lifts quiet input by up to 40 dB and pumps noise in pauses. Everything downstream, including the VAS and the planned codec, sees the limiter's output.
+
+**Independent Test**: process steady tones, level steps and bursts through the AGC-isolated configuration (every other stage bypassed) at the host rate; measure the per-sample gain at the "after AGC" tap directly, at every host rate. The ADC clamp (FR-008) is tested through the record stage with the AGC bypassed and with it on.
+
+**Acceptance Scenarios**:
+
+1. **Given** the AGC-isolated configuration at any host rate, **When** a steady 1 kHz tone at −20 dBFS, or any input whose peaks stay at least 1.5 dB below the knee, is processed, **Then** the output is bit-identical to the input (FR-003).
+2. **Given** the same configuration, **When** steady 1 kHz tones from −60 to +20 dBFS are processed (5 s each, the last second measured), **Then** the output peak is within ±0.5 dB of the ceiling for every tone at least 1.5 dB above the knee, the knee measured by bisection lies at +2 ± 2 dBFS, and the tones within 1.5 dB of the knee are reported (FR-004).
+3. **Given** 20 s of a −20 dBFS tone, **When** the level steps to +10 dBFS, **Then** the gain stays at unity for a dead time of 3 ± 1.5 ms, then reaches its steady value within 1 ms without exceeding it by more than 1 dB (FR-005).
+4. **Given** the same step 2 s after a previous +10 dBFS burst, **When** it is processed, **Then** the dead time is 0.5 ms or less (FR-005, armed).
+5. **Given** a 1 s burst at +11 dBFS followed by a −20 dBFS tone, **When** it is processed, **Then** the gain is back within 1 dB of unity 1.3 s ± 40 % after the burst ends, reading about −5.5 dB at 0.3 s and −2.6 dB at 0.75 s (FR-006).
+6. **Given** a 48 kHz host and a −20 dBFS 1 kHz probe, **When** a 6 kHz tone at +6 dBFS is added, **Then** the probe's output level drops by 5 ± 1 dB although the output contains no 6 kHz content (FR-007).
+7. **Given** the default pipeline at the 6 kHz identity host rate, **When** a +10 dBFS tone is processed, **Then** the output's largest magnitude is exactly 1.0, and the first 3 ms of the onset contain samples at exactly ±1.0 (FR-008).
+
+---
+
+### User Story 2 - The record chain still records speech (Priority: P2)
+
+With the limiter in place the VAS no longer sees an amplified signal. An app developer who records normal speech at a normal distance with the default settings expects it to be recorded without pauses inside the speech, expects long silences to be dropped, and expects the sensitivity levels to behave as the owner's manual describes: lower levels record only louder sounds.
+
+**Why this priority**: adopting unity gain without re-anchoring the threshold would make the default pipeline pause on normal speech, an unusable intermediate state. The chain-level behavior is what app developers experience; it depends on this feature's two assumption changes together.
+
+**Independent Test**: speech-like burst patterns over band-limited noise floors through the default pipeline, measured by output length and events (spec 003 research R-11), at the identity rate and at 48 kHz.
+
+**Acceptance Scenarios**:
+
+1. **Given** the default pipeline at sensitivity level 3, **When** 1 kHz bursts at −30 dBFS peak (300 ms on, 150 ms off, groups of four, 5 s gaps) over a −60 dBFS RMS band-limited noise floor are processed, **Then** no splice falls inside a burst group and each 5 s gap is cut to the hang time (FR-012).
+2. **Given** the same bursts over a −45 dBFS RMS floor, **When** processed at level 3, **Then** no pause occurs at all; **When** processed at level 1, **Then** the gaps are paused (FR-012).
+3. **Given** 30 s of a −60 dBFS floor, **When** a +6 dBFS burst follows, **Then** the burst is limited after the dead time, recording resumes after the onset time, and no second splice is reported (FR-012).
+4. **Given** sensitivity levels 1 to 5, **When** the threshold is bisected at 1 kHz, **Then** it reads −34, −37, −40, −43 and −46 dBFS, each ±1 dB (FR-012).
+
+---
+
+### User Story 3 - Tune, bypass or tap the limiter, from either interface (Priority: P3)
+
+An app developer adjusts the knee, the attack dead time or the release time, bypasses the limiter, taps the signal right after it at the host rate, and does all of this from the C interface with bit-identical results. The spec 002 settings no longer exist, and the documentation says why.
+
+**Why this priority**: the defaults deliver the device; the settings are a convenience for apps that want the character louder or softer, and the interface change must be clean and recorded.
+
+**Independent Test**: settings matrix through the AGC-isolated configuration; the "after AGC" tap against the stage's own output; C parity at all seven host rates.
+
+**Acceptance Scenarios**:
+
+1. **Given** a knee setting of −10 dBFS, **When** steady tones from −30 to +10 dBFS are processed, **Then** the measured knee lies at −10 + 1 ± 2 dBFS and the ceiling follows it (FR-011).
+2. **Given** a release setting of 4 s, **When** the burst-then-tone stimulus of US1 AS5 is processed, **Then** the gain returns within 1 dB of unity 4 s ± 40 % after the burst (FR-011).
+3. **Given** the tap "after AGC" at 48 kHz, **When** any input is processed, **Then** the output is the limiter's own output at the host rate, sample for sample, with a reported latency of 0 (FR-001).
+4. **Given** any valid settings at any of the seven host rates, **When** the same input is processed through the native and the language-neutral interface, **Then** the outputs are bit-identical; **When** an out-of-range value is supplied, **Then** it is rejected with the setting named (FR-015).
+5. **Given** the AGC bypassed, **When** spec 001's golden stimuli are processed, **Then** the spec 001 golden references match with zero differences (FR-016).
+
+---
+
+### Edge Cases
+
+- **Input that never reaches the knee**: the limiter is transparent (bit-exact) for its whole duration, however long; no slow drift, no gain change on silence (unlike spec 002's rise to maximum gain).
+- **Input exactly at or within 1.5 dB of the knee**: the gain depends on how long the tone has lasted (the dead time near the knee is 50 ms to 1 s); the harness reports these tones and does not pass or fail them (FR-004).
+- **Input far above the knee** (more than about 7–16 dB above it): the real mic amp would clip first (A-029); the emulator limits up to 40 dB of attenuation (engineering target) and clamps at the ADC. Inputs up to +20 dBFS are checked; beyond that the attenuation limit holds the loop stable and the clamp bounds the output.
+- **A DC offset in the host input**: the half-wave detector sees it because the circuit's 7 Hz DC block is not modeled; an offset of −30 dBFS shifts the knee by under 0.3 dB; an offset that itself exceeds the knee keeps the limiter engaged. Documented, not modeled (Assumptions).
+- **Non-finite or subnormal input samples**: treated as 0.0, as spec 001 says, before the detector sees them.
+- **Reset or reconfigure mid-attack or while armed**: the control returns to the discharged state; the next loud onset has the full dead time.
+- **Block boundaries**: output, events and the armed state are identical for every block partition (FR-014).
+- **Host rate**: the detector's bandwidth and its sample-peak reading depend on the host rate; at 6 kHz a 1 kHz tone is read exactly only at the aligned phase (004 FR-012). The harness uses aligned tones; the difference between host rates for arbitrary-phase input is a model property (Assumptions).
+- **The "after AGC" tap** has latency 0 and host-rate output; the other taps and the default output keep spec 004's latency, unchanged by this feature (FR-001).
+- **Mute mode of the VAS with the new threshold**: unchanged in form; the muted regions follow the re-anchored threshold.
+
+## Requirements *(mandatory)*
+
+### Functional Requirements
+
+**Placement and availability**
+
+- **FR-001**: The AGC stage (signal-chain stage 3) MUST act on the host-rate input before the host-to-device rate conversion, so its detector sees the input's full bandwidth as far as the host rate carries it (A-019 revised; in the device, the mic amp's ≈ 72 Hz–13 kHz, A-029). The tap "after AGC" MUST deliver the stage's output at the host rate with a reported latency of 0 (a breaking change of the tap's meaning relative to spec 002 FR-003, recorded in the CHANGELOG). The AGC MUST add no latency to any tap or to the default output; spec 004's latency figures are unchanged with the AGC on or bypassed.
+- **FR-002**: The AGC MUST be on by default (A-020) and bypassable; a bypassed AGC MUST pass its input through bit-exact. Its control MUST start discharged (unity gain) at creation, after reset and after reconfigure, and MUST remain at unity through any length of silence or sub-knee input; the first sample after creation or reset is bit-exact.
+
+**The limiter**
+
+- **FR-003**: **Unity below the knee.** For any input whose peaks of the sensed polarity stay at least 1.5 dB below the knee, the output MUST be bit-identical to the input, for the whole duration, at every host rate. This covers the start state, silence, speech-level input and the absence of distortion below the knee.
+- **FR-004**: **Knee and ceiling.** The knee is at +1 dBFS (A-028, ±2 dB; about 1 dB wide). Measured as the input level at which a steady 1 kHz tone's gain reaches −1 dB (bisection to 0.1 dB), the knee MUST lie at +2 ± 2 dBFS. For every steady tone at least 1.5 dB above the knee, up to +20 dBFS, the output peak MUST be within ±0.5 dB of the ceiling, which equals the measured knee level; the attenuation never needs to exceed 40 dB (engineering target: the circuit can attenuate more, but the mic amp clips first about 7–16 dB above the knee). Tones are 5 s long and the last second is measured; tones within 1.5 dB of the knee are reported without a tolerance. Steady tones from −60 to +20 dBFS in 2 dB steps, 1 dB steps from −4 to +6 dBFS, form the static-curve set (engineering target).
+- **FR-005**: **Attack: dead time, then limiting; arming.** After at least 20 s below the knee, a 1 kHz step to 10 dB above the knee MUST pass at unity gain for a dead time of 3 ± 1.5 ms (A-034), during which the ADC clamp (FR-008) clips it; the gain MUST then reach its steady value within 1 ms and MUST NOT exceed the static-curve value by more than 1 dB at any time at any host rate (the over-attenuation guard, engineering target). A step to only 2 dB above the knee MUST have a dead time at least 5 times that of the 10 dB step (A-034: the dead time grows as the overdrive shrinks, about 50 ms at 2 dB). The same 10 dB step applied 2 s after a previous loud burst MUST have a dead time of 0.5 ms or less (armed: the control stays near its turn-on point for about 10 s, R11 × C6, A-028). Measured by the exact per-sample gain at the "after AGC" tap with the step stimulus.
+- **FR-006**: **Release.** After a 1 s burst 10 dB above the knee ends and a 1 kHz tone 20 dB below the knee follows, the gain MUST return to within 1 dB of unity after 1.3 s ± 40 % (A-035), and MUST read −5.5 ± 2 dB at 0.3 s and −2.6 ± 1.5 dB at 0.75 s after the burst (A-035: fast at first, about 13 dB per second, slowing to about 3 dB per second near unity). From 17 dB of attenuation the return takes about 1.7 s (reported). The 10 s discharge product does not describe the audible release; it describes arming (FR-005).
+- **FR-007**: **Detector.** The detector MUST be peak-responding, half-wave on the sensed polarity (A-036: positive input samples by default), with no look-ahead and no hold other than the control's own memory, and MUST sense the signal after the attenuator (closed loop). Measured with an asymmetric stimulus (a 1 kHz tone plus its second harmonic at half amplitude, whose peaks differ by 2.5 dB between polarities, scaled so that one polarity reaches +4 dBFS): the steady gain with the stimulus and with its negation MUST differ by 2.5 ± 0.5 dB, and the output polarity that reaches the clamp MUST be the un-sensed one. Bandwidth: at a 48 kHz host, a 6 kHz tone at +6 dBFS added to a −20 dBFS 1 kHz probe MUST reduce the probe's output level by 5 ± 1 dB, while the default output contains no 6 kHz content (spec 004 FR-003). The circuit's 13 kHz roll-off and 7 Hz DC block are not modeled (Assumptions).
+- **FR-008**: **ADC full-scale clamp.** After the record band-limit stage (stage 4), in the sampled domain, every sample beyond full scale MUST be clamped to ±1.0 (A-030; S-005's full-scale code). Through the record path at the 6 kHz identity host rate, a +10 dBFS tone's largest output magnitude MUST be exactly 1.0, and the first 3 ms of a +10 dBFS onset after 20 s of quiet MUST contain samples at exactly ±1.0 (the clipped onset). The clamp MUST apply with the AGC bypassed too (it is the codec's, not the limiter's). It does not apply to the "after AGC" tap, which precedes it, nor to the VAS's decision, which follows it.
+- **FR-009**: **Distortion.** Below the knee, FR-003 makes distortion zero. Above the knee, THD+N of steady tones at +6 and +12 dBFS MUST be reported, not limited (it is dominated by the clamp and the limiter's own knee). The spec 002 THD+N limit (1 %) applies only below the knee, where FR-003 subsumes it.
+
+**Settings and interface**
+
+- **FR-010**: The caller MUST be able to set the following when creating or reconfiguring the pipeline; values outside the ranges MUST be rejected with an error that names the setting (as spec 002 FR-011):
+
+  | Setting | Default | Range | Trace |
+  |---|---|---|---|
+  | AGC enabled | on | on / off | A-020 |
+  | Knee level | +1 dBFS | −40 to +6 dBFS | A-028 |
+  | Attack dead time, measured at 10 dB above the knee | 3 ms | 0.5 to 50 ms | A-034 |
+  | Release time to within 1 dB of unity from 10 dB of attenuation | 1.3 s | 0.2 to 10 s | A-035 |
+
+  The spec 002 settings (target level, maximum gain, maximum attenuation, attack time, release time of the compressor) MUST be removed from the native interface and retired from the language-neutral one (the struct only grows: the new fields are added at the end, and the retired fields are documented as ignored or removed in the way the plan decides), a breaking change 0.4 → 0.5 recorded in the CHANGELOG. The arming memory (about 10 s), the attenuation limit (40 dB) and the sensed polarity are not settings.
+- **FR-011**: For non-default settings, FR-004 to FR-006 MUST hold with the defaults replaced by the configured values: the measured knee at the configured knee + 1 ± 2 dB, the dead time at the configured value ± 50 % or ± 0.5 ms, whichever is larger, and the release at the configured value ± 40 % (engineering targets). The arming and the fast-then-slow release shape MUST scale with the release setting.
+
+**The record chain**
+
+- **FR-012**: **VAS threshold re-anchored** (A-022 revised; spec 003 FR-006 and FR-007 restated). The default threshold at sensitivity level 3 MUST be −40 dBFS (sine-peak level of the VAS input), with 3 dB per sensitivity step: −34, −37, −40, −43 and −46 dBFS at levels 1 to 5, each ±1 dB; the setting's range stays −60 to 0 dBFS. Through the default pipeline at level 3: (i) 1 kHz bursts at −30 dBFS peak (300 ms on, 150 ms off, groups of four, 5 s gaps) over a −60 dBFS RMS band-limited noise floor MUST be recorded without a splice inside a group and with each 5 s gap cut to the hang time (±1 ms); (ii) the same bursts over a −45 dBFS RMS floor MUST produce no pause at level 3 and MUST pause the gaps at level 1; (iii) a +6 dBFS burst after 30 s of a −60 dBFS floor MUST be limited after the dead time, resume recording after the onset time and report exactly one splice. Spec 003's input-referred threshold statement ("about −58 dBFS through the AGC's static curve") is withdrawn: below the knee the static curve is the identity, so the threshold is input-referred one to one. The spec 003 interplay report MUST be rewritten accordingly. Every other spec 003 requirement, scenario and tolerance is unchanged.
+- **FR-013**: **Retirement of the spec 002 model.** Every spec 002 requirement and acceptance scenario about the compressor is replaced by this spec's: the regulation line and gain limits (002 FR-004, FR-005), the 10 ms / 1 s timing and its shape check (002 FR-006), the rise to maximum gain in silence (002 FR-007), the frequency-independence set (002 FR-008; subsumed by FR-003 below the knee), the noise rise in pauses (002 FR-009), the "starts at maximum gain" behavior and the overshoot warning (002 FR-013, A-019; now: starts at unity, never exceeds unity), the "content above the device band does not affect the gain" edge case (reversed by FR-007), the settings matrix (002 FR-011, FR-012) and the reference-ratio self-check (002 research R-11; the exact gain is now observable at every host rate). Spec 002's requirements that are not about the compressor (bypass, tap, no latency, determinism, interface parity, traceability, golden files) continue through this spec's FR-001, FR-002 and FR-014 to FR-018. Spec 002's header MUST gain a one-line note that its model is replaced by this spec; spec 003's header a note that its threshold is restated by this spec; nothing else in those documents changes.
+
+**Cross-cutting**
+
+- **FR-014**: Spec 001's determinism, real-time safety, block-partition invariance and reset requirements (001 FR-014 to FR-017) MUST hold with the limiter on, for every valid setting and at all seven host rates: bit-identical output, events and armed state for any block partition; no allocation, lock or I/O while processing; same input, settings and host rate ⇒ bit-identical output on every platform. The host rate is part of the configuration, so the detector's bandwidth differing between host rates is a model property, not a determinism failure.
+- **FR-015**: All settings MUST be available through the language-neutral interface with output bit-identical to the native interface at every host rate; invalid values MUST be reported with the setting named, as spec 002 FR-014. Version 0.5.0.
+- **FR-016**: **Golden references.** The AGC golden file and the VAS golden file MUST be re-blessed exactly once, in one commit, together with the CHANGELOG entry, their new stimuli (the AGC stimuli now exercise the knee, the dead time, arming and the release; the VAS stimuli follow the re-anchored threshold) and updated guards; the spec 001 golden file (AGC bypassed) MUST NOT change. The golden configurations MUST include the AGC-isolated configuration and the new default; the AGC golden stimuli MUST include one with a loud onset after quiet and one with a loud burst followed by a quiet tone.
+- **FR-017**: **Traceability.** Every default and tolerance MUST cite its S-/A- ID in the spec, code and tests. Engineering targets, labeled as such: the 1.5 dB margins around the knee (FR-003, FR-004); the ±0.5 dB ceiling tolerance, the ±2 dB knee tolerance and the 0.1 dB bisection (FR-004); the 40 dB attenuation limit (FR-004); the ±1.5 ms, ≤ 1 ms, 1 dB, 5× and 0.5 ms figures of FR-005; the ±40 %, ±2 dB and ±1.5 dB figures of FR-006; the 2.5 ± 0.5 dB and 5 ± 1 dB figures and the asymmetric stimulus of FR-007; the static-curve set; the setting ranges and the FR-011 tolerances; the ±1 dB and ±1 ms figures and the three chain scenarios of FR-012; the mutation sizes of SC-007; and the 5 minutes of SC-001. Device-derived values cite A-028 (knee, arming), A-034 (dead time), A-035 (release), A-036 (polarity), A-030 (clamp, level scale), A-029 (level scale, input range), A-022 (threshold).
+- **FR-018**: **Harness.** The measurement harness MUST check FR-001 to FR-012 and FR-016, with each result reporting its measured value, tolerance, requirement and A-/S- IDs (as 001 FR-020), at all seven host rates where the requirement applies (the knee bisection at 6 kHz uses the aligned phase; the bandwidth check needs a host rate above 12 kHz). The exact per-sample gain is measured at the "after AGC" tap at every host rate; the spec 002 reference-ratio method is retired for the AGC.
+- **FR-019**: **Records.** The assumption register MUST record: A-028 adopted (knee +1 dBFS ± 2 dB, arming ≈ 10 s, the circuit's time constants reinterpreted), A-034 (dead time), A-035 (release), A-036 (polarity) added; A-017 and A-018 superseded by A-028/A-034/A-035; A-019 revised (half-wave, host-rate bandwidth, starts at unity, no envelope filter); A-022 revised (−40 dBFS at level 3, with the A-029-based rationale and the 6 dB alternative); A-007 verified in circuit; A-029 refined (the mic amp clips 7–16 dB above the knee); the 40 dB limit and the 13 kHz / 7 Hz omissions noted. The signal-chain inventory rows 3 and 4 MUST point to this spec. The CHANGELOG entry MUST record the assumption changes, the removed settings and the changed tap, the re-anchored threshold, the re-blessed golden files and the version. The README MUST describe the limiter and the clamp in plain words with the "modeled on the circuit, not measured against a unit" caveat and the input-level anchor. The hardware-evidence issue template MUST ask for: 1 kHz 5 s tone bursts in 2 dB SPL steps from 70 to 110 dB SPL with a sound-level meter beside the recorder; a tone or clap about 10 dB above the knee after 60 s of silence, repeated 2 s and 20 s later; a 1 s loud tone followed by the same tone 10 dB quieter for 5 s; tone bursts stepped down 2 dB at each sensitivity level until recording pauses, and a constant tone at each level; and any loud speech capture (the flat-topped side shows the polarity); its "loud burst followed by a quiet tone" item MUST say "about 1–2 s, with a faster attack for the next ten seconds" instead of "several seconds".
+
+### Out of Scope
+
+The mic capsule and mic amp (noise floor, supply-rail clipping, the 72 Hz and 13 kHz corners; stages 1–2, A-029); µ-law quantization and idle noise (A-003, A-030); the speech codec (stages 7, 9) and noise reduction (stage 6); the playback stages (10–13); the sensitivity setting as a digital gain (A-033 hypotheses H4/H5) and a sensitivity step other than 3 dB; the detector's 13 kHz roll-off and 7 Hz DC block; temperature dependence of the knee; changing the arming memory, the attenuation limit or the polarity through settings.
+
+### Key Entities
+
+- **Limiter** (stage 3): the control state (a charge that must reach a turn-on point before attenuation begins, decays over about 10 s, and maps to attenuation through an exponential law), the sensed polarity, the knee, the ceiling, the dead time, the armed state and the release.
+- **ADC clamp**: full-scale saturation after stage 4, a property of the codec (A-030), independent of the limiter.
+- **Limiter settings**: enabled, knee level, attack dead time, release time (FR-010); the retired spec 002 settings.
+- **Re-anchored VAS threshold**: −40 dBFS at level 3, 3 dB per step (A-022 revised).
+- **Step stimulus**, **burst-then-tone stimulus**, **asymmetric stimulus**, **speech-like burst pattern over a noise floor**: the harness stimuli defined in FR-004 to FR-007 and FR-012.
+- **Measurement result** and **golden reference**: as specs 001–004.
+
+## Success Criteria *(mandatory)*
+
+### Measurable Outcomes
+
+- **SC-001**: An app developer can find what the limiter does to quiet and loud input, the input level that corresponds to full scale, how to bypass it or change its knee, and what changed from version 0.4 in under 5 minutes using only the project's documentation (CHANGELOG and README).
+- **SC-002**: 100 % of the tolerance checks in FR-003 to FR-009 pass at all seven supported host rates where they apply, at the default settings; 100 % of the FR-011 checks pass for the settings matrix at the identity rate and at 48 kHz.
+- **SC-003**: The three chain-level scenarios of FR-012 pass at the identity rate and at 48 kHz, and the bisected thresholds at the five sensitivity levels are within ±1 dB of −34, −37, −40, −43 and −46 dBFS.
+- **SC-004**: The AGC and VAS golden files are each re-blessed exactly once, in one commit; the spec 001 golden file is byte-identical before and after the feature; afterwards all three pass unchanged on all eight platform targets of 001 FR-014 and across at least 100 random block partitions of each golden stimulus.
+- **SC-005**: Zero memory allocations are observed while processing 1000+ blocks of varying size with the limiter on, at default and at extreme settings, at every host rate; processing runs at least 20× faster than real time (engineering target) at 48 kHz with the default settings.
+- **SC-006**: The AGC adds 0 samples of latency: spec 004's default latency at every host rate is unchanged, and the "after AGC" tap reports 0.
+- **SC-007**: A deliberate 3 dB shift of the default knee, a doubling of the default release time, or a 3 dB shift of the default VAS threshold is caught by the harness: both the tolerance check and the golden check fail.
+- **SC-008**: A review finds zero untraceable numbers in this feature; the CHANGELOG entry lets a reader reconstruct the old and new value of every changed assumption and setting from the entry alone.
+
+## Assumptions
+
+- **A-028** (existing, from circuit analysis), adopted and reinterpreted: a peak-detecting limiter at the codec input with its knee near full scale (+1 dBFS ± 2 dB, about 1 dB wide), effectively unlimited ratio, no regulation below the knee. The circuit's 390 Ω × 1 µF product limits only the detector's peak current; its 10 MΩ × 1 µF product governs arming (about 10 s), not the audible release. The knee moves about −0.3 dB per 10 °C (not modeled). Confidence: high on topology, medium on the knee relative to full scale, low on every dynamic figure.
+- **A-034** (new): attack dead time. The hold capacitor must charge through two base–emitter drops before the shunt conducts; the detector's charge current is limited and flows only near the peaks, so a loud onset after quiet passes at unity gain for about 3 ms when 10 dB above the knee (1.5–5 ms over the transistor-gain range), about 50 ms when 2 dB above, and under 0.5 ms while armed; the attenuation then reaches its steady value within one cycle without overshoot. Low confidence; the bounding evidence is the detector transistor's current gain, and the deciding capture is a clap after silence, repeated 2 s and 20 s later.
+- **A-035** (new): release. The shunt's conductance is exponential in the control voltage, so only a fraction of the capacitor's swing maps to gain: the attenuation falls from 10 dB to within 1 dB of unity in about 1.3 s (1.7 s from 17 dB), fast at first and slower near unity. Low confidence; the deciding capture is a 1 s loud tone followed by a quieter one.
+- **A-036** (new): sensed polarity. The detector responds to negative excursions at the codec input-amp output; through the chain's inversions this most likely corresponds to positive input samples. Low confidence; any loud speech capture decides it (the flat-topped side). Not a setting.
+- **A-030** (existing, family proxy): the level scale (0 dBFS = +3 dBm0 = 0.7 V peak at the codec input amp output) and the full-scale clamp. µ-law quantization and idle noise stay out of scope.
+- **A-029** (existing), used for the level anchor and refined: the mic amp clips about 7–16 dB above the knee (one polarity earlier than the other), so inputs beyond that are outside the device's own range; the emulator's 40 dB attenuation limit is an engineering target never reached by device-range input.
+- **A-022** (existing), revised: −40 dBFS at level 3, 3 dB per step, threshold-only (A-033 H2). Rationale: quiet syllables at 30 cm sit around −28 to −38 dBFS peak (A-029), capsule self-noise peaks around −57 to −62 dBFS, a 40 dBA room around −47 to −52 dBFS and a 50 dBA room around −37 to −42 dBFS (noise peaks about 8.5 dB above RMS, 003 R-03), so level 3 pauses in a quiet room, keeps recording in a 50 dBA room, and level 1 pauses there, matching S-001's "works better the lower the sensitivity". The 12 dB span of 3 dB steps is narrow against S-001's wording; 6 dB per step (−28 … −52 dBFS) is the recorded alternative.
+- **A-019** (existing), revised: peak-responding, half-wave, no look-ahead, sees the host-rate input's bandwidth, starts at unity. The envelope detector of spec 002 is removed.
+- **A-020** (existing, verified): always active, bypassable in the emulator.
+- The detector's bandwidth depending on the host rate (a 48 kHz host carries sounds up to 24 kHz to the detector; a 6 kHz host only 3 kHz) is a model property of running the detector at the host rate; the device's own detector sees ≈ 72 Hz–13 kHz. Likewise, at the identity rate the sample-peak detector reads an arbitrary-phase 1 kHz tone up to 1.25 dB low (004 research R-08); the harness uses aligned tones and the difference is documented.
+- The circuit's 13 kHz roll-off and 7 Hz DC block in the detector path are not modeled; a host input's DC offset is seen by the detector. A one-pole sidechain high-pass is a possible later addition if real app input shows it matters.
+- The default pipeline's output changes (unity gain below the knee, limiting and clipping above it, pauses against −40 dBFS). No release has been published; the CHANGELOG records it (Principle II).
