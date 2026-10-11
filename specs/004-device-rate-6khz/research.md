@@ -48,6 +48,7 @@ Decisions for feature 004. They revise [spec 001's research](../001-pipeline-ske
 
   Compared with today: the 44.1 and 88.2 kHz prototypes shrink from about 38 000 taps to about 8 500 (prototype rate 882 kHz instead of 3.528 MHz), so construction time and memory fall by about 4.5×; the per-converter delay falls from about 5.4 to about 4.8 ms.
 - **Default latency** (FR-004): 2 × 4.81 ms + (τ_rec + τ_play) at 1 kHz ≈ 9.62 + 0.11 + 0.07 ≈ 9.8 ms. Prototype values in host samples: about **1 at 6 kHz** (identity: only the stages' ≈ 1.0 device sample of group delay), **78 at 8 kHz**, **157 at 16 kHz**, **433 at 44.1 kHz**, **471 at 48 kHz** (was 541), **866 at 88.2 kHz**, **942 at 96 kHz**. The harness measures the final values and the CHANGELOG records them.
+- **0.3 baseline (measured 2026-10-11 at commit 75734b7, T003; the "old" column of the CHANGELOG table)**: default latency 8 kHz **4** samples (0.50 ms; identity), 16 kHz **181** (11.31 ms), 44.1 kHz **498** (11.29 ms), 48 kHz **541** (11.27 ms), 88.2 kHz **993** (11.26 ms), 96 kHz **1081** (11.26 ms).
 - **Harness restatement** (FR-003): `check_fr005_boundary` → `check_fr003_boundary`: flatness 50–2550 Hz within ±0.1 dB; rejection ≥ 60 dB at 3000 Hz, 3450 Hz, 6000 Hz and 20 kHz where below Nyquist; alias/image products ≤ −60 dB on a 1 kHz tone. Skipped at the 6 kHz host rate except the identity assertion.
 - **Rationale**: linear-phase boundary keeps the per-stage minimum-phase checks clean (001 R-08). A 300 Hz transition (2700 → 3000 Hz) would cost about 6.0 ms per converter, 12.1 ms boundary, 14 ms default: legal but eats most of the budget for no template benefit, since the templates end at 2550 Hz.
 - **Alternatives**: as 001 R-08.
@@ -157,6 +158,7 @@ Decisions for feature 004. They revise [spec 001's research](../001-pipeline-ske
 
 - **Prototype estimate**: the 7th rate adds about 1/6 to every rate matrix; the 44.1 and 88.2 kHz pipelines construct about 4.5× faster (8 481-tap prototypes instead of about 38 000) and each device sample costs 8 biquads instead of 12 at 6000 instead of 8000 samples per second. Net: the debug suite and the release matrices are expected to be flat or faster; the coverage job (16 min at 003) should not grow. The timing test's `default`/`default_agc`/`default_vas` rows are re-measured and the README figures updated.
 - **Decision**: no CI workflow change. Tasks record the before/after suite time in the PR, and the coverage job's time is checked on the first CI run.
+- **0.3 baseline (measured 2026-10-11 at commit 75734b7, T003, Apple-silicon laptop)**: `cargo test --all-features` wall time **89 s** (231 tests, warm build); release timing test: `default` 88.5–89.8 ns/sample, **234× real time** at 48 kHz; `default_agc` 91.6–92.6 ns/sample, **227×**; `default_vas` 91.5–92.4 ns/sample, **227×**. CI reference from 003: coverage job 16.2 min.
 
 ## R-13 Documentation, register, sources, CHANGELOG, version (FR-013, FR-014, FR-017, FR-018; SC-001, SC-008)
 
