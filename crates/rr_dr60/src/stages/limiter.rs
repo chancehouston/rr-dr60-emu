@@ -122,8 +122,6 @@ pub(crate) struct Limiter {
     vc: f64,
     /// Detector threshold at Q6's base, V: `KDIV · V_FS · 10^(knee / 20)` (R-05).
     vbe6: f64,
-    /// Discharge scale on both discharge terms: `RELEASE_REF_MS / release_ms` (R-05).
-    k_dis: f64,
     /// `vc` below which the gain is exactly 1.0 (R-03): 0.171 V.
     v_floor: f64,
     /// `vc` giving `MAX_ATTEN_DB` of attenuation: 1.275 V.
@@ -133,7 +131,8 @@ pub(crate) struct Limiter {
     /// `beta6 / RTH`: charge current per volt of overdrive, with `beta6` the detector current
     /// gain from the attack setting (knee-aware, R-05; [`Limiter::beta6_for`]).
     charge_gain: f64,
-    /// `k_dis / R11` and `k_dis / BETA5`: the two discharge terms.
+    /// The two discharge terms, `k_dis / R11` and `k_dis / BETA5`, with `k_dis` the discharge
+    /// scale `RELEASE_REF_MS / release_ms` (R-05).
     dis_r11: f64,
     dis_b5: f64,
     /// The detector onset in full-scale units, `vbe6 / (KDIV · V_FS)`: the ceiling (1.122 at
@@ -186,7 +185,6 @@ impl Limiter {
         Self {
             vc: 0.0,
             vbe6,
-            k_dis,
             // R-03: the floor is where the shunt's deviation from unity reaches 2⁻²⁴; the limit
             // where the attenuation reaches MAX_ATTEN_DB. Both from the closed-form inverse.
             v_floor: vc_of_gain(1.0 - UNITY_DEVIATION),
@@ -319,27 +317,17 @@ impl Limiter {
 
     /// The derived parameters (unit tests: a flushed stage equals a fresh one).
     #[cfg(test)]
-    fn params(&self) -> [f64; 7] {
+    fn params(&self) -> [f64; 8] {
         [
             self.vbe6,
             self.charge_gain,
-            self.k_dis,
+            self.dis_r11,
+            self.dis_b5,
             self.v_floor,
             self.v_limit,
             self.dt_over_c6,
             self.ceiling_fs,
         ]
-    }
-
-    /// Test-only (SC-007 mutation fixtures): shifts the detector threshold by `knee_shift_db`
-    /// and scales the release by `release_scale` after construction.
-    #[cfg(feature = "__test-hooks")]
-    pub(crate) fn mutate(&mut self, knee_shift_db: f64, release_scale: f64) {
-        self.vbe6 *= db_to_amplitude(knee_shift_db);
-        self.ceiling_fs = self.vbe6 / (KDIV * V_FS);
-        self.k_dis /= release_scale;
-        self.dis_r11 = self.k_dis / R11;
-        self.dis_b5 = self.k_dis / BETA5;
     }
 }
 

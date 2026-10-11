@@ -46,7 +46,7 @@ The limiter's output at the **host rate**, sample for sample; the rate converter
 ## Test hooks (`__test-hooks` feature; unpublished)
 
 - `__test_hooks::limiter_state(&Pipeline) -> f64` (the capacitor voltage) for unit and harness tests.
-- `Pipeline::__with_limiter_mutation(settings, knee_shift_db: f64, release_scale: f64)` for the SC-007 mutants (or settings-level mutants if the spec tolerances make the hook unnecessary; plan choice at implementation).
+- The SC-007 mutants are **settings-level** (`agc.knee_dbfs -= 3.0`, `agc.release_ms *= 2.0`, `vas.threshold_dbfs += 3.0` through the harness's `Make` factory): the spec tolerances catch them, so the `Pipeline::__with_limiter_mutation` hook the plan allowed for was not kept (removed in T035, 2026-10-11).
 - `record_sos()` / `playback_sos()` / `__with_stage_sos` unchanged (spec 004).
 
 ## Version

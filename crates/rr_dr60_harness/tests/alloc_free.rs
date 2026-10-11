@@ -15,6 +15,9 @@ use rr_dr60_harness::stimulus::{self, Pcg32};
 
 struct Counting;
 
+/// A labelled limiter setting at one end of its range (005 FR-010).
+type Extreme = (&'static str, fn(&mut rr_dr60::AgcSettings));
+
 thread_local! {
     /// Count only allocations made on the measuring thread. Other threads, such as libtest's
     /// main thread printing "has been running for over 60 seconds" in slow coverage builds,
@@ -77,19 +80,30 @@ fn processing_never_touches_the_heap() {
     let sizes: Vec<usize> = (0..1000).map(|_| rng.below(1025) as usize).collect();
 
     for rate in configs::all_rates() {
-        // Spec 001 configurations (AGC bypassed), the spec 002 AGC configurations, and the AGC
-        // at its extreme settings (002 SC-004).
+        // Spec 001 configurations (limiter bypassed), the spec 005 AGC configurations, the
+        // limiter at the extremes of every setting (knee −40 / +3 dBFS, attack 1 / 50 ms,
+        // release 200 / 10 000 ms; 005 FR-010) and the clamp off (005 SC-005).
         let mut cases: Vec<(String, rr_dr60::Settings)> = configs::CONFIGS
             .iter()
             .chain(&configs::AGC_CONFIGS)
             .map(|c| (c.to_string(), configs::settings(c, rate)))
             .collect();
-        let mut attack_min = configs::settings("default_agc", rate);
-        attack_min.agc.attack_ms = 1.0;
-        let mut release_max = configs::settings("default_agc", rate);
-        release_max.agc.release_ms = 10_000.0; // restated by 005 T031 (max_gain_db removed)
-        cases.push(("agc attack min".into(), attack_min));
-        cases.push(("agc release max".into(), release_max));
+        let extremes: [Extreme; 6] = [
+            ("knee min", |a| a.knee_dbfs = -40.0),
+            ("knee max", |a| a.knee_dbfs = 3.0),
+            ("attack min", |a| a.attack_ms = 1.0),
+            ("attack max", |a| a.attack_ms = 50.0),
+            ("release min", |a| a.release_ms = 200.0),
+            ("release max", |a| a.release_ms = 10_000.0),
+        ];
+        for (label, set) in extremes {
+            let mut s = configs::settings("default_agc", rate);
+            set(&mut s.agc);
+            cases.push((format!("agc {label}"), s));
+        }
+        let mut clamp_off = configs::settings("default_agc", rate);
+        clamp_off.adc_clamp_enabled = false;
+        cases.push(("agc clamp off".into(), clamp_off));
         for (config, settings) in cases {
             let mut p = Pipeline::new(settings).unwrap();
             let c_settings = configs::c_settings(&settings);
@@ -143,15 +157,16 @@ fn processing_never_touches_the_heap() {
     }
 }
 
-/// A 1024-sample block: 900 samples of silence, then 124 samples of a 1 kHz tone at −8 dBFS
-/// (the default threshold + 10 dB). Blocks replay this buffer's prefix, so short blocks are
-/// pure silence that accumulates across blocks into pauses, and full-length blocks end with
-/// sound that resumes recording (engineering target, 003 R-15).
+/// A 1024-sample block: 900 samples of silence, then 124 samples of a 1 kHz tone at −30 dBFS
+/// (the default threshold + 10 dB; −40 dBFS since spec 005, A-022 revised). Blocks replay this
+/// buffer's prefix, so short blocks are pure silence that accumulates across blocks into
+/// pauses, and full-length blocks end with sound that resumes recording (engineering target,
+/// 003 R-15).
 fn vas_input(rate: u32) -> Vec<f32> {
     let mut x = vec![0.0f32; 900];
     x.extend(stimulus::tone(
         1000.0,
-        stimulus::amplitude(-8.0),
+        stimulus::amplitude(-30.0),
         f64::from(rate),
         124,
     ));

@@ -111,10 +111,11 @@ fn golden_check_catches_shifted_band_edges() {
     }
 }
 
-/// Spec 005 SC-007: a deliberate doubling of the default release, or a 3 dB shift of the knee,
-/// is caught by both a tolerance check and the AGC golden check. The mutants are built through
-/// the harness's `Make` factory with altered public settings (005 research R-08). Property
-/// names are restated by 005 T035 once T022–T024 define the rows.
+/// Spec 005 SC-007 (T035): a deliberate doubling of the default release, or a 3 dB shift of
+/// the knee, is caught by both a tolerance check and the AGC golden check. The mutants are
+/// built through the harness's `Make` factory with altered public settings (005 research R-08);
+/// the plan's `__with_limiter_mutation` hook was not needed and was not kept
+/// (contracts/rust-api.md › Test hooks).
 mod agc {
     use rr_dr60::{Pipeline, Settings};
     use rr_dr60_harness::agc_checks;
@@ -143,7 +144,7 @@ mod agc {
 
     #[test]
     fn release_change_is_caught() {
-        // restated by 005 T035: the row name is the FR-006 −1 dB release-time row.
+        // The FR-006 −1 dB release-time row: 2.72 s against 0.82–1.92 s.
         let failed = failed_properties(&agc_checks::check_fr006_release(48_000, &release_x2));
         assert!(
             failed.contains(&"release time to -1 dB"),
@@ -170,9 +171,10 @@ mod agc {
     }
 }
 
-/// Spec 003 SC-007: a deliberate change of the default hang time by 20 %, or of the threshold
-/// by 3 dB, is caught by both a tolerance check and the VAS golden check. The mutants are built
-/// through the harness's `Make` factory with altered public settings, with no hidden hooks.
+/// Spec 003 SC-007, kept by spec 005 SC-007 (T035): a deliberate change of the default hang
+/// time by 20 %, or of the threshold by 3 dB (−40 → −37 dBFS since spec 005, A-022 revised),
+/// is caught by both a tolerance check and the VAS golden check. The mutants are built through
+/// the harness's `Make` factory with altered public settings, with no hidden hooks.
 mod vas {
     use rr_dr60::{Pipeline, Settings};
     use rr_dr60_harness::golden;

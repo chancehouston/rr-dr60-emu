@@ -4,8 +4,11 @@
 //!   (FR-001, FR-003 – FR-009), the static-curve set included (only the limiter runs at the
 //!   host-rate tap, so the 46 five-second tones per rate are cheap; 1 s tones under
 //!   `cfg(coverage)`).
+//! - `settings_matrix_6k_48k`: the FR-011 settings matrix (knee −10 / +3 dBFS, attack 1 / 10 /
+//!   50 ms, release 200 / 4000 / 10 000 ms, one setting moved at a time) at the 6 kHz identity
+//!   rate and at 48 kHz (SC-002).
 //! - `full_matrix_all_rates` (ignored; release-mode CI): the defaults plus the FR-011 settings
-//!   matrix at all seven rates (the matrix checks arrive with T033).
+//!   matrix at all seven rates.
 //!
 //! Report: `cargo test -p rr_dr60_harness --test agc_matrix -- --nocapture`.
 
@@ -45,6 +48,19 @@ fn defaults_all_rates() {
     for rate in configs::all_rates() {
         r.extend(defaults_at(rate));
     }
+    finish(r);
+}
+
+/// 005 FR-011, SC-002: the settings matrix at the identity rate and at 48 kHz.
+#[test]
+fn settings_matrix_6k_48k() {
+    let mut r = Vec::new();
+    for rate in [6000, 48_000] {
+        for case in &agc_checks::matrix()[1..] {
+            r.extend(per_case(rate, case));
+        }
+    }
+    assert!(r.iter().all(|row| row.requirement == "005/FR-011"));
     finish(r);
 }
 

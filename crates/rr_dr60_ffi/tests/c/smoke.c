@@ -1,5 +1,6 @@
 /*
- * C smoke test for rr_dr60.h (001 tasks.md T038; spec 004 contracts/c-api.md, T029).
+ * C smoke test for rr_dr60.h (001 tasks.md T038; spec 004 contracts/c-api.md, T029; spec 005
+ * contracts/c-api.md › Smoke test additions, T032).
  * Build and run with crates/rr_dr60_ffi/tests/c/run_smoke.sh.
  */
 #include "rr_dr60.h"
@@ -40,19 +41,29 @@ int main(void) {
 
   RrDr60Settings s = rr_dr60_settings_default(FS);
   CHECK(s.struct_size == sizeof(RrDr60Settings), "struct_size %u", s.struct_size);
+  CHECK(s.struct_size == 80, "struct_size %u (must be 80 since 0.5, spec 005 contracts/c-api.md)", s.struct_size);
   CHECK(s.tap == RR_DR60_TAP_AFTER_PLAYBACK, "default tap");
-  CHECK(s.agc_enabled, "AGC on by default (spec 002, A-020)");
+  CHECK(s.agc_enabled, "limiter on by default (spec 005, A-020)");
+  CHECK(s.agc_knee_dbfs == 1.0f, "default knee %g dBFS (A-028)", (double)s.agc_knee_dbfs);
+  CHECK(s.agc_attack_ms == 3.0f, "default attack %g ms (A-034)", (double)s.agc_attack_ms);
+  CHECK(s.agc_release_ms == 1370.0f, "default release %g ms (A-035)", (double)s.agc_release_ms);
+  CHECK(s.reserved_agc_1 == 0.0f && s.reserved_agc_2 == 0.0f, "reserved AGC slots must default to 0");
+  CHECK(s.adc_clamp_enabled, "ADC clamp on by default (spec 005 FR-008, A-030)");
   CHECK(s.vas_enabled && s.vas_mode == RR_DR60_VAS_MODE_DROP, "VAS on, drop mode by default (spec 003, A-008)");
-  /* The spec 001 checks below run with the AGC and the VAS bypassed (spec 002 FR-018, 003 FR-020). */
-  s.agc_enabled = false;
+  CHECK(s.vas_threshold_dbfs == -40.0f, "default VAS threshold %g dBFS (A-022 revised by spec 005)",
+        (double)s.vas_threshold_dbfs);
+  /* The spec 001 checks below run with the VAS bypassed (003 FR-020). The limiter stays on: below
+   * its knee it is the identity (spec 005 FR-003), so the 1 kHz -20 dBFS level check sees only
+   * the two codec templates. */
   s.vas_enabled = false;
 
   RrDr60Pipeline *p = NULL;
   CHECK(rr_dr60_create(&s, &p) == RR_DR60_STATUS_OK && p != NULL, "create");
 
-  /* 1 kHz at -20 dBFS keeps its level within +/-0.2 dB of unity (001 US1 AS1, A-015). Spec 004
-   * keeps 1 kHz as the reference here: the two codec templates lose about 0.03 dB there combined,
-   * well inside the tolerance (004 FR-009). */
+  /* 1 kHz at -20 dBFS keeps its level within +/-0.2 dB of unity (001 US1 AS1, A-015) through the
+   * default pipeline with the limiter on (spec 005 FR-003: unity below the knee). Spec 004 keeps
+   * 1 kHz as the reference here: the two codec templates lose about 0.03 dB there combined, well
+   * inside the tolerance (004 FR-009). */
   CHECK(rr_dr60_process(p, in, out, N, NULL) == RR_DR60_STATUS_OK, "process");
   double gain_db = 20.0 * log10(rms(out, N / 2, N) / rms(in, N / 2, N));
   CHECK(fabs(gain_db) <= 0.2, "1 kHz gain %.3f dB (must be within +/-0.2 dB of unity, A-015)", gain_db);
@@ -71,6 +82,7 @@ int main(void) {
   s6.vas_enabled = false;
   s6.record_stage_enabled = false;
   s6.playback_stage_enabled = false;
+  s6.adc_clamp_enabled = false; /* bypass_all bypasses the clamp too (spec 005 FR-008) */
   RrDr60Pipeline *p6 = NULL;
   CHECK(rr_dr60_create(&s6, &p6) == RR_DR60_STATUS_OK && p6 != NULL, "create at 6000 Hz");
   CHECK(rr_dr60_process(p6, in6, out6, N6, NULL) == RR_DR60_STATUS_OK, "process at 6000 Hz");
@@ -78,6 +90,40 @@ int main(void) {
   uint32_t latency6 = 99;
   CHECK(rr_dr60_latency_samples(p6, &latency6) == RR_DR60_STATUS_OK && latency6 == 0,
         "6000 Hz bypassed latency %u samples (must be 0, 004 FR-002)", latency6);
+
+  /* Spec 005 FR-001, FR-003 (contracts/c-api.md): the AGC-isolated configuration (tap after AGC,
+   * every other stage off) returns a -20 dBFS tone bit-identical, at the host rate with latency 0:
+   * below the knee the limiter is the identity. */
+  RrDr60Settings agc_only = s6;
+  agc_only.agc_enabled = true;
+  agc_only.tap = RR_DR60_TAP_AFTER_AGC;
+  CHECK(rr_dr60_reconfigure(p6, &agc_only) == RR_DR60_STATUS_OK, "reconfigure to agc_only at 6000 Hz");
+  for (size_t i = 0; i < N6; i++) in6[i] = (float)(0.1 * sin(2.0 * PI * 1000.0 * (double)i / FS6 + PI / 6.0));
+  CHECK(rr_dr60_process(p6, in6, out6, N6, NULL) == RR_DR60_STATUS_OK, "process agc_only at 6000 Hz");
+  CHECK(memcmp(in6, out6, sizeof in6) == 0, "agc_only is not the identity below the knee (005 FR-003)");
+  CHECK(rr_dr60_latency_samples(p6, &latency6) == RR_DR60_STATUS_OK && latency6 == 0,
+        "after-AGC tap latency %u samples (must be 0, 005 FR-001)", latency6);
+
+  /* Spec 005 FR-008 (A-030): a +11 dBFS tone (10 dB over the knee) through the record path at
+   * the 6 kHz identity rate, tapped after the record stage and the clamp, peaks at exactly 1.0;
+   * with the clamp bypassed it exceeds 1.0. */
+  RrDr60Settings record_path = rr_dr60_settings_default(FS6);
+  record_path.vas_enabled = false;
+  record_path.tap = RR_DR60_TAP_AFTER_RECORD;
+  CHECK(rr_dr60_reconfigure(p6, &record_path) == RR_DR60_STATUS_OK, "reconfigure to the record path at 6000 Hz");
+  static float loud6[FS6], loud_out6[FS6];
+  for (size_t i = 0; i < FS6; i++)
+    loud6[i] = (float)(3.5481 * sin(2.0 * PI * 1000.0 * (double)i / FS6 + PI / 6.0)); /* +11 dBFS, peak phase */
+  CHECK(rr_dr60_process(p6, loud6, loud_out6, FS6, NULL) == RR_DR60_STATUS_OK, "process +11 dBFS at 6000 Hz");
+  float peak6 = 0.0f;
+  for (size_t i = 0; i < FS6; i++) peak6 = fabsf(loud_out6[i]) > peak6 ? fabsf(loud_out6[i]) : peak6;
+  CHECK(peak6 == 1.0f, "clamped record-path peak %g (must be exactly 1.0, 005 FR-008)", (double)peak6);
+  record_path.adc_clamp_enabled = false;
+  CHECK(rr_dr60_reconfigure(p6, &record_path) == RR_DR60_STATUS_OK, "reconfigure with the clamp off");
+  CHECK(rr_dr60_process(p6, loud6, loud_out6, FS6, NULL) == RR_DR60_STATUS_OK, "process +11 dBFS, clamp off");
+  peak6 = 0.0f;
+  for (size_t i = 0; i < FS6; i++) peak6 = fabsf(loud_out6[i]) > peak6 ? fabsf(loud_out6[i]) : peak6;
+  CHECK(peak6 > 1.0f, "un-clamped record-path peak %g (must exceed 1.0, 005 FR-008)", (double)peak6);
   rr_dr60_destroy(p6);
 
   /* Error table from contracts/c-api.md (rows that do not need reconfigure). */
@@ -126,17 +172,19 @@ int main(void) {
   CHECK(rr_dr60_latency_samples(p, &latency_after) == RR_DR60_STATUS_OK && latency_after < latency,
         "bypass_all latency %u should be below default %u", latency_after, latency);
 
-  /* Spec 002 AGC (US2 AS5, AS6; contracts/c-api.md). */
+  /* Spec 005 limiter settings (FR-010, FR-015; contracts/c-api.md). */
   RrDr60Settings agc = rr_dr60_settings_default(FS);
-  agc.vas_enabled = false; /* the spec 002 default (spec 003 FR-020) */
+  agc.vas_enabled = false; /* the spec 005 `default_agc` configuration (spec 003 FR-020) */
   agc.agc_release_ms = 3000.0f;
   agc.tap = RR_DR60_TAP_AFTER_AGC;
   RrDr60SettingField field = RR_DR60_SETTING_FIELD_TAP;
   CHECK(rr_dr60_settings_validate(&agc, &field) == RR_DR60_STATUS_OK &&
             field == RR_DR60_SETTING_FIELD_NONE,
-        "validate(AGC release 3000 ms, tap after AGC)");
-  CHECK(rr_dr60_reconfigure(p, &agc) == RR_DR60_STATUS_OK, "reconfigure to AGC settings");
-  CHECK(rr_dr60_process(p, in, out, N, NULL) == RR_DR60_STATUS_OK, "process with AGC");
+        "validate(release 3000 ms, tap after AGC)");
+  CHECK(rr_dr60_reconfigure(p, &agc) == RR_DR60_STATUS_OK, "reconfigure to limiter settings");
+  CHECK(rr_dr60_process(p, in, out, N, NULL) == RR_DR60_STATUS_OK, "process with the limiter");
+  CHECK(rr_dr60_latency_samples(p, &latency_after) == RR_DR60_STATUS_OK && latency_after == 0,
+        "after-AGC tap latency %u at 48 kHz (must be 0, 005 FR-001)", latency_after);
   agc.agc_attack_ms = 0.0f;
   CHECK(rr_dr60_settings_validate(&agc, &field) == RR_DR60_STATUS_INVALID_SETTING &&
             field == RR_DR60_SETTING_FIELD_AGC_ATTACK_MS,
@@ -144,14 +192,32 @@ int main(void) {
   q = sentinel;
   CHECK(rr_dr60_create(&agc, &q) == RR_DR60_STATUS_INVALID_SETTING && q == sentinel,
         "create(attack 0 ms)");
+  agc = rr_dr60_settings_default(FS);
+  agc.agc_knee_dbfs = 4.0f; /* above the +3 dBFS cap (005 FR-010) */
+  CHECK(rr_dr60_settings_validate(&agc, &field) == RR_DR60_STATUS_INVALID_SETTING &&
+            field == RR_DR60_SETTING_FIELD_AGC_KNEE_DBFS,
+        "validate(knee 4 dBFS) names the field");
+  q = sentinel;
+  CHECK(rr_dr60_create(&agc, &q) == RR_DR60_STATUS_INVALID_SETTING && q == sentinel, "create(knee 4 dBFS)");
+  /* A struct from the 0.4 layout (72 bytes): rejected as STRUCT_SIZE after reading only its
+   * first field (spec 005 contracts/c-api.md). */
+  agc = rr_dr60_settings_default(FS);
+  agc.struct_size = 72;
+  CHECK(rr_dr60_settings_validate(&agc, &field) == RR_DR60_STATUS_INVALID_ARGUMENT &&
+            field == RR_DR60_SETTING_FIELD_STRUCT_SIZE,
+        "validate(struct_size = 72) names STRUCT_SIZE");
+  q = sentinel;
+  CHECK(rr_dr60_create(&agc, &q) == RR_DR60_STATUS_INVALID_ARGUMENT && q == sentinel, "create(struct_size = 72)");
 
   /* Spec 003 VAS (US2 AS7; contracts/c-api.md rule 8): drop mode, events, mute mode, the
-   * "after VAS" tap, and an invalid sensitivity. VAS-isolated configuration: AGC and both
-   * band-limit stages off. Burst 1 s, gap 5 s, burst 1 s, 1 kHz at -8 dBFS (threshold + 10 dB). */
+   * "after VAS" tap, and an invalid sensitivity. VAS-isolated configuration: the limiter, both
+   * band-limit stages and the clamp off. Burst 1 s, gap 5 s, burst 1 s, 1 kHz at -30 dBFS
+   * (threshold + 10 dB; the threshold is -40 dBFS since spec 005, A-022 revised). */
   RrDr60Settings vas = rr_dr60_settings_default(FS);
   vas.agc_enabled = false;
   vas.record_stage_enabled = false;
   vas.playback_stage_enabled = false;
+  vas.adc_clamp_enabled = false;
   vas.tap = RR_DR60_TAP_AFTER_VAS;
   CHECK(rr_dr60_settings_validate(&vas, &field) == RR_DR60_STATUS_OK && field == RR_DR60_SETTING_FIELD_NONE,
         "validate(tap after VAS)");
@@ -161,7 +227,7 @@ int main(void) {
   static float vin[7 * FS], vout[7 * FS];
   for (size_t i = 0; i < 7 * FS; i++) {
     int burst = i < (size_t)FS || i >= (size_t)(6 * FS);
-    vin[i] = burst ? (float)(0.398 * sin(2.0 * PI * 1000.0 * (double)(i % FS) / FS)) : 0.0f;
+    vin[i] = burst ? (float)(0.0316 * sin(2.0 * PI * 1000.0 * (double)(i % FS) / FS)) : 0.0f; /* -30 dBFS */
   }
   size_t capacity = 0;
   CHECK(rr_dr60_max_events(p, 7 * FS, &capacity) == RR_DR60_STATUS_OK && capacity >= 1, "max_events");

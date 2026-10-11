@@ -579,24 +579,6 @@ impl Pipeline {
         p.latency = latency_samples(&plan, &settings, &p.chain);
         Ok(p)
     }
-
-    /// Test-only (hidden): a pipeline whose limiter has its detector threshold shifted by
-    /// `knee_shift_db` and its release scaled by `release_scale` after construction, for the
-    /// spec 005 SC-007 mutation tests (contracts/rust-api.md › Test hooks).
-    ///
-    /// # Errors
-    ///
-    /// As [`Pipeline::new`].
-    #[doc(hidden)]
-    pub fn __with_limiter_mutation(
-        settings: Settings,
-        knee_shift_db: f64,
-        release_scale: f64,
-    ) -> Result<Self, Error> {
-        let mut p = Self::new(settings)?;
-        p.limiter.mutate(knee_shift_db, release_scale);
-        Ok(p)
-    }
 }
 
 #[cfg(any(test, feature = "__test-hooks"))]

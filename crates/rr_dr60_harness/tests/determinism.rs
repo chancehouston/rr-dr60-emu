@@ -96,27 +96,31 @@ fn seed_does_not_change_output() {
     assert_eq!(one_block(a, &x), one_block(b, &x)); // FR-009
 }
 
-/// Spec 002 SC-003, FR-013: the AGC is block-partition invariant. 100 random partitions
-/// (including sizes 0 and 1) of each AGC golden stimulus, for the AGC configurations and two
-/// extreme settings, at the 6 kHz identity rate (where the stimuli are shortest; spec 004
-/// FR-002), plus 10 partitions at 48 kHz.
+/// Spec 005 FR-014, SC-004: the limiter is block-partition invariant. 100 random partitions
+/// (including sizes 0 and 1) of each AGC golden stimulus through `agc_only` (the host-rate tap,
+/// where the limiter's own output and state are observed) at 48 kHz and at the 6 kHz identity
+/// rate, and through `default_agc` at 6 kHz; 10 through `default_agc` at 48 kHz and for the
+/// attack-minimum and release-maximum settings (the same code paths through the converters).
+/// Under coverage instrumentation 10 and 2 (003 T050 pattern).
 #[test]
 fn agc_partitions() {
     let mut rng = Pcg32::new(0x0D60, 4);
+    let (many, few) = if cfg!(coverage) { (10, 2) } else { (100, 10) };
     let cases = |rate: u32| {
         let mut attack_min = configs::settings("default_agc", rate);
         attack_min.agc.attack_ms = 1.0;
         let mut release_max = configs::settings("default_agc", rate);
         release_max.agc.release_ms = 10_000.0;
+        let full = if rate == 6000 { many } else { few };
         [
-            ("agc_only", configs::settings("agc_only", rate)),
-            ("default_agc", configs::settings("default_agc", rate)),
-            ("attack min", attack_min),
-            ("release max", release_max),
+            ("agc_only", configs::settings("agc_only", rate), many),
+            ("default_agc", configs::settings("default_agc", rate), full),
+            ("attack min", attack_min, few),
+            ("release max", release_max, few),
         ]
     };
-    for (rate, partitions) in [(6000, 100), (48_000, 10)] {
-        for (name, s) in cases(rate) {
+    for rate in [6000, 48_000] {
+        for (name, s, partitions) in cases(rate) {
             for stim in golden::AGC_STIMULI {
                 let x = golden::stimulus(stim, rate);
                 let want = one_block(s, &x);
