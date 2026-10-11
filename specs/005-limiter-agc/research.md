@@ -104,7 +104,7 @@ Decisions for feature 005. They revise [spec 002's research](../002-agc/research
 
 ## R-12 Performance and CI (SC-005, 001 FR-022)
 
-- Per host sample with the limiter on: one `exp`, about 20 flops, one `ln` on charging samples only; the Hilbert FIR's 32 MACs per device sample disappear. Expected: faster than 0.4 (368× at 48 kHz). The `op-count` test's per-sample bound is restated. No CI workflow change; the 42 + 63 golden entries keep their sizes. Coverage: the new modules are fully exercised by the unit tests; the retired Hilbert tests are deleted.
+- Per host sample with the limiter on: one `exp`, about 20 flops, one `ln` on charging samples only; the Hilbert FIR's 32 MACs per device sample disappear. Expected: faster than 0.4 (368× at 48 kHz). **0.4 baseline (T002, 2026-10-11, this machine)**: `cargo test --all-features` 63.4 s wall; the timing test's three configurations 59.6 / 64.6 / 64.5 ns per sample = 357× / 323× / 318× real time at 48 kHz; default latency 1 / 81 / 162 / 444 / 483 / 887 / 966 samples at the seven rates (unchanged by this feature except the "after AGC" tap, which becomes 0). The `op-count` test's per-sample bound is restated. No CI workflow change; the 42 + 63 golden entries keep their sizes. Coverage: the new modules are fully exercised by the unit tests; the retired Hilbert tests are deleted.
 
 ## R-13 Engineering-target constants (FR-017; SC-008)
 
