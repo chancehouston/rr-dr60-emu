@@ -34,8 +34,9 @@ pub const VAS_CONFIGS: [&str; 3] = ["default_vas", "vas_mute", "vas_only"];
 /// (off in `bypass_all`): `"default"` is the spec 001 default. `"record_only_clamp_off"` is
 /// `record_only` with the clamp off (spec 005 FR-008). The AGC names ([`AGC_CONFIGS`]) have
 /// the VAS bypassed; `"agc_only"` is the limiter alone at the host-rate tap, `"default_agc"`
-/// the 0.5 default with the VAS off. The VAS-isolated names have the limiter, both stages and
-/// the clamp off. The real 0.5 default (everything on) is `"default_vas"`.
+/// the 0.5 default with the VAS off, and `"record_path_agc"` the latter tapped after the record
+/// stage and the clamp (FR-007, FR-008). The VAS-isolated names have the limiter, both stages
+/// and the clamp off. The real 0.5 default (everything on) is `"default_vas"`.
 ///
 /// # Panics
 ///
@@ -89,6 +90,12 @@ pub fn settings(name: &str, host_rate_hz: u32) -> Settings {
             s.tap = Tap::AfterAgc;
         }
         "default_agc" => no_vas(&mut s),
+        // Spec 005 FR-007, FR-008: the record path with the limiter on, observed at the device
+        // rate: limiter, record stage and clamp on, VAS off, tap after the record stage.
+        "record_path_agc" => {
+            no_vas(&mut s);
+            s.tap = Tap::AfterRecord;
+        }
         // Spec 003: the VAS-isolated configuration (limiter, stages and clamp bypassed).
         "vas_only" | "vas_mute" => {
             no_agc(&mut s);
@@ -218,6 +225,10 @@ mod tests {
         assert_eq!(
             row("default_agc"),
             (on, on, on, off, on, Tap::AfterPlayback)
+        );
+        assert_eq!(
+            row("record_path_agc"),
+            (on, on, on, off, on, Tap::AfterRecord)
         );
         // Spec 003 names: the VAS-isolated configuration has the clamp off too.
         assert_eq!(row("vas_only"), (off, off, off, on, off, Tap::AfterVas));

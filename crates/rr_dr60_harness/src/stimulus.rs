@@ -4,7 +4,7 @@
 //! `rr_dr60_detmath` and integer arithmetic, never the platform math library. That's because
 //! stimuli feed the golden files (FR-014, FR-021). This module stays under the clippy R-04 ban.
 
-use rr_dr60_detmath::{PI, TAU, bessel_i0, exp, ln, sin, sqrt};
+use rr_dr60_detmath::{PI, TAU, bessel_i0, cos, exp, ln, sin, sqrt};
 
 /// Fractional part of a non-negative value, using basic operations only.
 fn frac(x: f64) -> f64 {
@@ -59,6 +59,66 @@ pub fn aligned_phase(freq_hz: f64, host_hz: u32, bypass_latency_samples: u32) ->
     let period = TAU * freq_hz / f64::from(rr_dr60::DEVICE_RATE_HZ); // A-026
     let raw = TAU / 4.0 + TAU * freq_hz * d / f64::from(host_hz);
     raw - (raw / period) as u64 as f64 * period
+}
+
+/// The starting phase that puts a **host** sample on the positive peak of a tone at `freq_hz`
+/// (spec 005 research R-08, plan review P8): `φ = (π/2) mod (2π·freq/host)`. Used by every
+/// stimulus that feeds the limiter at the host-rate "after AGC" tap, where there is no device
+/// grid: for 1 kHz this is π/6 at 6 kHz and 0 at 8, 16, 48 and 96 kHz, whereas spec 004's
+/// [`aligned_phase`] gives π/6 at every rate and misses the 8 kHz peak by 15° (the ceiling then
+/// reads 0.3 dB low). Chain tests at the default output keep [`aligned_phase`]. Engineering
+/// target (005 FR-017).
+pub fn peak_phase(freq_hz: f64, host_hz: u32) -> f64 {
+    let period = TAU * freq_hz / f64::from(host_hz);
+    let raw = PI / 2.0;
+    raw - (raw / period) as u64 as f64 * period
+}
+
+/// The spec 005 FR-007 asymmetric stimulus: `sign · A · (sin ωt + 0.5 cos 2ωt)` at 1 kHz,
+/// whose peaks are +0.75·A and −1.5·A (6 dB apart), with `A = 10^(level/20) / 1.5` so the
+/// larger peak sits at `level_dbfs_of_larger_peak` and the smaller 6 dB lower. With `sign`
+/// +1 the larger peak is negative (not sensed, A-036); with −1 it is positive (sensed).
+/// `phase_rad` is the fundamental's starting phase: [`peak_phase`] puts a host sample on the
+/// 270° peak (and on the 30° / 150° peaks) at every rate whose grid can hold it, where phase 0
+/// misses the 6 kHz grid's peak by 30° and reads it 2.6 dB low (005 R-08). Bit-reproducible
+/// (detmath).
+pub fn asymmetric(
+    level_dbfs_of_larger_peak: f64,
+    sign: f64,
+    fs: f64,
+    len: usize,
+    phase_rad: f64,
+) -> Vec<f32> {
+    let a = amplitude(level_dbfs_of_larger_peak) / 1.5; // 005 FR-007: peaks +0.75 / −1.5
+    (0..len)
+        .map(|n| {
+            let theta = TAU * frac(1000.0 * n as f64 / fs) + phase_rad;
+            (sign * a * (sin(theta) + 0.5 * cos(2.0 * theta))) as f32
+        })
+        .collect()
+}
+
+/// Two tones summed, each at its own level (dBFS), both at phase 0 (spec 005 FR-007
+/// bandwidth test: 1 kHz at −20 dBFS plus 6 kHz at +6 dBFS).
+pub fn two_tone(
+    f1: f64,
+    level1_dbfs: f64,
+    f2: f64,
+    level2_dbfs: f64,
+    fs: f64,
+    len: usize,
+) -> Vec<f32> {
+    let (a1, a2) = (amplitude(level1_dbfs), amplitude(level2_dbfs));
+    (0..len)
+        .map(|n| (tone_sample(f1, a1, fs, n) + tone_sample(f2, a2, fs, n)) as f32)
+        .collect()
+}
+
+/// A phase-continuous 1 kHz level staircase: each level in `levels_dbfs` for `seg_s` seconds,
+/// starting at `phase_rad` (spec 005 golden stimuli, research R-10; the AGC checks' steps).
+pub fn staircase(levels_dbfs: &[f64], seg_s: f64, fs: f64, phase_rad: f64) -> Vec<f32> {
+    let durations: Vec<f64> = levels_dbfs.iter().map(|_| seg_s).collect();
+    step_at_phase(1000.0, levels_dbfs, &durations, phase_rad, fs)
 }
 
 /// A unit impulse: 1.0 at n = 0, otherwise 0.
@@ -488,6 +548,59 @@ mod tests {
         );
         let x = step_at_phase(1000.0, &[0.0], &[0.01], PI / 6.0, 6000.0);
         assert!((f64::from(x[1]) - 1.0).abs() < 1e-7, "{}", x[1]);
+    }
+
+    /// 005 T020 (research R-08): the host-grid peak phase, the asymmetric stimulus's peaks,
+    /// the two-tone sum and the staircase.
+    #[test]
+    fn peak_phase_asymmetric_two_tone_and_staircase() {
+        assert!((peak_phase(1000.0, 6000) - PI / 6.0).abs() < 1e-12);
+        assert_eq!(peak_phase(1000.0, 8000), 0.0);
+        assert_eq!(peak_phase(1000.0, 48_000), 0.0);
+        assert_eq!(peak_phase(1000.0, 96_000), 0.0);
+        for rate in [6000u32, 8000, 16_000, 44_100, 48_000, 88_200, 96_000] {
+            let x = tone_at_phase(
+                1000.0,
+                0.0,
+                peak_phase(1000.0, rate),
+                f64::from(rate),
+                rate as usize,
+            );
+            let peak = x.iter().fold(f32::MIN, |m, &v| m.max(v));
+            assert!(
+                (f64::from(peak) - 1.0).abs() < 1e-6,
+                "{rate} Hz: peak {peak}"
+            );
+        }
+        let fs = 48_000.0;
+        let x = asymmetric(4.0, 1.0, fs, 48_000, 0.0);
+        let max = x.iter().fold(f32::MIN, |m, &v| m.max(v));
+        let min = x.iter().fold(f32::MAX, |m, &v| m.min(v));
+        assert!(
+            (f64::from(max) - amplitude(4.0) * 0.5).abs() < 1e-6,
+            "max {max}"
+        );
+        assert!((f64::from(min) + amplitude(4.0)).abs() < 1e-6, "min {min}");
+        let y = asymmetric(4.0, -1.0, fs, 48_000, 0.0);
+        assert!(x.iter().zip(&y).all(|(a, b)| *a == -*b));
+        let z = asymmetric(4.0, 1.0, 6000.0, 6000, peak_phase(1000.0, 6000));
+        let min6 = z.iter().fold(f32::MAX, |m, &v| m.min(v));
+        assert!(
+            (f64::from(min6) + amplitude(4.0)).abs() < 1e-6,
+            "6 kHz min {min6}"
+        );
+        let t = two_tone(1000.0, -20.0, 6000.0, 6.0, fs, 48_000);
+        let peak = t.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+        assert!(
+            (f64::from(peak) - (amplitude(-20.0) + amplitude(6.0))).abs() < 0.01,
+            "{peak}"
+        );
+        let s = staircase(&[-20.0, 0.0, 3.0], 0.4, 6000.0, 0.0);
+        assert_eq!(s.len(), 3 * 2400);
+        assert_eq!(
+            s,
+            step(1000.0, &[-20.0, 0.0, 3.0], &[0.4, 0.4, 0.4], 6000.0)
+        );
     }
 
     #[test]

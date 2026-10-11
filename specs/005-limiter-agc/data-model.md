@@ -106,7 +106,8 @@ The harness's `configs.rs` table (`configs_match_data_model_table` asserts it). 
 | `bypass_all` (spec 001) | off | off | **off** | off | off | AfterPlayback | 001 identity checks |
 | `record_only_clamp_off` (new) | off | on | off | off | off | AfterPlayback | FR-008 (the un-clamped peak exceeds 1.0) |
 | `agc_only` (the AGC-isolated configuration) | on | off | off | off | off | **AfterAgc** (host rate, latency 0) | every limiter check (FR-003 – FR-007, FR-011), `golden-agc-v1.json` |
-| `default_agc` | on | on | on | off | on | AfterPlayback | FR-007 bandwidth, FR-008 duty, FR-009 reports, `golden-agc-v1.json` |
+| `default_agc` | on | on | on | off | on | AfterPlayback | FR-007 bandwidth, FR-009 reports, `golden-agc-v1.json` |
+| `record_path_agc` (new, T023) | on | on | on | off | off | AfterRecord | FR-007 clamp rows, FR-008 clipped duty (the device-rate output, where samples are exactly ±1.0) |
 | `default_vas` (the 0.5 default) | on | on | on | on | on | AfterPlayback | FR-012 chain scenarios, 003 checks, `golden-vas-v1.json` |
 | `vas_only`, `vas_mute` (VAS-isolated) | off | off | off | on | off | AfterVas | 003 checks, `golden-vas-v1.json` |
 | retired: `agc_isolated_after_playback`, `agc_tap_stages_on` | — | — | — | — | — | — | removed with 002 R-11 (research R-08) |

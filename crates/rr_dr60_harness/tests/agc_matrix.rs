@@ -1,15 +1,13 @@
 //! Spec 005 limiter measurement matrix (tasks.md T018; research R-08; SC-002).
 //!
-//! - `defaults_all_rates`: every limiter check at the device defaults, at all seven host rates.
-//! - `settings_matrix_6k_48k`: the FR-011 settings matrix at the 6 kHz identity rate and at
-//!   48 kHz.
-//! - `full_matrix_all_rates` (ignored; release-mode CI): the whole matrix at all seven rates.
+//! - `defaults_all_rates`: every limiter check at the device defaults, at all seven host rates
+//!   (FR-001, FR-003 – FR-009), the static-curve set included (only the limiter runs at the
+//!   host-rate tap, so the 46 five-second tones per rate are cheap; 1 s tones under
+//!   `cfg(coverage)`).
+//! - `full_matrix_all_rates` (ignored; release-mode CI): the defaults plus the FR-011 settings
+//!   matrix at all seven rates (the matrix checks arrive with T033).
 //!
 //! Report: `cargo test -p rr_dr60_harness --test agc_matrix -- --nocapture`.
-//!
-//! **Phase 2 state (005 T016):** the check functions are stubs that return no rows, so each
-//! test asserts that it measured something and is **expected red** until T018 and T021–T024
-//! (the golden window). Restated by 005 T018.
 
 use rr_dr60_harness::agc_checks::{self, Case};
 use rr_dr60_harness::checks::{MeasurementResult, assert_all, standard};
@@ -36,10 +34,7 @@ fn defaults_at(rate: u32) -> Vec<MeasurementResult> {
 
 fn finish(results: Vec<MeasurementResult>) {
     report::print(&results);
-    assert!(
-        !results.is_empty(),
-        "no measurements: the 005 checks are still stubs (T021–T024, T033)"
-    );
+    assert!(!results.is_empty(), "no measurements");
     assert_all(&results);
 }
 
@@ -54,18 +49,7 @@ fn defaults_all_rates() {
 }
 
 #[test]
-fn settings_matrix_6k_48k() {
-    let mut r = Vec::new();
-    for rate in [6000, 48_000] {
-        for case in &agc_checks::matrix()[1..] {
-            r.extend(per_case(rate, case));
-        }
-    }
-    finish(r);
-}
-
-#[test]
-#[ignore = "slow: full settings matrix at all seven rates; run in release mode (CI check job)"]
+#[ignore = "slow: defaults plus the settings matrix at all seven rates; run in release mode (CI check job)"]
 fn full_matrix_all_rates() {
     let mut r = Vec::new();
     for rate in configs::all_rates() {

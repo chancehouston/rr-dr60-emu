@@ -1,148 +1,102 @@
-//! Spec 002 User Story 1: hear the RR-DR60's auto-gain character (tasks.md T021).
+//! Spec 005 User Story 1: hear the RR-DR60's limiter (tasks.md T017; spec › US1 AS1–AS7).
 //!
-//! Standalone: uses only the pipeline and the Phase 2 analysis helpers, not the US3 checks
-//! (Principle VII). AGC measurements use the AGC-isolated configuration `agc_only`.
+//! One test per acceptance scenario, each running the Phase 3 check functions at the 6 kHz
+//! identity rate and at 48 kHz (AS6 at 48 kHz only, AS7 at 6 kHz only) and asserting every row
+//! passes. Every limiter row is measured at the host-rate "after AGC" tap of the AGC-isolated
+//! configuration (`agc_only`), with the exact per-sample gain (005 research R-08).
+//! Report: `cargo test -p rr_dr60_harness --test us1_agc -- --nocapture`.
 
-use rr_dr60::{Pipeline, SUPPORTED_HOST_RATES, Settings, Tap};
-use rr_dr60_harness::analysis::{db, gain_trajectory_exact, single_bin};
-use rr_dr60_harness::{configs, stimulus};
+use rr_dr60_harness::agc_checks;
+use rr_dr60_harness::checks::{MeasurementResult, assert_all, standard};
+use rr_dr60_harness::report;
 
-const FS: u32 = 48_000;
+const RATES: [u32; 2] = [6000, 48_000];
 
-fn process(settings: Settings, x: &[f32]) -> Vec<f32> {
-    let mut y = vec![0.0; x.len()];
-    let produced = Pipeline::new(settings)
-        .unwrap()
-        .process(x, &mut y)
-        .unwrap()
-        .produced;
-    y.truncate(produced);
-    y
+fn finish(results: Vec<MeasurementResult>) {
+    report::print(&results);
+    assert!(!results.is_empty(), "no measurements");
+    assert_all(&results);
 }
 
-/// Steady 1 kHz output level in dBFS (AES17 peak amplitude), over the last 0.25 s.
-fn steady_level(settings: Settings, input_dbfs: f64) -> f64 {
-    let fs = f64::from(settings.host_rate_hz);
-    let x = stimulus::step(1000.0, &[input_dbfs], &[1.0], fs);
-    let y = process(settings, &x);
-    let len = (0.25 * fs) as usize;
-    db(single_bin(&y, 1000.0, fs, y.len() - len, len).norm())
+fn at(rates: &[u32], check: impl Fn(u32) -> Vec<MeasurementResult>) -> Vec<MeasurementResult> {
+    rates.iter().flat_map(|&r| check(r)).collect()
 }
 
-/// US1 AS1 (002 FR-004, A-017): −40 / −10 / 0 dBFS in → −13 / −10 / −9 dBFS out, ±1 dB.
+/// US1 AS1 (FR-003): input whose peaks stay 1.5 dB below the knee is returned bit for bit; a
+/// bypassed limiter too.
 #[test]
-fn as1_regulation() {
-    for (input, want) in [(-40.0, -13.0), (-10.0, -10.0), (0.0, -9.0)] {
-        let got = steady_level(configs::settings("agc_only", FS), input);
-        eprintln!("US1 AS1: {input} dBFS in → {got:.3} dBFS out (want {want} ± 1)");
-        assert!(
-            (got - want).abs() <= 1.0,
-            "{input} dBFS → {got:.3} dBFS, want {want} ± 1"
-        );
-    }
+fn as1_passthrough_below_the_knee() {
+    finish(at(&RATES, |r| {
+        agc_checks::check_fr003_passthrough(r, &standard)
+    }));
 }
 
-/// US1 AS2 (002 FR-005, A-017): −60 dBFS is below the regulated range: +40 dB → −20 dBFS.
+/// US1 AS2 (FR-004): the static curve from −60 to +20 dBFS, the ceiling ±0.5 dB above the
+/// knee + 1.5 dB, the knee at +2 ± 2 dBFS by bisection, the knee band reported.
 #[test]
-fn as2_maximum_gain() {
-    let got = steady_level(configs::settings("agc_only", FS), -60.0);
-    eprintln!("US1 AS2: −60 dBFS in → {got:.3} dBFS out (want −20 ± 1)");
-    assert!(
-        (got + 20.0).abs() <= 1.0,
-        "−60 dBFS → {got:.3} dBFS, want −20 ± 1"
-    );
+fn as2_static_curve_and_knee() {
+    finish(at(&RATES, |r| agc_checks::check_fr004_static(r, &standard)));
 }
 
-/// US1 AS3 (002 FR-006, A-018): attack 10 ms ± 2 ms and release 1.0 s ± 0.2 s at 48 kHz.
-///
-/// Gain trajectory = output ÷ a reference run with the AGC bypassed, sample by sample, where
-/// the reference is at least 0.1 × the tone amplitude (research.md R-11, as corrected in
-/// T026). Both runs share the rate conversion, so the ratio is the AGC's gain at every host
-/// sample, already latency-aligned. An FFT envelope reads ≈1.6 ms long here at every rate,
-/// because the 1 kHz tone is too slow a carrier for a 3.7 ms time constant.
+/// US1 AS3 (FR-005): the dead time of a −20 → +11 dBFS step is 3 ± 1.5 ms, the gain then
+/// settles within 1 ms without over-attenuating by more than 1 dB; the 2 dB-over step takes
+/// at least 3× longer.
 #[test]
-fn as3_attack_and_release() {
-    let fs = f64::from(FS);
-    let ms = |t: f64| (t * fs / 1000.0) as usize;
-    let segments = [(-40.0, 0.5), (-10.0, 0.3), (-40.0, 2.0)];
-    let x = stimulus::step(1000.0, &segments.map(|s| s.0), &segments.map(|s| s.1), fs);
-    let on = configs::settings("agc_only", FS);
-    let mut off = on;
-    off.agc.enabled = false;
-    let (y, y_ref) = (process(on, &x), process(off, &x));
-    let lat = Pipeline::new(on).unwrap().latency_samples() as usize;
-    let (s1, s2) = (ms(500.0) + lat, ms(800.0) + lat);
-    // Gate on the low level so both segments are measured.
-    let traj = gain_trajectory_exact(&y_ref, &y, stimulus::amplitude(-40.0));
-    let segment = |from: usize, to: usize| -> Vec<(usize, f64)> {
-        traj.iter()
-            .filter(|&&(n, _)| n >= from && n < to)
-            .map(|&(n, g)| (n - from, g))
+fn as3_dead_time_then_limiting() {
+    finish(at(&RATES, |r| {
+        agc_checks::check_fr005_attack(r, &standard)
+            .into_iter()
+            .filter(|row| !row.property.contains("armed"))
             .collect()
-    };
-    let mean = |t: &[(usize, f64)]| t.iter().map(|p| p.1).sum::<f64>() / t.len() as f64;
-
-    let before = mean(&segment(s1 - ms(50.0), s1 - ms(10.0)));
-    let up = segment(s1, s2 - ms(10.0));
-    let fin_up = mean(&segment(s2 - ms(50.0), s2 - ms(10.0)));
-    let attack_ms = settle(&up, fin_up, before - fin_up) as f64 / fs * 1000.0;
-    eprintln!("US1 AS3: attack {attack_ms:.2} ms (want 10 ± 2)");
-    assert!((attack_ms - 10.0).abs() <= 2.0, "attack {attack_ms:.2} ms");
-
-    let down = segment(s2, y.len() - ms(50.0));
-    let fin_down = mean(&segment(y.len() - ms(150.0), y.len() - ms(50.0)));
-    let release_s = settle(&down, fin_down, fin_down - fin_up) as f64 / fs;
-    eprintln!("US1 AS3: release {release_s:.4} s (want 1.0 ± 0.2)");
-    assert!((release_s - 1.0).abs() <= 0.2, "release {release_s:.4} s");
+    }));
 }
 
-/// Samples from the start of the trajectory to just after the last point outside the
-/// settling band (2/27 of the excursion, spec 002 Overview).
-fn settle(traj: &[(usize, f64)], final_db: f64, excursion: f64) -> usize {
-    let band = excursion.abs() * 2.0 / 27.0;
-    traj.iter()
-        .rev()
-        .find(|(_, v)| (v - final_db).abs() > band)
-        .map_or(0, |&(n, _)| n + 1)
-}
-
-/// US1 AS4 (002 FR-007): digital silence in gives exact zeros out, isolated and by default.
+/// US1 AS4 (FR-005): 2 s after a loud burst the limiter is armed and the dead time is ≤ 0.5 ms.
 #[test]
-fn as4_silence() {
-    for config in ["agc_only", "default_agc"] {
-        let y = process(
-            configs::settings(config, FS),
-            &stimulus::silence(FS as usize),
-        );
-        assert!(y.iter().all(|&v| v.to_bits() == 0), "{config}");
-    }
+fn as4_armed_dead_time() {
+    finish(at(&RATES, |r| {
+        agc_checks::check_fr005_attack(r, &standard)
+            .into_iter()
+            .filter(|row| row.property.contains("armed"))
+            .collect()
+    }));
 }
 
-/// US1 AS5: the spec 002 default pipeline (AGC and both band-limit stages on, VAS bypassed per
-/// spec 003 FR-020) gives −13 dBFS ±
-/// 1.2 dB for a −40 dBFS 1 kHz tone (AGC ±1 dB plus the stages' ±0.2 dB, A-015).
+/// US1 AS5 (FR-006): after a 1 s burst 10 dB over the knee the gain is back within 1 dB of
+/// unity after 1.37 s ± 40 %, reading about −6 dB at 0.3 s and −3 dB at 0.75 s.
 #[test]
-fn as5_default_pipeline() {
-    let got = steady_level(configs::settings("default_agc", FS), -40.0);
-    eprintln!("US1 AS5: default pipeline, −40 dBFS in → {got:.3} dBFS out (want −13 ± 1.2)");
-    assert!((got + 13.0).abs() <= 1.2, "default pipeline: {got:.3} dBFS");
+fn as5_release_trajectory() {
+    finish(at(&RATES, |r| {
+        agc_checks::check_fr006_release(r, &standard)
+    }));
 }
 
-/// 002 FR-010: the AGC adds no latency, for every tap at every rate.
+/// US1 AS6 (FR-007): at 48 kHz a 6 kHz tone at +6 dBFS pulls a −20 dBFS probe down by 5 ± 1 dB
+/// although the default output carries no 6 kHz content.
 #[test]
-fn fr010_no_added_latency() {
-    for rate in SUPPORTED_HOST_RATES {
-        for tap in [Tap::AfterAgc, Tap::AfterRecord, Tap::AfterPlayback] {
-            let mut on = Settings::new(rate);
-            on.vas.enabled = false; // the spec 002 default (spec 003 FR-020)
-            on.tap = tap;
-            let mut off = on;
-            off.agc.enabled = false;
-            assert_eq!(
-                Pipeline::new(on).unwrap().latency_samples(),
-                Pipeline::new(off).unwrap().latency_samples(),
-                "{rate} Hz, {tap:?}"
-            );
-        }
-    }
+fn as6_bandwidth_at_48k() {
+    finish(agc_checks::check_fr007_bandwidth(48_000, &standard));
+}
+
+/// FR-007 (A-036): the sensed polarity, with the asymmetric stimulus at 6 and 48 kHz.
+#[test]
+fn fr007_polarity() {
+    finish(at(&RATES, |r| {
+        agc_checks::check_fr007_polarity(r, &standard)
+    }));
+}
+
+/// US1 AS7 (FR-008): at the 6 kHz identity rate a +11 dBFS tone through the record path peaks
+/// at exactly 1.0, with ≥ 60 % of the first 2 ms of its onset at ±1.0 and ≤ 40 % after 20 ms.
+#[test]
+fn as7_clipped_onset_duty_at_6k() {
+    finish(agc_checks::check_fr008_clamp(6000, &standard));
+}
+
+/// FR-009 (report rows) and FR-001 (latency) at 6 and 48 kHz.
+#[test]
+fn fr009_thdn_reports_and_fr001_latency() {
+    let mut r = at(&RATES, |r| agc_checks::check_fr009_thdn(r, &standard));
+    r.extend(at(&RATES, agc_checks::check_fr001_latency));
+    finish(r);
 }
