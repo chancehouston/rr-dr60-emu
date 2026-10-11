@@ -36,9 +36,11 @@ const T_ENG: &[&str] = &["engineering target"];
 /// no "small overdrive" left for the 2 dB-over ratio to measure (T033, coach review).
 const RAIL_DBFS: f64 = 4.7; // A-028 (research R-02)
 
-/// Static-curve tone length, s (FR-004: 5 s, the last second measured); 1 s under coverage
-/// instrumentation (003 T050 pattern).
-const STATIC_TONE_S: f64 = if cfg!(coverage) { 1.0 } else { 5.0 }; // engineering target (005 FR-004)
+/// Static-curve tone length, s (FR-004: 5 s, the last second measured). Not shortened under
+/// coverage instrumentation (the 003 T050 pattern): the last second must lie past the dead
+/// time, which grows without bound toward the knee, or the knee bisection reads the search's
+/// upper bound (found by the T046 coverage run); the limiter alone at the tap is cheap anyway.
+const STATIC_TONE_S: f64 = 5.0; // engineering target (005 FR-004)
 
 /// A named AGC setting for the matrix (spec 005 FR-011).
 #[derive(Clone, Copy, Debug)]

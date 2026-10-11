@@ -58,13 +58,15 @@ fn never_reaches_the_knee_for_60_s_is_bit_exact() {
     assert_eq!(differing, 0, "{differing} differing samples in 60 s");
 }
 
-/// Spec Edge Cases › Input within 1.5 dB of the knee: the FR-004 row for a +1.5 dBFS tone is
-/// a report row, not a pass/fail row.
+/// Spec Edge Cases › Input within 1.5 dB of the knee: the FR-004 row for a tone 0.5 dB above
+/// the measured knee is a report row, not a pass/fail row. The level is taken relative to the
+/// bisected knee rather than fixed at +1.5 dBFS, so the test asserts the band rule itself and
+/// not where the knee happens to read.
 #[test]
 fn tone_within_the_knee_band_is_reported_not_failed() {
     let rate = 48_000;
     let knee = agc_checks::knee_bisection(rate, &standard, 0.0);
-    let rows = agc_checks::static_curve_rows(rate, &standard, &[1.5], knee);
+    let rows = agc_checks::static_curve_rows(rate, &standard, &[knee + 0.5], knee);
     report::print(&rows);
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].tolerance, Tolerance::Report, "{}", rows[0]);
