@@ -15,7 +15,13 @@ body:
         - **A hand clap or a single click** at a medium level: edge ringing and the filters' transient response.
         - **Bursts and gaps:** 1 s tone bursts separated by gaps of 0.3, 1, 2 and 5 s, at a quiet, a normal and a loud level: VAS hang and onset times, and the AGC's recovery.
         - **A clap after 10 s of silence:** the AGC's attack and any clipped onset.
-        - **A loud burst followed by a quiet tone:** how long the gain stays reduced (the schematic suggests several seconds).
+        - **A loud burst followed by a quiet tone:** how long the gain stays reduced (the model says about 1–2 s, with a faster attack for the next ten seconds).
+        - **1 kHz 5 s tone bursts in 2 dB SPL steps from 70 to 110 dB SPL,** with a sound-level meter beside the recorder: the limiter's knee and ceiling in SPL terms (A-028, A-029).
+        - **A tone or clap about 10 dB above the knee after 60 s of silence, repeated 2 s and 20 s later:** the attack dead time, then the armed dead time, then the re-discharged one (A-034, A-028).
+        - **A 1 s loud tone followed by the same tone 10 dB quieter for 5 s:** the release curve (A-035).
+        - **Tone bursts stepped down 2 dB at each MIC SENS level until recording pauses, and a constant tone at each level:** the VAS threshold per level, and whether the level also changes the recorded level (A-022, A-033).
+        - **Any loud speech:** the flat-topped side of the waveform shows which polarity the limiter senses (A-036).
+        - **A slowly rising tone or voice:** which comes first as the level rises, flat-topping or a level ceiling (A-028: the emulator flat-tops at about 1 dB above full scale; a real unit may limit just below it).
         - **Quiet room, 60 s, at each MIC SENS level:** noise floor, and whether the VAS pauses.
         - **Pink noise at a low level:** how the speech codec renders non-speech sound.
         - **Normal speech.**
