@@ -16,16 +16,16 @@ uv run tools/filter-design/design_voiceband.py --check
 uv run tools/filter-design/design_hilbert.py --check
 ```
 
-Expected: two margin tables (record and playback), every row PASS, the chosen low-pass edges printed with the 2550 Hz loss near 0.4 dB (record) and 0.56 dB (playback) and the 1950 Hz group-delay distortion at least 0.015 ms inside its 0.17 ms limit. The Hilbert script reports PASS at 6 kHz; `git diff --stat crates/rr_dr60/src/stages/agc_hilbert_coeffs.rs` shows only header-comment lines changed (the bit patterns are identical).
+Expected: two margin tables (record and playback), every row PASS, the chosen Chebyshev-II stopband edges printed with the 2550 Hz loss within ±0.1 dB of 0.4 dB (record) and 0.56 dB (playback), the 1950 Hz group-delay distortion near 0.08 and 0.11 ms (limit 0.17), and the group delay at 2550 Hz about 1.4–1.5 ms (target ≤ 2 ms). The loss at 2700 and 2900 Hz is printed as report-only rows. The Hilbert script reports PASS at 6 kHz; `git diff --stat crates/rr_dr60/src/stages/agc_hilbert_coeffs.rs` shows only header-comment lines changed (the bit patterns are identical).
 
 ## 2. Story 1: the stages at the device rate (FR-005 – FR-009)
 
 ```sh
-cargo test -p rr_dr60 stages::voiceband
+cargo test -p rr_dr60 stages::voiceband stages::vas stages::agc
 cargo test -p rr_dr60_harness --test us1_voiceband --test response_matrix -- --nocapture
 ```
 
-Expected: the unit tests re-verify both templates from the committed coefficients. The response matrix prints, for all seven rates and each single-stage configuration, the loss at every frequency of the test set, the group-delay distortion rows, the minimum-phase check at 6 kHz, the anti-alias rows (≥ 30 dB; expect ≥ 60 dB) and the two report-only rows at 2700 and 2900 Hz. Every toleranced row passes.
+Expected: the unit tests re-verify both templates from the committed coefficients, and the VAS and AGC unit tests pass with their 1 kHz tones phase-aligned to the 6 kHz grid (plan R-08). The response matrix prints, for all seven rates and each single-stage configuration, the loss at every frequency of the test set, the group-delay distortion rows, the minimum-phase check at 6 kHz, the anti-alias rows (≥ 30 dB; expect ≥ 60 dB) and the two report-only rows at 2700 and 2900 Hz. Every toleranced row passes.
 
 ## 3. Story 2: host rates and the boundary (FR-002 – FR-004)
 
@@ -51,7 +51,7 @@ Expected: every AGC check passes at seven rates with the restated tones (225 …
 cargo test -p rr_dr60_harness --test golden --test golden_agc --test golden_vas --test determinism --test mutation
 ```
 
-Expected: the three re-blessed files match (112, 42 and 63 entries), the SHA guards accept the new 001 and AGC files, 100 partitions of each golden stimulus agree, and each of the three shifted-edge fixtures fails both its response check and the golden check.
+Expected: the three re-blessed files match (112, 42 and 63 entries), the SHA guards accept the new 001 and AGC files, 100 partitions of each golden stimulus agree, and each of the three toward-band shifted-edge fixtures (record high-pass +100 Hz, record and playback low-pass stopband edges −100 Hz) fails both its response check and the golden check.
 
 ## 6. C API parity, including 6 kHz (FR-017)
 

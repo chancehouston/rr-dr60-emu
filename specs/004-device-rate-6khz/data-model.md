@@ -49,7 +49,7 @@ A **template** is the set of limits a band-limit stage must meet, plus the typic
 | Loss, 225–2250 Hz | −0.15 … +0.2 dB | +0.07 dB at 225 Hz | S-005 300/3000 Hz rows, A-027 |
 | Loss at 2550 Hz | 0 … 0.8 dB | 0.4 dB | S-005 3400 Hz row, A-027 |
 | Attenuation ≤ 45 Hz (above DC) | ≥ 20 dB | 26 dB | S-005 60 Hz row, A-027 |
-| Attenuation at DC | ≥ 40 dB | — | S-007 (G.712) via A-014 |
+| Attenuation at DC | ≥ 40 dB | — | A-014; S-007 (G.712) if its mask states DC, else engineering target |
 | Loss at 2700, 2900 Hz | report only | — | no source |
 | GDD at 375 Hz | ≤ 1.0 ms | 0.25 ms | S-005 500 Hz row ÷ 0.75, A-027 |
 | GDD at 450 Hz | ≤ 0.47 ms | 0.15 ms | S-005 600 Hz row ÷ 0.75 |
@@ -57,10 +57,11 @@ A **template** is the set of limits a band-limit stage must meet, plus the typic
 | GDD at 2100 Hz | ≤ 1.0 ms | 0.09 ms | S-005 2800 Hz row ÷ 0.75 |
 | Group delay at 1 kHz | ≤ 2 ms | — | A-016 |
 | Group delay at 225 and 2550 Hz | > at 1 kHz | — | A-016 |
+| Group delay at 2550 Hz | reported; ≤ 2 ms | — | engineering target (A-016's spirit; Clarifications) |
 | Phase, 225–2550 Hz (at 6 kHz host) | within ±5° of minimum phase | — | A-016 (±5° engineering target) |
 | Anti-alias (host rate, through the stage) | ≥ 30 dB from 3450 Hz to host Nyquist, total power incl. aliases | 32 dB | S-005 discrimination row, A-027 |
 
-Design (R-04): Butterworth high-pass order 3 at 112.5 Hz + elliptic low-pass order 5, 0.1 dB / 35 dB, edge ≈ 2540 Hz (script-tuned); 5 biquads; `RECORD_SOS: [[f64; 5]; 5]`.
+Design (R-04): Butterworth high-pass order 3 at 112.5 Hz + Chebyshev-II low-pass order 5, 32 dB stopband, stopband edge ≈ 2740 Hz (script-tuned to 0.4 dB at 2550 Hz); 5 biquads; `RECORD_SOS: [[f64; 5]; 5]`.
 
 ### Playback template (stage 10; receive, scaled by 0.75; low-pass only)
 
@@ -74,10 +75,10 @@ Design (R-04): Butterworth high-pass order 3 at 112.5 Hz + elliptic low-pass ord
 | GDD 375–1950 Hz | ≤ 0.17 ms | 0.00 … 0.12 ms | S-005 receive rows ÷ 0.75 |
 | GDD at 2100 Hz | ≤ 1.0 ms | 0.16 ms | S-005 receive 2800 Hz row ÷ 0.75 |
 | Group delay at 1 kHz | ≤ 2 ms | — | A-016 |
-| Group delay at 2550 Hz | > at 1 kHz | — | A-016 |
+| Group delay at 2550 Hz | > at 1 kHz; reported; ≤ 2 ms | — | A-016; 2 ms engineering target |
 | Phase, 225–2550 Hz (at 6 kHz host) | within ±5° of minimum phase | — | A-016 |
 
-Design (R-05): elliptic low-pass order 5, 0.15 dB / 35 dB, edge ≈ 2540 Hz (script-tuned); 3 biquads; `PLAYBACK_SOS: [[f64; 5]; 3]`.
+Design (R-05): Chebyshev-II low-pass order 5, 32 dB stopband, stopband edge ≈ 2715 Hz (script-tuned to 0.56 dB at 2550 Hz); 3 biquads; `PLAYBACK_SOS: [[f64; 5]; 3]`.
 
 ### Stage types (changed)
 
@@ -140,8 +141,8 @@ For a steady tone of frequency f that divides 6000, used to measure a sample-pea
 | A-001 | superseded by A-026 (adopted by spec 004) |
 | A-002 | superseded by A-027 (adopted by spec 004) |
 | A-014 | superseded by A-027 (spec 004) |
-| A-016 | kept; confidence High; status partially verified (S-005); 6 kHz GDD figures recorded |
+| A-016 | kept; confidence High; status partially verified (S-005, MSM7717 family proxy); 6 kHz GDD figures recorded |
 | A-019 | detector band 4 kHz → 3 kHz |
 | A-026 | adopted (verified) |
 | A-027 | adopted; receive row corrected to low-pass only; GDD limits per template recorded |
-| S-007 (new source) | ITU-T G.712, cited by the record stage's DC attenuation and the dropped 4000 Hz point |
+| S-007 (new source) | ITU-T G.712, cited for the origin of spec 001's 4000 and 4600 Hz points, and for the record stage's DC attenuation only if its mask states DC |
