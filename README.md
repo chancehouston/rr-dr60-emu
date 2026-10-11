@@ -21,7 +21,7 @@ The details of each stage are in [docs/hardware/signal-chain.md](docs/hardware/s
 
 ### Who is it for?
 
-- **App developers** (including ghost-hunting and EVP apps) who want an authentic RR-DR60 sound without sourcing vintage hardware.
+- **App developers** (including ghost-hunting and EVP apps) who want a sound modeled on the RR-DR60 without sourcing vintage hardware.
 - **Audiophiles and vintage-gear enthusiasts** curious about the device's sonic character.
 
 ### A note on claims
