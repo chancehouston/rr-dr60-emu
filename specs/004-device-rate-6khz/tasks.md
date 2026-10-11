@@ -31,7 +31,7 @@ description: "Task list for 004 6 kHz Device Rate and Codec Filter Templates"
 - **Never widen a spec tolerance** to make a test pass. Raise it with the user instead. The design-time trade-off rule lives in research R-04 (edge search); the harness tolerances are the datasheet limits.
 - **Story boundaries (Principle VII)**: `us1_voiceband.rs` and `us2_bypass_tap.rs` (US1) and `edge_cases.rs`, `latency.rs` (US2) use plain assertions or the 001-style check functions in `checks.rs`; the AGC and VAS checks (US3) keep their isolated configurations.
 - **Before ticking a task** (outside the golden window): `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings` and `cargo test --all-features` must pass.
-- **Commits**: Conventional Commits, on branch `004-device-rate-6khz`. The re-bless commit (T038 + T039) is `feat!:` (breaking: all output and the rate list). Merge to `main` only through a green PR, and only after the user says so.
+- **Commits**: Conventional Commits, on branch `004-device-rate-6khz`. The re-bless commit (T037 + T038) is `feat!:` (breaking: all output and the rate list). Merge to `main` only through a green PR, and only after the user says so.
 
 ---
 
@@ -181,7 +181,7 @@ description: "Task list for 004 6 kHz Device Rate and Codec Filter Templates"
 
 ## Phase 6: CI and cross-platform golden files (SC-004, SC-006; research R-12)
 
-- [ ] T042 (SC-003) Ask the user, then push `004-device-rate-6khz` and open a **draft PR** against `main` with the T003 baseline and the new numbers (suite time, timing rows, latency table, matrix row count). The workflow needs no change (the seven rates come from the code). Confirm all 11 jobs green: `check` (ubuntu, macos), `coverage`, the six `golden` targets, `ios`, `msrv`. Record the coverage job's wall time against 003's 16 min and the `check` job's test time against T003; if either grew by more than 25 %, say so in the PR and propose the cause.
+- [X] T042 (SC-003) Ask the user, then push `004-device-rate-6khz` and open a **draft PR** against `main` with the T003 baseline and the new numbers (suite time, timing rows, latency table, matrix row count). The workflow needs no change (the seven rates come from the code). Confirm all 11 jobs green: `check` (ubuntu, macos), `coverage`, the six `golden` targets, `ios`, `msrv`. Record the coverage job's wall time against 003's 16 min and the `check` job's test time against T003; if either grew by more than 25 %, say so in the PR and propose the cause.
 - [X] T043 [P] Release-mode checks locally (SC-006; 001 FR-022): `cargo test -p rr_dr60_harness --release --test timing -- --ignored --nocapture` shows ≥ 20× real time for `default_vas` at 48 kHz (expect faster than 0.3); paste the ns/sample rows into the PR beside T003's; `scripts/ios-device-golden.sh` is unchanged and still lists the three golden files (release gate, `docs/release-checklist.md`).
 
 **Checkpoint**: CI green on every automated target; the time comparison is in the PR; the iOS-device check stays a manual release gate.

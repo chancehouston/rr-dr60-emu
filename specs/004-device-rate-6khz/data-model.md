@@ -106,7 +106,7 @@ Design (R-05): Chebyshev-II low-pass order 5, 32 dB stopband, stopband edge ≈ 
 
 ## Stimulus phase rule (new; R-08)
 
-For a steady tone of frequency f that divides 6000, used to measure a sample-peak detector at host rate h: starting phase φ = (π/2 + 2π·f·D/h) mod (2π·f/6000), where D = the bypassed pipeline's reported latency at h divided by 2 (the decimator's delay in host samples; 0 at 6 kHz). Applied to the VAS threshold bisections at 1 kHz; not to the burst-gap stimuli (threshold + 10 dB) or the AGC tones.
+For a steady tone of frequency f that divides 6000, used to measure a sample-peak detector at host rate h: starting phase φ = (π/2 + 2π·f·D/h) mod (2π·f/6000), where D = the bypassed pipeline's reported latency at h divided by 2 (the decimator's delay in host samples; 0 at 6 kHz). Applied to the VAS threshold bisections at 1 kHz and to the AGC FR-006 timing step (research R-08, implementation finding); not to the burst-gap stimuli (threshold + 10 dB) or the AGC FR-008 steady tones.
 
 ## Restated figures (new entity: the CHANGELOG table, FR-010 to FR-013)
 

@@ -18,13 +18,12 @@
 //!   A-021 – A-025) and is on by default; see [`VasSettings`]. And
 //! - **Stage 10**, the playback-side DAC and reconstruction filter.
 //!
-//! Stages 4 and 10 are modeled on the OKI MSM7702 voice-band codec. They are
-//! *assumed* to follow a telephone-style 300–3400 Hz band-pass (A-002, A-014)
-//! at the device's internal rate of 6 kHz (A-026, verified from the service manual, S-002).
-//! The two band-limit stages are modeled on the codec family's datasheet templates scaled to
-//! that clock (A-027, medium confidence): the record stage is a band-pass (about 225 to
-//! 2550 Hz) and the playback stage a low-pass that passes DC. None of these values has yet
-//! been measured against a real unit. See `docs/hardware/assumptions.md`.
+//! Stages 4 and 10 are modeled on the OKI MSM7702 voice-band codec at the device's internal
+//! rate of 6 kHz (A-026, verified from the service manual, S-002). They follow the codec
+//! family's datasheet templates scaled to that clock (A-027, medium confidence): the record
+//! stage is a band-pass (about 225 to 2550 Hz) and the playback stage a low-pass that passes
+//! DC. None of these values has yet been measured against a real unit. See
+//! `docs/hardware/assumptions.md`.
 //!
 //! The crate describes signal processing only: gain control, band-limiting,
 //! voice-activated pausing, latency and level. It makes no claims about what recorded audio contains.
