@@ -84,7 +84,11 @@ mod tests {
             panic!("identity")
         };
         assert_eq!((pl, pm), (l, m), "{host}: l/m");
-        assert_eq!(prototype_rate, f64::from(host) * f64::from(l), "{host}: prototype rate");
+        assert_eq!(
+            prototype_rate,
+            f64::from(host) * f64::from(l),
+            "{host}: prototype rate"
+        );
         assert_eq!(
             (num_taps - 1) % (2 * l as usize),
             0,

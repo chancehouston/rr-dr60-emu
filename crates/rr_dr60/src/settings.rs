@@ -298,7 +298,10 @@ mod tests {
         let rates: [u32; 7] = SUPPORTED_HOST_RATES; // the type is part of the contract
         assert_eq!(rates, [6000, 8000, 16000, 44100, 48000, 88200, 96000]); // 004 FR-002
         assert_eq!(DEVICE_RATE_HZ, 6000); // A-026
-        assert_eq!(SUPPORTED_HOST_RATES[0], DEVICE_RATE_HZ, "the identity rate is listed");
+        assert_eq!(
+            SUPPORTED_HOST_RATES[0], DEVICE_RATE_HZ,
+            "the identity rate is listed"
+        );
     }
 
     /// 004 T004 (spec 004 FR-002): 6 kHz validates; other rates are rejected with an error that
