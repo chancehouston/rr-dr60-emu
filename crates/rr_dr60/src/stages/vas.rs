@@ -6,7 +6,10 @@
 //! Per-sample processing and research.md R-02 – R-04:
 //!
 //! - **Detector** (A-022, R-02): a sample is "sound" when |x| ≥ A_thr. A sine's peak equals its
-//!   AES17 level, so a sample peak compares directly against the sine-level threshold.
+//!   AES17 level, so a sample peak compares directly against the sine-level threshold. The
+//!   VAS input is the clamped record-stage output (spec 005 FR-008); below the limiter's knee
+//!   the limiter is the identity, so the threshold (−40 dBFS at level 3, A-022 revised by spec
+//!   005) is input-referred one to one (005 FR-012).
 //! - **Pause** (A-023): after more than H consecutive non-sound samples. The first H are kept.
 //! - **Resume** (A-024): on a sound sample, once a "sound run" has lasted O + 1 samples. A run
 //!   continues across gaps of at most W samples between sound samples, which bridges the troughs

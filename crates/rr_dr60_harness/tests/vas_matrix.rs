@@ -78,13 +78,24 @@ fn full_matrix_all_rates() {
     finish(r);
 }
 
-/// US3 AS3: how much of each noise gap the default pipeline keeps at each floor, and the
-/// input-referred threshold table. No pass/fail (spec 003 US3 AS3).
+/// US3 AS3 (rewritten by spec 005 FR-012): how much of each noise gap the default pipeline keeps
+/// at each floor with the speech-like bursts on top, and the threshold table. Report only,
+/// except the identity statement: below the limiter's knee the threshold is input-referred one
+/// to one (the spec 003 "about −58 dBFS" statement is withdrawn).
 #[test]
 fn interplay_report() {
     for rate in [DEVICE_RATE_HZ, 48_000] {
         for line in vas_checks::interplay_report(rate, &standard) {
             println!("{line}");
         }
+    }
+    for level in 1..=5u8 {
+        let mut s = configs::settings("default_vas", 48_000);
+        s.vas.sensitivity = level;
+        assert_eq!(
+            vas_checks::input_referred_threshold_dbfs(&s),
+            vas_checks::effective_threshold_dbfs(&s.vas),
+            "level {level}: input-referred == configured below the knee (005 FR-012)"
+        );
     }
 }

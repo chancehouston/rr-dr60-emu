@@ -10,8 +10,9 @@ use rr_dr60_harness::{configs, stimulus};
 const RATES: [u32; 2] = [DEVICE_RATE_HZ, 48_000];
 /// One device sample, in seconds (A-026).
 const DEVICE_SAMPLE_S: f64 = 1.0 / 6000.0;
-/// Burst level: the default threshold (−18 dBFS, A-022) + 10 dB (spec 003 definitions).
-const BURST_DBFS: f64 = -8.0;
+/// Burst level: the default threshold (−40 dBFS, A-022 revised by spec 005 FR-012) + 10 dB
+/// (spec 003 definitions; restated by 005 FR-012, was −8 dBFS).
+const BURST_DBFS: f64 = -30.0;
 
 fn run(settings: Settings, x: &[f32]) -> Run {
     vas_checks::run(&|s| Pipeline::new(s).unwrap(), settings, x)
@@ -132,7 +133,8 @@ fn hovering_level_pauses_at_most_once_per_hang_time() {
             .unwrap()
             .latency_samples();
         let phase = stimulus::aligned_phase(1000.0, rate, bypass);
-        let mut x: Vec<f32> = stimulus::tone_at_phase(1000.0, -18.0, phase, fs, n);
+        // At the threshold: −40 dBFS (restated by 005 FR-012; was −18).
+        let mut x: Vec<f32> = stimulus::tone_at_phase(1000.0, -40.0, phase, fs, n);
         // Random ±0.5 dB segments and dropouts, 20 ms each (engineering target, 003 R-15).
         let seg = (0.02 * fs) as usize;
         for chunk in x.chunks_mut(seg) {
