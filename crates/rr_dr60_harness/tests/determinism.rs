@@ -1,14 +1,15 @@
 //! Determinism: block-partition invariance, in-place equivalence, seed independence
 //! (FR-009, FR-014, SC-003; tasks.md T052).
 
-use rr_dr60::Pipeline;
+use rr_dr60::{Pipeline, VasEvent};
 use rr_dr60_harness::stimulus::Pcg32;
 use rr_dr60_harness::{configs, golden};
 
 fn one_block(s: rr_dr60::Settings, x: &[f32]) -> Vec<f32> {
     let mut p = Pipeline::new(s).unwrap();
     let mut y = vec![0.0; x.len()];
-    p.process(x, &mut y).unwrap();
+    let produced = p.process(x, &mut y).unwrap().produced;
+    y.truncate(produced);
     y
 }
 
@@ -23,7 +24,8 @@ fn partitioned(s: rr_dr60::Settings, x: &[f32], rng: &mut Pcg32) -> Vec<f32> {
         let n = if pos == 0 && !first { 1 } else { n };
         first = false;
         let mut y = vec![0.0; n];
-        p.process(&x[pos..pos + n], &mut y).unwrap();
+        let produced = p.process(&x[pos..pos + n], &mut y).unwrap().produced;
+        y.truncate(produced);
         out.extend(y);
         pos += n;
     }
@@ -73,7 +75,8 @@ fn in_place_equals_copy() {
         let x = golden::stimulus("sweep_log", rate);
         let mut p = Pipeline::new(configs::settings("default", rate)).unwrap();
         let mut buf = x.clone();
-        p.process_in_place(&mut buf);
+        let produced = p.process_in_place(&mut buf).produced;
+        buf.truncate(produced);
         assert_eq!(
             buf,
             one_block(configs::settings("default", rate), &x),
@@ -120,6 +123,79 @@ fn agc_partitions() {
                         partitioned(s, &x, &mut rng),
                         want,
                         "{rate} Hz {name} {stim}, partition {i}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// One block with events: (output, events, paused at end).
+fn one_block_events(s: rr_dr60::Settings, x: &[f32]) -> (Vec<f32>, Vec<VasEvent>, bool) {
+    let mut p = Pipeline::new(s).unwrap();
+    let mut y = vec![0.0; x.len()];
+    let mut ev = vec![VasEvent::default(); p.max_events(x.len())];
+    let info = p.process_with_events(x, &mut y, &mut ev).unwrap();
+    y.truncate(info.produced);
+    ev.truncate(info.events);
+    (y, ev, info.paused)
+}
+
+/// Random blocks of 0..=8192 samples (always including sizes 0 and 1), concatenating the
+/// produced samples and the events; the last block's `paused` is the stream's.
+fn partitioned_events(
+    s: rr_dr60::Settings,
+    x: &[f32],
+    rng: &mut Pcg32,
+) -> (Vec<f32>, Vec<VasEvent>, bool) {
+    let mut p = Pipeline::new(s).unwrap();
+    let (mut out, mut events) = (Vec::with_capacity(x.len()), Vec::new());
+    let mut paused = false;
+    let mut pos = 0;
+    let mut first = true;
+    while pos < x.len() {
+        let n = if first { 0 } else { rng.below(8193) as usize }.min(x.len() - pos);
+        let n = if pos == 0 && !first { 1 } else { n };
+        first = false;
+        let mut y = vec![0.0; n];
+        let mut ev = vec![VasEvent::default(); p.max_events(n)];
+        let info = p
+            .process_with_events(&x[pos..pos + n], &mut y, &mut ev)
+            .unwrap();
+        out.extend_from_slice(&y[..info.produced]);
+        events.extend_from_slice(&ev[..info.events]);
+        paused = info.paused;
+        pos += n;
+    }
+    (out, events, paused)
+}
+
+/// Spec 003 FR-014, SC-003: for every block partition the concatenated output, the events and
+/// the final `paused` are bit-identical. 100 seeded partitions of each VAS golden stimulus with
+/// `vas_only` at 8 and 48 kHz; 10 for `vas_mute`, `default_vas` and the other rates. Under
+/// coverage instrumentation (unoptimized, `cfg(coverage)`) 10 and 2: the paths are the same and
+/// the CI coverage job stays within its budget (003 T050).
+#[test]
+fn vas_partitions() {
+    let mut rng = Pcg32::new(0x0D60, 5);
+    let (many, few) = if cfg!(coverage) { (10, 2) } else { (100, 10) };
+    for rate in configs::all_rates() {
+        for config in configs::VAS_CONFIGS {
+            let partitions = if config == "vas_only" && (rate == 8000 || rate == 48_000) {
+                many
+            } else {
+                few
+            };
+            let s = configs::settings(config, rate);
+            for stim in golden::VAS_STIMULI {
+                let x = golden::stimulus(stim, rate);
+                let want = one_block_events(s, &x);
+                assert!(!want.1.is_empty(), "{rate} Hz {config} {stim}: no events");
+                for i in 0..partitions {
+                    assert_eq!(
+                        partitioned_events(s, &x, &mut rng),
+                        want,
+                        "{rate} Hz {config} {stim}, partition {i}"
                     );
                 }
             }

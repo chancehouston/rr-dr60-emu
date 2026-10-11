@@ -14,7 +14,8 @@ release PR or issue and tick each item. The reason for each item is in brackets.
 ## Manual gates (not covered by hosted CI)
 
 - [ ] **Golden files on a physical iOS device.** Run `scripts/ios-device-golden.sh` with a
-      device connected, then paste its PASS line here:
+      device connected (since spec 003 it covers all three golden files: 001, AGC and VAS, plus
+      determinism), then paste its PASS line here:
 
       ios-device-golden: PASS on <model> (iOS <version>), rr_dr60 <version>, <commit>
 
@@ -22,7 +23,7 @@ release PR or issue and tick each item. The reason for each item is in brackets.
 - [ ] **Windows ARM64**, only if the `windows-11-arm` hosted runner was removed from
       `golden-matrix`. On a Windows ARM64 machine, run:
 
-      cargo test -p rr_dr60_harness --all-features --test golden --test golden_agc --test determinism
+      cargo test -p rr_dr60_harness --all-features --test golden --test golden_agc --test golden_vas --test determinism
 
       Record the machine and OS version here. [FR-014]
 - [ ] The release-mode timing checks pass on a developer machine:

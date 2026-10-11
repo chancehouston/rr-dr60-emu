@@ -179,7 +179,8 @@ const PHASE_TARGET: &[&str] = &["A-016", "engineering target"];
 fn run(make: Make<'_>, settings: Settings, input: &[f32]) -> Vec<f32> {
     let mut p = make(settings);
     let mut out = vec![0.0; input.len()];
-    p.process(input, &mut out).expect("equal lengths");
+    let produced = p.process(input, &mut out).expect("equal lengths").produced;
+    out.truncate(produced);
     out
 }
 

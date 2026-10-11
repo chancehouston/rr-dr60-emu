@@ -1,0 +1,1969 @@
+{
+  "format": "rr_dr60-golden",
+  "version": 1,
+  "library_version": "0.3.0",
+  "entries": [
+    {
+      "stimulus": "vas_burst_gap",
+      "config": "default_vas",
+      "host_rate_hz": 8000,
+      "n_samples": 40643,
+      "sha256": "1d9f600bbcae09a66eb17f9dc5c47b68f0e85e7679037302ed052742fb20ea72",
+      "head": [
+        "00000000",
+        "4045a1a8",
+        "40f7c905",
+        "c0378871",
+        "c1b22825",
+        "c183475a",
+        "40a3c202",
+        "418fdc70",
+        "41cc8d1a",
+        "41919b10",
+        "3f0d1f8d",
+        "c13cc6a3",
+        "c1a50907",
+        "c18df4d4",
+        "c103fc40",
+        "bd484b0d"
+      ],
+      "rms_dbfs": -9.05,
+      "vas": {
+        "events": [
+          [
+            24802,
+            16159
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_burst_gap",
+      "config": "default_vas",
+      "host_rate_hz": 16000,
+      "n_samples": 81376,
+      "sha256": "83f986f7f4f5a5461b70ace8636931a7b18503eb96f08b139c9e26168f810dec",
+      "head": [
+        "00000000",
+        "00000000",
+        "310f5032",
+        "b0c5564e",
+        "b1840ff4",
+        "30e012ea",
+        "b072087c",
+        "317456f7",
+        "30ed8304",
+        "b182cebe",
+        "3092b5a7",
+        "307c65a4",
+        "313cb0e5",
+        "b182fbf8",
+        "303293ac",
+        "adc98d9f"
+      ],
+      "rms_dbfs": -10.03,
+      "vas": {
+        "events": [
+          [
+            49692,
+            32316
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_burst_gap",
+      "config": "default_vas",
+      "host_rate_hz": 44100,
+      "n_samples": 224293,
+      "sha256": "7d8989e633f8622228839c0d65997e818e270cea3cdb52f8256aaa01a20dc7d5",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "b03f680c",
+        "300b1512",
+        "30f5d086",
+        "313c513a",
+        "314d2b8c",
+        "311f3c0f",
+        "2f78a37c",
+        "31620044",
+        "31ccb558",
+        "31f91166"
+      ],
+      "rms_dbfs": -9.55,
+      "vas": {
+        "events": [
+          [
+            136964,
+            89070
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_burst_gap",
+      "config": "default_vas",
+      "host_rate_hz": 48000,
+      "n_samples": 244128,
+      "sha256": "5dda22922aa1e3b5210f6b99a806567ff55d8996b793bfcd62b55779da4f8513",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "b07e03ca",
+        "ae68b8c5",
+        "30897017",
+        "310779e8",
+        "31310403",
+        "31318de2",
+        "b10cc0b4",
+        "2fc824b2",
+        "315b925f",
+        "31c4825d"
+      ],
+      "rms_dbfs": -9.45,
+      "vas": {
+        "events": [
+          [
+            149076,
+            96948
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_burst_gap",
+      "config": "default_vas",
+      "host_rate_hz": 88200,
+      "n_samples": 448597,
+      "sha256": "67f356a8348117adb19688806acb497fa7699e9d3f2f730a75d15c8ea7407065",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "af3d149f",
+        "303a2a9d",
+        "30d608b2",
+        "3124e014"
+      ],
+      "rms_dbfs": -9.29,
+      "vas": {
+        "events": [
+          [
+            273928,
+            178130
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_burst_gap",
+      "config": "default_vas",
+      "host_rate_hz": 96000,
+      "n_samples": 488268,
+      "sha256": "28b15bb08b1fa19489e9f91b39657799f297382129116e1a7b7976c96d78badd",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "b064bab7",
+        "aeb8a7d1",
+        "304b6f99",
+        "30da88ad"
+      ],
+      "rms_dbfs": -9.34,
+      "vas": {
+        "events": [
+          [
+            298152,
+            193884
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_burst_gap",
+      "config": "vas_mute",
+      "host_rate_hz": 8000,
+      "n_samples": 68800,
+      "sha256": "50ff615570eeecce6b5dabc8a865d7c98ca3d49b2b84ce4d84c9ab0d9442f9d6",
+      "head": [
+        "00000000",
+        "3e902154",
+        "3ecbd4b4",
+        "3e902154",
+        "2460d6a5",
+        "be902154",
+        "becbd4b4",
+        "be902154",
+        "00000000",
+        "3e902154",
+        "3ecbd4b4",
+        "3e902154",
+        "2460d6a5",
+        "be902154",
+        "becbd4b4",
+        "be902154"
+      ],
+      "rms_dbfs": -16.41,
+      "vas": {
+        "events": [
+          [
+            24800,
+            16161
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_burst_gap",
+      "config": "vas_mute",
+      "host_rate_hz": 16000,
+      "n_samples": 137600,
+      "sha256": "668e9e5d6229fd60aab17148999b8f2299bfbdf0af91f3c1bddd12d054064f43",
+      "head": [
+        "00000000",
+        "00000000",
+        "2f51087e",
+        "af0fea60",
+        "b0235cd4",
+        "2fae08c2",
+        "30b2921f",
+        "b00b5184",
+        "b1357aa9",
+        "3056da35",
+        "31a0b0eb",
+        "b06ef906",
+        "b204d1f1",
+        "30339aee",
+        "32500fdc",
+        "2f1ba506"
+      ],
+      "rms_dbfs": -16.41,
+      "vas": {
+        "events": [
+          [
+            49688,
+            32320
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_burst_gap",
+      "config": "vas_mute",
+      "host_rate_hz": 44100,
+      "n_samples": 379260,
+      "sha256": "27e38620350f0dbfe97b3d0e02652fc4132803ec515d81f80d831cb44197796e",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "ae8b9721",
+        "2e4adcad",
+        "2f3344fe",
+        "2f895665",
+        "2f95a0c6",
+        "2f684173",
+        "2e24a477",
+        "2f364630",
+        "2f956d38",
+        "2fac8a00"
+      ],
+      "rms_dbfs": -16.41,
+      "vas": {
+        "events": [
+          [
+            136948,
+            89087
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_burst_gap",
+      "config": "vas_mute",
+      "host_rate_hz": 48000,
+      "n_samples": 412800,
+      "sha256": "24605afe849bf7c8c7e271a3ec17066693c33f2c344f76ce4176b1c941de7c1d",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "aeb93ff7",
+        "aca9b89a",
+        "2ec876a5",
+        "2f459a2c",
+        "2f811869",
+        "2f817cf4",
+        "aeace86c",
+        "2e2d2ec1",
+        "2f3fa847",
+        "2f9fdabf"
+      ],
+      "rms_dbfs": -16.41,
+      "vas": {
+        "events": [
+          [
+            149058,
+            96966
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_burst_gap",
+      "config": "vas_mute",
+      "host_rate_hz": 88200,
+      "n_samples": 758520,
+      "sha256": "9a13b5377ca25993fb75c883abf971c564760361931521cf9661393101ae771f",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "ad89e4e4",
+        "2e87c4d6",
+        "2f1c17a3",
+        "2f707ba8"
+      ],
+      "rms_dbfs": -16.41,
+      "vas": {
+        "events": [
+          [
+            273895,
+            178175
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_burst_gap",
+      "config": "vas_mute",
+      "host_rate_hz": 96000,
+      "n_samples": 825600,
+      "sha256": "1a292a6b4a43fd06c84957dd813efb4804e489c7f344250ec95fe73dcc4c0584",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "aea6cf3b",
+        "ad06aac0",
+        "2e945d01",
+        "2f1f5fc3"
+      ],
+      "rms_dbfs": -16.41,
+      "vas": {
+        "events": [
+          [
+            298116,
+            193932
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_burst_gap",
+      "config": "vas_only",
+      "host_rate_hz": 8000,
+      "n_samples": 40639,
+      "sha256": "4c10dbdd5c2a7c1eeaa460eaee53c3b8940338019b1f39ece6fd4ef37bbad2df",
+      "head": [
+        "00000000",
+        "3e902154",
+        "3ecbd4b4",
+        "3e902154",
+        "2460d6a5",
+        "be902154",
+        "becbd4b4",
+        "be902154",
+        "00000000",
+        "3e902154",
+        "3ecbd4b4",
+        "3e902154",
+        "2460d6a5",
+        "be902154",
+        "becbd4b4",
+        "be902154"
+      ],
+      "rms_dbfs": -14.12,
+      "vas": {
+        "events": [
+          [
+            24800,
+            16161
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_burst_gap",
+      "config": "vas_only",
+      "host_rate_hz": 16000,
+      "n_samples": 81368,
+      "sha256": "afb73f17ec5ff4a045f9f4b890108d0eae96066b2a70ce16b8cd7c8e36f7cb72",
+      "head": [
+        "00000000",
+        "00000000",
+        "2f51087e",
+        "af0fea60",
+        "b0235cd4",
+        "2fae08c2",
+        "30b2921f",
+        "b00b5184",
+        "b1357aa9",
+        "3056da35",
+        "31a0b0eb",
+        "b06ef906",
+        "b204d1f1",
+        "30339aee",
+        "32500fdc",
+        "2f1ba506"
+      ],
+      "rms_dbfs": -14.13,
+      "vas": {
+        "events": [
+          [
+            49688,
+            32320
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_burst_gap",
+      "config": "vas_only",
+      "host_rate_hz": 44100,
+      "n_samples": 224260,
+      "sha256": "e86b957ec5a83408a9445249b9760a74b11947fcbedd9382c3ebae92fd47a0a7",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "ae8b9721",
+        "2e4adcad",
+        "2f3344fe",
+        "2f895665",
+        "2f95a0c6",
+        "2f684173",
+        "2e24a477",
+        "2f364630",
+        "2f956d38",
+        "2fac8a00"
+      ],
+      "rms_dbfs": -14.13,
+      "vas": {
+        "events": [
+          [
+            136948,
+            89087
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_burst_gap",
+      "config": "vas_only",
+      "host_rate_hz": 48000,
+      "n_samples": 244092,
+      "sha256": "404cab1c63f15f1cfa328b66666b7b9693fd4b7dbf6802dcb3ed71fcbd07dc67",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "aeb93ff7",
+        "aca9b89a",
+        "2ec876a5",
+        "2f459a2c",
+        "2f811869",
+        "2f817cf4",
+        "aeace86c",
+        "2e2d2ec1",
+        "2f3fa847",
+        "2f9fdabf"
+      ],
+      "rms_dbfs": -14.13,
+      "vas": {
+        "events": [
+          [
+            149058,
+            96966
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_burst_gap",
+      "config": "vas_only",
+      "host_rate_hz": 88200,
+      "n_samples": 448520,
+      "sha256": "66927a526e8c6554b72b9ab37be148b0abcb6adb8850d519967e3cceaccc91d7",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "ad89e4e4",
+        "2e87c4d6",
+        "2f1c17a3",
+        "2f707ba8"
+      ],
+      "rms_dbfs": -14.13,
+      "vas": {
+        "events": [
+          [
+            273895,
+            178175
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_burst_gap",
+      "config": "vas_only",
+      "host_rate_hz": 96000,
+      "n_samples": 488184,
+      "sha256": "09379f19457f62dd033655abc29f3506d5f8b167726085af143632e9ab4d6c87",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "aea6cf3b",
+        "ad06aac0",
+        "2e945d01",
+        "2f1f5fc3"
+      ],
+      "rms_dbfs": -14.13,
+      "vas": {
+        "events": [
+          [
+            298116,
+            193932
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_noise_gaps",
+      "config": "default_vas",
+      "host_rate_hz": 8000,
+      "n_samples": 31843,
+      "sha256": "408872ec9044b2a5e42a6d0697dab4edb90c26b22fd0d86d4ce5dc599d048dfc",
+      "head": [
+        "3a98b4c7",
+        "4045dea9",
+        "40f7bd00",
+        "c0387a7a",
+        "c1b23a30",
+        "c1832529",
+        "40a468f4",
+        "418fdaed",
+        "41cc793e",
+        "41919750",
+        "3f0bca75",
+        "c13ce4d9",
+        "c1a4f937",
+        "c18df2ec",
+        "c10424a9",
+        "bd4384de"
+      ],
+      "rms_dbfs": -8.72,
+      "vas": {
+        "events": [
+          [
+            16002,
+            16159
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_noise_gaps",
+      "config": "default_vas",
+      "host_rate_hz": 16000,
+      "n_samples": 63776,
+      "sha256": "3369d33d1b972a164c4339b00cb3aad1b76e917e934b254c66b24cc26f73eda2",
+      "head": [
+        "2ab8de78",
+        "aa7e8ed2",
+        "310f2b28",
+        "b0c528ef",
+        "b183e44d",
+        "30dfc4be",
+        "b072ec3b",
+        "31743d91",
+        "30ec8cf4",
+        "b182752d",
+        "3094eb48",
+        "3078d27d",
+        "313bd2ec",
+        "b182e7af",
+        "3032daff",
+        "ad34d261"
+      ],
+      "rms_dbfs": -9.83,
+      "vas": {
+        "events": [
+          [
+            32092,
+            32316
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_noise_gaps",
+      "config": "default_vas",
+      "host_rate_hz": 44100,
+      "n_samples": 175783,
+      "sha256": "1337581141a71a87bc508a0fc978838a6e751af8441e61f31a6e1828e47a4321",
+      "head": [
+        "2a6d465c",
+        "28bb1574",
+        "aa72feb6",
+        "aaf1a884",
+        "ab194098",
+        "ab0e4ece",
+        "b03fc5e3",
+        "300b4cca",
+        "30f63cdc",
+        "313ca5b7",
+        "314d88ac",
+        "311f858b",
+        "2f7a8c9e",
+        "3161c1a5",
+        "31cc697c",
+        "31f8a9c8"
+      ],
+      "rms_dbfs": -9.29,
+      "vas": {
+        "events": [
+          [
+            88454,
+            89070
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_noise_gaps",
+      "config": "default_vas",
+      "host_rate_hz": 48000,
+      "n_samples": 191328,
+      "sha256": "d9ecbab14652e4687a6c0f0daec271882768566fa9e8dccf8ab3235202be76a5",
+      "head": [
+        "aa5788d0",
+        "a8457790",
+        "2a693c33",
+        "2ae5e7fb",
+        "2b163326",
+        "2b16a822",
+        "b07d8d4b",
+        "ae67dbf0",
+        "3089371c",
+        "31073fa0",
+        "3130b6b9",
+        "31313f5f",
+        "b10d556a",
+        "2fc758e1",
+        "315c10ee",
+        "31c5095e"
+      ],
+      "rms_dbfs": -9.17,
+      "vas": {
+        "events": [
+          [
+            96276,
+            96948
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_noise_gaps",
+      "config": "default_vas",
+      "host_rate_hz": 88200,
+      "n_samples": 351577,
+      "sha256": "9f9034cdc2c13446cb04b94cf2d4daca364a71bf979f0d6506605d0840e64dbd",
+      "head": [
+        "a8658477",
+        "a7189196",
+        "282fe27e",
+        "28c69f76",
+        "291824f4",
+        "2945f03b",
+        "296854aa",
+        "297b8533",
+        "297c9d63",
+        "2969f3a4",
+        "294355a3",
+        "290a2a86",
+        "af3d0c67",
+        "303a2643",
+        "30d60330",
+        "3124dbb8"
+      ],
+      "rms_dbfs": -8.97,
+      "vas": {
+        "events": [
+          [
+            176908,
+            178130
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_noise_gaps",
+      "config": "default_vas",
+      "host_rate_hz": 96000,
+      "n_samples": 382668,
+      "sha256": "c9b9232575153469a2c1114a4b26b3e99bb1ac8898b24dd75222b54316359556",
+      "head": [
+        "a8f46255",
+        "a7454b35",
+        "28d95c0a",
+        "29697da8",
+        "29b0ed54",
+        "29e69160",
+        "2a08b95d",
+        "2a16df09",
+        "2a1c2c6c",
+        "2a178ea0",
+        "2a088c1f",
+        "29deaffd",
+        "b0649ba5",
+        "aeb88144",
+        "304b576d",
+        "30da6d9b"
+      ],
+      "rms_dbfs": -9.05,
+      "vas": {
+        "events": [
+          [
+            192552,
+            193884
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_noise_gaps",
+      "config": "vas_mute",
+      "host_rate_hz": 8000,
+      "n_samples": 64000,
+      "sha256": "4dbf37d0aaf995fd33af4ebe150462f5d6988442a5693c5f494d43ff9f5e4ebf",
+      "head": [
+        "38debbc2",
+        "3e903bf5",
+        "3ecbce43",
+        "3e9002a3",
+        "b99377c2",
+        "be900905",
+        "becbda24",
+        "be902f10",
+        "39258c5d",
+        "3e8ffb75",
+        "3ecbb91c",
+        "3e90332b",
+        "391fade3",
+        "be901572",
+        "becbd74e",
+        "be90407c"
+      ],
+      "rms_dbfs": -17.07,
+      "vas": {
+        "events": [
+          [
+            16000,
+            16161
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_noise_gaps",
+      "config": "vas_mute",
+      "host_rate_hz": 16000,
+      "n_samples": 128000,
+      "sha256": "e4e2e94b8fb2197e6ab2af847708319cbba1d62b1b2c7162663510a6d1b5ba23",
+      "head": [
+        "2906d29c",
+        "a8b9a55b",
+        "2f50c7a9",
+        "af0fc1d8",
+        "b023215c",
+        "2fadc8d6",
+        "30b24bb5",
+        "b00b16f7",
+        "b1353aed",
+        "3056973f",
+        "31a07feb",
+        "b06ed6f8",
+        "b204b05f",
+        "3033d7a1",
+        "324fe670",
+        "2f17ed62"
+      ],
+      "rms_dbfs": -17.07,
+      "vas": {
+        "events": [
+          [
+            32088,
+            32320
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_noise_gaps",
+      "config": "vas_mute",
+      "host_rate_hz": 44100,
+      "n_samples": 352800,
+      "sha256": "b8819e67c07ee7a8e9d05c4a713759fa067bfaddfa55d10a076988d08fdd9709",
+      "head": [
+        "28ad0aa7",
+        "2708701a",
+        "a8b13696",
+        "a9303d07",
+        "a95f87b1",
+        "a94f9112",
+        "ae8be3f7",
+        "2e4b3a26",
+        "2f339eca",
+        "2f899c45",
+        "2f95edb1",
+        "2f68ba9a",
+        "2e25935c",
+        "2f3590f6",
+        "2f94a17c",
+        "2fab7ab4"
+      ],
+      "rms_dbfs": -17.08,
+      "vas": {
+        "events": [
+          [
+            88438,
+            89087
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_noise_gaps",
+      "config": "vas_mute",
+      "host_rate_hz": 48000,
+      "n_samples": 384000,
+      "sha256": "359fc882f23e66e09cd21f70a791b83b8e38c9dae1576777cb75276faf6cee7f",
+      "head": [
+        "a89d2fc5",
+        "a69002a1",
+        "28aa1873",
+        "2927aaf0",
+        "295b13e5",
+        "295bbe86",
+        "aeb8dcf0",
+        "aca90c01",
+        "2ec815e5",
+        "2f4537b8",
+        "2f80d742",
+        "2f813ae3",
+        "aeaf392e",
+        "2e2c7ac7",
+        "2f40b032",
+        "2fa0efd4"
+      ],
+      "rms_dbfs": -17.08,
+      "vas": {
+        "events": [
+          [
+            96258,
+            96966
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_noise_gaps",
+      "config": "vas_mute",
+      "host_rate_hz": 88200,
+      "n_samples": 705600,
+      "sha256": "9628ab06c4d51fc9173372ed5d2afcd77d936b39ed945747090379085e2c9c36",
+      "head": [
+        "a6a7625d",
+        "a55e886d",
+        "26804543",
+        "2710da6d",
+        "275de9fb",
+        "27905aa1",
+        "27a96f98",
+        "27b76e3f",
+        "27b83a96",
+        "27aa9e3c",
+        "278e747e",
+        "27498692",
+        "ad89de44",
+        "2e87c10b",
+        "2f1c12e7",
+        "2f707432"
+      ],
+      "rms_dbfs": -17.08,
+      "vas": {
+        "events": [
+          [
+            176875,
+            178175
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_noise_gaps",
+      "config": "vas_mute",
+      "host_rate_hz": 96000,
+      "n_samples": 768000,
+      "sha256": "78058c8235cff82d59f7ea86e5c0b1e0e66ea409dbca6c277db15c2a32b94e94",
+      "head": [
+        "a73239ef",
+        "a58fe248",
+        "271e8483",
+        "27aa4830",
+        "280107dd",
+        "2828267a",
+        "28476c20",
+        "285c0e9b",
+        "2863ca75",
+        "285d0eb8",
+        "28472a22",
+        "28226738",
+        "aea6b6c8",
+        "ad068d32",
+        "2e9449ca",
+        "2f1f4a50"
+      ],
+      "rms_dbfs": -17.08,
+      "vas": {
+        "events": [
+          [
+            192516,
+            193932
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_noise_gaps",
+      "config": "vas_only",
+      "host_rate_hz": 8000,
+      "n_samples": 31839,
+      "sha256": "58611289e35915a5cd05e98b42a83434c92e0421332d9d5fe69bc003432de20e",
+      "head": [
+        "38debbc2",
+        "3e903bf5",
+        "3ecbce43",
+        "3e9002a3",
+        "b99377c2",
+        "be900905",
+        "becbda24",
+        "be902f10",
+        "39258c5d",
+        "3e8ffb75",
+        "3ecbb91c",
+        "3e90332b",
+        "391fade3",
+        "be901572",
+        "becbd74e",
+        "be90407c"
+      ],
+      "rms_dbfs": -14.04,
+      "vas": {
+        "events": [
+          [
+            16000,
+            16161
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_noise_gaps",
+      "config": "vas_only",
+      "host_rate_hz": 16000,
+      "n_samples": 63768,
+      "sha256": "eb53730ceb560b918fdf0c151a12ab05d8d3c1664066a450b7a5270896f666bd",
+      "head": [
+        "2906d29c",
+        "a8b9a55b",
+        "2f50c7a9",
+        "af0fc1d8",
+        "b023215c",
+        "2fadc8d6",
+        "30b24bb5",
+        "b00b16f7",
+        "b1353aed",
+        "3056973f",
+        "31a07feb",
+        "b06ed6f8",
+        "b204b05f",
+        "3033d7a1",
+        "324fe670",
+        "2f17ed62"
+      ],
+      "rms_dbfs": -14.05,
+      "vas": {
+        "events": [
+          [
+            32088,
+            32320
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_noise_gaps",
+      "config": "vas_only",
+      "host_rate_hz": 44100,
+      "n_samples": 175750,
+      "sha256": "fcf69822e50ad0bf4f2eac1143c483228e6dc79d898f48121169d6f7e08df166",
+      "head": [
+        "28ad0aa7",
+        "2708701a",
+        "a8b13696",
+        "a9303d07",
+        "a95f87b1",
+        "a94f9112",
+        "ae8be3f7",
+        "2e4b3a26",
+        "2f339eca",
+        "2f899c45",
+        "2f95edb1",
+        "2f68ba9a",
+        "2e25935c",
+        "2f3590f6",
+        "2f94a17c",
+        "2fab7ab4"
+      ],
+      "rms_dbfs": -14.05,
+      "vas": {
+        "events": [
+          [
+            88438,
+            89087
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_noise_gaps",
+      "config": "vas_only",
+      "host_rate_hz": 48000,
+      "n_samples": 191292,
+      "sha256": "9d97ce315bc6126e1976b36335aeae9c2b9613de6d4d0d5a992ba26778f1bfef",
+      "head": [
+        "a89d2fc5",
+        "a69002a1",
+        "28aa1873",
+        "2927aaf0",
+        "295b13e5",
+        "295bbe86",
+        "aeb8dcf0",
+        "aca90c01",
+        "2ec815e5",
+        "2f4537b8",
+        "2f80d742",
+        "2f813ae3",
+        "aeaf392e",
+        "2e2c7ac7",
+        "2f40b032",
+        "2fa0efd4"
+      ],
+      "rms_dbfs": -14.05,
+      "vas": {
+        "events": [
+          [
+            96258,
+            96966
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_noise_gaps",
+      "config": "vas_only",
+      "host_rate_hz": 88200,
+      "n_samples": 351500,
+      "sha256": "692ace54d1604e5ef797f65b9f82ca24e3de8232be8ed03ec79dbfde586e8cea",
+      "head": [
+        "a6a7625d",
+        "a55e886d",
+        "26804543",
+        "2710da6d",
+        "275de9fb",
+        "27905aa1",
+        "27a96f98",
+        "27b76e3f",
+        "27b83a96",
+        "27aa9e3c",
+        "278e747e",
+        "27498692",
+        "ad89de44",
+        "2e87c10b",
+        "2f1c12e7",
+        "2f707432"
+      ],
+      "rms_dbfs": -14.05,
+      "vas": {
+        "events": [
+          [
+            176875,
+            178175
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_noise_gaps",
+      "config": "vas_only",
+      "host_rate_hz": 96000,
+      "n_samples": 382584,
+      "sha256": "ad115bb12d951e95f0894ce456d35e074eacb3b350a3621ff87095467d904742",
+      "head": [
+        "a73239ef",
+        "a58fe248",
+        "271e8483",
+        "27aa4830",
+        "280107dd",
+        "2828267a",
+        "28476c20",
+        "285c0e9b",
+        "2863ca75",
+        "285d0eb8",
+        "28472a22",
+        "28226738",
+        "aea6b6c8",
+        "ad068d32",
+        "2e9449ca",
+        "2f1f4a50"
+      ],
+      "rms_dbfs": -14.05,
+      "vas": {
+        "events": [
+          [
+            192516,
+            193932
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_short_bursts",
+      "config": "default_vas",
+      "host_rate_hz": 8000,
+      "n_samples": 25522,
+      "sha256": "e8c418fc95dc1db7c58ef7b68085ed315f63f5821d9e4ad30372eace12c4fc1c",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -25.04,
+      "vas": {
+        "events": [
+          [
+            8000,
+            24241
+          ],
+          [
+            16081,
+            8159
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_short_bursts",
+      "config": "default_vas",
+      "host_rate_hz": 16000,
+      "n_samples": 51048,
+      "sha256": "b3dfe42fb613598ef07e8a955e4016d72b69cf8e68451d7db6e3d3868cb3eba4",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -25.04,
+      "vas": {
+        "events": [
+          [
+            16000,
+            48568
+          ],
+          [
+            32164,
+            16316
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_short_bursts",
+      "config": "default_vas",
+      "host_rate_hz": 44100,
+      "n_samples": 140702,
+      "sha256": "c1ef6278e7b10ebbb904b6f505c11f81a4f8d9f8050a96aed81f52242565cd34",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -25.04,
+      "vas": {
+        "events": [
+          [
+            44100,
+            133865
+          ],
+          [
+            88653,
+            44971
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_short_bursts",
+      "config": "default_vas",
+      "host_rate_hz": 48000,
+      "n_samples": 153144,
+      "sha256": "8c41d3868d3786b1c55fffbeb293fb0ec0392ad150e25ebe8b298ea59e4310b9",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -25.04,
+      "vas": {
+        "events": [
+          [
+            48000,
+            145704
+          ],
+          [
+            96492,
+            48948
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_short_bursts",
+      "config": "default_vas",
+      "host_rate_hz": 88200,
+      "n_samples": 281425,
+      "sha256": "cbc4a6130c6db0f0d016b406360e3234e8c0e3e048e74c318399d15c6b5ebb48",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -25.04,
+      "vas": {
+        "events": [
+          [
+            88200,
+            267720
+          ],
+          [
+            177316,
+            89931
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_short_bursts",
+      "config": "default_vas",
+      "host_rate_hz": 96000,
+      "n_samples": 306312,
+      "sha256": "f10cef488e17ab2aa7b9675ec6e99c43654c663fce2c0434fc5bf3de48adbf57",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -25.04,
+      "vas": {
+        "events": [
+          [
+            96000,
+            291396
+          ],
+          [
+            192996,
+            97884
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_short_bursts",
+      "config": "vas_mute",
+      "host_rate_hz": 8000,
+      "n_samples": 65920,
+      "sha256": "19fc542f4f4e9939f9fa62030750b470637e6539ae72efa4f72122a7474a958b",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -27.38,
+      "vas": {
+        "events": [
+          [
+            8000,
+            24241
+          ],
+          [
+            40320,
+            8161
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_short_bursts",
+      "config": "vas_mute",
+      "host_rate_hz": 16000,
+      "n_samples": 131840,
+      "sha256": "df2fa89922083804dad807c7de862c789b7233f3dca4979ee707c70a06023b49",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -27.38,
+      "vas": {
+        "events": [
+          [
+            16000,
+            48568
+          ],
+          [
+            80728,
+            16320
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_short_bursts",
+      "config": "vas_mute",
+      "host_rate_hz": 44100,
+      "n_samples": 363384,
+      "sha256": "29ccdc516bb8509518168e418792e886e0d554af8609623f54428d2c34a9b241",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -27.38,
+      "vas": {
+        "events": [
+          [
+            44100,
+            133866
+          ],
+          [
+            222502,
+            44987
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_short_bursts",
+      "config": "vas_mute",
+      "host_rate_hz": 48000,
+      "n_samples": 395520,
+      "sha256": "63abe45ad8ef16fdf84d57c189af107e11d4c6325fa54825d7c7fcc1d2a2f3a6",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -27.38,
+      "vas": {
+        "events": [
+          [
+            48000,
+            145704
+          ],
+          [
+            242178,
+            48966
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_short_bursts",
+      "config": "vas_mute",
+      "host_rate_hz": 88200,
+      "n_samples": 726768,
+      "sha256": "b9985faeec5e3a7e34bf1a3f2ada7f7b949b00ffb1904dd2afea4aa16f40cd42",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -27.38,
+      "vas": {
+        "events": [
+          [
+            88200,
+            267732
+          ],
+          [
+            445003,
+            89975
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_short_bursts",
+      "config": "vas_mute",
+      "host_rate_hz": 96000,
+      "n_samples": 791040,
+      "sha256": "a28ceeb8cbf0e51a5092663b37b279c53f3fb1700d80f8b5fdcd29387761a144",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -27.38,
+      "vas": {
+        "events": [
+          [
+            96000,
+            291408
+          ],
+          [
+            484356,
+            97932
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_short_bursts",
+      "config": "vas_only",
+      "host_rate_hz": 8000,
+      "n_samples": 25518,
+      "sha256": "911712ffe93cc0fa17b0b4737afa97661103a8529f19e6fccf47b9da47efb52b",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -23.26,
+      "vas": {
+        "events": [
+          [
+            8000,
+            24241
+          ],
+          [
+            16079,
+            8161
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_short_bursts",
+      "config": "vas_only",
+      "host_rate_hz": 16000,
+      "n_samples": 51040,
+      "sha256": "55e94a81ef8689f300f385b7c3c96e39ab7a028a3557c82e7e96b061be920c95",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -23.26,
+      "vas": {
+        "events": [
+          [
+            16000,
+            48568
+          ],
+          [
+            32160,
+            16320
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_short_bursts",
+      "config": "vas_only",
+      "host_rate_hz": 44100,
+      "n_samples": 140668,
+      "sha256": "f215561a5d29441b80a09543b1f71c10488e7a2369fdc29dc040135ba65f20a3",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -23.26,
+      "vas": {
+        "events": [
+          [
+            44100,
+            133865
+          ],
+          [
+            88636,
+            44988
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_short_bursts",
+      "config": "vas_only",
+      "host_rate_hz": 48000,
+      "n_samples": 153108,
+      "sha256": "9b51ec1dc9f17f125d45e0300879fa9c23e33cb937d8ed0e95a1e9b05f3b68c1",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -23.26,
+      "vas": {
+        "events": [
+          [
+            48000,
+            145704
+          ],
+          [
+            96474,
+            48966
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_short_bursts",
+      "config": "vas_only",
+      "host_rate_hz": 88200,
+      "n_samples": 281336,
+      "sha256": "ab2e2835d0036e348c1216b18e79fc9eafeef98c714be79cb907a841a4cdcdc4",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -23.26,
+      "vas": {
+        "events": [
+          [
+            88200,
+            267731
+          ],
+          [
+            177271,
+            89975
+          ]
+        ],
+        "paused_at_end": true
+      }
+    },
+    {
+      "stimulus": "vas_short_bursts",
+      "config": "vas_only",
+      "host_rate_hz": 96000,
+      "n_samples": 306216,
+      "sha256": "60ef02e33286a0469aa4f4b27f93fdb9549bb4b07cb245d90afe33b623928ad1",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -23.26,
+      "vas": {
+        "events": [
+          [
+            96000,
+            291408
+          ],
+          [
+            192948,
+            97932
+          ]
+        ],
+        "paused_at_end": true
+      }
+    }
+  ]
+}

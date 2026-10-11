@@ -80,7 +80,11 @@ fn agc_only(rate: u32, agc: &AgcSettings) -> Settings {
 
 fn run(make: Make<'_>, settings: Settings, x: &[f32]) -> Vec<f32> {
     let mut y = vec![0.0; x.len()];
-    make(settings).process(x, &mut y).expect("equal lengths");
+    let produced = make(settings)
+        .process(x, &mut y)
+        .expect("equal lengths")
+        .produced;
+    y.truncate(produced);
     y
 }
 
@@ -581,6 +585,7 @@ pub fn check_fr010_latency(rate: u32) -> Vec<MeasurementResult> {
         .into_iter()
         .map(|tap| {
             let mut on = Settings::new(rate);
+            on.vas.enabled = false; // the spec 002 default (spec 003 FR-020)
             on.tap = tap;
             let mut off = on;
             off.agc.enabled = false;

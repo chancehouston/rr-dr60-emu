@@ -5,9 +5,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)
 
-> ⚠️ **Pre-alpha.** Audio passes through the record-path AGC and the device's two voice-band
-> codec stages (record and playback). The other stages (mic, VAS, speech codec, speaker) aren't built yet,
-> and the API may still change before 1.0.
+> ⚠️ **Pre-alpha.** Audio passes through the record-path AGC, the voice-activated recording
+> (VAS) and the device's two voice-band codec stages (record and playback). The other stages
+> (mic, preamp, speech codec, speaker) aren't built yet, and the API may still change before 1.0.
 
 ## What is this?
 
@@ -52,28 +52,30 @@ Nothing in this table claims the emulator sounds like a real RR-DR60 yet. It cla
 
 ## Using the library
 
-What exists today ([spec 001](specs/001-pipeline-skeleton/spec.md) and [spec 002](specs/002-agc/spec.md)):
+What exists today ([spec 001](specs/001-pipeline-skeleton/spec.md), [spec 002](specs/002-agc/spec.md) and [spec 003](specs/003-vas/spec.md)):
 
-- Mono audio at **8, 16, 44.1, 48, 88.2 or 96 kHz** goes in, in blocks of any size, and the same number of samples comes out at the same rate.
+- Mono audio at **8, 16, 44.1, 48, 88.2 or 96 kHz** goes in, in blocks of any size, and audio comes out at the same rate. By default the output can be **shorter** than the input, because the VAS drops pauses; each call reports how many samples it produced.
 - Inside, the audio is converted to the device's internal 8 kHz rate and passes through two band-limiting stages. They model the record and playback filters of the recorder's MSM7702 voice-band codec, *assumed* to follow a telephone-style 300–3400 Hz band. They're designed to the spec's tolerances but haven't been measured against a real unit ([A-002, A-014–A-016](docs/hardware/assumptions.md)).
 - A record-path **automatic gain control** (AGC), on by default. See [AGC](#agc-signal-chain-stage-3) below.
+- A record-path **Voice Activated System** (VAS), on by default: recording pauses while the signal stays below a threshold, and the paused audio is removed. See [VAS](#vas-signal-chain-stage-5) below.
 - Fixed, reported latency: 541 samples (about 11.3 ms) at 48 kHz in the default configuration. It is under 20 ms at every supported rate, and each configuration reports its own.
-- **Real-time safe:** `process`, `process_in_place` and `reset` never allocate, lock or do I/O. Processing runs at about 230× real time at 48 kHz on a laptop with the AGC on (about 245× without it). `Pipeline::new` and `reconfigure` allocate, so call them outside the audio callback.
-- **Deterministic:** the same input and settings give bit-identical output for any block size, and on every supported platform. One golden file is checked on Linux, macOS and Windows (x86-64 and ARM64) and on iOS.
+- **Real-time safe:** `process`, `process_in_place`, `process_with_events` and `reset` never allocate, lock or do I/O. Processing runs at about 220× real time at 48 kHz on a laptop with the AGC and the VAS on (about 230× with the AGC alone, 245× with neither). `Pipeline::new` and `reconfigure` allocate, so call them outside the audio callback.
+- **Deterministic:** the same input and settings give bit-identical output for any block size, and on every supported platform. Three golden files (001, AGC and VAS) are checked on Linux, macOS and Windows (x86-64 and ARM64) and on iOS.
 - A C API with a generated header ([`rr_dr60.h`](crates/rr_dr60_ffi/include/rr_dr60.h)).
 
-- Each stage can be **bypassed**, the output can be **tapped after the AGC** or **after the record stage** ("what the device recorded"), and the reported latency follows the configuration. `reconfigure` changes settings between streams.
+- Each stage can be **bypassed**, the output can be **tapped after the AGC**, **after the record stage** or **after the VAS** ("what the device recorded"), and the reported latency follows the configuration. `reconfigure` changes settings between streams.
 
-Not yet: every stage beyond the AGC and the codec filters.
+Not yet: every stage beyond the AGC, the VAS and the codec filters.
 
 ### Rust
 
 ```rust
 use rr_dr60::{Pipeline, Settings};
 
-let mut p = Pipeline::new(Settings::new(48_000))?;   // AGC and both filter stages on, output after playback
+let mut p = Pipeline::new(Settings::new(48_000))?;   // device defaults: AGC, VAS and both filter stages on
 println!("latency: {} samples", p.latency_samples());
-p.process_in_place(&mut buffer);                     // in your audio callback; any block length
+let info = p.process_in_place(&mut buffer);          // in your audio callback; any block length
+let out = &buffer[..info.produced];                  // VAS drops pauses: output can be shorter
 ```
 
 ### C / Swift
@@ -84,7 +86,9 @@ p.process_in_place(&mut buffer);                     // in your audio callback; 
 RrDr60Settings s = rr_dr60_settings_default(48000);
 RrDr60Pipeline *p = NULL;
 if (rr_dr60_create(&s, &p) != RR_DR60_STATUS_OK) { /* handle the error */ }
-rr_dr60_process(p, in, out, frames);                 /* real-time safe; in == out is allowed */
+RrDr60BlockInfo info;
+rr_dr60_process(p, in, out, frames, &info);          /* real-time safe; in == out is allowed */
+/* only out[0 .. info.produced) is output: the VAS drops pauses by default */
 rr_dr60_destroy(p);
 ```
 
@@ -124,9 +128,58 @@ RrDr60SettingField field;
 if (rr_dr60_settings_validate(&s, &field) != RR_DR60_STATUS_OK) { /* field names the bad setting */ }
 ```
 
+### VAS (signal-chain stage 5)
+
+The owner's manual ([S-001](docs/hardware/sources.md)) describes the Voice Activated System: "Recording automatically pauses when no sound is detected. This avoids blank portions in recordings. The function works better the lower the microphone sensitivity level." The device has no VAS switch, so the emulator's VAS is **on by default**. Its character comes from what it removes: pauses longer than the hang time vanish from the recording, the first part of each sound after a pause is lost (clipped onsets), and the remaining audio is joined at abrupt splices. It is **modeled on the manual's description and assumed values** ([A-008, A-021–A-025](docs/hardware/assumptions.md)): every number below is a low-confidence assumption until recordings from a real unit exist.
+
+| Setting | Default | Range |
+|---|---|---|
+| On / bypassed | on (S-001, A-008: the device has no VAS switch) | — |
+| Output mode | drop (S-001, A-008) | drop, mute |
+| Sensitivity level | 3 (S-001, A-021) | 1 to 5 |
+| Threshold at level 3 | −18 dBFS (A-022) | −60 to 0 dBFS |
+| Hang time | 1 s (A-023) | 50 ms to 10 s |
+| Onset time | 20 ms (A-024) | 0 to 200 ms |
+
+> **The output can be shorter than the input.** In drop mode (the default), paused audio is removed, so a block can produce fewer samples than it consumed, or none. Always read `produced` (`BlockInfo::produced` in Rust, `RrDr60BlockInfo.produced` in C) and use only `output[..produced]`. **Mute mode** keeps one output sample per input sample and replaces paused audio with digital silence instead; it is an emulator option for real-time hosts that need a fixed block length, not a device behavior. Both modes make the same pause and resume decisions, and both report where they acted: drop mode reports each splice's output position and the length of input removed there, mute mode each muted region's start and length.
+
+The threshold is compared with the signal's peaks *after* the AGC (stage 3) and the record band-limit (stage 4). Through the AGC's static curve (A-017), the default threshold corresponds to an input level of about −58 dBFS peak at sensitivity level 3 (about −30, −55, −58, −61 and −64 dBFS at levels 1 to 5), so the default pauses only on near-silence: an input floor whose peaks exceed about −58 dBFS keeps recording at levels 2 to 5. In this version the sensitivity level moves only the VAS threshold (3 dB per level; higher levels record quieter sounds). The service manual places the sensitivity setting in the DSP, after the AGC (A-033), so it cannot change the AGC's behavior; whether it also applies a digital gain before the encoder, which would change the recorded level per level, is still open.
+
+```rust
+use rr_dr60::{Pipeline, Settings, Tap, VasEvent, VasMode};
+
+let mut s = Settings::new(48_000);
+s.vas.enabled = false;            // bypass the VAS (the spec 002 sound, fixed length)
+// s.vas.mode = VasMode::Mute;    // or: keep the length, replacing pauses with silence
+// s.vas.sensitivity = 5;         // or: record quieter sounds (1 records only louder sounds)
+// s.tap = Tap::AfterVas;         // or: take the output right after the VAS
+let mut p = Pipeline::new(s)?;
+
+// Read how much each block produced and where the VAS acted.
+let mut events = vec![VasEvent::default(); p.max_events(input.len())];  // outside the callback
+let info = p.process_with_events(&input, &mut output, &mut events)?;
+let out = &output[..info.produced];
+for e in &events[..info.events] {
+    // drop mode: a splice at output e.output_position removed e.input_length input samples
+    // mute mode: a muted region of e.input_length samples starts at e.output_position
+}
+```
+
+```c
+RrDr60Settings s = rr_dr60_settings_default(48000);
+s.vas_mode = RR_DR60_VAS_MODE_MUTE;         /* fixed length; s.vas_enabled = false bypasses */
+s.vas_sensitivity = 5;                       /* record quieter sounds */
+/* ... rr_dr60_create(&s, &p) ... */
+size_t capacity;
+rr_dr60_max_events(p, frames, &capacity);    /* always enough; allocate `events` outside the callback */
+RrDr60BlockInfo info;
+rr_dr60_process_with_events(p, in, out, frames, &info, events, capacity);
+/* out[0 .. info.produced) is output; events[0 .. info.events) says where the VAS acted */
+```
+
 ### Accuracy of this slice
 
-The AGC is **modeled on** an *assumed* AGC, and the two filter stages on the MSM7702 codec's *assumed* telephone-band filters. A measurement harness ([001](specs/001-pipeline-skeleton/quickstart.md), [002](specs/002-agc/quickstart.md)) checks the filter stages' 212 properties (band edges, ripple, rejection, latency) and the AGC's 1162 (regulation, gain limits, attack and release, distortion, noise rise, latency; 1734 in the full settings matrix) against the specs' tolerances at every supported rate. That proves the emulator does what the spec says. It does **not** prove that the spec matches a real RR-DR60, because no real-unit recordings exist yet. See [Accuracy](#accuracy) above for how to help.
+The AGC is **modeled on** an *assumed* AGC, the VAS on the owner's manual's description plus *assumed* values, and the two filter stages on the MSM7702 codec's *assumed* telephone-band filters. A measurement harness ([001](specs/001-pipeline-skeleton/quickstart.md), [002](specs/002-agc/quickstart.md), [003](specs/003-vas/quickstart.md)) checks the filter stages' 212 properties (band edges, ripple, rejection, latency), the AGC's 1162 (regulation, gain limits, attack and release, distortion, noise rise, latency; 1734 in the full settings matrix) and the VAS's acceptance scenarios (output lengths, splice positions, threshold, hang and onset times, mute mode) against the specs' tolerances at every supported rate. That proves the emulator does what the spec says. It does **not** prove that the spec matches a real RR-DR60, because no real-unit recordings exist yet. See [Accuracy](#accuracy) above for how to help.
 
 ## Planned features
 

@@ -6,7 +6,12 @@ use rr_dr60_harness::{agc_checks, configs, stimulus};
 
 fn run(settings: Settings, x: &[f32]) -> Vec<f32> {
     let mut y = vec![0.0; x.len()];
-    Pipeline::new(settings).unwrap().process(x, &mut y).unwrap();
+    let produced = Pipeline::new(settings)
+        .unwrap()
+        .process(x, &mut y)
+        .unwrap()
+        .produced;
+    y.truncate(produced);
     y
 }
 
@@ -41,13 +46,15 @@ fn reset_and_reconfigure_equal_fresh() {
     for how in ["reset", "reconfigure"] {
         let mut p = Pipeline::new(s).unwrap();
         let mut warm = loud.clone();
-        p.process_in_place(&mut warm);
+        let produced = p.process_in_place(&mut warm).produced;
+        warm.truncate(produced);
         match how {
             "reset" => p.reset(),
             _ => p.reconfigure(s).unwrap(),
         }
         let mut y = vec![0.0; x.len()];
-        p.process(&x, &mut y).unwrap();
+        let produced = p.process(&x, &mut y).unwrap().produced;
+        y.truncate(produced);
         assert_eq!(y, fresh, "{how}");
     }
 }
@@ -107,16 +114,19 @@ fn ten_minute_flush_and_long_silence() {
 
     let mut p = Pipeline::new(agc_only(8000, AgcSettings::DEVICE)).unwrap();
     let mut loud = stimulus::step(1000.0, &[0.0], &[1.0], fs);
-    p.process_in_place(&mut loud);
+    let produced = p.process_in_place(&mut loud).produced;
+    loud.truncate(produced);
     let mut quiet = stimulus::silence(ten_min);
-    p.process_in_place(&mut quiet);
+    let produced = p.process_in_place(&mut quiet).produced;
+    quiet.truncate(produced);
     assert!(
         quiet.iter().all(|v| v.to_bits() == 0),
         "silence must stay exactly 0.0"
     );
     let probe = stimulus::step(1000.0, &[-80.0], &[0.001], fs);
     let mut out = probe.clone();
-    p.process_in_place(&mut out);
+    let produced = p.process_in_place(&mut out).produced;
+    out.truncate(produced);
     let n = probe.iter().position(|&v| v != 0.0).unwrap();
     let gain = db(f64::from(out[n]) / f64::from(probe[n]));
     assert!(

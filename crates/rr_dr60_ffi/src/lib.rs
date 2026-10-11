@@ -13,7 +13,9 @@
 //! 1. Errors are values. No function aborts or unwinds into C. A caught panic returns
 //!    [`RrDr60Status::InternalError`] and poisons the handle until `rr_dr60_reset` succeeds.
 //! 2. A failed call changes nothing: out-parameters are left untouched and pipeline state is
-//!    unchanged, apart from poisoning.
+//!    unchanged, apart from poisoning. The one exception is `out_info` in `rr_dr60_process` and
+//!    `rr_dr60_process_with_events`, which is always written when not NULL (spec 003
+//!    contracts/c-api.md › Rule 2 amendment).
 //! 3. The caller owns all buffers. The library never keeps a pointer after a call returns.
 //! 4. A handle must not be used by two threads at the same time.
 //! 5. `RrDr60Settings` only grows at the end. Callers set `struct_size`.
@@ -21,12 +23,12 @@
 use std::ffi::c_char;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use rr_dr60::{Error, Pipeline, Setting, Settings, Tap};
+use rr_dr60::{BlockInfo, Error, Pipeline, Setting, Settings, Tap, VasEvent, VasMode};
 
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 2;
+pub const RR_DR60_VERSION_MINOR: u32 = 3;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -44,7 +46,7 @@ pub enum RrDr60Status {
     InvalidArgument = 3,
     /// An internal error (a caught panic). The handle is poisoned until `rr_dr60_reset`.
     InternalError = 4,
-    /// An AGC setting is out of range or not finite (spec 002 FR-011).
+    /// An AGC or VAS setting is out of range or not finite (spec 002 FR-011, spec 003 FR-012).
     /// `rr_dr60_settings_validate` names it.
     InvalidSetting = 5,
 }
@@ -57,7 +59,7 @@ pub enum RrDr60SettingField {
     None = 0,
     /// `host_rate_hz` is not a supported rate.
     HostRate = 1,
-    /// `tap` is not an `RrDr60Tap` value.
+    /// `tap` is not an `RrDr60Tap` value (status `INVALID_ARGUMENT`).
     Tap = 2,
     /// `struct_size` is smaller than `sizeof(RrDr60Settings)` of this library version.
     StructSize = 3,
@@ -71,6 +73,16 @@ pub enum RrDr60SettingField {
     AgcAttackMs = 7,
     /// `agc_release_ms` is outside 50 to 10000, or not finite.
     AgcReleaseMs = 8,
+    /// `vas_mode` is not an `RrDr60VasMode` value (status `INVALID_ARGUMENT`; spec 003).
+    VasMode = 9,
+    /// `vas_sensitivity` is outside 1 to 5 (spec 003).
+    VasSensitivity = 10,
+    /// `vas_threshold_dbfs` is outside -60 to 0, or not finite (spec 003).
+    VasThresholdDbfs = 11,
+    /// `vas_hang_ms` is outside 50 to 10000, or not finite (spec 003).
+    VasHangMs = 12,
+    /// `vas_onset_ms` is outside 0 to 200, or not finite (spec 003).
+    VasOnsetMs = 13,
 }
 
 /// Output tap point, passed as `uint32_t` in [`RrDr60Settings::tap`].
@@ -83,6 +95,45 @@ pub enum RrDr60Tap {
     AfterPlayback = 1,
     /// After signal-chain stage 3 (AGC). Stages 4 and 10 are not run (spec 002 FR-003).
     AfterAgc = 2,
+    /// After signal-chain stage 5 (VAS). Stage 10 is not run (spec 003 FR-003).
+    AfterVas = 3,
+}
+
+/// What the VAS does with paused audio, passed as `uint32_t` in [`RrDr60Settings::vas_mode`]
+/// (spec 003 FR-004).
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RrDr60VasMode {
+    /// Removed, so the output can be shorter than the input. The default (S-001, A-008).
+    Drop = 0,
+    /// Replaced by silence, so the output keeps the input's length. An emulator option.
+    Mute = 1,
+}
+
+/// The result of one `rr_dr60_process` call (spec 003 FR-004, FR-005).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RrDr60BlockInfo {
+    /// Output samples written to `output[0 .. produced)`. Never more than `frames`. With the VAS
+    /// in drop mode (the default) it can be smaller, or 0.
+    pub produced: usize,
+    /// VAS events this block generated (splices in drop mode, muted regions in mute mode).
+    pub events: usize,
+    /// The VAS is paused at the end of the block.
+    pub paused: bool,
+}
+
+/// A VAS splice (drop mode) or muted region (mute mode), from `rr_dr60_process_with_events`
+/// (spec 003 FR-005).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RrDr60VasEvent {
+    /// Drop mode: stream output index of the first sample after the splice. Mute mode: stream
+    /// output index of the region's first muted sample. Counted from create, reset or
+    /// reconfigure, so it does not depend on block sizes.
+    pub output_position: u64,
+    /// Drop mode: host input samples removed at this splice. Mute mode: the region's length.
+    pub input_length: u64,
 }
 
 /// Pipeline settings. Start from `rr_dr60_settings_default` and change fields as needed.
@@ -118,20 +169,70 @@ pub struct RrDr60Settings {
     pub agc_attack_ms: f32,
     /// AGC release time in ms. Default 1000 (A-018). Range 50 to 10000.
     pub agc_release_ms: f32,
+    /// Signal-chain stage 5 (VAS) on (true, default; the device has no VAS switch, S-001, A-008)
+    /// or bypassed.
+    pub vas_enabled: bool,
+    /// An `RrDr60VasMode` value. Default `RR_DR60_VAS_MODE_DROP`: paused audio is removed, so
+    /// read `RrDr60BlockInfo.produced`.
+    pub vas_mode: u32,
+    /// Microphone sensitivity level. Default 3 (S-001, A-021). Range 1 to 5. Moves only the VAS
+    /// threshold in this version, 3 dB per level (A-022).
+    pub vas_sensitivity: u32,
+    /// VAS threshold at sensitivity 3, dBFS (sine peak). Default -18 (A-022). Range -60 to 0.
+    pub vas_threshold_dbfs: f32,
+    /// VAS hang time in ms. Default 1000 (A-023). Range 50 to 10000.
+    pub vas_hang_ms: f32,
+    /// VAS onset time in ms. Default 20 (A-024). Range 0 to 200.
+    pub vas_onset_ms: f32,
 }
 
-// contracts/c-api.md: the 0.2 layout is 48 bytes, with the AGC fields at offsets 24–44.
-const _: () = assert!(size_of::<RrDr60Settings>() == 48);
+// spec 003 contracts/c-api.md: the 0.3 layout is 72 bytes, with the VAS fields at offsets 48–68.
+const _: () = assert!(size_of::<RrDr60Settings>() == 72);
+// spec 003 contracts/c-api.md: the C event type and the core's `repr(C)` `VasEvent` share one
+// layout, so `rr_dr60_process_with_events` can pass the caller's buffer straight through.
+const _: () = assert!(
+    size_of::<VasEvent>() == size_of::<RrDr60VasEvent>()
+        && align_of::<VasEvent>() == align_of::<RrDr60VasEvent>()
+);
 
 /// Opaque pipeline handle.
 pub struct RrDr60Pipeline {
     inner: Pipeline,
     poisoned: bool,
+    /// `paused` from the last processed block, reported by calls that return early.
+    last_paused: bool,
     #[cfg(feature = "ffi-test-panic")]
     force_panic: bool,
 }
 
 const SETTINGS_SIZE: u32 = size_of::<RrDr60Settings>() as u32;
+
+/// Checks `struct_size` before anything else is read, and only then forms a reference to the
+/// whole struct. A caller built against an older, smaller layout passes a smaller `struct_size`
+/// (contract rule 5), and the memory past its struct may not be readable, so the first field is
+/// read on its own through the raw pointer.
+///
+/// # Safety
+///
+/// `settings` must be non-null and point to at least a readable `u32` at offset 0; when that
+/// value is at least `sizeof(RrDr60Settings)`, the whole struct must be valid.
+unsafe fn check_struct_size<'a>(
+    settings: *const RrDr60Settings,
+) -> Result<&'a RrDr60Settings, (RrDr60Status, RrDr60SettingField)> {
+    // SAFETY: `struct_size` is the first field of a `repr(C)` struct, so it sits at offset 0,
+    // and the caller guarantees that much is readable. `read_unaligned` makes no alignment
+    // assumption about the caller's storage.
+    let size = unsafe { settings.cast::<u32>().read_unaligned() };
+    if size < SETTINGS_SIZE {
+        return Err((
+            RrDr60Status::InvalidArgument,
+            RrDr60SettingField::StructSize,
+        ));
+    }
+    // SAFETY: the caller's struct is at least as large as ours, and the caller guarantees it is
+    // valid; no mutable reference to it exists during the call.
+    Ok(unsafe { &*settings })
+}
 
 /// Maps a caught panic to a status (contract rule 1). Every entry point routes its panic
 /// arm through here; the `ffi-test-panic` tests exercise it.
@@ -160,6 +261,10 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
                 Setting::AgcMaxAttenuationDb => RrDr60SettingField::AgcMaxAttenuationDb,
                 Setting::AgcAttackMs => RrDr60SettingField::AgcAttackMs,
                 Setting::AgcReleaseMs => RrDr60SettingField::AgcReleaseMs,
+                Setting::VasSensitivity => RrDr60SettingField::VasSensitivity,
+                Setting::VasThresholdDbfs => RrDr60SettingField::VasThresholdDbfs,
+                Setting::VasHangMs => RrDr60SettingField::VasHangMs,
+                Setting::VasOnsetMs => RrDr60SettingField::VasOnsetMs,
                 _ => RrDr60SettingField::None,
             };
             (RrDr60Status::InvalidSetting, field)
@@ -170,7 +275,7 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
 
 /// The one validator behind `rr_dr60_create`, `rr_dr60_reconfigure` and
 /// `rr_dr60_settings_validate`, so their status and named field always agree (spec 002 R-09).
-/// Order: struct size → tap → host rate → AGC fields in struct order.
+/// Order: struct size → tap → VAS mode → host rate → AGC fields → VAS fields, in struct order.
 fn validate_c(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60SettingField)> {
     if s.struct_size < SETTINGS_SIZE {
         return Err((
@@ -178,21 +283,29 @@ fn validate_c(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Setti
             RrDr60SettingField::StructSize,
         ));
     }
-    let settings = to_settings(s).map_err(|status| (status, RrDr60SettingField::Tap))?;
+    let settings = to_settings(s)?;
     settings.validate().map_err(error_to_status_and_field)?;
     Ok(settings)
 }
 
-/// Converts C settings to Rust settings, validating `struct_size` and `tap`.
-fn to_settings(s: &RrDr60Settings) -> Result<Settings, RrDr60Status> {
+/// Converts C settings to Rust settings, validating `struct_size`, `tap` and `vas_mode`, and
+/// naming the failing field (spec 003 contracts/c-api.md › Conversion rules).
+fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60SettingField)> {
+    let invalid = |field| (RrDr60Status::InvalidArgument, field);
     if s.struct_size < SETTINGS_SIZE {
-        return Err(RrDr60Status::InvalidArgument);
+        return Err(invalid(RrDr60SettingField::StructSize));
     }
     let tap = match s.tap {
         0 => Tap::AfterRecord,
         1 => Tap::AfterPlayback,
         2 => Tap::AfterAgc,
-        _ => return Err(RrDr60Status::InvalidArgument),
+        3 => Tap::AfterVas,
+        _ => return Err(invalid(RrDr60SettingField::Tap)),
+    };
+    let vas_mode = match s.vas_mode {
+        0 => VasMode::Drop,
+        1 => VasMode::Mute,
+        _ => return Err(invalid(RrDr60SettingField::VasMode)),
     };
     let mut out = Settings::new(s.host_rate_hz);
     out.record_stage_enabled = s.record_stage_enabled;
@@ -205,14 +318,22 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, RrDr60Status> {
     out.agc.max_attenuation_db = s.agc_max_attenuation_db;
     out.agc.attack_ms = s.agc_attack_ms;
     out.agc.release_ms = s.agc_release_ms;
+    out.vas.enabled = s.vas_enabled;
+    out.vas.mode = vas_mode;
+    // A value such as 259 must not wrap to a valid level (spec 003 plan review, finding 8).
+    out.vas.sensitivity = u8::try_from(s.vas_sensitivity).unwrap_or(u8::MAX);
+    out.vas.threshold_dbfs = s.vas_threshold_dbfs;
+    out.vas.hang_ms = s.vas_hang_ms;
+    out.vas.onset_ms = s.vas_onset_ms;
     Ok(out)
 }
 
-/// Default settings for `host_rate_hz` (not validated): AGC on with the assumed device values,
-/// both band-limit stages on, tap after playback, seed 0. Never fails.
+/// Default settings for `host_rate_hz` (not validated): AGC and VAS on with the assumed device
+/// values, both band-limit stages on, tap after playback, seed 0. Never fails.
 #[unsafe(no_mangle)]
 pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings {
     let agc = rr_dr60::AgcSettings::DEVICE; // A-017, A-018, A-020
+    let vas = rr_dr60::VasSettings::DEVICE; // S-001, A-008, A-021 – A-024
     RrDr60Settings {
         struct_size: SETTINGS_SIZE,
         host_rate_hz,
@@ -226,6 +347,12 @@ pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings 
         agc_max_attenuation_db: agc.max_attenuation_db,
         agc_attack_ms: agc.attack_ms,
         agc_release_ms: agc.release_ms,
+        vas_enabled: vas.enabled,
+        vas_mode: RrDr60VasMode::Drop as u32,
+        vas_sensitivity: u32::from(vas.sensitivity),
+        vas_threshold_dbfs: vas.threshold_dbfs,
+        vas_hang_ms: vas.hang_ms,
+        vas_onset_ms: vas.onset_ms,
     }
 }
 
@@ -244,14 +371,19 @@ pub unsafe extern "C" fn rr_dr60_create(
     if settings.is_null() || out_pipeline.is_null() {
         return RrDr60Status::NullPointer;
     }
-    // SAFETY: checked non-null above; the caller guarantees it points to a valid struct.
-    let settings = unsafe { &*settings };
+    // SAFETY: checked non-null above; the caller guarantees it points to a valid struct of at
+    // least its own `struct_size`.
+    let settings = match unsafe { check_struct_size(settings) } {
+        Ok(s) => s,
+        Err((status, _)) => return status,
+    };
     let result = catch_unwind(|| {
         let s = validate_c(settings).map_err(|(status, _)| status)?;
         let inner = Pipeline::new(s).map_err(status_from_error)?;
         Ok(Box::new(RrDr60Pipeline {
             inner,
             poisoned: false,
+            last_paused: false,
             #[cfg(feature = "ffi-test-panic")]
             force_panic: false,
         }))
@@ -281,7 +413,33 @@ pub unsafe extern "C" fn rr_dr60_destroy(pipeline: *mut RrDr60Pipeline) {
     }
 }
 
+/// Writes `info` to `out_info` unless it is NULL.
+///
+/// # Safety
+///
+/// `out_info` must be NULL or writable.
+unsafe fn put_info(out_info: *mut RrDr60BlockInfo, info: RrDr60BlockInfo) {
+    if !out_info.is_null() {
+        // SAFETY: non-null and writable (caller contract).
+        unsafe { *out_info = info };
+    }
+}
+
+fn c_info(info: BlockInfo) -> RrDr60BlockInfo {
+    RrDr60BlockInfo {
+        produced: info.produced,
+        events: info.events,
+        paused: info.paused,
+    }
+}
+
 /// Processes `frames` samples from `input` into `output`. Real-time safe.
+///
+/// Only `output[0 .. produced)` holds output: with the VAS in drop mode (the default), pauses
+/// are removed, so `produced` can be smaller than `frames`, or 0 (spec 003 FR-004).
+/// `out_info` may be NULL. When it is not, it is always written: on an error, a poisoned handle
+/// or `frames == 0` it gets `produced = 0`, `events = 0` and the current `paused` value
+/// (`false` for a NULL handle).
 ///
 /// `input == output` processes in place. Any other overlap returns
 /// [`RrDr60Status::InvalidArgument`]. With `frames == 0`, both buffers may be NULL.
@@ -289,27 +447,127 @@ pub unsafe extern "C" fn rr_dr60_destroy(pipeline: *mut RrDr60Pipeline) {
 /// # Safety
 ///
 /// `pipeline` must be a live handle. When `frames > 0`, `input` must be readable and
-/// `output` writable for `frames` floats.
+/// `output` writable for `frames` floats. `out_info` must be NULL or writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rr_dr60_process(
     pipeline: *mut RrDr60Pipeline,
     input: *const f32,
     output: *mut f32,
     frames: usize,
+    out_info: *mut RrDr60BlockInfo,
+) -> RrDr60Status {
+    // SAFETY: the caller contract of this function is that of `process_block`, with no events.
+    unsafe {
+        process_block(
+            pipeline,
+            input,
+            output,
+            frames,
+            out_info,
+            std::ptr::null_mut(),
+            0,
+        )
+    }
+}
+
+/// As `rr_dr60_process`, and writes the block's VAS events (splices in drop mode, muted
+/// regions in mute mode) to `events`: the first `events_capacity` of them, in order.
+/// `out_info->events` counts all of them, so a count above `events_capacity` means some were
+/// not written; `rr_dr60_max_events` gives a capacity that is always enough. `events` may be
+/// NULL only when `events_capacity` is 0. Real-time safe (spec 003 FR-005, FR-014).
+///
+/// # Safety
+///
+/// As `rr_dr60_process`; additionally, when `events_capacity > 0`, `events` must be writable
+/// for that many `RrDr60VasEvent` values.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_process_with_events(
+    pipeline: *mut RrDr60Pipeline,
+    input: *const f32,
+    output: *mut f32,
+    frames: usize,
+    out_info: *mut RrDr60BlockInfo,
+    events: *mut RrDr60VasEvent,
+    events_capacity: usize,
+) -> RrDr60Status {
+    // SAFETY: the caller contract of this function is that of `process_block`.
+    unsafe {
+        process_block(
+            pipeline,
+            input,
+            output,
+            frames,
+            out_info,
+            events,
+            events_capacity,
+        )
+    }
+}
+
+/// Writes to `*out_capacity` an `events_capacity` that is always enough for a block of `frames`
+/// input samples with the pipeline's current settings (spec 003 research R-07). Never
+/// allocates; real-time safe. On a non-OK status `*out_capacity` is untouched (rule 2).
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_capacity` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_max_events(
+    pipeline: *const RrDr60Pipeline,
+    frames: usize,
+    out_capacity: *mut usize,
+) -> RrDr60Status {
+    if pipeline.is_null() || out_capacity.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: non-null live handle (caller contract).
+    let p = unsafe { &*pipeline };
+    if p.poisoned {
+        return RrDr60Status::InternalError;
+    }
+    // SAFETY: out_capacity is non-null and writable (caller contract).
+    unsafe { *out_capacity = p.inner.max_events(frames) };
+    RrDr60Status::Ok
+}
+
+/// The one block loop behind `rr_dr60_process` and `rr_dr60_process_with_events`.
+///
+/// # Safety
+///
+/// As `rr_dr60_process_with_events`.
+unsafe fn process_block(
+    pipeline: *mut RrDr60Pipeline,
+    input: *const f32,
+    output: *mut f32,
+    frames: usize,
+    out_info: *mut RrDr60BlockInfo,
+    events: *mut RrDr60VasEvent,
+    events_capacity: usize,
 ) -> RrDr60Status {
     if pipeline.is_null() {
+        // SAFETY: out_info is NULL or writable (caller contract).
+        unsafe { put_info(out_info, RrDr60BlockInfo::default()) };
         return RrDr60Status::NullPointer;
     }
     // SAFETY: non-null live handle (caller contract); no other reference exists during the call.
     let p = unsafe { &mut *pipeline };
+    let idle = RrDr60BlockInfo {
+        paused: p.last_paused,
+        ..RrDr60BlockInfo::default()
+    };
+    let early = |status| {
+        // SAFETY: out_info is NULL or writable (caller contract).
+        unsafe { put_info(out_info, idle) };
+        status
+    };
     if p.poisoned {
-        return RrDr60Status::InternalError;
+        return early(RrDr60Status::InternalError);
     }
     if frames == 0 {
-        return RrDr60Status::Ok;
+        return early(RrDr60Status::Ok);
     }
-    if input.is_null() || output.is_null() {
-        return RrDr60Status::NullPointer;
+    if input.is_null() || output.is_null() || (events.is_null() && events_capacity > 0) {
+        return early(RrDr60Status::NullPointer);
     }
     let (in_start, out_start) = (input as usize, output as usize);
     let bytes = frames.saturating_mul(size_of::<f32>());
@@ -318,7 +576,7 @@ pub unsafe extern "C" fn rr_dr60_process(
         && in_start < out_start.saturating_add(bytes)
         && out_start < in_start.saturating_add(bytes)
     {
-        return RrDr60Status::InvalidArgument;
+        return early(RrDr60Status::InvalidArgument);
     }
     let result = catch_unwind(AssertUnwindSafe(|| {
         #[cfg(feature = "ffi-test-panic")]
@@ -326,11 +584,20 @@ pub unsafe extern "C" fn rr_dr60_process(
             p.force_panic = false;
             panic!("rr_dr60__test_force_panic");
         }
+        // SAFETY: `VasEvent` is `repr(C)` with the same two `u64` fields in the same order as
+        // `RrDr60VasEvent`, so their layouts are identical (checked by the const assert below
+        // `RrDr60Settings`); the slice is rebuilt from the caller's storage, which is writable
+        // for `events_capacity` values (or empty).
+        let slots: &mut [VasEvent] = if events_capacity == 0 {
+            &mut []
+        } else {
+            unsafe { std::slice::from_raw_parts_mut(events.cast::<VasEvent>(), events_capacity) }
+        };
         if in_place {
             // SAFETY: output is non-null and writable for `frames` floats; it is the only
             // reference to that memory during the call.
             let buf = unsafe { std::slice::from_raw_parts_mut(output, frames) };
-            p.inner.process_in_place(buf);
+            p.inner.process_in_place_with_events(buf, slots)
         } else {
             // SAFETY: both are non-null, valid for `frames` floats, and checked not to overlap.
             let (x, y) = unsafe {
@@ -340,12 +607,22 @@ pub unsafe extern "C" fn rr_dr60_process(
                 )
             };
             // Lengths are equal by construction, so this cannot fail.
-            let _ = p.inner.process(x, y);
+            p.inner.process_with_events(x, y, slots).unwrap_or_default()
         }
     }));
     match result {
-        Ok(()) => RrDr60Status::Ok,
-        Err(_) => panic_to_status(Some(p)),
+        Ok(info) => {
+            p.last_paused = info.paused;
+            // SAFETY: out_info is NULL or writable (caller contract).
+            unsafe { put_info(out_info, c_info(info)) };
+            RrDr60Status::Ok
+        }
+        Err(_) => {
+            let status = panic_to_status(Some(p));
+            // SAFETY: out_info is NULL or writable (caller contract).
+            unsafe { put_info(out_info, idle) };
+            status
+        }
     }
 }
 
@@ -388,6 +665,7 @@ pub unsafe extern "C" fn rr_dr60_reset(pipeline: *mut RrDr60Pipeline) -> RrDr60S
     match catch_unwind(AssertUnwindSafe(|| p.inner.reset())) {
         Ok(()) => {
             p.poisoned = false;
+            p.last_paused = false;
             RrDr60Status::Ok
         }
         Err(_) => panic_to_status(Some(p)),
@@ -410,8 +688,13 @@ pub unsafe extern "C" fn rr_dr60_reconfigure(
     if pipeline.is_null() || settings.is_null() {
         return RrDr60Status::NullPointer;
     }
-    // SAFETY: both non-null; the caller guarantees a live handle and a valid struct.
-    let (p, settings) = unsafe { (&mut *pipeline, &*settings) };
+    // SAFETY: non-null; the caller guarantees a valid struct of at least its own `struct_size`.
+    let settings = match unsafe { check_struct_size(settings) } {
+        Ok(s) => s,
+        Err((status, _)) => return status,
+    };
+    // SAFETY: non-null live handle (caller contract); no other reference exists during the call.
+    let p = unsafe { &mut *pipeline };
     let result = catch_unwind(AssertUnwindSafe(|| {
         let s = validate_c(settings).map_err(|(status, _)| status)?;
         p.inner.reconfigure(s).map_err(status_from_error)
@@ -419,6 +702,7 @@ pub unsafe extern "C" fn rr_dr60_reconfigure(
     match result {
         Ok(Ok(())) => {
             p.poisoned = false;
+            p.last_paused = false;
             RrDr60Status::Ok
         }
         Ok(Err(status)) => status,
@@ -429,7 +713,7 @@ pub unsafe extern "C" fn rr_dr60_reconfigure(
 /// Checks `settings` without creating a pipeline. Returns exactly the status
 /// `rr_dr60_create` would return for them and, if `out_field` is not NULL, writes the field
 /// at fault there (`RR_DR60_SETTING_FIELD_NONE` when the status is OK). Fields are checked in
-/// the order struct size, tap, host rate, then the AGC fields. Never allocates; real-time safe.
+/// the order struct size, tap, VAS mode, host rate, the AGC fields, then the VAS fields. Never allocates; real-time safe.
 ///
 /// # Safety
 ///
@@ -443,12 +727,15 @@ pub unsafe extern "C" fn rr_dr60_settings_validate(
     if settings.is_null() {
         return RrDr60Status::NullPointer;
     }
-    // SAFETY: checked non-null above; the caller guarantees it points to a valid struct.
-    let settings = unsafe { &*settings };
-    let (status, field) = match catch_unwind(|| validate_c(settings)) {
-        Ok(Ok(_)) => (RrDr60Status::Ok, RrDr60SettingField::None),
-        Ok(Err(fault)) => fault,
-        Err(_) => (panic_to_status(None), RrDr60SettingField::None),
+    // SAFETY: checked non-null above; the caller guarantees a valid struct of at least its own
+    // `struct_size`.
+    let (status, field) = match unsafe { check_struct_size(settings) } {
+        Err(fault) => fault,
+        Ok(settings) => match catch_unwind(|| validate_c(settings)) {
+            Ok(Ok(_)) => (RrDr60Status::Ok, RrDr60SettingField::None),
+            Ok(Err(fault)) => fault,
+            Err(_) => (panic_to_status(None), RrDr60SettingField::None),
+        },
     };
     if !out_field.is_null() {
         // SAFETY: out_field is non-null and writable (caller contract).
@@ -500,7 +787,29 @@ mod tests {
         assert_eq!(s.struct_size as usize, size_of::<RrDr60Settings>());
         assert!(to_settings(&s).is_ok());
         s.tap = 7;
-        assert_eq!(to_settings(&s), Err(RrDr60Status::InvalidArgument));
+        assert_eq!(
+            to_settings(&s),
+            Err((RrDr60Status::InvalidArgument, RrDr60SettingField::Tap))
+        );
+        s.tap = RrDr60Tap::AfterVas as u32;
+        assert_eq!(to_settings(&s).unwrap().tap, Tap::AfterVas);
+        s.vas_mode = 7;
+        assert_eq!(
+            to_settings(&s),
+            Err((RrDr60Status::InvalidArgument, RrDr60SettingField::VasMode))
+        );
+        s.vas_mode = RrDr60VasMode::Mute as u32;
+        assert_eq!(to_settings(&s).unwrap().vas.mode, VasMode::Mute);
+        s.vas_sensitivity = 259; // must not wrap to 3
+        assert_eq!(to_settings(&s).unwrap().vas.sensitivity, u8::MAX);
+        assert_eq!(
+            validate_c(&s),
+            Err((
+                RrDr60Status::InvalidSetting,
+                RrDr60SettingField::VasSensitivity
+            ))
+        );
+        s.vas_sensitivity = 3;
         s.tap = RrDr60Tap::AfterRecord as u32;
         assert_eq!(to_settings(&s).unwrap().tap, Tap::AfterRecord);
         s.tap = RrDr60Tap::AfterAgc as u32;
@@ -511,7 +820,13 @@ mod tests {
             to_settings(&rr_dr60_settings_default(48_000)).unwrap(),
             Settings::new(48_000)
         );
-        s.struct_size = 4;
-        assert_eq!(to_settings(&s), Err(RrDr60Status::InvalidArgument));
+        s.struct_size = 48; // the 0.2 size
+        assert_eq!(
+            to_settings(&s),
+            Err((
+                RrDr60Status::InvalidArgument,
+                RrDr60SettingField::StructSize
+            ))
+        );
     }
 }
