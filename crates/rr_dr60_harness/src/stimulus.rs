@@ -458,7 +458,8 @@ mod tests {
     fn aligned_phase_rule() {
         // At the 6 kHz identity rate, 1 kHz: π/2 mod π/3 = π/6 (the spec's example).
         assert!((aligned_phase(1000.0, 6000, 0) - PI / 6.0).abs() < 1e-12);
-        // Formula check at 48 kHz with a bypass latency of 462 samples (D = 231):
+        // Formula check at 48 kHz with a hypothetical bypass latency of 462 samples (D = 231;
+        // the realized 48 kHz figure is 476):
         // (0.25 + 1000·231/48000) cycles mod 1/6 cycle = 1.0625 mod 0.1667 = 0.0625 cycles = 22.5°.
         let phi = aligned_phase(1000.0, 48_000, 462);
         assert!((phi - TAU * 0.0625).abs() < 1e-12, "{phi}");

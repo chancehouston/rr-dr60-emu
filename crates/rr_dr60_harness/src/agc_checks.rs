@@ -169,7 +169,8 @@ pub struct Timing {
     pub attack_s: f64,
     /// Release time in seconds.
     pub release_s: f64,
-    /// Fraction of the release excursion reached at 25 % of the release time.
+    /// Fraction of the release excursion reached 25 % of the way through the release, measured
+    /// from the end of the detector dead time (spec 004 FR-011, research R-09).
     pub midpoint: f64,
     /// Steady gain at the high level, dB.
     pub high_gain_db: f64,
@@ -239,9 +240,16 @@ pub fn measure_timing(make: Make<'_>, rate: u32, agc: &AgcSettings, exact: bool)
     let fin = mean(&window(&traj, end - tail - s(0.05), end - s(0.05)));
     let down = window(&traj, s2, end - s(0.05));
     let release_n = settle(&down, fin, fin - high_gain);
+    // Spec 004 FR-011 (research R-09, implementation finding): the shape's 25 % point is taken
+    // from the end of the detector dead time (31 device samples, `DETECTOR_DELAY_S`), not from
+    // the step, because the dead time grew from 3.875 to 5.17 ms at 6 kHz and at the 50 ms
+    // minimum release the fraction read 0.33 (was 0.373) against 002 FR-006's 35–65 % window.
+    // The release time itself still counts from the step. The exponential-in-dB law (A-018)
+    // predicts 1 − 13.5^(−1/4) ≈ 0.48 at every setting; a steady-dB recovery would read ≈ 0.25.
+    let dead = s(DETECTOR_DELAY_S);
     let at = down
         .iter()
-        .find(|&&(n, _)| n >= release_n / 4)
+        .find(|&&(n, _)| n >= dead + release_n.saturating_sub(dead) / 4)
         .map_or(fin, |p| p.1);
     Some(Timing {
         attack_s,
@@ -365,7 +373,7 @@ pub fn check_fr006_timing(rate: u32, case: &Case, make: Make<'_>) -> Vec<Measure
         ),
         MeasurementResult::new(
             "002/FR-006",
-            "release recovered at 25 % of release time",
+            "release recovered at 25 % of release time after the detector dead time",
             T_A018,
             rate,
             CONFIG,

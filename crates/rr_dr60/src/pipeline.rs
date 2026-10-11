@@ -12,7 +12,7 @@ use crate::validate::validate;
 
 /// One emulator instance: host-rate mono audio in, host-rate mono audio out.
 ///
-/// Internally, each sample goes through the 8 kHz device-rate domain (A-001), the record-path
+/// Internally, each sample goes through the 6 kHz device-rate domain (A-026), the record-path
 /// AGC (signal-chain stage 3, spec 002), the record band-limit stage (stage 4), the Voice
 /// Activated System (VAS, stage 5, spec 003) and the playback band-limit stage (stage 10). Each
 /// stage can be bypassed, and the output can be taken after the AGC, stage 4 or the VAS instead
@@ -130,7 +130,7 @@ enum DeviceOut {
 /// Stream counters that place VAS events in the output (spec 003 research R-05, R-06).
 #[derive(Clone, Debug)]
 struct EventCounters {
-    /// Host samples per device sample is `m / l` (`l = m = 1` at the 8 kHz identity rate).
+    /// Host samples per device sample is `m / l` (`l = m = 1` at the 6 kHz identity rate).
     l: u64,
     m: u64,
     /// Device samples kept (fed to the interpolator) since the stream started.

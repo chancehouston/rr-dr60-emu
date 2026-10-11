@@ -61,7 +61,7 @@ A **template** is the set of limits a band-limit stage must meet, plus the typic
 | Phase, 225–2550 Hz (at 6 kHz host) | within ±5° of minimum phase | — | A-016 (±5° engineering target) |
 | Anti-alias (host rate, through the stage) | ≥ 30 dB from 3450 Hz to host Nyquist, total power incl. aliases | 32 dB | S-005 discrimination row, A-027 |
 
-Design (R-04): Butterworth high-pass order 3 at 112.5 Hz + Chebyshev-II low-pass order 5, 32 dB stopband, stopband edge ≈ 2740 Hz (script-tuned to 0.4 dB at 2550 Hz); 5 biquads; `RECORD_SOS: [[f64; 5]; 5]`.
+Design (R-04): Butterworth high-pass order 3 at 112.5 Hz + Chebyshev-II low-pass order 5, 32 dB stopband, stopband edge ≈ 2740 Hz (script-tuned toward 0.4 dB at 2550 Hz; committed: edge 2735 Hz, 0.306 dB at 2550 Hz, the highest edge within ±0.1 dB of the typical); 5 biquads; `RECORD_SOS: [[f64; 5]; 5]`.
 
 ### Playback template (stage 10; receive, scaled by 0.75; low-pass only)
 
@@ -78,7 +78,7 @@ Design (R-04): Butterworth high-pass order 3 at 112.5 Hz + Chebyshev-II low-pass
 | Group delay at 2550 Hz | > at 1 kHz; reported; ≤ 2 ms | — | A-016; 2 ms engineering target |
 | Phase, 225–2550 Hz (at 6 kHz host) | within ±5° of minimum phase | — | A-016 |
 
-Design (R-05): Chebyshev-II low-pass order 5, 32 dB stopband, stopband edge ≈ 2715 Hz (script-tuned to 0.56 dB at 2550 Hz); 3 biquads; `PLAYBACK_SOS: [[f64; 5]; 3]`.
+Design (R-05): Chebyshev-II low-pass order 5, 32 dB stopband, stopband edge ≈ 2715 Hz (script-tuned toward 0.56 dB at 2550 Hz; committed: edge 2725 Hz, 0.478 dB at 2550 Hz, the highest edge within ±0.1 dB of the typical); 3 biquads; `PLAYBACK_SOS: [[f64; 5]; 3]`.
 
 ### Stage types (changed)
 
@@ -126,6 +126,8 @@ For a steady tone of frequency f that divides 6000, used to measure a sample-pea
 | 002 FR-008 tones | 300, 500, 1000, 2000, 2667, 3400 Hz; phases at 2000, 2667 | 225, 375, 750, 1000, 1500, 2000, 2550 Hz; phases at 1500, 2000 |
 | 002 FR-009 noise band | 300–3400 Hz | 225–2550 Hz |
 | 002 detector delay (harness) | 31/8000 s | 31/6000 s |
+| 002 FR-006 timing-step stimulus (harness) | 1 kHz step at phase 0; exact y/x gated at 0.5·A | step at the FR-012 aligned phase at every host rate; exact y/x gated at 0.4·A (implementation finding, research R-08) |
+| 002 FR-006 shape midpoint origin | 25 % of the release time from the step | 25 % of the release time after the detector dead time (31 device samples); window 35–65 % unchanged (implementation finding, research R-09) |
 | 003 FR-004/FR-005 exact rates | 8, 16, 48, 96 kHz | 6, 48, 96 kHz |
 | 003 FR-004 lead bound / settling | ⌈host/8000⌉ (12 at 96 kHz) | ⌈host/6000⌉ (16 at 96 kHz) |
 | 003 FR-006 frequencies | 300, 1000, 3400 Hz | 225, 1000, 2550 Hz, 1 kHz phase-aligned |

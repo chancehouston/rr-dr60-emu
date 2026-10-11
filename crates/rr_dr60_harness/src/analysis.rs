@@ -118,7 +118,8 @@ pub fn analytic_envelope<T: Copy + Into<f64>>(x: &[T]) -> Vec<f64> {
 
 /// Exact per-sample gain in dB, `|y[n] / x[n]|`, at every sample where `|x[n]| ≥ 0.1·amp`
 /// (gating threshold: engineering target, spec 002 R-15). Valid where the device under test is
-/// a pure multiplier with no delay, e.g. the AGC at the 8 kHz host rate (R-11).
+/// a pure multiplier with no delay, e.g. the AGC at the 6 kHz identity host rate (002 R-11;
+/// spec 004 FR-002).
 pub fn gain_trajectory_exact<T: Copy + Into<f64>, U: Copy + Into<f64>>(
     input: &[T],
     output: &[U],

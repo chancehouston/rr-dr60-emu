@@ -16,7 +16,7 @@ uv run tools/filter-design/design_voiceband.py --check
 uv run tools/filter-design/design_hilbert.py --check
 ```
 
-Expected: two margin tables (record and playback), every row PASS, the chosen Chebyshev-II stopband edges printed with the 2550 Hz loss within ±0.1 dB of 0.4 dB (record) and 0.56 dB (playback), the 1950 Hz group-delay distortion near 0.08 and 0.11 ms (limit 0.17), and the group delay at 2550 Hz about 1.4–1.5 ms (target ≤ 2 ms). The loss at 2700 and 2900 Hz is printed as report-only rows. The Hilbert script reports PASS at 6 kHz; `git diff --stat crates/rr_dr60/src/stages/agc_hilbert_coeffs.rs` shows only header-comment lines changed (the bit patterns are identical).
+Expected: two margin tables (record and playback), every row PASS, the chosen Chebyshev-II stopband edges printed with the 2550 Hz loss within ±0.1 dB of 0.4 dB (record) and 0.56 dB (playback), the 1950 Hz group-delay distortion near 0.08 and 0.11 ms (limit 0.17), and the group delay at 2550 Hz under 2 ms (committed design: edges 2735 and 2725 Hz, 0.306 and 0.478 dB at 2550 Hz, group delay 1.43 and 1.58 ms at 2550 Hz; the rule takes the highest edge inside the ±0.1 dB window, so the loss lands below the typical). The loss at 2700 and 2900 Hz is printed as report-only rows. The Hilbert script reports PASS at 6 kHz; `git diff --stat crates/rr_dr60/src/stages/agc_hilbert_coeffs.rs` shows only header-comment lines changed (the bit patterns are identical).
 
 ## 2. Story 1: the stages at the device rate (FR-005 – FR-009)
 
@@ -34,7 +34,7 @@ cargo test -p rr_dr60 rate resample
 cargo test -p rr_dr60_harness --test us2_bypass_tap --test edge_cases --test latency -- --nocapture
 ```
 
-Expected: 6 kHz is the identity (bypassed output equals input; latency 0 with both stages bypassed); the boundary is flat within ±0.1 dB to 2550 Hz and rejects ≥ 60 dB from 3000 Hz at the six converting rates; a 7 kHz request is rejected naming the seven rates; the latency table shows every default under 20 ms (about 471 samples at 48 kHz) and matching the measured 1 kHz group delay within ±1 sample.
+Expected: 6 kHz is the identity (bypassed output equals input; latency 0 with both stages bypassed); the boundary is flat within ±0.1 dB to 2550 Hz and rejects ≥ 60 dB from 3000 Hz at the six converting rates; a 7 kHz request is rejected naming the seven rates; the latency table shows every default under 20 ms (483 samples at 48 kHz; 1, 81, 162, 444, 483, 887 and 966 at the seven rates) and matching the measured 1 kHz group delay within ±1 sample.
 
 ## 4. Story 3: the AGC and VAS laws are unchanged (FR-011, FR-012)
 
