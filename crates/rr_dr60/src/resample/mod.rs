@@ -1,5 +1,5 @@
-//! Rate conversion boundary between the host rate and the 8 kHz device rate
-//! (FR-004, FR-005; research.md R-08).
+//! Rate conversion boundary between the host rate and the 6 kHz device rate (A-026; spec 004
+//! FR-001, FR-003; 001 research R-08, 004 research R-03).
 
 pub(crate) mod design;
 mod down;
@@ -10,11 +10,13 @@ pub(crate) use up::PolyphaseUp;
 
 use crate::rate::RatePlan;
 
-/// Prototype cutoff: the middle of the 3600–4000 Hz transition band (FR-005, engineering target).
-pub(crate) const CUTOFF_HZ: f64 = 3800.0;
-/// Transition width: passband flat to 3600 Hz, stopband from 4000 Hz (FR-005, engineering target).
-pub(crate) const TRANSITION_HZ: f64 = 400.0;
-/// Kaiser design stopband: 70 dB, a 10 dB margin over FR-005's 60 dB (engineering target).
+/// Prototype cutoff: the middle of the 2550–3000 Hz transition band (spec 004 FR-003,
+/// engineering target).
+pub(crate) const CUTOFF_HZ: f64 = 2775.0;
+/// Transition width: passband flat to 2550 Hz (the templates' top edge, A-027), stopband from
+/// the 3000 Hz device Nyquist frequency (spec 004 FR-003, engineering target).
+pub(crate) const TRANSITION_HZ: f64 = 450.0;
+/// Kaiser design stopband: 70 dB, a 10 dB margin over FR-003's 60 dB (engineering target).
 pub(crate) const STOPBAND_DB: f64 = 70.0;
 
 /// Builds the decimator and interpolator for `plan`, or `None` for the identity plan.
@@ -66,6 +68,8 @@ mod tests {
             .collect()
     }
 
+    /// 004 T005 (spec 004 FR-002, FR-003; research R-02, R-03): the plan's (l, m), the delay
+    /// as a whole number of host samples, and the round-trip response at the new band.
     fn check_rate(host: u32, l: u32, m: u32) {
         let plan = RatePlan::for_host(host).unwrap();
         let RatePlan::Convert {
@@ -73,24 +77,30 @@ mod tests {
             m: pm,
             num_taps,
             delay_host,
+            prototype_rate,
             ..
         } = plan
         else {
             panic!("identity")
         };
-        assert_eq!((pl, pm), (l, m), "{host}: L/M");
+        assert_eq!((pl, pm), (l, m), "{host}: l/m");
+        assert_eq!(prototype_rate, f64::from(host) * f64::from(l), "{host}: prototype rate");
         assert_eq!(
             (num_taps - 1) % (2 * l as usize),
             0,
             "{host}: delay not a whole number of host samples"
         );
         assert_eq!(delay_host as usize, (num_taps - 1) / (2 * l as usize));
+        std::eprintln!(
+            "{host} Hz: l/m {l}/{m}, prototype {prototype_rate} Hz, {num_taps} taps, delay {delay_host} host samples ({:.2} ms)",
+            f64::from(delay_host) * 1000.0 / f64::from(host)
+        );
 
         let fs = f64::from(host);
         let settle = 4 * delay_host as usize + 2000;
         let len = settle + host as usize / 2;
-        // FR-005 (engineering target): flat within ±0.1 dB from 50 to 3600 Hz.
-        for f in [50.0, 1000.0, 3600.0] {
+        // 004 FR-003 (engineering target): flat within ±0.1 dB from 50 to 2550 Hz.
+        for f in [50.0, 1000.0, 2550.0] {
             let y = round_trip(host, &tone(f, 0.5, fs, len));
             let (amp, residual) = fit(&y[settle..], f, fs);
             let g = 20.0 * (amp / 0.5).log10();
@@ -104,8 +114,8 @@ mod tests {
                 );
             }
         }
-        // FR-005: input from 4000 Hz up to the host Nyquist frequency attenuated >= 60 dB.
-        for f in [4000.0, 4600.0, 8000.0, 20_000.0] {
+        // 004 FR-003: input from 3000 Hz up to the host Nyquist frequency attenuated >= 60 dB.
+        for f in [3000.0, 3450.0, 6000.0, 20_000.0] {
             if f >= fs / 2.0 {
                 continue;
             }
@@ -115,8 +125,9 @@ mod tests {
         }
     }
 
+    /// 004 T005: prototype ripple <= 0.01 dB to 2550 Hz, stopband >= 70 dB from 3000 Hz
+    /// (engineering targets, 004 FR-003; research R-03).
     fn check_prototype(host: u32) {
-        // Design level: prototype ripple <= 0.01 dB to 3600 Hz, stopband >= 70 dB from 4000 Hz.
         let plan = RatePlan::for_host(host).unwrap();
         let RatePlan::Convert {
             num_taps,
@@ -142,7 +153,7 @@ mod tests {
             }
             20.0 * ((re * re + im * im).sqrt() / dc).log10()
         };
-        for f in (0..=36).map(|k| f64::from(k) * 100.0) {
+        for f in (0..=51).map(|k| f64::from(k) * 50.0) {
             assert!(
                 response(f).abs() <= 0.01,
                 "{host}: passband {f} Hz {:.4} dB",
@@ -150,7 +161,7 @@ mod tests {
             );
         }
         let top = (4.0 * f64::from(host)).min(prototype_rate / 2.0);
-        let mut f = 4000.0;
+        let mut f = 3000.0;
         while f <= top {
             assert!(
                 response(f) <= -70.0,
@@ -162,38 +173,45 @@ mod tests {
     }
 
     #[test]
-    fn rate_48k() {
-        check_rate(48_000, 1, 6);
-        check_prototype(48_000);
-    }
-
-    #[test]
-    fn rate_44k1() {
-        check_rate(44_100, 80, 441);
-        check_prototype(44_100);
+    fn rate_8k() {
+        check_rate(8000, 3, 4);
+        check_prototype(8000);
     }
 
     #[test]
     fn rate_16k() {
-        check_rate(16_000, 1, 2);
+        check_rate(16_000, 3, 8);
         check_prototype(16_000);
     }
 
     #[test]
+    fn rate_44k1() {
+        check_rate(44_100, 20, 147);
+        check_prototype(44_100);
+    }
+
+    #[test]
+    fn rate_48k() {
+        check_rate(48_000, 1, 8);
+        check_prototype(48_000);
+    }
+
+    #[test]
     fn rate_88k2() {
-        check_rate(88_200, 40, 441);
+        check_rate(88_200, 10, 147);
         check_prototype(88_200);
     }
 
     #[test]
     fn rate_96k() {
-        check_rate(96_000, 1, 12);
+        check_rate(96_000, 1, 16);
         check_prototype(96_000);
     }
 
+    /// 004 FR-002: 6 kHz is the identity rate (A-026).
     #[test]
-    fn rate_8k_is_identity() {
-        let plan = RatePlan::for_host(8000).unwrap();
+    fn rate_6k_is_identity() {
+        let plan = RatePlan::for_host(6000).unwrap();
         assert_eq!(plan, RatePlan::Identity);
         assert_eq!(plan.delay_host_samples(), 0);
         assert!(converters(&plan).is_none());

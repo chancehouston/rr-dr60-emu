@@ -1,4 +1,4 @@
-//! Polyphase interpolator: 8 kHz device rate to host rate (research.md R-08, R-09).
+//! Polyphase interpolator: 6 kHz device rate to host rate (001 research R-08, R-09; A-026).
 
 use alloc::boxed::Box;
 use alloc::vec;
@@ -113,8 +113,8 @@ mod tests {
     use crate::resample::converters;
     use std::vec::Vec;
 
-    /// The five resampled host rates (the 8 kHz plan is the identity).
-    const RATES: [u32; 5] = [16_000, 44_100, 48_000, 88_200, 96_000];
+    /// The six converting host rates (the 6 kHz plan is the identity; 004 FR-002).
+    const RATES: [u32; 6] = [8000, 16_000, 44_100, 48_000, 88_200, 96_000];
 
     fn input(n: usize) -> Vec<f64> {
         (0..n)
@@ -156,8 +156,9 @@ mod tests {
         }
     }
 
-    /// 003 T006 (research R-05, R-06; spec FR-004): with dropped device samples, at most one
-    /// sample per step; input − output stays within one device sample (⌈m/l⌉ host samples) of
+    /// 003 T006 (research R-05, R-06; spec FR-004), re-run by 004 T005 over the six converting
+    /// rates (004 FR-012: lead bound ⌈m/l⌉ = 2, 3, 8, 8, 15, 16): with dropped device samples, at
+    /// most one sample per step; input − output stays within one device sample (⌈m/l⌉ host samples) of
     /// ⌊dropped·m/l⌋ at every step, and within ±1 (exact when m/l is an integer) once ⌈m/l⌉ + 1
     /// steps have passed since the step that reported the last pause; and the writer never leads the
     /// newest-read index by more than it does with no drops (ring safety).

@@ -1,15 +1,19 @@
 //! Pipeline settings, defaults and supported rates (data-model.md › Settings).
 
-/// Host sample rates supported by this version, in Hz (FR-002).
+/// Host sample rates supported by this version, in Hz (spec 004 FR-002).
 ///
-/// Any other rate is rejected by [`Pipeline::new`](crate::Pipeline::new) with
+/// 6 kHz is the device's own rate (A-026) and the identity rate: no rate conversion is applied.
+/// The other six rates convert to and from the device rate at the pipeline boundary; 8 and
+/// 16 kHz are ordinary conversions (3:4 and 3:8), not the identity. Any other rate is rejected
+/// by [`Pipeline::new`](crate::Pipeline::new) with
 /// [`Error::UnsupportedHostRate`](crate::Error::UnsupportedHostRate).
-pub const SUPPORTED_HOST_RATES: [u32; 6] = [8000, 16000, 44100, 48000, 88200, 96000]; // FR-002
+pub const SUPPORTED_HOST_RATES: [u32; 7] = [6000, 8000, 16000, 44100, 48000, 88200, 96000]; // 004 FR-002
 
 /// The emulated device's internal sample rate, in Hz.
 ///
-/// A-001: assumed 8 kHz, the standard rate for the MSM7702 class of voice-band codec.
-pub const DEVICE_RATE_HZ: u32 = 8000;
+/// A-026 (S-002, verified): the RR-DR60 samples at 6 kHz, so nothing above 3 kHz exists inside
+/// the device. Supersedes A-001's assumed 8 kHz (spec 004).
+pub const DEVICE_RATE_HZ: u32 = 6000;
 
 /// Where the pipeline output is taken (FR-007; spec 002 FR-003).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
@@ -272,7 +276,9 @@ impl Settings {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
+    use std::string::ToString;
 
     #[test]
     fn defaults_cite_a002_and_fr009() {
@@ -285,13 +291,35 @@ mod tests {
         assert_eq!(Tap::default(), Tap::AfterPlayback);
     }
 
+    /// 004 T004 (spec 004 FR-001, FR-002; contracts/rust-api.md): seven host rates with 6 kHz
+    /// first, and the measured 6 kHz device rate (A-026, S-002).
     #[test]
     fn supported_rates_and_device_rate() {
-        assert_eq!(
-            SUPPORTED_HOST_RATES,
-            [8000, 16000, 44100, 48000, 88200, 96000]
-        ); // FR-002
-        assert_eq!(DEVICE_RATE_HZ, 8000); // A-001
+        let rates: [u32; 7] = SUPPORTED_HOST_RATES; // the type is part of the contract
+        assert_eq!(rates, [6000, 8000, 16000, 44100, 48000, 88200, 96000]); // 004 FR-002
+        assert_eq!(DEVICE_RATE_HZ, 6000); // A-026
+        assert_eq!(SUPPORTED_HOST_RATES[0], DEVICE_RATE_HZ, "the identity rate is listed");
+    }
+
+    /// 004 T004 (spec 004 FR-002): 6 kHz validates; other rates are rejected with an error that
+    /// names all seven supported rates.
+    #[test]
+    fn host_rate_6k_accepted_and_others_rejected() {
+        assert_eq!(Settings::new(6000).validate(), Ok(()));
+        for bad in [7000, 11_025, 32_000] {
+            let err = Settings::new(bad)
+                .validate()
+                .expect_err("unsupported rate must be rejected");
+            assert_eq!(
+                err,
+                crate::Error::UnsupportedHostRate { requested: bad },
+                "{bad}"
+            );
+            let text = err.to_string();
+            for rate in SUPPORTED_HOST_RATES {
+                assert!(text.contains(&rate.to_string()), "{text} is missing {rate}");
+            }
+        }
     }
 
     #[test]
