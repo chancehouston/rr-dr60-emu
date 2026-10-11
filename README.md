@@ -42,7 +42,7 @@ What each modeled stage rests on today. "Documented" means the behavior is taken
 |---|---|---|---|
 | Codec band-limiting (record and playback filters) | yes | assumed (A-014), to be revised | The service manual, read 2026-10-10, gives a **6 kHz** sampling rate and the codec family's datasheet gives a flatter, narrower-topped response than the current model (A-026, A-027). The current filters run at 8 kHz with 300–3400 Hz edges. |
 | AGC | yes | assumed (A-017–A-019), to be revised | The schematic shows a limiter at the codec's full scale with a ~10 s release, not the wide-range compressor modeled now (A-028). |
-| VAS (voice-activated pausing) | in progress ([spec 003](specs/003-vas/spec.md)) | documented behavior (owner's manual), assumed values registered by spec 003 | Threshold, hang and onset times are guesses until captures exist. |
+| VAS (voice-activated pausing) | yes ([spec 003](specs/003-vas/spec.md)) | documented behavior (owner's manual), assumed values (A-022–A-025) | Threshold, hang and onset times are guesses until captures exist. |
 | Microphone and mic amp | no | documented topology (A-005, A-006, A-029) | Gain and noise are estimates from the circuit. |
 | µ-law quantization | no | documented (A-003) | |
 | CELP speech codec, 4 kbit/s | no | documented bitrate and type (A-004); the exact codec is unknown | The stage most responsible for the device's sound; the hardest to get right. |
