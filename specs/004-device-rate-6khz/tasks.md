@@ -196,7 +196,7 @@ description: "Task list for 004 6 kHz Device Rate and Codec Filter Templates"
 - [X] T047 Hard-coded 8 kHz sweep (research R-01): `grep -rn '8000\|8_000\|8 kHz\|8kHz' crates tools scripts README.md CLAUDE.md docs/hardware/signal-chain.md .github` must show only historical or explanatory mentions (CHANGELOG, the register's superseded rows, "was 8 kHz" comparisons, the 8 kHz **host** rate). Fix every straggler, including `crates/rr_dr60_harness/src/analysis.rs` tests if they assumed the identity, `crates/rr_dr60_harness/src/report.rs`, `crates/rr_dr60_harness/tests/timing.rs` and `crates/rr_dr60_harness/tests/memory.rs`.
 - [X] T048 Traceability audit (SC-008, FR-015): `scripts/check-traceability.sh`; then `git diff main -- crates/ tools/ | grep -E '^\+.*[0-9]+\.[0-9]+|^\+.*\b[0-9]{2,}\b' | grep -v -E 'A-0|S-0|engineering target|FR-0|R-[0-9]'` and label every hit (the test frequency set, the anti-alias set, 765 Hz = 0.75 × 1020 (S-005), 6000, the sample counts, the Chebyshev parameters, the edge-search margins). Record the check in the PR description.
 - [X] T049 Run every step of `specs/004-device-rate-6khz/quickstart.md` § 1–8 and the coverage gate `cargo llvm-cov --all-features --workspace --fail-under-lines 80`. Fix anything that fails. Paste the two design-script margin tables into the PR description.
-- [ ] T050 Ask the speckit-coach for a final review of the branch against spec 004, then ask the user before marking the PR ready and before merging.
+- [X] T050 Ask the speckit-coach for a final review of the branch against spec 004, then ask the user before marking the PR ready and before merging.
 
 ---
 
