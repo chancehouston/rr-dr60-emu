@@ -75,10 +75,15 @@ pub use settings::{
 #[cfg(feature = "__test-hooks")]
 #[doc(hidden)]
 pub mod __test_hooks {
-    /// The committed voice-band stage coefficients, `[b0, b1, b2, a1, a2]` per section, so the
-    /// harness can compare measured responses with the analytic one (tasks.md T040, T048).
-    pub fn voiceband_sos() -> [[f64; 5]; 6] {
-        crate::stages::voiceband_coeffs::VOICEBAND_SOS
+    /// The committed record-stage coefficients (stage 4), `[b0, b1, b2, a1, a2]` per section,
+    /// so the harness can compare measured responses with the analytic one (spec 004 R-06).
+    pub fn record_sos() -> [[f64; 5]; 5] {
+        crate::stages::voiceband_coeffs::RECORD_SOS
+    }
+
+    /// The committed playback-stage coefficients (stage 10; spec 004 R-06).
+    pub fn playback_sos() -> [[f64; 5]; 3] {
+        crate::stages::voiceband_coeffs::PLAYBACK_SOS
     }
 }
 

@@ -77,7 +77,7 @@ impl Biquad {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stages::voiceband_coeffs::VOICEBAND_SOS;
+    use crate::stages::voiceband_coeffs::RECORD_SOS;
 
     #[test]
     fn impulse_response_matches_hand_computation() {
@@ -94,13 +94,14 @@ mod tests {
     fn cascade_tail_reaches_exact_zero_without_a_limit_cycle() {
         // Regression (found by the US3 tail edge-case test): flushing s1 and s2 separately let
         // the two-stage cascade sustain a ~1.9e-30 oscillation forever after a full-scale sweep.
-        let mut cascade: [Biquad; 12] =
-            core::array::from_fn(|i| Biquad::from_sos(VOICEBAND_SOS[i % 6]));
+        let mut cascade: [Biquad; 10] =
+            core::array::from_fn(|i| Biquad::from_sos(RECORD_SOS[i % 5]));
         let mut phase = 0.0f64;
-        for n in 0..8000 {
-            // Exponential chirp 20 Hz -> 3600 Hz at 8 kHz, amplitude 1 (basic ops only).
-            let f = 20.0 * (1.0 + 179.0 * n as f64 / 8000.0);
-            phase += f / 8000.0;
+        for n in 0..6000 {
+            // Chirp 20 Hz -> 2700 Hz over 1 s at the 6 kHz device rate (A-026), amplitude 1
+            // (basic ops only).
+            let f = 20.0 * (1.0 + 134.0 * n as f64 / 6000.0);
+            phase += f / 6000.0;
             phase -= (phase as i64) as f64;
             let x = if phase < 0.5 {
                 4.0 * phase - 1.0
@@ -136,9 +137,9 @@ mod tests {
 
     #[test]
     fn voiceband_cascade_tail_decays_then_flushes_to_zero() {
-        // Spec Edge Cases: below -120 dBFS within 0.5 s (4,000 samples at 8 kHz) after input
-        // stops; exactly 0.0 within 20,000 samples (R-05).
-        let mut cascade: [Biquad; 6] = VOICEBAND_SOS.map(Biquad::from_sos);
+        // Spec Edge Cases: below -120 dBFS within 0.5 s (3,000 samples at the 6 kHz device
+        // rate, A-026) after input stops; exactly 0.0 within 20,000 samples (001 R-05).
+        let mut cascade: [Biquad; 5] = RECORD_SOS.map(Biquad::from_sos);
         for n in 0..800 {
             let x = if n % 16 < 8 { 1.0 } else { -1.0 }; // 0 dBFS square-ish drive
             let mut y = x;
@@ -152,7 +153,7 @@ mod tests {
             for s in cascade.iter_mut() {
                 y = s.process(y);
             }
-            if n >= 4_000 {
+            if n >= 3_000 {
                 assert!(
                     y.abs() < 1e-6,
                     "sample {n} after stop = {y:e} (> -120 dBFS)"
