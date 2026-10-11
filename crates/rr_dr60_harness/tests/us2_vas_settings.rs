@@ -71,12 +71,19 @@ fn as2_tap_after_vas_equals_stage_10_bypassed() {
 }
 
 /// The lowest 1 kHz level, to 0.05 dB (engineering target, 003 R-15), that is kept in full for
-/// H + 1 s with the given settings, by bisection between `lo` (dropped) and `hi` (kept).
+/// H + 1 s with the given settings, by bisection between `lo` (dropped) and `hi` (kept). The
+/// tone starts at the aligned phase (spec 004 FR-012, research R-08): at 6 samples per cycle a
+/// device sample must land on the peak for the sample-peak detector to read the level exactly.
 fn lowest_kept_level_dbfs(settings: Settings, mut lo: f64, mut hi: f64) -> f64 {
-    let fs = f64::from(settings.host_rate_hz);
+    let rate = settings.host_rate_hz;
+    let fs = f64::from(rate);
     let secs = f64::from(settings.vas.hang_ms) / 1000.0 + 1.0;
+    let bypass = Pipeline::new(configs::settings("bypass_all", rate))
+        .unwrap()
+        .latency_samples();
+    let phase = stimulus::aligned_phase(1000.0, rate, bypass);
     let kept_in_full = |level: f64| {
-        let x = stimulus::step(1000.0, &[level], &[secs], fs);
+        let x = stimulus::tone_at_phase(1000.0, level, phase, fs, (secs * fs) as usize);
         let (y, ev, _) = run(settings, &x);
         y.len() == x.len() && ev.is_empty()
     };
@@ -108,11 +115,12 @@ fn as3_sensitivity_1_and_5_move_the_threshold_by_6_db() {
 }
 
 /// US2 AS4 (FR-008, FR-013): with a hang time of 3 s, a burst, a 10 s gap and a burst keep
-/// 3 s ± 1 ms of the gap, at 8 and 48 kHz. The kept gap is read from the splice's removed length
-/// (gap − removed + onset), so the end-of-stream latency doesn't matter (R-11).
+/// 3 s ± 1 ms of the gap, at the 6 kHz identity rate and at 48 kHz (spec 004 FR-012; 8 kHz
+/// before). The kept gap is read from the splice's removed length (gap − removed + onset), so
+/// the end-of-stream latency doesn't matter (R-11).
 #[test]
 fn as4_hang_time_3_s_keeps_3_s_of_the_gap() {
-    for rate in [8_000u32, 48_000] {
+    for rate in [6000u32, 48_000] {
         let fs = f64::from(rate);
         let mut s = configs::settings("vas_only", rate);
         s.vas.hang_ms = 3000.0;
@@ -130,13 +138,14 @@ fn as4_hang_time_3_s_keeps_3_s_of_the_gap() {
     }
 }
 
-/// US2 AS5 (FR-004, FR-005): mute mode in the VAS-isolated configuration keeps the input's
-/// length, reports one muted region whose length equals drop mode's removed length (exact at 8
-/// and 48 kHz, ±1 at 44.1 kHz), is exactly 0.0 inside the region (at 8 kHz; at 48 kHz after the
-/// first `latency + 1` samples of the region), and equals drop mode's output outside it (8 kHz).
+/// US2 AS5 (FR-004, FR-005; rates restated by spec 004 FR-012): mute mode in the VAS-isolated
+/// configuration keeps the input's length, reports one muted region whose length equals drop
+/// mode's removed length (exact at 6 and 48 kHz, ±1 at 44.1 kHz), is exactly 0.0 inside the
+/// region (at 6 kHz; at 48 kHz after the first `latency + 1` samples of the region), and equals
+/// drop mode's output outside it (6 kHz, the identity rate).
 #[test]
 fn as5_mute_mode_keeps_the_length_and_reports_the_region() {
-    for rate in [8_000u32, 48_000, 44_100] {
+    for rate in [6000u32, 48_000, 44_100] {
         let x = burst_gap(&[(true, 1.0), (false, 5.0), (true, 1.0)], rate);
         let drop = configs::settings("vas_only", rate);
         let mute = configs::settings("vas_mute", rate);
@@ -161,7 +170,7 @@ fn as5_mute_mode_keeps_the_length_and_reports_the_region() {
         assert!(start + len <= y_mute.len());
 
         let latency = Pipeline::new(mute).unwrap().latency_samples() as usize;
-        let exact_from = if rate == 8_000 { 0 } else { latency + 1 }; // 003 FR-004 allowance
+        let exact_from = if rate == 6000 { 0 } else { latency + 1 }; // 003 FR-004 allowance
         for (i, v) in y_mute[start + exact_from..start + len].iter().enumerate() {
             assert!(
                 v.to_bits() == 0,
@@ -169,7 +178,7 @@ fn as5_mute_mode_keeps_the_length_and_reports_the_region() {
                 exact_from + i
             );
         }
-        if rate == 8_000 {
+        if rate == 6000 {
             assert_eq!(start, ev_drop[0].output_position as usize);
             assert_eq!(&y_mute[..start], &y_drop[..start], "before the region");
             assert_eq!(&y_mute[start + len..], &y_drop[start..], "after the region");

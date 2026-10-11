@@ -6,6 +6,8 @@
 
 **Status**: Implemented, merged to `main` (PRs #2–#5)
 
+**Restated by spec 004** (2026-10-11): the device-rate-dependent figures of this spec are restated in [spec 004](../004-device-rate-6khz/spec.md) FR-010 to FR-012 and in the CHANGELOG; the text below is otherwise unchanged.
+
 ## Clarifications
 
 ### Session 2026-10-08

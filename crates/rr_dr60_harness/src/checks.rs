@@ -613,7 +613,7 @@ pub fn check_stage_template(rate: u32, stage: Stage, make: Make<'_>) -> Vec<Meas
         "impulse",
         gd1k,
         "ms",
-        Tolerance::AtMost(2.0),
+        Tolerance::AtMost(2.0), // A-016: ≤ 2 ms group delay at 1 kHz per stage
     ));
     if t.low_rejection {
         out.push(mr(

@@ -31,7 +31,8 @@ fn golden_agc_v1_unchanged() {
     );
 }
 
-/// Spec 002 FR-017 (contracts/golden-format.md): 36 AGC entries, bit-exact on every target.
+/// Spec 002 FR-017 (contracts/golden-format.md): 42 AGC entries (3 stimuli × 2 configurations
+/// × 7 rates since spec 004, FR-013; 36 before), bit-exact on every target.
 /// Bless on purpose only, with a CHANGELOG entry:
 /// `RR_DR60_BLESS=agc cargo test -p rr_dr60_harness --test golden_agc`
 #[test]
@@ -40,7 +41,7 @@ fn golden_agc_matches() {
     use rr_dr60_harness::golden;
 
     let actual = golden::generate_agc(&standard);
-    assert_eq!(actual.entries.len(), 36);
+    assert_eq!(actual.entries.len(), 42); // 004 contracts/golden-format.md
     let path = golden::path_agc();
     if std::env::var("RR_DR60_BLESS").as_deref() == Ok("agc") {
         golden::bless(&path, &actual).unwrap();

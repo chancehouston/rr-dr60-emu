@@ -2,6 +2,14 @@
 //!
 //! Every stimulus here is bit-reproducible (detmath and integer PCG32 only), so a single
 //! golden file serves every platform (FR-014). This module stays under the clippy R-04 ban.
+//!
+//! Spec 004 (the 6 kHz device rate; contracts/golden-format.md, research R-11): the generators
+//! cover the seven host rates, so the three files hold 112, 42 and 63 entries. Only two
+//! stimulus definitions changed, both through the band of `stimulus::bandlimited_noise`
+//! (225–2550 Hz, A-027): `agc_noise_burst` and `vas_noise_gaps`. No other stimulus changed:
+//! `sweep_log` is defined relative to the host rate, and the VAS bursts stay at 1 kHz,
+//! −8 dBFS, phase 0 (research R-08: the phase rule applies to threshold bisections, not to
+//! bursts 10 dB above the threshold).
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -406,6 +414,17 @@ mod tests {
 
     #[test]
     fn stimuli_have_contract_lengths() {
+        // The 6 kHz identity rate (spec 004 FR-016): the same durations in device samples.
+        assert_eq!(stimulus("impulse", 6000).len(), 1500);
+        assert_eq!(stimulus("tone_1k_m20", 6000).len(), 3000);
+        assert_eq!(stimulus("sweep_log", 6000).len(), 6000);
+        assert_eq!(stimulus("noise_seed_0d60", 6000).len(), 3000);
+        assert_eq!(stimulus("agc_step", 6000).len(), 48_000);
+        assert_eq!(stimulus("agc_start_m10", 6000).len(), 3000);
+        assert_eq!(stimulus("agc_noise_burst", 6000).len(), 60_000);
+        assert_eq!(stimulus("vas_burst_gap", 6000).len(), 51_600);
+        assert_eq!(stimulus("vas_noise_gaps", 6000).len(), 48_000);
+        assert_eq!(stimulus("vas_short_bursts", 6000).len(), 49_440);
         assert_eq!(stimulus("impulse", 48_000).len(), 12_000);
         assert_eq!(stimulus("tone_1k_m20", 48_000).len(), 24_000);
         assert_eq!(stimulus("sweep_log", 44_100).len(), 44_100);

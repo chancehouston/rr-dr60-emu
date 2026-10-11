@@ -67,7 +67,8 @@ fn as2_long_gap_is_cut_to_the_hang_time() {
     assert!((y.len() as f64 - want).abs() <= tol, "{} samples", y.len());
     assert_eq!(ev.len(), 1);
     assert!(!info.paused);
-    // The removed length accounts for everything that is missing (m/l = 6 is an integer).
+    // The removed length accounts for everything that is missing (m/l = 8 at 48 kHz is an
+    // integer; spec 004 R-02).
     let (pos, removed) = (ev[0].output_position as usize, ev[0].input_length as usize);
     assert_eq!(removed + y.len(), x.len());
 

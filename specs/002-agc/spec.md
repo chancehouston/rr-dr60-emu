@@ -6,6 +6,8 @@
 
 **Status**: Implemented, merged to `main` (PR #6)
 
+**Restated by spec 004** (2026-10-11): the device-rate-dependent figures of this spec are restated in [spec 004](../004-device-rate-6khz/spec.md) FR-010 to FR-012 and in the CHANGELOG; the text below is otherwise unchanged.
+
 **Input**: User description: "Automatic gain control (AGC) for the RR-DR60 record path, signal-chain stage 3 (A-007). It sits before the anti-alias filter + ADC (stage 4) and raises quiet input and lowers loud input toward a target level, producing the audible "pumping" and the rise of background noise in quiet passages. Behaviors to specify with measurable tolerances: target output level for steady tones; maximum gain and maximum attenuation; steady-state input-vs-output level curve; attack time and release time measured with level-step tones (e.g. 0 dB to -30 dB to 0 dB); behavior on silence (gain stays at maximum or holds); no added distortion above a stated limit for steady tones. The stage can be bypassed, can be tapped ("after AGC"), defaults to assumed device values, is deterministic for any block split, and does no allocation during processing. Each numeric default must cite a source or a new registered assumption (target level, gain range, attack, release, detector type), all low confidence until real-unit captures exist. Tests use synthetic stimuli with other stages bypassed. Out of scope: mic capsule, preamp hiss, VAS, noise reduction, codec, quantization (A-003), speaker."
 
 ## Overview
