@@ -1,0 +1,196 @@
+# Feature Specification: Record and Playback Paths with a Modeled Memory
+
+**Feature Branch**: `006-record-playback-split`
+
+**Created**: 2026-10-11
+
+**Status**: Draft
+
+**Input**: User description (abridged; the full text is in the specify session's transcript): "Split the emulator's single microphone-to-speaker pass into the two paths the real RR-DR60 has and the app's core loop needs (record, stop, play, share; product decision 2026-10-11): a record path that turns incoming audio into a recording held in a modeled memory, and a playback path that plays a stored recording out through a selectable output route. The record stages (signal-chain stages 3–5) run as today and their device-rate, VAS-spliced output is what gets stored; recording stops by itself when the memory is full or the recording count is reached, and the caller is told why. Capacity is counted the way the device reports it (60 minutes, 99 recordings; S-001, S-002), configurable at construction; recordings can be listed, selected and erased; a recording can be exported as opaque bytes and re-imported bit-identically; the stored form is the record path's output today and will become encoded frames when the codec is modeled (A-004) without changing the interface. Playback runs a selected recording through stage 10 toward one of two routes, speaker or earphone, which sound identical until stages 11–13 are modeled; the device mutes the speaker while recording (S-002), so the two paths never run at once and the state is readable. Record-then-play must be bit-identical to today's one-pass processing (the golden files remain the oracle), the one-pass processing stays available, and every existing guarantee (block-based, real-time safe, deterministic, taps, settings, C API parity) is kept. Out of scope: the codec, stages 11–13, SLOW/FAST and the 10-second review, A-033, file formats and disk I/O, live monitoring, the stage manifest (feature 007)."
+
+## Overview
+
+Today the emulator is one pass: audio goes in at the microphone end and comes out at the speaker end in the same call, which is right for "what would this sound like through an RR-DR60" but not for how the device is used. The RR-DR60 **records** into a flash memory (99 recordings, 60 minutes in total; S-001, S-002) and later **plays** a chosen recording back through its speaker or its earphone jack. While recording, the power amplifier is muted (S-002: the amp's mute pin reads standby during recording), so the device never records and plays at the same time. The app built on this engine lives in that loop: record, stop, play, share (product decision 2026-10-11, `docs/product/decisions.md`), and the app's inside view wants to light a record path and a separate playback path (`docs/product/front-and-inside.md`).
+
+This feature splits the engine into those two paths and puts a modeled memory between them:
+
+- the **record path** is signal-chain stages 3–5 as they exist (the limiter, the codec input band-limit with the full-scale clamp, the VAS), ending in a **recording** stored in the memory at the device rate with the VAS splices already applied;
+- the **memory** holds up to 99 recordings and 60 minutes of recorded time by default (configurable), reports what is used and what remains, and lets a host list, select, erase, export and import recordings;
+- the **playback path** plays a selected recording through stage 10 (the codec output band-limit) to a selectable **route**, speaker or earphone, at any supported host rate.
+
+Nothing in the sound changes. Playing a recording back produces exactly the samples the one-pass processing produces today, so the three golden files stay the oracle, and the one-pass processing remains available as a convenience. What the host gains is the device's structure: a state that is idle, recording or playing; a memory that fills and can be emptied; recordings that outlive the call that made them; and a route that the later speaker and earphone features (stages 11–13; A-031, A-010, A-032) will give different sounds to. Those stages are not modeled here; the route exists so that the interface does not change when they are.
+
+The stored form of a recording is today the record path's device-rate output. When the speech codec is modeled (A-004, a later feature), the stored form becomes encoded frames and the memory's accounting in recorded time stays the same, because that is how the device reports its capacity.
+
+## Clarifications
+
+### Session 2026-10-11 (product consult, before specification)
+
+- Q: Which engine feature follows 005? → A: **This split**, before the codec and the stage manifest (decision log 2026-10-11: "grows with every stage added before the split"; `docs/product/front-and-inside.md` E-C). The stage manifest is feature 007; the codec follows.
+- Q: Does the app need live monitoring during recording? → A: **No.** The device mutes its speaker while recording (S-002); live monitoring, if ever offered, is a labelled app extra (decision log 2026-10-11). The record path therefore produces no host-rate output of its own.
+- Q: What must the memory expose for the app? → A: Storage used, the route, and mute-while-recording as readable state (E-C), plus the device's limits (60 minutes, 99 recordings) with the capacity configurable so the app's expanded-memory purchase can raise it (`docs/product/monetization.md`).
+
+## User Scenarios & Testing *(mandatory)*
+
+### User Story 1 - Record, stop, play (Priority: P1)
+
+An app developer feeds microphone audio into the engine's record path, stops, and plays the resulting recording back through the playback path. What comes out is exactly what the one-pass processing would have produced for that audio, so everything already verified about the sound (specs 001–005) carries over unchanged. The developer never sees the two paths run at the same time, and can read at any moment whether the engine is idle, recording or playing.
+
+**Why this priority**: it is the app's core loop and the reason for the feature. Without it the app cannot be built on this engine; with it alone, an app can record and play at the device's fidelity, even before the memory's limits and persistence exist.
+
+**Independent Test**: for every stimulus in the three golden files whose configuration reaches the default tap, record it, stop, play it back at the same host rate, and compare with the stored golden output sample for sample; also compare record-then-play against the one-pass processing of the same stimulus in the same run at all seven host rates. Check the reported state before, during and after each step. No memory limit, persistence or route feature is needed.
+
+**Acceptance Scenarios**:
+
+1. **Given** a freshly created engine at any supported host rate, **When** the host starts a recording, feeds a stimulus block by block, stops, and plays the recording back at the same host rate block by block until the engine reports the end, **Then** the playback output, up to the end-of-recording drain, is bit-identical to the one-pass output for the same stimulus followed by the record path's own latency of silence, at the same settings and seed.
+2. **Given** the default settings, **When** the host records the golden stimuli of specs 001, 002 and 003 that use the default tap and plays each back, **Then** each playback reproduces its golden output bit-exactly (within the comparison rule of scenario 1), without any golden file being re-blessed.
+3. **Given** an idle engine, **When** the host starts recording, **Then** the state reads "recording" and "speaker muted"; **When** the host stops, **Then** it reads "idle"; **When** the host starts playback of the recording, **Then** it reads "playing" with the selected route; **When** the recording ends, **Then** it reads "idle" again.
+4. **Given** the engine is recording, **When** the host asks to start playback, **Then** the request is refused with the reason "recording in progress" and the recording continues unaffected; **Given** the engine is playing, **When** the host asks to start recording, **Then** the request is refused with the reason "playback in progress".
+5. **Given** a recording made at 48 kHz, **When** it is played back at 44.1 kHz (or any other supported host rate), **Then** playback succeeds, and its output is bit-identical to the output of the one-pass processing whose record half ran at 48 kHz and whose playback half ran at 44.1 kHz (the device-rate samples are the same; only the output conversion differs).
+6. **Given** an input of any length and block pattern, **When** it is recorded in blocks of one size and played back in blocks of another, **Then** the output does not depend on either block size (bit-identical across partitions, as today).
+
+---
+
+### User Story 2 - A memory that fills and empties like the device's (Priority: P2)
+
+The host records several times and the engine behaves like the device: recordings are numbered in the order made, the memory reports time used and remaining and how many recordings exist, recording stops by itself when the memory is full or the 99th recording is complete and the host is told why, and recordings can be erased one at a time or all at once. A host that needs less memory, or (later) more than the device, sets the capacity when it creates the engine.
+
+**Why this priority**: the device's limits are part of its character ("60 minutes, 99 items") and the free tier of the app is defined as the device with its limits (`docs/product/monetization.md`); the Workbench's expanded memory is the same mechanism with a larger figure.
+
+**Independent Test**: with a small configured capacity (so tests stay fast), record until the time limit and until the count limit, check the stop reasons and the exact sample at which recording stopped, erase one and all recordings and check the numbering and the figures. Uses the record path only; no playback or persistence is needed.
+
+**Acceptance Scenarios**:
+
+1. **Given** the default configuration, **When** the host reads the memory's figures before recording anything, **Then** it reads 0 recordings, 0 s used, 3600 s (60 minutes) and 99 recordings remaining.
+2. **Given** a capacity of 10 s of recorded time, **When** the host records 25 s of continuous speech-like audio with the VAS bypassed, **Then** recording stops by itself at exactly 10 s of stored device time (60 000 device samples at 6 kHz), the block that crossed the limit reports how many of its samples were stored and the reason "memory full", the partial recording is kept with length 10 s, and the memory reports 0 s remaining.
+3. **Given** a capacity of 10 s and the VAS on, **When** the host records 25 s of audio of which the VAS pauses 20 s, **Then** the recording stops only if the stored (unpaused) time reaches 10 s; paused time costs no memory.
+4. **Given** 98 recordings exist and a 99th is made, **When** it stops, **Then** the memory reports 0 recordings remaining, and a further start is refused with the reason "no recording slots left" while the memory still has time left.
+5. **Given** five recordings numbered 1–5, **When** the host erases recording 3, **Then** the memory holds four recordings numbered 1–4 (the former 4 and 5 become 3 and 4), the erased recording's time returns to "remaining", and the others' content is unchanged; **When** the host erases all, **Then** the memory reads as in scenario 1.
+6. **Given** the memory is full, **When** the host starts a recording, **Then** the start is refused with the reason "memory full"; **When** the host erases a recording and starts again, **Then** recording proceeds.
+7. **Given** the host starts a recording and stops it before any sample was stored (the input was silent and the VAS paused throughout, or no block was fed), **When** it stops, **Then** no recording is added, the stop reports that the recording was empty and discarded, and the count is unchanged.
+8. **Given** an engine created with a capacity above the device's (for example 600 minutes and 999 recordings), **When** the host records beyond 60 minutes, **Then** recording continues up to the configured figures; the documentation states that such a configuration is not the device's.
+
+---
+
+### User Story 3 - Recordings that survive the session and can be shared (Priority: P3)
+
+The host takes a recording out of the memory as a block of bytes, stores or sends it however it likes (a file, a share sheet, a network), and later puts it back into a memory, in the same or a later engine, where it plays back exactly as it did before. The host never needs to know what the bytes contain.
+
+**Why this priority**: an app must survive being closed and reopened, and "share a recording" is in the app's loop; but a session-only memory (US1 and US2) is already a usable engine.
+
+**Independent Test**: record a stimulus, export it, create a new engine, import the bytes, compare the imported recording's length and the playback output against the original engine's; mutate or truncate the bytes and check the refusal. No route or capacity feature beyond the import's own accounting is needed.
+
+**Acceptance Scenarios**:
+
+1. **Given** a recording in the memory, **When** the host exports it, **Then** it receives a byte sequence whose length is reported beforehand, so the host can size its buffer, and whose content is identical every time the same recording is exported.
+2. **Given** an exported byte sequence, **When** it is imported into a different engine instance (same engine version, any host rate), **Then** the imported recording has the same length, and its playback output is bit-identical to the original's at every supported host rate.
+3. **Given** a byte sequence that is truncated, altered, or produced by something other than this engine, **When** the host imports it, **Then** the import is refused with a reason that names the problem (unknown form, damaged, or does not fit) and the memory is unchanged.
+4. **Given** the memory has 30 s of time or no recording slot remaining, **When** the host imports a recording of 40 s, or any recording when no slot is left, **Then** the import is refused with the reason "does not fit" (time or slot) and the memory is unchanged.
+5. **Given** a byte sequence exported by an engine of this feature's version, **When** a later engine version imports it, **Then** the import succeeds and plays back identically, or is refused with the reason "unsupported form version"; the form is versioned so that this can always be told.
+
+---
+
+### User Story 4 - The same from C (Priority: P4)
+
+A Swift or C developer does everything in US1–US3 through the C API: start and stop recording, feed blocks, read the state and the memory's figures, list, select, erase, export and import recordings, select the route, and play back. Errors come back as codes with the same reasons; nothing panics across the boundary.
+
+**Why this priority**: the C API is the integration surface for the iOS app (Constitution I); it is last only because its behaviour is fully defined by the stories above.
+
+**Independent Test**: a C smoke test that records a tone, reads the figures, exports, imports into a second engine, and plays back, comparing against the Rust path's output; plus the existing parity checks extended to the new calls.
+
+**Acceptance Scenarios**:
+
+1. **Given** the C header, **When** a C program performs the record, stop, play loop of US1 scenario 1, **Then** its output is bit-identical to the Rust path's output for the same input and settings.
+2. **Given** any error case in US1–US3 (refused start, refused import, memory full), **When** it occurs through the C API, **Then** a distinct error code with the same meaning is returned, buffers the caller provided are left in a defined state, and the engine remains usable.
+3. **Given** an app that only ever used the one-pass processing call, **When** it is rebuilt against this version, **Then** it needs no source change for that call, and its output is unchanged.
+
+---
+
+### Edge Cases
+
+- **Memory fills inside a block.** The block's samples are stored up to the exact capacity boundary (in device samples), the remainder is discarded, the recording stops, and the block's report says how many were stored and why it stopped. The next block fed while idle is refused (not recording).
+- **Count limit reached by a recording that is still running.** The 99th recording runs to the host's stop or to the time limit; the count limit only prevents a further start.
+- **Stop while the VAS is paused.** The recording ends at the last stored sample; no pause event is left open; the paused time after the last stored sample is not part of the recording.
+- **Stop flush.** When the host stops, the record path finishes the samples that are still inside its conversion and filters (its reported latency), so the recording contains everything the host fed up to the stop (see FR-005). If the memory fills during this flush, the flush is cut at the boundary like any other block.
+- **Playback drain.** When the stored samples are exhausted, the playback path drains its own latency of output (silence into the playback stage and conversion) and then reports the end; the drained samples are the playback stage's deterministic response to silence after the recording. Playback stopped early by the host ends at once, without draining.
+- **Playback of an empty memory or a bad number.** Starting playback of recording number 0, or above the count, is refused with the reason "no such recording".
+- **Erase during playback.** Erasing the recording being played, or erasing all, is refused with the reason "playback in progress"; erasing a different recording is allowed and does not disturb playback, but renumbers the others; the engine reports the playing recording's current number.
+- **Erase and import during recording.** Both are refused with the reason "recording in progress" (the device cannot do either while recording either).
+- **Reconfigure while recording or playing.** Refused with the reason naming the activity; reconfigure is allowed when idle and keeps the memory's contents (the memory is data, not state), unless the new capacity is smaller than what is stored, in which case reconfigure is refused with the reason "stored recordings exceed the new capacity".
+- **Reset.** Resetting the engine returns it to idle with cleared path state and leaves the memory's contents unchanged; "erase all" is the only way to empty the memory.
+- **Route change during playback.** Allowed; it takes effect at the next block and is reported. Until stages 11–13 are modeled it does not change the sound.
+- **Host rate change between record and playback.** The recording is at the device rate, so playback at any supported host rate is allowed; the playback host rate is the engine's configured host rate at the time playback starts.
+- **The one-pass processing while a recording or playback is in progress.** Refused with the reason naming the activity; the one-pass processing has its own path state and is otherwise unchanged.
+- **Device rate in the stored form.** The device rate is 6 kHz (A-026). A recording's length in time is its stored device samples divided by 6000; the figures the memory reports are exact integers of device samples and derived seconds, never rounded in a way that lets the sum of recordings exceed the capacity.
+
+## Requirements *(mandatory)*
+
+### Functional Requirements
+
+**Paths and state**
+
+- **FR-001**: The engine MUST offer a **record path** consisting of signal-chain stages 3 (limiter), 4 (codec input band-limit and full-scale clamp) and 5 (VAS) exactly as specs 003–005 define them, including every setting, bypass and default, fed with host-rate input and producing device-rate samples with the VAS splices applied (drop mode) or the muted regions applied (mute mode); those samples are appended to the recording in progress. The record path produces no host-rate output of its own (the device mutes its amplifier while recording, S-002).
+- **FR-002**: The engine MUST offer a **playback path** consisting of stage 10 (codec output band-limit) as spec 004 defines it, including its bypass, fed from a stored recording at the device rate and producing host-rate output at the engine's configured host rate, toward a selected route (FR-015).
+- **FR-003**: The engine MUST be in exactly one of three states, **idle**, **recording** or **playing**, readable at any time together with the selected route, the number of the recording being recorded or played, and whether the speaker is muted (true exactly while recording, S-002). Recording and playback MUST NOT run at the same time: a start request that conflicts with the current state MUST be refused with a reason naming the activity in progress, and the activity in progress MUST be unaffected.
+- **FR-004**: **Start of a recording.** Each recording MUST start from the record path's reset state (the limiter discharged at unity, the VAS unpaused and the filters and rate conversion cleared), independent of earlier recordings or playbacks (A-037: the analog section's rail is switched off between recordings, S-002 Q20; the DSP state is per recording). Each playback MUST likewise start from the playback path's reset state.
+- **FR-005**: **Stop of a recording.** When the host stops, the record path MUST first pass its own latency of silence through itself (the conversion and filters' delay as reported by FR-016) so that every input sample the host fed up to the stop is represented in the recording, then close the recording. The recording's length MUST be reported in device samples and seconds.
+- **FR-006**: **Per-block reports.** Every record call MUST report how many device samples it stored, how many VAS events it produced (with the same event records as spec 003 FR-005, positions counted in the recording's device samples from its start), whether the VAS is paused at the end of the block, and whether and why recording stopped during the block. Every playback call MUST report how many host samples it produced and whether the recording (and its drain, FR-008) has ended.
+- **FR-007**: **Equivalence with the one-pass processing.** For any input, settings, seed and host rate, the playback output of a recording made from that input (US1 scenario 1), taken up to the end-of-recording drain, MUST be bit-identical to the output of the one-pass processing of the same input followed by the record path's latency of silence (FR-005). With the record and playback halves at different host rates, the stored device samples MUST be identical to those the one-pass processing's record half produces at the record rate. Consequently the golden files of specs 001, 002 and 003 MUST be reproduced by record-then-play without re-blessing (SC-002).
+- **FR-008**: **End of playback.** When the stored samples are exhausted, the playback path MUST drain its own latency (FR-016) of output, produced from device-rate silence after the recording's last sample, and then report the end and return to idle. The host MAY stop playback earlier; the engine then returns to idle at once.
+- **FR-009**: **The one-pass processing stays.** The existing one-pass processing calls MUST remain, with unchanged meaning, settings, taps, block reports, VAS events, latency and output (the three golden files unchanged byte for byte), and MUST be refused only while a recording or playback is in progress.
+
+**Memory**
+
+- **FR-010**: The engine MUST hold recordings in a **memory** whose capacity is counted in **recorded device time** and in **number of recordings**, with the device's figures as defaults: 3600 s (60 minutes; S-001) and 99 recordings (S-001, S-002), and with both figures configurable at construction, lower or higher than the device's (A-038: the manual's 60 minutes is authoritative for capacity, although 16 Mbit at 4 kbit/s would hold about 70 minutes; the difference is taken as the device's own overhead and headroom). The documentation MUST state that figures above the device's are not the device's.
+- **FR-011**: The memory MUST report at any time: the number of recordings, the recorded time used and remaining (in device samples and seconds), the recording slots remaining, and for each recording its number and length. Paused (VAS-dropped) time MUST cost no memory, since only stored device samples count.
+- **FR-012**: **Limits.** A recording MUST stop by itself at the exact device sample at which the stored total reaches the time capacity, keeping the partial recording and reporting the reason "memory full" in that block's report; a start MUST be refused with the reason "memory full" when no time remains and with the reason "no recording slots left" when the count is at capacity. A recording that stops with no stored samples MUST be discarded, reported as empty, and MUST NOT count (A-039).
+- **FR-013**: **Numbering and erase.** Recordings MUST be numbered 1 to the count in the order they were made; erasing a recording MUST return its time to "remaining" and renumber the later recordings down by one (A-039: as the device's item numbering does); the host MUST be able to erase one recording by number or all recordings. Erase MUST be refused while recording, and erase of the recording being played (or of all) while playing, each with a reason naming the activity.
+- **FR-014**: **Export and import.** The host MUST be able to obtain any recording as a sequence of opaque bytes, learning the length first so it can provide the buffer, and to add a recording to a memory from such a sequence. A recording imported from the bytes of an exported recording MUST have the same length and the same playback output at every supported host rate, in the same or another engine instance of the same version. The byte form MUST carry a form version and enough redundancy that a truncated, altered or foreign sequence is refused with a reason (unknown form, unsupported form version, damaged), and an import that exceeds the remaining time or slots MUST be refused with the reason "does not fit" and leave the memory unchanged. The documentation MUST state that the stored form is the record path's device-rate output in this version and will change to encoded frames when the codec is modeled (A-004), with the version field telling them apart.
+- **FR-015**: **Route.** The host MUST be able to select the output route, **speaker** or **earphone**, at any time; the selection MUST be readable and MUST take effect at the next playback block. In this version the two routes MUST produce identical output, and the documentation MUST say that stages 11–13 (volume and power amplifier, speaker, earphone follower; A-031, A-010, A-032) are not yet modeled and that the route exists so that those features do not change the interface.
+
+**Guarantees kept**
+
+- **FR-016**: **Latency.** The engine MUST report the record path's latency (host input samples until the corresponding device sample is stored) and the playback path's latency (device samples until the corresponding host output sample is produced), each as a count of samples at its own rate; converted to one rate, their sum MUST match the one-pass processing's reported latency within one host sample.
+- **FR-017**: **Real-time safety.** The per-block record and playback calls, the state and figure reads, and stop and route selection MUST NOT allocate memory, take locks, perform I/O or do unbounded work. Memory for the configured capacity MUST be reserved at construction or reconfiguration; starting a recording, erasing, exporting and importing are not per-block calls and MAY allocate, and the documentation MUST say which calls are real-time safe. The memory footprint of the default capacity MUST be stated in the documentation (SC-007).
+- **FR-018**: **Determinism.** Same input, settings, seed and host rate MUST give bit-identical recordings and playback output on every supported platform and for every block partition of the input and of the playback requests (FR-007, US1 scenario 6), checked by the existing determinism matrix extended with a record-then-play case.
+- **FR-019**: **Reconfigure and reset.** Reconfigure MUST be allowed only when idle, MUST keep the memory's contents, and MUST be refused with the reason "stored recordings exceed the new capacity" when they would not fit. Reset MUST return the engine to idle with the path state cleared and the memory untouched.
+- **FR-020**: **C API.** Every capability of FR-001 to FR-019 MUST be reachable through the C API with the same meaning, with each refusal reason as a distinct error code, with caller-provided buffers for samples, event records and exported bytes, and with no panic crossing the boundary. The one-pass C call MUST keep its signature and behaviour. The C settings structure MAY grow by the capacity and route fields; its layout change MUST be recorded in the CHANGELOG, and the header MUST be regenerated and checked for drift as today.
+- **FR-021**: **Traceability and documentation.** Every default and modeled figure in this feature MUST cite its S-/A- ID (S-001, S-002, A-026, A-037, A-038, A-039); the three new assumptions MUST be registered in `docs/hardware/assumptions.md` with rationale, confidence and how to verify; `docs/hardware/signal-chain.md` MUST mark stage 8 (flash) as modeled for capacity by this feature and stages 11–13 as having a reserved route; the README MUST gain a recording-and-playback section with the state model, the memory figures, the byte form's status and the real-time-safe calls; the CHANGELOG MUST record the new capability, the C structure change and the version bump.
+- **FR-022**: **Harness.** The measurement harness MUST check FR-003 to FR-008 and FR-010 to FR-016 at all seven supported host rates where a requirement applies (the equivalence of FR-007 against every applicable golden entry and against the one-pass processing in the same run; the capacity scenarios with a small configured capacity; the export round trip; the latency sum), each result reporting its measured value, requirement and IDs as the existing harness does, and MUST include the record-then-play timing of FR-017 (SC-006).
+
+### Out of Scope
+
+The speech codec and the encoded stored form (A-004); µ-law quantization and idle noise (A-030); stages 11–13 (power amplifier clipping, speaker response, earphone corners; A-031, A-010, A-032); playback speed control (SLOW/FAST) and the 10-second review (S-001); the sensitivity setting's digital-gain question (A-033); any file format or disk I/O (the host owns persistence; the exported bytes are not a file format); live monitoring during recording; per-stage meters and the scope copy (`front-and-inside.md` E-A, E-B); the stage manifest (feature 007); battery and power behaviour (A-013).
+
+### Key Entities
+
+- **Engine state**: idle, recording or playing; carries the selected route, the number of the recording in progress, and whether the speaker is muted.
+- **Record path**: stages 3–5 with their settings; input at the host rate, output appended to the recording in progress at the device rate; reports stored samples, VAS events, paused flag, stop reason; starts from its reset state for each recording.
+- **Playback path**: stage 10 with its setting; input from a recording at the device rate, output at the host rate toward the route; reports produced samples and the end; drains its latency at the end.
+- **Memory**: capacity in device time and in recordings (defaults 3600 s and 99); holds recordings in order; reports count, used and remaining time, slots remaining.
+- **Recording**: a number (1 to the count, renumbered on erase), a length in device samples, and stored content at the device rate; exportable as versioned opaque bytes; importable if it fits and is intact.
+- **Route**: speaker or earphone; selectable and readable; identical in sound in this version.
+- **Refusal reasons**: recording in progress, playback in progress, memory full, no recording slots left, no such recording, does not fit, unknown form, unsupported form version, damaged, stored recordings exceed the new capacity.
+
+## Success Criteria *(mandatory)*
+
+### Measurable Outcomes
+
+- **SC-001**: An app developer can find, using only the README and the CHANGELOG, how to record, stop, play, read the state, read the memory's figures, erase, export and import, which calls are real-time safe, and what the route does in this version, in under 5 minutes.
+- **SC-002**: 100 % of the applicable entries of the three golden files (those at the default tap: 112 + 42 + 63 entries less any at an earlier tap) are reproduced bit-exactly by record-then-play without any golden file changing, and record-then-play is bit-identical to the one-pass processing in the same run at all seven host rates for the harness's stimulus set.
+- **SC-003**: In 100 % of the capacity scenarios (US2), recording stops at exactly the configured device sample, the stop reason is the stated one, paused time costs nothing, and the reported figures (used, remaining, count, slots, numbering after erase) are exact.
+- **SC-004**: 100 % of export round trips (US3) reproduce length and playback output bit-exactly at all seven host rates, and 100 % of the damaged, foreign and oversized sequences are refused with the stated reason and leave the memory unchanged.
+- **SC-005**: 100 % of the state-transition scenarios (US1 scenario 3 and 4, the edge cases) report the stated state and refusal reason, in Rust and through the C API.
+- **SC-006**: The combined per-sample cost of the record path and the playback path at 48 kHz, measured in the same run on the same machine, is within 10 % of the one-pass processing's cost (engineering target), so the split costs nothing audible or measurable in headroom.
+- **SC-007**: The memory footprint of an engine at the default capacity is stated in the README to the nearest megabyte and measured within ±10 % of the stated figure.
+- **SC-008**: The reported record and playback latencies sum to the one-pass latency within one host sample at all seven host rates, and reported playback latency matches measured within ±1 sample.
+
+## Assumptions
+
+- **A-037** (new): **no state carries between recordings or playbacks.** The analog record section runs from a rail switched by Q20 (S-002) and the DSP's firmware state is per item, so each recording starts with the limiter discharged, the VAS unpaused and the filters cleared, and each playback starts with the playback filter cleared. Medium confidence (topology from the schematic; the firmware behaviour is inferred). Verify: on a real unit, record a loud tone, stop, and immediately record a quiet tone; the second recording should show no residual limiting.
+- **A-038** (new): **capacity is the manual's 60 minutes and 99 items, counted in recorded time.** 16 Mbit at 4 kbit/s would hold about 70 minutes; the manual's 60 minutes is taken as authoritative and the difference as file-system overhead and headroom. Capacity is counted in stored device samples (paused time costs nothing, which the manual implies by describing VAS as extending recording time). High confidence for the figures (S-001, S-002), medium for the accounting. Verify: fill a real unit with and without VAS pauses and compare the elapsed and displayed times.
+- **A-039** (new): **item numbering and erase.** Items are numbered 1 to the count in recording order; erasing an item renumbers the later items down by one; the device can erase one item or all; an item with no stored samples is not created. Medium confidence (common to Panasonic IC recorders of the period; the manual's erase section was not re-read for this spec). Verify: re-read S-001's erase and item-number sections, then check on a unit.
+- The stored form of a recording in this version is the record path's device-rate output, kept exactly (bit-exact round trip, FR-014). Its representation and the resulting memory footprint are plan decisions, constrained by SC-007; when the codec is modeled the stored form becomes encoded frames and the footprint falls to the device's order of magnitude (2 MB for 16 Mbit, S-002).
+- The record path's latency flush at stop (FR-005) and the playback drain (FR-008) are engine conveniences so that a host gets the whole recording out without feeding trailing silence itself (spec 003's measurement lesson); the device has no such notion, and neither changes any stored or played sample compared with the one-pass processing fed the same trailing silence.
+- The route is a label in this version; stages 11–13 are later features and will give the two routes different outputs (A-031, A-010, A-032) without an interface change.
+- No release has been published; the CHANGELOG records the new capability and the C structure change as the version 0.6.0 entry (Principle II). The default one-pass output does not change.
