@@ -3,14 +3,19 @@
 //! A portable software emulator of the audio signal chain of the Panasonic
 //! RR-DR60 digital voice recorder (mid-1990s IC recorder).
 //!
-//! This version models four stages of that chain:
+//! This version models the record path as the limiter (stage 3), the host-to-device rate
+//! conversion, the record band-limit (stage 4), the ADC's full-scale saturation, the VAS
+//! (stage 5), and the playback path as the playback band-limit (stage 10) and the
+//! device-to-host conversion:
 //!
-//! - **Stage 3**, the record-path automatic gain control (AGC). It raises quiet
-//!   input and lowers loud input toward a target level, which produces level
-//!   "pumping" after loud sounds and background noise that rises in pauses. It
-//!   is modeled on an *assumed* AGC (A-017 – A-020) and is on by default; see
-//!   [`AgcSettings`].
-//! - **Stage 4**, the record-side anti-alias filter and ADC,
+//! - **Stage 3**, the record-path automatic gain control, is a **limiter**: below
+//!   its knee (about the codec's full scale) it is the identity, above it the
+//!   output is held at a ceiling after a dead time of a few milliseconds, and it
+//!   releases over about 1.4 s. Quiet input is not raised and nothing happens in
+//!   pauses. It is modeled on the circuit in the service manual's schematic
+//!   (S-002; A-028, A-034 – A-036) and is on by default; see [`AgcSettings`].
+//! - **Stage 4**, the record-side anti-alias filter and ADC, followed by the
+//!   ADC's **full-scale clamp** (A-030; see [`Settings::adc_clamp_enabled`]).
 //! - **Stage 5**, the Voice Activated System (VAS). Recording pauses while no
 //!   sound is detected, so long pauses shrink to the hang time, the start of a
 //!   sound after a pause is lost, and the remaining audio is joined at abrupt
@@ -22,16 +27,18 @@
 //! rate of 6 kHz (A-026, verified from the service manual, S-002). They follow the codec
 //! family's datasheet templates scaled to that clock (A-027, medium confidence): the record
 //! stage is a band-pass (about 225 to 2550 Hz) and the playback stage a low-pass that passes
-//! DC. None of these values has yet been measured against a real unit. See
-//! `docs/hardware/assumptions.md`.
+//! DC. The limiter is modeled on the circuit, not measured against a unit: its dead time,
+//! release and knee carry low confidence. None of these values has yet been measured against a
+//! real unit. See `docs/hardware/assumptions.md`.
 //!
 //! The crate describes signal processing only: gain control, band-limiting,
 //! voice-activated pausing, latency and level. It makes no claims about what recorded audio contains.
 //!
-//! **Output level:** with the AGC on, output can briefly exceed ±1.0 (by up to
-//! the AGC's maximum gain, +40 dB by default) after creation, a reset or a long
-//! silence. It is never clipped and always finite. Limit or clip it before
-//! converting to integer PCM.
+//! **Level scale:** 0 dBFS (a sine of peak amplitude 1.0) is the codec's full scale, about
+//! 0.196 V peak at the microphone amplifier's output (A-030); speech at a conversational
+//! distance is assumed 25–35 dB below it (A-029). The limiter holds sustained loud input
+//! about 1 dB above full scale, and the clamp flat-tops it there; with the clamp bypassed the
+//! output can exceed ±1.0. The output is always finite.
 //!
 //! **Output length:** with the VAS on in drop mode (the default), pauses are
 //! removed, so a block can produce fewer output samples than it consumed, or
@@ -83,6 +90,12 @@ pub mod __test_hooks {
     /// The committed playback-stage coefficients (stage 10; spec 004 R-06).
     pub fn playback_sos() -> [[f64; 5]; 3] {
         crate::stages::voiceband_coeffs::PLAYBACK_SOS
+    }
+
+    /// The limiter's hold-capacitor voltage, in volts: 0.0 when discharged (spec 005 R-03;
+    /// contracts/rust-api.md › Test hooks).
+    pub fn limiter_state(pipeline: &crate::Pipeline) -> f64 {
+        pipeline.limiter_state()
     }
 }
 

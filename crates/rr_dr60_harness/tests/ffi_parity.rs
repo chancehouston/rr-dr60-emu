@@ -106,12 +106,11 @@ fn c_api_matches_rust_api_with_agc() {
         .iter()
         .map(|c| configs::settings(c, rate))
         .collect();
-    let extremes: [fn(&mut rr_dr60::AgcSettings, bool); 5] = [
-        |a, hi| a.target_dbfs = if hi { 0.0 } else { -30.0 },
-        |a, hi| a.max_gain_db = if hi { 60.0 } else { 0.0 },
-        |a, hi| a.max_attenuation_db = if hi { 40.0 } else { 0.0 },
-        |a, hi| a.attack_ms = if hi { 100.0 } else { 1.0 },
-        |a, hi| a.release_ms = if hi { 10_000.0 } else { 50.0 },
+    // restated by 005 T031: the 0.5 fields and ranges.
+    let extremes: [fn(&mut rr_dr60::AgcSettings, bool); 3] = [
+        |a, hi| a.knee_dbfs = if hi { 3.0 } else { -40.0 },
+        |a, hi| a.attack_ms = if hi { 50.0 } else { 1.0 },
+        |a, hi| a.release_ms = if hi { 10_000.0 } else { 200.0 },
     ];
     for set in extremes {
         for hi in [false, true] {
@@ -164,16 +163,9 @@ fn validate(s: &RrDr60Settings) -> (RrDr60Status, RrDr60SettingField) {
 /// INVALID_SETTING, and `rr_dr60_settings_validate` names the field.
 #[test]
 fn c_api_names_invalid_agc_settings() {
-    let cases: [BreakCase; 5] = [
-        (RrDr60SettingField::AgcTargetDbfs, |s| {
-            s.agc_target_dbfs = 1.0
-        }),
-        (RrDr60SettingField::AgcMaxGainDb, |s| {
-            s.agc_max_gain_db = f32::NAN
-        }),
-        (RrDr60SettingField::AgcMaxAttenuationDb, |s| {
-            s.agc_max_attenuation_db = 41.0
-        }),
+    // restated by 005 T031: the 0.5 fields.
+    let cases: [BreakCase; 3] = [
+        (RrDr60SettingField::AgcKneeDbfs, |s| s.agc_knee_dbfs = 4.0),
         (RrDr60SettingField::AgcAttackMs, |s| s.agc_attack_ms = 0.0),
         (RrDr60SettingField::AgcReleaseMs, |s| {
             s.agc_release_ms = f32::INFINITY
@@ -223,7 +215,7 @@ fn c_api_validate_agrees_with_create() {
         ..base
     };
     let bad_target_and_release = RrDr60Settings {
-        agc_target_dbfs: 5.0,
+        agc_knee_dbfs: 5.0, // restated by 005 T031
         agc_release_ms: 1.0,
         ..base
     };
@@ -251,7 +243,7 @@ fn c_api_validate_agrees_with_create() {
         (
             bad_target_and_release,
             RrDr60Status::InvalidSetting,
-            RrDr60SettingField::AgcTargetDbfs,
+            RrDr60SettingField::AgcKneeDbfs,
         ),
     ];
     for (s, status, field) in expected {

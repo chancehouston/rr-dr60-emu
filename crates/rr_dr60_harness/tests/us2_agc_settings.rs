@@ -34,6 +34,7 @@ fn as1_bypassed_agc_reproduces_spec_001_golden_file() {
 
 /// US2 AS2 and 002 FR-003: the tap after the AGC ignores the band-limit stage settings, and
 /// equals the AGC-isolated configuration with the tap after playback.
+/// (The two spec 002 configurations named below are retired; restated by 005 T030.)
 #[test]
 fn as2_tap_after_agc_ignores_stage_settings() {
     for rate in SUPPORTED_HOST_RATES {
@@ -85,7 +86,7 @@ fn as4_target_minus_20() {
     let rate = 48_000;
     let fs = f64::from(rate);
     let mut s = configs::settings("agc_only", rate);
-    s.agc.target_dbfs = -20.0;
+    s.agc.knee_dbfs = -10.0; // restated by 005 T030 (was target_dbfs = -20.0)
     let y = process(s, &stimulus::step(1000.0, &[-30.0], &[1.0], fs));
     let len = (0.25 * fs) as usize;
     let got = db(single_bin(&y, 1000.0, fs, y.len() - len, len).norm());
@@ -97,12 +98,9 @@ fn as4_target_minus_20() {
 /// `reconfigure`, naming the field; a failed reconfigure leaves the pipeline unchanged.
 #[test]
 fn as5_invalid_settings_are_named_and_rejected() {
-    let cases: [BreakCase; 5] = [
-        (Setting::AgcTargetDbfs, |s| s.agc.target_dbfs = 0.5),
-        (Setting::AgcMaxGainDb, |s| s.agc.max_gain_db = 61.0),
-        (Setting::AgcMaxAttenuationDb, |s| {
-            s.agc.max_attenuation_db = -1.0
-        }),
+    // restated by 005 T030: the three 0.5 fields (knee, attack, release).
+    let cases: [BreakCase; 3] = [
+        (Setting::AgcKneeDbfs, |s| s.agc.knee_dbfs = 4.0),
         (Setting::AgcAttackMs, |s| s.agc.attack_ms = 0.0),
         (Setting::AgcReleaseMs, |s| s.agc.release_ms = 10_001.0),
     ];

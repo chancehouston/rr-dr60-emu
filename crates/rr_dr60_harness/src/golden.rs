@@ -96,8 +96,14 @@ pub fn stimulus(name: &str, fs: u32) -> Vec<f32> {
         "tone_1k_m20" => stimulus::tone(1000.0, 0.1, f, secs(0.5)),
         "sweep_log" => stimulus::log_sweep(20.0, 0.45 * f, 0.25, f, secs(1.0)),
         "noise_seed_0d60" => stimulus::noise(0x0D60, secs(0.5)),
-        // Spec 002 (contracts/golden-format.md).
-        "agc_noise_burst" => crate::agc_checks::noise_burst_stimulus(f),
+        // Spec 002 (contracts/golden-format.md); restated by 005 T034 (the 0.4 stimuli measured
+        // the compressor). Band-limited noise at −70 dBFS plus 1 kHz bursts at −10 dBFS, 1 s on
+        // / 4 s off, 2 cycles (was `agc_checks::noise_burst_stimulus`).
+        "agc_noise_burst" => {
+            let bursts = stimulus::tone_bursts(1000.0, -10.0, 1.0, 4.0, 2, f);
+            let noise = stimulus::bandlimited_noise(0x0D60, bursts.len(), f, -70.0);
+            bursts.iter().zip(&noise).map(|(b, n)| b + n).collect()
+        }
         "agc_start_m10" => stimulus::step(1000.0, &[-10.0], &[0.5], f),
         "agc_step" => stimulus::step(1000.0, &[-40.0, -10.0, -40.0], &[3.0, 1.0, 4.0], f),
         // Spec 003 (contracts/golden-format.md). Bursts are 1 kHz at −8 dBFS: the default

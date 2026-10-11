@@ -1,8 +1,12 @@
 # Filter design tools
 
-Two `uv` inline scripts design the emulator's fixed filters and write their coefficients into
-the core crate as exact bit patterns. Run them from the repository root; they need
+One `uv` inline script designs the emulator's fixed filters and writes their coefficients into
+the core crate as exact bit patterns. Run it from the repository root; it needs
 [uv](https://docs.astral.sh/uv/), which fetches numpy and scipy automatically.
+
+The record-path AGC (stage 3) has no designed filter since spec 005: it is a limiter modeled
+on the schematic's circuit, and its reference model lives in `tools/agc-model/` (pure Python,
+no dependencies; `python3 tools/agc-model/limiter_model.py`).
 
 ## `design_voiceband.py`: the codec band-limit stages (stages 4 and 10)
 
@@ -43,18 +47,6 @@ spec 004 FR-005, FR-006 or FR-008 is not met. The three `--shift-*` forms write 
 mutation fixtures in `crates/rr_dr60_harness/tests/fixtures/`: one edge moved 100 Hz toward the
 band (the high-pass up, a stopband edge down).
 
-## `design_hilbert.py`: the AGC detector (stage 3)
-
-Spec 002 ([research R-03](../../specs/002-agc/research.md)): the 63-tap equiripple Hilbert
-transformer of the AGC's level detector. The design is normalized to the device rate, so the
-coefficients did not change when the device rate moved from 8 to 6 kHz (spec 004 research R-09);
-the script's constants and the file header name the 6 kHz band (187.5 to 2812.5 Hz).
-
-```sh
-uv run tools/filter-design/design_hilbert.py            # design, verify, write the coefficient file
-uv run tools/filter-design/design_hilbert.py --check    # design and verify only
-```
-
 ## Why the coefficients are committed
 
 The generated files store every coefficient as an exact bit pattern (`f64::from_bits`). The
@@ -64,7 +56,7 @@ Instead, the Rust unit tests re-verify every template bound from the committed c
 
 ## Changing a design
 
-Any change to these scripts or their output changes the emulator's sound. **Any change requires
+Any change to this script or its output changes the emulator's sound. **Any change requires
 a golden re-bless of all three golden files, a CHANGELOG entry, and an assumption-register
 check** (Constitution II):
 

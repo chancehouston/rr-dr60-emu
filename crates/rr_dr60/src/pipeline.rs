@@ -1,25 +1,29 @@
-//! The per-sample processing engine (data-model.md; research.md R-09, R-10).
+//! The per-sample processing engine (data-model.md; research.md R-09, R-10; spec 005 research
+//! R-01: the limiter runs at the host rate, before the rate conversion).
 
 use crate::error::Error;
 use crate::rate::RatePlan;
 use crate::resample::{self, PolyphaseDown, PolyphaseUp};
 use crate::sanitize::{narrow_out, sanitize_in};
 use crate::settings::{DEVICE_RATE_HZ, Settings, Tap, VasMode};
-use crate::stages::agc::AgcStage;
+use crate::stages::clamp::ClampStage;
+use crate::stages::limiter::Limiter;
 use crate::stages::vas::{VasDecision, VasStage};
 use crate::stages::voiceband::{PlaybackStage, RecordStage};
 use crate::validate::validate;
 
 /// One emulator instance: host-rate mono audio in, host-rate mono audio out.
 ///
-/// Internally, each sample goes through the 6 kHz device-rate domain (A-026), the record-path
-/// AGC (signal-chain stage 3, spec 002), the record band-limit stage (stage 4), the Voice
-/// Activated System (VAS, stage 5, spec 003) and the playback band-limit stage (stage 10). Each
-/// stage can be bypassed, and the output can be taken after the AGC, stage 4 or the VAS instead
-/// ([`Settings`], FR-007). The device rate itself is always applied (FR-004). The band-limit
-/// stages are modeled on the MSM7702 voice-band codec's assumed 300–3400 Hz band (A-002,
-/// A-014); the AGC on an assumed AGC (A-017 – A-020); the VAS on the owner's manual and assumed
-/// values (A-008, A-021 – A-025).
+/// The record path is the limiter (signal-chain stage 3, spec 005) at the host rate, the
+/// host-to-device conversion into the 6 kHz device-rate domain (A-026), the record band-limit
+/// stage (stage 4), the ADC's full-scale saturation (the clamp, spec 005 FR-008), and the Voice
+/// Activated System (VAS, stage 5, spec 003); the playback path is the playback band-limit
+/// stage (stage 10) and the device-to-host conversion. Each stage can be bypassed, and the
+/// output can be taken after the limiter (at the host rate), after stage 4 or after the VAS
+/// instead ([`Settings`], FR-007). The device rate itself is always applied (FR-004) except at
+/// the "after AGC" tap, which is before the conversion. The band-limit stages are modeled on the
+/// MSM7702 codec family's templates (A-027); the limiter on the schematic's circuit (A-028,
+/// A-034 – A-036); the VAS on the owner's manual and assumed values (A-008, A-021 – A-025).
 ///
 /// # Output length
 ///
@@ -30,10 +34,14 @@ use crate::validate::validate;
 ///
 /// # Output level
 ///
-/// With the AGC on (the default), output can exceed ±1.0 by up to
-/// [`AgcSettings::max_gain_db`](crate::AgcSettings::max_gain_db) (+40 dB by default) for
-/// about one attack time after creation, a reset or a long silence. The output is never
-/// clipped and is always finite. Limit or clip it before converting to integer PCM.
+/// 0 dBFS is the codec's full scale (A-030). The limiter never amplifies: below its knee it is
+/// the identity, and sustained input above the knee is held about 1 dB over full scale, where
+/// the ADC clamp flat-tops it, so the record path (the "after record" and "after VAS" taps)
+/// never exceeds ±1.0. The playback band-limit stage reconstructs a flat-topped waveform with
+/// overshoot (the fundamental of a full-scale square wave is 4/π), so the default output can
+/// exceed ±1.0 by a few dB on clipped audio. With the clamp bypassed, or at the "after AGC"
+/// tap, the output carries the input's excess during the limiter's dead time and about 1 dB
+/// after it. The output is always finite.
 ///
 /// # Real-time use
 ///
@@ -65,6 +73,13 @@ use crate::validate::validate;
 #[derive(Clone, Debug)]
 pub struct Pipeline {
     settings: Settings,
+    /// Stage 3 at the host rate, before the conversion (spec 005 research R-01).
+    limiter: Limiter,
+    /// Stage 3 runs: the AGC is enabled (spec 002 FR-002; spec 005 FR-002).
+    run_limiter: bool,
+    /// The output is the limiter's, at the host rate: nothing after it runs (spec 005 FR-001).
+    tap_after_agc: bool,
+    /// `None` at the 6 kHz identity rate (spec 004 FR-002) and at the "after AGC" tap.
     converters: Option<(PolyphaseDown, PolyphaseUp)>,
     chain: DeviceChain,
     latency: u32,
@@ -228,23 +243,25 @@ impl EventCounters {
     }
 }
 
-/// The device-rate part of the chain (stages 3, 4, 5 and 10) and which parts of it run.
+/// The device-rate part of the chain, in order: stage 4, the ADC clamp, stage 5, stage 10
+/// (spec 005 data-model.md › Pipeline order and taps), and which parts of it run. The tap
+/// after the AGC never enters the chain.
 #[derive(Clone, Debug)]
 struct DeviceChain {
-    agc: AgcStage,
-    /// Stage 3 runs: the AGC is enabled (spec 002 FR-002).
-    run_agc: bool,
+    /// Stage 4: the record band-pass (5 sections; spec 004 research R-06).
+    record: RecordStage,
+    /// Stage 4 runs: enabled (FR-007).
+    run_record: bool,
+    /// The ADC's full-scale saturation after stage 4 (spec 005 FR-008; A-030); bypassed when
+    /// `Settings::adc_clamp_enabled` is false.
+    clamp: ClampStage,
     vas: VasStage,
     /// Stage 5 runs: the VAS is enabled and the tap is after it (spec 003 FR-003; research R-01).
     run_vas: bool,
     /// Stage 5 mutes paused audio instead of dropping it (spec 003 FR-004; research R-09).
     mute: bool,
-    /// Stage 4: the record band-pass (5 sections; spec 004 research R-06).
-    record: RecordStage,
     /// Stage 10: the playback low-pass (3 sections; spec 004 research R-06).
     playback: PlaybackStage,
-    /// Stage 4 runs: enabled and the tap is not after the AGC (FR-007; spec 002 FR-003).
-    run_record: bool,
     /// Stage 10 runs: enabled and the tap is after playback (data-model.md › Tap).
     run_playback: bool,
 }
@@ -252,31 +269,29 @@ struct DeviceChain {
 impl DeviceChain {
     fn new(settings: &Settings) -> Self {
         Self {
-            agc: AgcStage::new(&settings.agc),
-            run_agc: settings.agc.enabled,
+            record: RecordStage::record(),
+            run_record: settings.record_stage_enabled,
+            clamp: ClampStage::new(settings.adc_clamp_enabled),
             vas: VasStage::new(&settings.vas),
             run_vas: settings.vas.enabled
                 && matches!(settings.tap, Tap::AfterVas | Tap::AfterPlayback),
             mute: settings.vas.mode == VasMode::Mute,
-            record: RecordStage::record(),
             playback: PlaybackStage::playback(),
-            run_record: settings.record_stage_enabled && settings.tap != Tap::AfterAgc,
             run_playback: settings.playback_stage_enabled && settings.tap == Tap::AfterPlayback,
         }
     }
 
     /// One device-rate sample. A bypassed stage passes the sample through bit-exactly,
-    /// with no arithmetic (FR-007). The AGC runs on every sample, also while the VAS is paused
-    /// (spec 003 FR-016, A-025); a dropped sample never reaches stage 10, and a muted sample
-    /// reaches it as +0.0 (spec 003 Edge Cases: its ring-out continues into the region).
+    /// with no arithmetic (FR-007). The clamp sees stage 4's output, so the VAS and every tap
+    /// from "after record" on see clamped samples (spec 005 FR-008); a dropped sample never
+    /// reaches stage 10, and a muted sample reaches it as +0.0 (spec 003 Edge Cases: its
+    /// ring-out continues into the region).
     #[inline]
     fn process(&mut self, mut d: f64) -> DeviceOut {
-        if self.run_agc {
-            d = self.agc.process(d);
-        }
         if self.run_record {
             d = self.record.process(d);
         }
+        d = self.clamp.process(d);
         let decision = if self.run_vas {
             self.vas.process(d)
         } else {
@@ -319,9 +334,9 @@ impl DeviceChain {
     }
 
     fn reset(&mut self) {
-        self.agc.reset();
-        self.vas.reset();
         self.record.reset();
+        self.clamp.reset();
+        self.vas.reset();
         self.playback.reset();
     }
 }
@@ -340,9 +355,18 @@ impl Pipeline {
         let plan = RatePlan::for_host(settings.host_rate_hz)?;
         let chain = DeviceChain::new(&settings);
         let latency = latency_samples(&plan, &settings, &chain);
+        let tap_after_agc = settings.tap == Tap::AfterAgc;
         Ok(Self {
             settings,
-            converters: resample::converters(&plan),
+            limiter: Limiter::new(&settings.agc, settings.host_rate_hz),
+            run_limiter: settings.agc.enabled,
+            tap_after_agc,
+            // The "after AGC" tap never converts, so its converters are not built (R-01).
+            converters: if tap_after_agc {
+                None
+            } else {
+                resample::converters(&plan)
+            },
             chain,
             latency,
             events: EventCounters::new(&plan),
@@ -414,8 +438,12 @@ impl Pipeline {
     /// enough for a block of `frames` input samples with the current settings (spec 003 R-07).
     /// Splices are at least H + 2 device samples apart, and `frames` host samples hold at most
     /// ⌊frames·l/m⌋ + 1 device samples (+ 2 at the non-integer rates (8, 16, 44.1 and 88.2 kHz)); the "+ 2" also covers a
-    /// splice on the block's first device sample (engineering target, 003 R-15). Never allocates.
+    /// splice on the block's first device sample (engineering target, 003 R-15). 0 at the
+    /// "after AGC" tap, where the VAS never runs (spec 005 FR-001). Never allocates.
     pub fn max_events(&self, frames: usize) -> usize {
+        if self.tap_after_agc {
+            return 0;
+        }
         let (l, m) = (u128::from(self.events.l), u128::from(self.events.m));
         let device = frames as u128 * l / m;
         let spacing = u128::from(self.chain.vas.hang_samples()) + 2;
@@ -458,13 +486,16 @@ impl Pipeline {
     /// Fixed latency of the current configuration, in host-rate samples (FR-012).
     ///
     /// This is the rate conversion's delay plus the voice-band stages' group delay at 1 kHz,
-    /// rounded to the nearest sample (research.md R-10).
+    /// rounded to the nearest sample (research.md R-10). The limiter adds none, and at the
+    /// "after AGC" tap the latency is 0 (spec 005 FR-001).
     pub fn latency_samples(&self) -> u32 {
         self.latency
     }
 
-    /// Returns the pipeline to its freshly created state, without allocating (FR-017).
+    /// Returns the pipeline to its freshly created state, without allocating (FR-017): the
+    /// limiter's capacitor is discharged, every filter and the VAS reset.
     pub fn reset(&mut self) {
+        self.limiter.reset();
         if let Some((down, up)) = &mut self.converters {
             down.reset();
             up.reset();
@@ -495,11 +526,21 @@ impl Pipeline {
         &self.settings
     }
 
-    /// One host sample through the engine (data-model.md steps 1–3). Returns the host sample
-    /// emitted at this step, if any (spec 003 research R-05).
+    /// One host sample through the engine (data-model.md steps 1–3; spec 005 data-model.md ›
+    /// Pipeline order and taps). Returns the host sample emitted at this step, if any (spec 003
+    /// research R-05).
     #[inline]
     fn tick(&mut self, x: f32) -> Option<f32> {
-        let x = sanitize_in(x);
+        let mut x = sanitize_in(x);
+        // Stage 3 at the host rate (spec 005 R-01). Bypassed: no arithmetic (FR-002).
+        if self.run_limiter {
+            x = self.limiter.process(x);
+        }
+        if self.tap_after_agc {
+            // The limiter's output sample for sample: no conversion, no chain, no events
+            // (spec 005 FR-001).
+            return Some(narrow_out(x));
+        }
         let y = match &mut self.converters {
             None => self.events.record(self.chain.process(x))?,
             Some((down, up)) => {
@@ -538,11 +579,42 @@ impl Pipeline {
         p.latency = latency_samples(&plan, &settings, &p.chain);
         Ok(p)
     }
+
+    /// Test-only (hidden): a pipeline whose limiter has its detector threshold shifted by
+    /// `knee_shift_db` and its release scaled by `release_scale` after construction, for the
+    /// spec 005 SC-007 mutation tests (contracts/rust-api.md › Test hooks).
+    ///
+    /// # Errors
+    ///
+    /// As [`Pipeline::new`].
+    #[doc(hidden)]
+    pub fn __with_limiter_mutation(
+        settings: Settings,
+        knee_shift_db: f64,
+        release_scale: f64,
+    ) -> Result<Self, Error> {
+        let mut p = Self::new(settings)?;
+        p.limiter.mutate(knee_shift_db, release_scale);
+        Ok(p)
+    }
 }
 
-/// 001 R-10: round(D_down + D_up + (τ_rec + τ_play) · host / DEVICE_RATE_HZ). A bypassed stage contributes
-/// 0, and with the tap after the record stage τ_play is not included.
+#[cfg(any(test, feature = "__test-hooks"))]
+impl Pipeline {
+    /// The limiter's hold-capacitor voltage (spec 005 R-03): 0.0 when discharged.
+    pub(crate) fn limiter_state(&self) -> f64 {
+        self.limiter.state()
+    }
+}
+
+/// 001 R-10: round(D_down + D_up + (τ_rec + τ_play) · host / DEVICE_RATE_HZ). A bypassed stage
+/// contributes 0, and with the tap after the record stage τ_play is not included. The limiter
+/// adds nothing; at the "after AGC" tap nothing after it runs, so the latency is 0 (spec 005
+/// FR-001).
 fn latency_samples(plan: &RatePlan, settings: &Settings, chain: &DeviceChain) -> u32 {
+    if settings.tap == Tap::AfterAgc {
+        return 0;
+    }
     let stages = chain.group_delay_1k_samples();
     let total = 2.0 * f64::from(plan.delay_host_samples())
         + stages * f64::from(settings.host_rate_hz) / f64::from(DEVICE_RATE_HZ);
@@ -556,12 +628,14 @@ mod validation_tests {
     use crate::error::Setting;
     use std::vec::Vec;
 
-    /// 002 T014: with the tap after the AGC, stages 4 and 10 do not run, whatever their
-    /// settings (spec 002 FR-003, data-model.md › Tap).
+    /// 002 T014, restated by 005 T007 (spec 005 FR-001): with the tap after the AGC, the
+    /// band-limit stages, the clamp and the VAS do not run, whatever their settings, and the
+    /// output is the limiter's own at the host rate with latency 0: the stage settings make no
+    /// difference, and with the limiter bypassed the output is the input.
     #[test]
     fn tap_after_agc_skips_both_band_limit_stages() {
         let x: Vec<f32> = (0..9600)
-            .map(|n| if n % 97 == 0 { 0.5 } else { -0.01 })
+            .map(|n| if n % 97 == 0 { 1.5 } else { -0.01 })
             .collect();
         let run = |s: Settings| {
             let mut y = x.clone();
@@ -569,17 +643,21 @@ mod validation_tests {
             y
         };
         for rate in crate::SUPPORTED_HOST_RATES {
-            let mut tap_agc = Settings::new(rate);
-            tap_agc.agc.enabled = false; // isolate the tap logic from the AGC stage
-            tap_agc.tap = Tap::AfterAgc;
-            let mut bypass = tap_agc;
-            bypass.tap = Tap::AfterPlayback;
-            bypass.record_stage_enabled = false;
-            bypass.playback_stage_enabled = false;
-            assert_eq!(run(tap_agc), run(bypass), "{rate} Hz");
+            let mut stages_on = Settings::new(rate);
+            stages_on.tap = Tap::AfterAgc;
+            let mut stages_off = stages_on;
+            stages_off.record_stage_enabled = false;
+            stages_off.playback_stage_enabled = false;
+            stages_off.adc_clamp_enabled = false;
+            stages_off.vas.enabled = false;
+            assert_eq!(run(stages_on), run(stages_off), "{rate} Hz");
+            assert_eq!(Pipeline::new(stages_on).unwrap().latency_samples(), 0);
+            let mut bypassed = stages_on;
+            bypassed.agc.enabled = false;
             assert_eq!(
-                Pipeline::new(tap_agc).unwrap().latency_samples(),
-                Pipeline::new(bypass).unwrap().latency_samples()
+                run(bypassed),
+                x,
+                "{rate} Hz: limiter bypassed is the identity"
             );
         }
     }
@@ -726,6 +804,208 @@ mod validation_tests {
     }
 }
 
+/// 005 T007 (spec 005 FR-001, FR-002, FR-008, FR-014; research R-01; contracts/rust-api.md):
+/// the limiter at the host rate, the "after AGC" tap, the clamp's place in the chain.
+#[cfg(test)]
+mod limiter_tests {
+    extern crate std;
+    use super::*;
+    use crate::stages::limiter::Limiter;
+    use rr_dr60_detmath::{PI, TAU, exp, ln, sin};
+    use std::vec::Vec;
+
+    /// A 1 kHz tone at `dbfs` for `secs`, starting at the host-grid peak phase (005 R-08).
+    fn tone(dbfs: f64, secs: f64, fs: f64) -> Vec<f32> {
+        let amp = exp(dbfs * ln(10.0) / 20.0);
+        let w = TAU * 1000.0 / fs;
+        let phase = (PI / 2.0) % w;
+        (0..(secs * fs) as usize)
+            .map(|n| (amp * sin(w * n as f64 + phase)) as f32)
+            .collect()
+    }
+
+    /// The onset stimulus: −20 dBFS 0.1 s, then +11 dBFS 0.4 s (data-model.md › Attack step).
+    fn onset(fs: f64) -> Vec<f32> {
+        let mut x = tone(-20.0, 0.1, fs);
+        let w = TAU * 1000.0 / fs;
+        let phase = (PI / 2.0) % w;
+        let amp = exp(11.0 * ln(10.0) / 20.0);
+        let n0 = x.len();
+        x.extend((0..(0.4 * fs) as usize).map(|n| (amp * sin(w * (n0 + n) as f64 + phase)) as f32));
+        x
+    }
+
+    fn run(s: Settings, x: &[f32]) -> (Vec<f32>, BlockInfo) {
+        let mut y = std::vec![0.0f32; x.len()];
+        let info = Pipeline::new(s).unwrap().process(x, &mut y).unwrap();
+        y.truncate(info.produced);
+        (y, info)
+    }
+
+    fn peak(y: &[f32]) -> f32 {
+        y.iter().fold(0.0f32, |m, v| m.max(v.abs()))
+    }
+
+    /// FR-001: at the "after AGC" tap the output is a standalone limiter's output, bit for bit,
+    /// at the host rate: latency 0, no events, one sample out per sample in.
+    #[test]
+    fn tap_after_agc_is_the_limiter_output_at_the_host_rate() {
+        for rate in [6000, 48_000] {
+            let fs = f64::from(rate);
+            let mut s = Settings::new(rate);
+            s.tap = Tap::AfterAgc;
+            let p = Pipeline::new(s).unwrap();
+            assert_eq!(p.latency_samples(), 0, "{rate} Hz");
+            for n in [0, 1, 4800, 1 << 20] {
+                assert_eq!(p.max_events(n), 0, "{rate} Hz, {n} frames");
+            }
+            let x = onset(fs);
+            let (y, info) = run(s, &x);
+            assert_eq!(
+                info,
+                BlockInfo {
+                    produced: x.len(),
+                    events: 0,
+                    paused: false
+                },
+                "{rate} Hz"
+            );
+            let mut limiter = Limiter::new(&s.agc, rate);
+            let mut attenuated = 0;
+            for (n, (&xi, &yi)) in x.iter().zip(&y).enumerate() {
+                let want = narrow_out(limiter.process(sanitize_in(xi)));
+                assert_eq!(yi.to_bits(), want.to_bits(), "{rate} Hz: sample {n}");
+                if yi != xi {
+                    attenuated += 1;
+                }
+            }
+            assert!(attenuated > 0, "{rate} Hz: the limiter never acted");
+            // With events, the same: no event is ever reported.
+            let mut p = Pipeline::new(s).unwrap();
+            let mut y2 = std::vec![0.0f32; x.len()];
+            let mut ev = [VasEvent::default(); 4];
+            let info = p.process_with_events(&x, &mut y2, &mut ev).unwrap();
+            assert_eq!((info.produced, info.events), (x.len(), 0));
+            assert_eq!(y2, y);
+        }
+    }
+
+    /// SC-006 (FR-001): the limiter adds no latency at any tap; the "after AGC" tap is 0.
+    #[test]
+    fn latency_unchanged_with_limiter_on_or_off() {
+        for rate in crate::SUPPORTED_HOST_RATES {
+            for tap in [Tap::AfterRecord, Tap::AfterVas, Tap::AfterPlayback] {
+                let mut on = Settings::new(rate);
+                on.tap = tap;
+                let mut off = on;
+                off.agc.enabled = false;
+                let (lat_on, lat_off) = (
+                    Pipeline::new(on).unwrap().latency_samples(),
+                    Pipeline::new(off).unwrap().latency_samples(),
+                );
+                assert_eq!(lat_on, lat_off, "{rate} Hz {tap:?}");
+                assert!(lat_on > 0 || rate == DEVICE_RATE_HZ, "{rate} Hz {tap:?}");
+            }
+            let mut s = Settings::new(rate);
+            s.tap = Tap::AfterAgc;
+            assert_eq!(Pipeline::new(s).unwrap().latency_samples(), 0);
+            s.agc.enabled = false;
+            assert_eq!(Pipeline::new(s).unwrap().latency_samples(), 0);
+        }
+    }
+
+    /// FR-008 (A-030): the clamp applies after the record stage, so with the limiter off a
+    /// +11 dBFS tone through stage 4 peaks at exactly 1.0; with the clamp off it exceeds 1.0;
+    /// the "after AGC" tap never clamps.
+    #[test]
+    fn clamp_applies_after_the_record_stage() {
+        let x = tone(11.0, 0.5, 6000.0);
+        let mut s = Settings::new(6000);
+        s.agc.enabled = false;
+        s.vas.enabled = false;
+        s.playback_stage_enabled = false;
+        let (y, _) = run(s, &x);
+        assert_eq!(peak(&y), 1.0, "clamped peak");
+        assert!(
+            y.iter().filter(|v| v.abs() == 1.0).count() > 100,
+            "no flat top"
+        );
+        let mut off = s;
+        off.adc_clamp_enabled = false;
+        let (y, _) = run(off, &x);
+        assert!(peak(&y) > 1.0, "unclamped peak {}", peak(&y));
+        let mut tap = s;
+        tap.tap = Tap::AfterAgc;
+        let (y, _) = run(tap, &x);
+        assert_eq!(y, x, "the after-AGC tap must not clamp");
+    }
+
+    /// FR-008: the spec 001 `bypass_all` configuration (everything off, the clamp included)
+    /// is the identity at 6 kHz beyond full scale; the clamp alone saturates.
+    #[test]
+    fn bypass_all_disables_the_clamp() {
+        let x: Vec<f32> = [1.5f32, -2.0, 0.25, 1.0, -1.0, 0.999]
+            .iter()
+            .copied()
+            .cycle()
+            .take(600)
+            .collect();
+        let mut s = Settings::new(6000);
+        s.agc.enabled = false;
+        s.vas.enabled = false;
+        s.record_stage_enabled = false;
+        s.playback_stage_enabled = false;
+        s.adc_clamp_enabled = false;
+        let (y, info) = run(s, &x);
+        assert_eq!(info.produced, x.len());
+        assert_eq!(y, x);
+        s.adc_clamp_enabled = true;
+        let (y, _) = run(s, &x);
+        let want: Vec<f32> = x.iter().map(|v| v.clamp(-1.0, 1.0)).collect();
+        assert_eq!(y, want);
+    }
+
+    /// data-model.md › Pipeline order: record → clamp → VAS → playback. The clamp sees stage
+    /// 4's output (its peak is exactly 1.0 only if the clamp comes after the band-pass), and the
+    /// "after record" and "after VAS" taps both see clamped samples, so the clamp precedes the
+    /// VAS and stage 10 (whose order spec 003 established).
+    #[test]
+    fn device_chain_order_is_record_clamp_vas_playback() {
+        let x = tone(11.0, 0.5, 6000.0);
+        let mut s = Settings::new(6000);
+        s.agc.enabled = false;
+        s.vas.enabled = false;
+        s.tap = Tap::AfterRecord;
+        let (y, _) = run(s, &x);
+        assert_eq!(peak(&y), 1.0);
+        s.record_stage_enabled = false;
+        for tap in [Tap::AfterRecord, Tap::AfterVas, Tap::AfterPlayback] {
+            s.tap = tap;
+            s.playback_stage_enabled = false;
+            let (y, _) = run(s, &x);
+            let want: Vec<f32> = x.iter().map(|v| v.clamp(-1.0, 1.0)).collect();
+            assert_eq!(y, want, "{tap:?}");
+        }
+    }
+
+    /// FR-014: `reset` and `reconfigure` discharge the limiter.
+    #[test]
+    fn reset_discharges_the_limiter() {
+        let s = Settings::new(48_000);
+        let mut p = Pipeline::new(s).unwrap();
+        assert_eq!(p.limiter_state(), 0.0);
+        let x = onset(48_000.0);
+        let _ = p.process_in_place(&mut x.clone());
+        assert!(p.limiter_state() > 0.9, "state {}", p.limiter_state());
+        p.reset();
+        assert_eq!(p.limiter_state(), 0.0);
+        let _ = p.process_in_place(&mut x.clone());
+        assert!(p.limiter_state() > 0.9);
+        p.reconfigure(s).unwrap();
+        assert_eq!(p.limiter_state(), 0.0);
+    }
+}
+
 #[cfg(test)]
 mod vas_event_tests {
     extern crate std;
@@ -733,21 +1013,23 @@ mod vas_event_tests {
     use rr_dr60_detmath::{TAU, exp, ln, sin};
     use std::vec::Vec;
 
-    /// The VAS-isolated configuration (spec 003 definitions): AGC and stages 4 and 10 off.
+    /// The VAS-isolated configuration (spec 003 definitions): the limiter, stages 4 and 10 and
+    /// the clamp off.
     fn vas_only(rate: u32) -> Settings {
         let mut s = Settings::new(rate);
         s.agc.enabled = false;
         s.record_stage_enabled = false;
         s.playback_stage_enabled = false;
+        s.adc_clamp_enabled = false;
         s.tap = Tap::AfterVas;
         s
     }
 
-    /// 1 kHz at −8 dBFS (threshold + 10 dB) with a half-sample phase offset at the 6 kHz device
-    /// rate (spec 004 research R-08), so every device sample is a sound sample and burst lengths
-    /// are exact (see `stages::vas` tests).
+    /// 1 kHz at −30 dBFS (threshold + 10 dB; A-022 revised by spec 005) with a half-sample
+    /// phase offset at the 6 kHz device rate (spec 004 research R-08), so every device sample
+    /// is a sound sample and burst lengths are exact (see `stages::vas` tests).
     fn loud(n: usize, fs: f64) -> Vec<f32> {
-        let amp = exp(-8.0 * ln(10.0) / 20.0);
+        let amp = exp(-30.0 * ln(10.0) / 20.0);
         (0..n)
             .map(|k| (amp * sin(TAU * ((1000.0 * (k as f64 + 0.5) / fs) % 1.0))) as f32)
             .collect()
@@ -988,7 +1270,8 @@ mod op_count_tests {
     impl Pipeline {
         fn ops(&self) -> u64 {
             let conv = self.converters.as_ref().map_or(0, |(d, u)| d.ops + u.ops);
-            conv + self.chain.agc.ops
+            conv + self.limiter.ops
+                + self.limiter.transcendentals
                 + self.chain.vas.ops
                 + self.chain.record.ops()
                 + self.chain.playback.ops()
@@ -1001,12 +1284,13 @@ mod op_count_tests {
         }
     }
 
-    /// FR-015 bounded work: no host sample costs more than one full decimator branch, one
+    /// FR-015 bounded work: no host sample costs more than one limiter step (spec 005 R-12: at
+    /// most 1 `exp` + 1 `ln` + 30 basic operations), one full decimator branch, one
     /// interpolator branch, both band-limit stages (5 + 3 sections × 5 multiply-adds, spec 004
-    /// research R-06) and one
-    /// AGC update (spec 002) and one VAS decision (spec 003), and the total is independent of
-    /// how the input is split into blocks. The default settings have the AGC and the VAS on, and
-    /// the input has long gaps, so the VAS both keeps and drops samples.
+    /// research R-06) and one VAS decision (spec 003), and the total is independent of how the
+    /// input is split into blocks. The default settings have the limiter and the VAS on, and
+    /// the input has a loud click train (over the knee, so the limiter charges) with a long gap,
+    /// so the VAS both keeps and drops samples.
     #[test]
     fn per_sample_work_is_bounded_and_block_independent() {
         for rate in crate::SUPPORTED_HOST_RATES {
@@ -1016,15 +1300,14 @@ mod op_count_tests {
             let x: Vec<f32> = (0..r / 4 + 3 * r / 2 + r / 4)
                 .map(|n| {
                     let quiet = n >= r / 4 && n < r / 4 + 3 * r / 2;
-                    if !quiet && n % 97 == 0 { 0.5 } else { -0.0001 }
+                    if !quiet && n % 97 == 0 { 1.5 } else { -0.0001 }
                 })
                 .collect();
             let mut one = Pipeline::new(Settings::new(rate)).unwrap();
             let (taps_down, taps_up) = one.taps();
-            // + the AGC's fixed per-device-sample work (002 T024: 32 Hilbert multiply-adds,
-            // 33 compares and 12 scalar operations) + the VAS's (003 T023: one compare and a few
-            // counter updates).
-            let bound = taps_down + taps_up + 40 + 77 + 4;
+            // + the limiter's per-host-sample work (005 R-12: 30 basic + 2 transcendental) +
+            // the VAS's (003 T023: one compare and a few counter updates).
+            let bound = taps_down + taps_up + 40 + 32 + 4;
             let mut worst = 0;
             for &v in &x {
                 let before = one.ops();

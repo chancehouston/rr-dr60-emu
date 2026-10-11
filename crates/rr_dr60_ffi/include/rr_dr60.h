@@ -80,15 +80,13 @@ enum RrDr60SettingField
   RR_DR60_SETTING_FIELD_TAP = 2,
   // `struct_size` is smaller than `sizeof(RrDr60Settings)` of this library version.
   RR_DR60_SETTING_FIELD_STRUCT_SIZE = 3,
-  // `agc_target_dbfs` is outside -30 to 0, or not finite.
-  RR_DR60_SETTING_FIELD_AGC_TARGET_DBFS = 4,
-  // `agc_max_gain_db` is outside 0 to 60, or not finite.
-  RR_DR60_SETTING_FIELD_AGC_MAX_GAIN_DB = 5,
-  // `agc_max_attenuation_db` is outside 0 to 40, or not finite.
-  RR_DR60_SETTING_FIELD_AGC_MAX_ATTENUATION_DB = 6,
-  // `agc_attack_ms` is outside 1 to 100, or not finite.
+  // `agc_knee_dbfs` is outside -40 to 3, or not finite (spec 005; value 4 named the 0.4
+  // target level).
+  RR_DR60_SETTING_FIELD_AGC_KNEE_DBFS = 4,
+  // `agc_attack_ms` is outside 1 to 50, or not finite (spec 005). Values 5 and 6 are retired
+  // (the 0.4 AGC maximum gain and maximum attenuation) and are never returned.
   RR_DR60_SETTING_FIELD_AGC_ATTACK_MS = 7,
-  // `agc_release_ms` is outside 50 to 10000, or not finite.
+  // `agc_release_ms` is outside 200 to 10000, or not finite (spec 005).
   RR_DR60_SETTING_FIELD_AGC_RELEASE_MS = 8,
   // `vas_mode` is not an `RrDr60VasMode` value (status `INVALID_ARGUMENT`; spec 003).
   RR_DR60_SETTING_FIELD_VAS_MODE = 9,
@@ -119,7 +117,8 @@ enum RrDr60Tap
   RR_DR60_TAP_AFTER_RECORD = 0,
   // After signal-chain stage 10 (playback band-limit). The default.
   RR_DR60_TAP_AFTER_PLAYBACK = 1,
-  // After signal-chain stage 3 (AGC). Stages 4 and 10 are not run (spec 002 FR-003).
+  // After signal-chain stage 3 (the limiter), at the host rate: the limiter's output sample
+  // for sample. No rate conversion, no later stage, latency 0, no events (spec 005 FR-001).
   RR_DR60_TAP_AFTER_AGC = 2,
   // After signal-chain stage 5 (VAS). Stage 10 is not run (spec 003 FR-003).
   RR_DR60_TAP_AFTER_VAS = 3,
@@ -157,10 +156,14 @@ typedef struct RrDr60Pipeline RrDr60Pipeline;
 
 // Pipeline settings. Start from `rr_dr60_settings_default` and change fields as needed.
 //
-// AGC levels use the AES17 convention (a full-scale sine is 0 dBFS). AGC ranges are
-// inclusive; out-of-range or non-finite values are rejected even when the AGC is off.
+// Levels use the AES17 convention (a full-scale sine is 0 dBFS; full scale is the codec's,
+// A-030). AGC ranges are inclusive; out-of-range or non-finite values are rejected even when
+// the AGC is off. Layout (0.5, 80 bytes): the 0.4 offsets are kept; `agc_target_dbfs` became
+// `agc_knee_dbfs` at offset 28, the two slots at 32 and 36 are reserved, and
+// `adc_clamp_enabled` is appended at offset 72 (spec 005 contracts/c-api.md).
 typedef struct RrDr60Settings {
-  // Must be `sizeof(RrDr60Settings)`. Lets the struct grow in later versions.
+  // Must be `sizeof(RrDr60Settings)`: 80 since 0.5 (72 in 0.3 and 0.4, rejected as
+  // `STRUCT_SIZE`). Lets the struct grow in later versions.
   uint32_t struct_size;
   // Host sample rate in Hz: 6000, 8000, 16000, 44100, 48000, 88200 or 96000 (spec 004
   // FR-002; 6000 is the device rate, A-026, and needs no rate conversion).
@@ -173,19 +176,22 @@ typedef struct RrDr60Settings {
   uint32_t tap;
   // Seed for stochastic stages. No effect on output in this version.
   uint64_t seed;
-  // Signal-chain stage 3 (AGC) on (true, default; assumed always active, A-020) or bypassed.
+  // Signal-chain stage 3 (the limiter) on (true, default; assumed always active, A-020) or
+  // bypassed. Below its knee the limiter is the identity; above it the output is held at the
+  // knee level after a dead time of a few ms (spec 005; modeled on the circuit, A-028).
   bool agc_enabled;
-  // AGC target level in dBFS. Default -10 (A-017). Range -30 to 0.
-  float agc_target_dbfs;
-  // AGC maximum gain in dB. Default 40 (A-017). Range 0 to 60. A loud first sound after
-  // create, reset or long silence can exceed full scale by up to this much: limit or clip
-  // before converting to integer PCM.
-  float agc_max_gain_db;
-  // AGC maximum attenuation in dB (positive). Default 20 (A-017). Range 0 to 40.
-  float agc_max_attenuation_db;
-  // AGC attack time in ms. Default 10 (A-018). Range 1 to 100.
+  // The limiter's knee in dBFS: where it begins to act and the level it holds. Default 1
+  // (A-028). Range -40 to 3. (Offset 28; was `agc_target_dbfs` in 0.4.)
+  float agc_knee_dbfs;
+  // Ignored; reserved since 0.5 (was `agc_max_gain_db`). Write 0.
+  float reserved_agc_1;
+  // Ignored; reserved since 0.5 (was `agc_max_attenuation_db`). Write 0.
+  float reserved_agc_2;
+  // Attack as the dead time, in ms, at 10 dB over the knee: how long a loud onset passes at
+  // full level before the limiter acts. Default 3 (A-034). Range 1 to 50.
   float agc_attack_ms;
-  // AGC release time in ms. Default 1000 (A-018). Range 50 to 10000.
+  // Release, in ms: time to return within 1 dB of unity from 10 dB of attenuation. Default
+  // 1370 (A-035). Range 200 to 10000.
   float agc_release_ms;
   // Signal-chain stage 5 (VAS) on (true, default; the device has no VAS switch, S-001, A-008)
   // or bypassed.
@@ -196,12 +202,16 @@ typedef struct RrDr60Settings {
   // Microphone sensitivity level. Default 3 (S-001, A-021). Range 1 to 5. Moves only the VAS
   // threshold in this version, 3 dB per level (A-022).
   uint32_t vas_sensitivity;
-  // VAS threshold at sensitivity 3, dBFS (sine peak). Default -18 (A-022). Range -60 to 0.
+  // VAS threshold at sensitivity 3, dBFS (sine peak). Default -40 (A-022, revised by spec
+  // 005). Range -60 to 0.
   float vas_threshold_dbfs;
   // VAS hang time in ms. Default 1000 (A-023). Range 50 to 10000.
   float vas_hang_ms;
   // VAS onset time in ms. Default 20 (A-024). Range 0 to 200.
   float vas_onset_ms;
+  // The ADC's full-scale clamp after stage 4: output beyond ±1.0 is saturated (true,
+  // default; A-030) or passed unchanged. Appended in 0.5 at offset 72 (spec 005 FR-008).
+  bool adc_clamp_enabled;
 } RrDr60Settings;
 
 // The result of one `rr_dr60_process` call (spec 003 FR-004, FR-005).
@@ -230,8 +240,9 @@ typedef struct RrDr60VasEvent {
 extern "C" {
 #endif // __cplusplus
 
-// Default settings for `host_rate_hz` (not validated): AGC and VAS on with the assumed device
-// values, both band-limit stages on, tap after playback, seed 0. Never fails.
+// Default settings for `host_rate_hz` (not validated): the limiter and the VAS on with the
+// modeled device values, both band-limit stages and the ADC clamp on, tap after playback,
+// seed 0, the reserved slots 0. Never fails.
 struct RrDr60Settings rr_dr60_settings_default(uint32_t host_rate_hz);
 
 // Creates a pipeline. On success, writes the new handle to `*out_pipeline`. Not real-time

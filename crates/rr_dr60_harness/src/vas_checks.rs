@@ -824,19 +824,12 @@ pub fn interplay_stimulus(fs: f64, floor_dbfs: f64) -> Vec<f32> {
     bursts.iter().zip(&noise).map(|(b, n)| b + n).collect()
 }
 
-/// The input-referred VAS threshold implied by spec 002's static curve (A-017, A-022): the
-/// post-AGC threshold mapped back through the regulation line, or through the maximum gain
-/// below the regulated range.
+/// The input-referred VAS threshold (spec 005 FR-012): the identity below the limiter's knee,
+/// where the limiter is unity gain (A-028), so the configured threshold at the current
+/// sensitivity level **is** the input level. The spec 003 R-03 mapping through the spec 002
+/// compressor's curve is withdrawn (restated by 005 T016; the report text follows in T028).
 pub fn input_referred_threshold_dbfs(settings: &Settings) -> f64 {
-    let t_out = effective_threshold_dbfs(&settings.vas);
-    let target = f64::from(settings.agc.target_dbfs);
-    let max_gain = f64::from(settings.agc.max_gain_db);
-    let range_low_out = target - max_gain / 0.9 + max_gain;
-    if t_out >= range_low_out {
-        target + 10.0 * (t_out - target)
-    } else {
-        t_out - max_gain
-    }
+    effective_threshold_dbfs(&settings.vas)
 }
 
 /// US3 AS3 (report only, no tolerance): the floor sweep through the default pipeline. Returns
@@ -888,20 +881,22 @@ mod tests {
     fn matrix_thresholds_and_rounding() {
         assert_eq!(matrix().len(), 11);
         assert!(matrix()[0].is_default() && !matrix()[1].is_default());
+        // A-022 (revised by spec 005 FR-012): −40 dBFS at level 3, 3 dB per level.
         let d = VasSettings::DEVICE;
-        assert_eq!(effective_threshold_dbfs(&d), -18.0);
+        assert_eq!(effective_threshold_dbfs(&d), -40.0);
         let mut v = d;
         v.sensitivity = 1;
-        assert_eq!(effective_threshold_dbfs(&v), -12.0);
+        assert_eq!(effective_threshold_dbfs(&v), -34.0);
         v.sensitivity = 5;
-        assert_eq!(effective_threshold_dbfs(&v), -24.0);
+        assert_eq!(effective_threshold_dbfs(&v), -46.0);
         assert_eq!(hang_s(&d), 1.0);
         assert_eq!(onset_s(&d), 0.02);
+        // 005 FR-012: input-referred == configured below the knee (restated from −58 / −30).
         let s = Settings::new(48_000);
-        assert!((input_referred_threshold_dbfs(&s) + 58.0).abs() < 1e-9);
+        assert!((input_referred_threshold_dbfs(&s) + 40.0).abs() < 1e-9);
         let mut s1 = s;
         s1.vas.sensitivity = 1;
-        assert!((input_referred_threshold_dbfs(&s1) + 30.0).abs() < 1e-9);
+        assert!((input_referred_threshold_dbfs(&s1) + 34.0).abs() < 1e-9);
         // At the 6 kHz device rate (spec 004): 2 s lead, bursts of 10, 18, 30 and 1000 ms, each
         // followed by 2 s (was 16_000 + 80 + 144 + 240 + 8000 + 4 × 16_000 at 8 kHz).
         let (x, bursts) = onset_stimulus(&d, 6000.0);

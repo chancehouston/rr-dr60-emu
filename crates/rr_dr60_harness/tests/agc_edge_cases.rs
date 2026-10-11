@@ -2,7 +2,7 @@
 
 use rr_dr60::{AgcSettings, Pipeline, Settings};
 use rr_dr60_harness::analysis::{db, from_db, gain_trajectory_exact, single_bin};
-use rr_dr60_harness::{agc_checks, configs, stimulus};
+use rr_dr60_harness::{configs, stimulus};
 
 fn run(settings: Settings, x: &[f32]) -> Vec<f32> {
     let mut y = vec![0.0; x.len()];
@@ -63,9 +63,7 @@ fn reset_and_reconfigure_equal_fresh() {
 /// within ±0.01 dB at every level (here: bit for bit, since the gain is exactly 0 dB).
 #[test]
 fn zero_gain_range_is_unity() {
-    let mut agc = AgcSettings::DEVICE;
-    agc.max_gain_db = 0.0;
-    agc.max_attenuation_db = 0.0;
+    let agc = AgcSettings::DEVICE; // restated by 005 T019 (max_gain_db / max_attenuation_db removed)
     for rate in [6000, 48_000] {
         let mut off = agc_only(rate, agc);
         off.agc.enabled = false;
@@ -97,8 +95,7 @@ fn zero_gain_range_is_unity() {
 fn ten_minute_flush_and_long_silence() {
     let fs = 6000.0; // the identity rate (spec 004 FR-002); the durations are unchanged
     let ten_min = (600.0 * fs) as usize;
-    let mut agc = AgcSettings::DEVICE;
-    agc.max_attenuation_db = 0.0;
+    let agc = AgcSettings::DEVICE; // restated by 005 T019 (max_attenuation_db removed)
     let x: Vec<f32> = stimulus::step(1000.0, &[0.0], &[600.0], fs);
     let y = run(agc_only(6000, agc), &x);
     assert!(y.iter().all(|v| !v.is_subnormal()));
@@ -249,11 +246,5 @@ fn overshoot_is_unclipped_and_finite() {
     );
 }
 
-/// The FR-009 stimulus is bit-reproducible (it feeds the golden file).
-#[test]
-fn noise_burst_stimulus_is_reproducible() {
-    assert_eq!(
-        agc_checks::noise_burst_stimulus(16_000.0),
-        agc_checks::noise_burst_stimulus(16_000.0)
-    );
-}
+// `noise_burst_stimulus_is_reproducible` removed: the helper went with the 0.4 checks
+// (restated by 005 T019; the golden stimuli are rebuilt in T034).

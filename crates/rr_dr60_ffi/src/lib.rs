@@ -63,15 +63,15 @@ pub enum RrDr60SettingField {
     Tap = 2,
     /// `struct_size` is smaller than `sizeof(RrDr60Settings)` of this library version.
     StructSize = 3,
-    /// `agc_target_dbfs` is outside -30 to 0, or not finite.
-    AgcTargetDbfs = 4,
-    /// `agc_max_gain_db` is outside 0 to 60, or not finite.
-    AgcMaxGainDb = 5,
-    /// `agc_max_attenuation_db` is outside 0 to 40, or not finite.
-    AgcMaxAttenuationDb = 6,
-    /// `agc_attack_ms` is outside 1 to 100, or not finite.
+    /// `agc_knee_dbfs` is outside -40 to 3, or not finite (spec 005; value 4 named the 0.4
+    /// target level).
+    AgcKneeDbfs = 4,
+    // 5 and 6 (AGC max gain / max attenuation) retired in 0.5; never reused. The fields they
+    // named are `reserved_agc_1` and `reserved_agc_2`, which are ignored.
+    /// `agc_attack_ms` is outside 1 to 50, or not finite (spec 005). Values 5 and 6 are retired
+    /// (the 0.4 AGC maximum gain and maximum attenuation) and are never returned.
     AgcAttackMs = 7,
-    /// `agc_release_ms` is outside 50 to 10000, or not finite.
+    /// `agc_release_ms` is outside 200 to 10000, or not finite (spec 005).
     AgcReleaseMs = 8,
     /// `vas_mode` is not an `RrDr60VasMode` value (status `INVALID_ARGUMENT`; spec 003).
     VasMode = 9,
@@ -93,7 +93,8 @@ pub enum RrDr60Tap {
     AfterRecord = 0,
     /// After signal-chain stage 10 (playback band-limit). The default.
     AfterPlayback = 1,
-    /// After signal-chain stage 3 (AGC). Stages 4 and 10 are not run (spec 002 FR-003).
+    /// After signal-chain stage 3 (the limiter), at the host rate: the limiter's output sample
+    /// for sample. No rate conversion, no later stage, latency 0, no events (spec 005 FR-001).
     AfterAgc = 2,
     /// After signal-chain stage 5 (VAS). Stage 10 is not run (spec 003 FR-003).
     AfterVas = 3,
@@ -138,12 +139,16 @@ pub struct RrDr60VasEvent {
 
 /// Pipeline settings. Start from `rr_dr60_settings_default` and change fields as needed.
 ///
-/// AGC levels use the AES17 convention (a full-scale sine is 0 dBFS). AGC ranges are
-/// inclusive; out-of-range or non-finite values are rejected even when the AGC is off.
+/// Levels use the AES17 convention (a full-scale sine is 0 dBFS; full scale is the codec's,
+/// A-030). AGC ranges are inclusive; out-of-range or non-finite values are rejected even when
+/// the AGC is off. Layout (0.5, 80 bytes): the 0.4 offsets are kept; `agc_target_dbfs` became
+/// `agc_knee_dbfs` at offset 28, the two slots at 32 and 36 are reserved, and
+/// `adc_clamp_enabled` is appended at offset 72 (spec 005 contracts/c-api.md).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RrDr60Settings {
-    /// Must be `sizeof(RrDr60Settings)`. Lets the struct grow in later versions.
+    /// Must be `sizeof(RrDr60Settings)`: 80 since 0.5 (72 in 0.3 and 0.4, rejected as
+    /// `STRUCT_SIZE`). Lets the struct grow in later versions.
     pub struct_size: u32,
     /// Host sample rate in Hz: 6000, 8000, 16000, 44100, 48000, 88200 or 96000 (spec 004
     /// FR-002; 6000 is the device rate, A-026, and needs no rate conversion).
@@ -156,19 +161,22 @@ pub struct RrDr60Settings {
     pub tap: u32,
     /// Seed for stochastic stages. No effect on output in this version.
     pub seed: u64,
-    /// Signal-chain stage 3 (AGC) on (true, default; assumed always active, A-020) or bypassed.
+    /// Signal-chain stage 3 (the limiter) on (true, default; assumed always active, A-020) or
+    /// bypassed. Below its knee the limiter is the identity; above it the output is held at the
+    /// knee level after a dead time of a few ms (spec 005; modeled on the circuit, A-028).
     pub agc_enabled: bool,
-    /// AGC target level in dBFS. Default -10 (A-017). Range -30 to 0.
-    pub agc_target_dbfs: f32,
-    /// AGC maximum gain in dB. Default 40 (A-017). Range 0 to 60. A loud first sound after
-    /// create, reset or long silence can exceed full scale by up to this much: limit or clip
-    /// before converting to integer PCM.
-    pub agc_max_gain_db: f32,
-    /// AGC maximum attenuation in dB (positive). Default 20 (A-017). Range 0 to 40.
-    pub agc_max_attenuation_db: f32,
-    /// AGC attack time in ms. Default 10 (A-018). Range 1 to 100.
+    /// The limiter's knee in dBFS: where it begins to act and the level it holds. Default 1
+    /// (A-028). Range -40 to 3. (Offset 28; was `agc_target_dbfs` in 0.4.)
+    pub agc_knee_dbfs: f32,
+    /// Ignored; reserved since 0.5 (was `agc_max_gain_db`). Write 0.
+    pub reserved_agc_1: f32,
+    /// Ignored; reserved since 0.5 (was `agc_max_attenuation_db`). Write 0.
+    pub reserved_agc_2: f32,
+    /// Attack as the dead time, in ms, at 10 dB over the knee: how long a loud onset passes at
+    /// full level before the limiter acts. Default 3 (A-034). Range 1 to 50.
     pub agc_attack_ms: f32,
-    /// AGC release time in ms. Default 1000 (A-018). Range 50 to 10000.
+    /// Release, in ms: time to return within 1 dB of unity from 10 dB of attenuation. Default
+    /// 1370 (A-035). Range 200 to 10000.
     pub agc_release_ms: f32,
     /// Signal-chain stage 5 (VAS) on (true, default; the device has no VAS switch, S-001, A-008)
     /// or bypassed.
@@ -179,16 +187,21 @@ pub struct RrDr60Settings {
     /// Microphone sensitivity level. Default 3 (S-001, A-021). Range 1 to 5. Moves only the VAS
     /// threshold in this version, 3 dB per level (A-022).
     pub vas_sensitivity: u32,
-    /// VAS threshold at sensitivity 3, dBFS (sine peak). Default -18 (A-022). Range -60 to 0.
+    /// VAS threshold at sensitivity 3, dBFS (sine peak). Default -40 (A-022, revised by spec
+    /// 005). Range -60 to 0.
     pub vas_threshold_dbfs: f32,
     /// VAS hang time in ms. Default 1000 (A-023). Range 50 to 10000.
     pub vas_hang_ms: f32,
     /// VAS onset time in ms. Default 20 (A-024). Range 0 to 200.
     pub vas_onset_ms: f32,
+    /// The ADC's full-scale clamp after stage 4: output beyond ±1.0 is saturated (true,
+    /// default; A-030) or passed unchanged. Appended in 0.5 at offset 72 (spec 005 FR-008).
+    pub adc_clamp_enabled: bool,
 }
 
-// spec 003 contracts/c-api.md: the 0.3 layout is 72 bytes, with the VAS fields at offsets 48–68.
-const _: () = assert!(size_of::<RrDr60Settings>() == 72);
+// spec 005 contracts/c-api.md: the 0.5 layout is 80 bytes; the 0.3/0.4 offsets are kept and
+// `adc_clamp_enabled` sits at 72 (the unit tests assert every offset).
+const _: () = assert!(size_of::<RrDr60Settings>() == 80);
 // spec 003 contracts/c-api.md: the C event type and the core's `repr(C)` `VasEvent` share one
 // layout, so `rr_dr60_process_with_events` can pass the caller's buffer straight through.
 const _: () = assert!(
@@ -257,9 +270,7 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
         ),
         Error::InvalidSetting { setting } => {
             let field = match setting {
-                Setting::AgcTargetDbfs => RrDr60SettingField::AgcTargetDbfs,
-                Setting::AgcMaxGainDb => RrDr60SettingField::AgcMaxGainDb,
-                Setting::AgcMaxAttenuationDb => RrDr60SettingField::AgcMaxAttenuationDb,
+                Setting::AgcKneeDbfs => RrDr60SettingField::AgcKneeDbfs,
                 Setting::AgcAttackMs => RrDr60SettingField::AgcAttackMs,
                 Setting::AgcReleaseMs => RrDr60SettingField::AgcReleaseMs,
                 Setting::VasSensitivity => RrDr60SettingField::VasSensitivity,
@@ -290,7 +301,8 @@ fn validate_c(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Setti
 }
 
 /// Converts C settings to Rust settings, validating `struct_size`, `tap` and `vas_mode`, and
-/// naming the failing field (spec 003 contracts/c-api.md › Conversion rules).
+/// naming the failing field (spec 003 contracts/c-api.md › Conversion rules). The two reserved
+/// AGC slots are ignored (spec 005 contracts/c-api.md).
 fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60SettingField)> {
     let invalid = |field| (RrDr60Status::InvalidArgument, field);
     if s.struct_size < SETTINGS_SIZE {
@@ -311,12 +323,11 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Sett
     let mut out = Settings::new(s.host_rate_hz);
     out.record_stage_enabled = s.record_stage_enabled;
     out.playback_stage_enabled = s.playback_stage_enabled;
+    out.adc_clamp_enabled = s.adc_clamp_enabled;
     out.tap = tap;
     out.seed = s.seed;
     out.agc.enabled = s.agc_enabled;
-    out.agc.target_dbfs = s.agc_target_dbfs;
-    out.agc.max_gain_db = s.agc_max_gain_db;
-    out.agc.max_attenuation_db = s.agc_max_attenuation_db;
+    out.agc.knee_dbfs = s.agc_knee_dbfs;
     out.agc.attack_ms = s.agc_attack_ms;
     out.agc.release_ms = s.agc_release_ms;
     out.vas.enabled = s.vas_enabled;
@@ -329,23 +340,25 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Sett
     Ok(out)
 }
 
-/// Default settings for `host_rate_hz` (not validated): AGC and VAS on with the assumed device
-/// values, both band-limit stages on, tap after playback, seed 0. Never fails.
+/// Default settings for `host_rate_hz` (not validated): the limiter and the VAS on with the
+/// modeled device values, both band-limit stages and the ADC clamp on, tap after playback,
+/// seed 0, the reserved slots 0. Never fails.
 #[unsafe(no_mangle)]
 pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings {
-    let agc = rr_dr60::AgcSettings::DEVICE; // A-017, A-018, A-020
-    let vas = rr_dr60::VasSettings::DEVICE; // S-001, A-008, A-021 – A-024
+    let agc = rr_dr60::AgcSettings::DEVICE; // A-020, A-028, A-034, A-035
+    let vas = rr_dr60::VasSettings::DEVICE; // S-001, A-008, A-021 – A-024 (A-022 revised)
+    let defaults = Settings::new(host_rate_hz);
     RrDr60Settings {
         struct_size: SETTINGS_SIZE,
         host_rate_hz,
-        record_stage_enabled: true,
-        playback_stage_enabled: true,
+        record_stage_enabled: defaults.record_stage_enabled,
+        playback_stage_enabled: defaults.playback_stage_enabled,
         tap: RrDr60Tap::AfterPlayback as u32,
         seed: 0,
         agc_enabled: agc.enabled,
-        agc_target_dbfs: agc.target_dbfs,
-        agc_max_gain_db: agc.max_gain_db,
-        agc_max_attenuation_db: agc.max_attenuation_db,
+        agc_knee_dbfs: agc.knee_dbfs,
+        reserved_agc_1: 0.0,
+        reserved_agc_2: 0.0,
         agc_attack_ms: agc.attack_ms,
         agc_release_ms: agc.release_ms,
         vas_enabled: vas.enabled,
@@ -354,6 +367,7 @@ pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings 
         vas_threshold_dbfs: vas.threshold_dbfs,
         vas_hang_ms: vas.hang_ms,
         vas_onset_ms: vas.onset_ms,
+        adc_clamp_enabled: defaults.adc_clamp_enabled, // A-030
     }
 }
 
@@ -825,6 +839,134 @@ mod tests {
         assert_eq!(
             to_settings(&s),
             Err((
+                RrDr60Status::InvalidArgument,
+                RrDr60SettingField::StructSize
+            ))
+        );
+    }
+
+    /// 005 T008 (spec 005 FR-015; contracts/c-api.md): the 0.5 layout is 80 bytes with every
+    /// 0.4 offset kept and `adc_clamp_enabled` appended at 72.
+    #[test]
+    fn settings_layout_is_80_bytes_with_the_contract_offsets() {
+        use std::mem::offset_of;
+        assert_eq!(size_of::<RrDr60Settings>(), 80);
+        assert_eq!(offset_of!(RrDr60Settings, struct_size), 0);
+        assert_eq!(offset_of!(RrDr60Settings, host_rate_hz), 4);
+        assert_eq!(offset_of!(RrDr60Settings, record_stage_enabled), 8);
+        assert_eq!(offset_of!(RrDr60Settings, playback_stage_enabled), 9);
+        assert_eq!(offset_of!(RrDr60Settings, tap), 12);
+        assert_eq!(offset_of!(RrDr60Settings, seed), 16);
+        assert_eq!(offset_of!(RrDr60Settings, agc_enabled), 24);
+        assert_eq!(offset_of!(RrDr60Settings, agc_knee_dbfs), 28);
+        assert_eq!(offset_of!(RrDr60Settings, reserved_agc_1), 32);
+        assert_eq!(offset_of!(RrDr60Settings, reserved_agc_2), 36);
+        assert_eq!(offset_of!(RrDr60Settings, agc_attack_ms), 40);
+        assert_eq!(offset_of!(RrDr60Settings, agc_release_ms), 44);
+        assert_eq!(offset_of!(RrDr60Settings, vas_enabled), 48);
+        assert_eq!(offset_of!(RrDr60Settings, vas_mode), 52);
+        assert_eq!(offset_of!(RrDr60Settings, vas_sensitivity), 56);
+        assert_eq!(offset_of!(RrDr60Settings, vas_threshold_dbfs), 60);
+        assert_eq!(offset_of!(RrDr60Settings, vas_hang_ms), 64);
+        assert_eq!(offset_of!(RrDr60Settings, vas_onset_ms), 68);
+        assert_eq!(offset_of!(RrDr60Settings, adc_clamp_enabled), 72);
+    }
+
+    /// 005 T008 (FR-010, FR-015): the 0.5 defaults, the reserved slots at 0, the clamp on.
+    #[test]
+    fn settings_default_has_the_0_5_values() {
+        let s = rr_dr60_settings_default(48_000);
+        assert_eq!(s.struct_size, 80);
+        assert!(s.agc_enabled); // A-020
+        assert_eq!(s.agc_knee_dbfs, 1.0); // A-028
+        assert_eq!(s.reserved_agc_1, 0.0);
+        assert_eq!(s.reserved_agc_2, 0.0);
+        assert_eq!(s.agc_attack_ms, 3.0); // A-034
+        assert_eq!(s.agc_release_ms, 1370.0); // A-035
+        assert_eq!(s.vas_threshold_dbfs, -40.0); // A-022 (revised by spec 005)
+        assert!(s.adc_clamp_enabled); // A-030
+        assert_eq!(to_settings(&s).unwrap(), Settings::new(48_000));
+        // The reserved slots are ignored, whatever they hold.
+        let mut noisy = s;
+        noisy.reserved_agc_1 = f32::NAN;
+        noisy.reserved_agc_2 = f32::INFINITY;
+        assert_eq!(validate_c(&noisy), Ok(Settings::new(48_000)));
+        // The clamp setting round-trips.
+        let mut off = s;
+        off.adc_clamp_enabled = false;
+        assert!(!to_settings(&off).unwrap().adc_clamp_enabled);
+    }
+
+    /// 005 T008 (contracts/c-api.md › RrDr60SettingField): 4 is the knee (was the target), 5
+    /// and 6 are retired and never returned, 7 and 8 keep their numbers.
+    #[test]
+    fn setting_field_numbers_are_stable() {
+        assert_eq!(RrDr60SettingField::AgcKneeDbfs as u32, 4);
+        assert_eq!(RrDr60SettingField::AgcAttackMs as u32, 7);
+        assert_eq!(RrDr60SettingField::AgcReleaseMs as u32, 8);
+        assert_eq!(RrDr60SettingField::VasMode as u32, 9);
+        let all = [
+            RrDr60SettingField::None,
+            RrDr60SettingField::HostRate,
+            RrDr60SettingField::Tap,
+            RrDr60SettingField::StructSize,
+            RrDr60SettingField::AgcKneeDbfs,
+            RrDr60SettingField::AgcAttackMs,
+            RrDr60SettingField::AgcReleaseMs,
+            RrDr60SettingField::VasMode,
+            RrDr60SettingField::VasSensitivity,
+            RrDr60SettingField::VasThresholdDbfs,
+            RrDr60SettingField::VasHangMs,
+            RrDr60SettingField::VasOnsetMs,
+        ];
+        assert!(all.iter().all(|f| *f as u32 != 5 && *f as u32 != 6));
+        let mut s = rr_dr60_settings_default(48_000);
+        s.agc_knee_dbfs = 4.0; // above the +3 dBFS cap (005 R-05)
+        assert_eq!(
+            validate_c(&s),
+            Err((
+                RrDr60Status::InvalidSetting,
+                RrDr60SettingField::AgcKneeDbfs
+            ))
+        );
+        s.agc_knee_dbfs = -40.0;
+        s.agc_attack_ms = 0.5; // below the 1 ms floor (005 R-05)
+        assert_eq!(
+            validate_c(&s),
+            Err((
+                RrDr60Status::InvalidSetting,
+                RrDr60SettingField::AgcAttackMs
+            ))
+        );
+        s.agc_attack_ms = 50.0;
+        s.agc_release_ms = 199.0;
+        assert_eq!(
+            validate_c(&s),
+            Err((
+                RrDr60Status::InvalidSetting,
+                RrDr60SettingField::AgcReleaseMs
+            ))
+        );
+    }
+
+    /// 005 T008 (contracts/c-api.md): a 0.4 caller's 72-byte struct is rejected after reading
+    /// only `struct_size`, as `STRUCT_SIZE`.
+    #[test]
+    fn a_0_4_struct_size_is_rejected() {
+        let mut s = rr_dr60_settings_default(48_000);
+        s.struct_size = 72;
+        assert_eq!(
+            to_settings(&s),
+            Err((
+                RrDr60Status::InvalidArgument,
+                RrDr60SettingField::StructSize
+            ))
+        );
+        // SAFETY: a valid struct; `check_struct_size` reads only its first field.
+        let fault = unsafe { check_struct_size(&s) }.err();
+        assert_eq!(
+            fault,
+            Some((
                 RrDr60Status::InvalidArgument,
                 RrDr60SettingField::StructSize
             ))

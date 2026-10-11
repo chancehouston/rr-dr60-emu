@@ -87,10 +87,9 @@ fn processing_never_touches_the_heap() {
         let mut attack_min = configs::settings("default_agc", rate);
         attack_min.agc.attack_ms = 1.0;
         let mut release_max = configs::settings("default_agc", rate);
-        release_max.agc.release_ms = 10_000.0;
-        release_max.agc.max_gain_db = 60.0;
+        release_max.agc.release_ms = 10_000.0; // restated by 005 T031 (max_gain_db removed)
         cases.push(("agc attack min".into(), attack_min));
-        cases.push(("agc release max, gain max".into(), release_max));
+        cases.push(("agc release max".into(), release_max));
         for (config, settings) in cases {
             let mut p = Pipeline::new(settings).unwrap();
             let c_settings = configs::c_settings(&settings);
