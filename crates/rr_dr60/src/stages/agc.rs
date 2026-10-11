@@ -11,7 +11,7 @@
 //! 3. **Smoother** (A-018): one pole on the gain in dB, with separate attack and release
 //!    coefficients, so the gain approaches its target exponentially in the dB domain.
 //!
-//! The stage runs at the 8 kHz device rate (A-001, R-01), adds no latency (FR-010), and uses
+//! The stage runs at the 6 kHz device rate (A-026; spec 004), adds no latency (FR-010), and uses
 //! only basic IEEE operations plus `rr_dr60_detmath::{ln, exp}`, so it is bit-identical on
 //! every platform (R-06).
 

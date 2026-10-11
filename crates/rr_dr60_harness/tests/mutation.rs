@@ -91,9 +91,9 @@ fn playback_lp_shift_is_caught() {
     );
 }
 
-/// Spec 004 SC-007: each mutant also fails the spec 001 golden check. Meaningful once the
-/// golden file is re-blessed for 6 kHz (T038); before that any 6 kHz output differs from the
-/// committed 8 kHz file, so the check passes trivially and must be re-run after T038.
+/// Spec 004 SC-007: each mutant also fails the spec 001 golden check against the committed
+/// file, which is the 6 kHz re-bless of T038 (the unmutated pipeline matches it, see
+/// `tests/golden.rs`), so a failure here means the mutation changed the output, not the rate.
 #[test]
 fn golden_check_catches_shifted_band_edges() {
     let expected = golden::committed();
