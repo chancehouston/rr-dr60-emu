@@ -72,20 +72,24 @@ fn analytic_stage_db(sos: &[[f64; 5]], f: f64) -> f64 {
 
 #[test]
 fn as1_record_stage_alone_matches_its_analytic_response() {
-    for host in [48_000, 8000] {
-        for f in [300.0, 1000.0, 3200.0, 3400.0] {
+    // 001 US2 AS1 restated at 6 kHz (004 FR-005, T018): the measured record stage (config over
+    // bypassed baseline) matches the analytic response of the committed coefficients, with unity
+    // gain at the 765 Hz reference (A-015; 0.75 × 1020 Hz, A-027).
+    let sos = rr_dr60::__test_hooks::record_sos();
+    for host in [48_000, 6000] {
+        for f in [225.0, 765.0, 1000.0, 2250.0, 2550.0] {
             let stage =
                 response(config("record_only", host), f) / response(config("bypass_all", host), f);
             let measured = analysis::db(stage.norm());
-            let want = analytic_stage_db(&rr_dr60::__test_hooks::record_sos(), f);
+            let want = analytic_stage_db(&sos, f);
             assert!(
                 (measured - want).abs() <= 0.3,
                 "{host} Hz host, {f} Hz: {measured:.3} dB vs analytic {want:.3}"
             );
-            if f == 1000.0 {
+            if f == 765.0 {
                 assert!(
                     measured.abs() <= 0.1,
-                    "{host}: stage gain at 1 kHz {measured:.3} dB (A-015)"
+                    "{host}: record stage gain at 765 Hz {measured:.3} dB (A-015)"
                 );
             }
         }
@@ -93,8 +97,42 @@ fn as1_record_stage_alone_matches_its_analytic_response() {
 }
 
 #[test]
+fn as1b_playback_stage_alone_matches_its_analytic_response_and_passes_dc() {
+    // 004 FR-008 (T018): the playback stage is a low-pass only (S-005 receive, A-027 corrected).
+    // Its measured response matches the committed coefficients, and a steady DC input passes
+    // with a loss within −0.15 … +0.25 dB.
+    let sos = rr_dr60::__test_hooks::playback_sos();
+    for host in [48_000, 6000] {
+        for f in [50.0, 225.0, 765.0, 1000.0, 2250.0, 2550.0] {
+            let stage = response(config("playback_only", host), f)
+                / response(config("bypass_all", host), f);
+            let measured = analysis::db(stage.norm());
+            let want = analytic_stage_db(&sos, f);
+            assert!(
+                (measured - want).abs() <= 0.3,
+                "{host} Hz host, {f} Hz: {measured:.3} dB vs analytic {want:.3}"
+            );
+        }
+        // DC: one second of 0.5 through playback_only vs bypass_all; compare the steady state
+        // (last fifth) of both. The loss must be within the receive template's in-band limits.
+        let x = stimulus::dc(0.5, host as usize);
+        let mean_last = |y: &[f32]| {
+            let tail = &y[y.len() - y.len() / 5..];
+            tail.iter().map(|&v| f64::from(v)).sum::<f64>() / tail.len() as f64
+        };
+        let dc_stage = mean_last(&run(config("playback_only", host), &x));
+        let dc_base = mean_last(&run(config("bypass_all", host), &x));
+        let loss_db = -analysis::db(dc_stage / dc_base);
+        assert!(
+            (-0.15..=0.25).contains(&loss_db),
+            "{host} Hz: playback stage DC loss {loss_db:+.3} dB (must pass DC, FR-008)"
+        );
+    }
+}
+
+#[test]
 fn as2_tap_after_record_equals_record_only() {
-    for host in [48_000, 8000] {
+    for host in [48_000, 6000] {
         let x = stimulus::log_sweep(
             20.0,
             0.45 * f64::from(host),

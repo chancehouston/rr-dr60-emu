@@ -49,24 +49,51 @@ fn failed_properties(results: &[rr_dr60_harness::checks::MeasurementResult]) -> 
         .collect()
 }
 
-/// Placeholder until T024 rewrites these against `check_stage_template` (T019): the three
-/// mutants must each fail the current stage check and the 001 golden check.
+/// Spec 004 SC-007 (research R-06): each toward-band shift fails its stage's template on the
+/// row the shift moves. The record high-pass up 100 Hz breaks the 225–2250 Hz loss maximum;
+/// a low-pass stopband edge down 100 Hz breaks the loss at 2550 Hz (about 9–11 dB).
 #[test]
-fn response_check_catches_shifted_band_edges() {
-    for (name, mutant, stage) in [
-        (
-            "record hp",
-            record_hp_mutant as fn(Settings) -> Pipeline,
-            Stage::Record,
-        ),
-        ("record lp", record_lp_mutant, Stage::Record),
-        ("playback lp", playback_lp_mutant, Stage::Playback),
-    ] {
-        let failed = failed_properties(&checks::check_fr010_stage(48_000, stage, &mutant));
-        assert!(!failed.is_empty(), "{name}: no response row failed");
-    }
+fn record_hp_shift_is_caught() {
+    let failed = failed_properties(&checks::check_stage_template(
+        48_000,
+        Stage::Record,
+        &record_hp_mutant,
+    ));
+    assert!(
+        failed.contains(&"loss 225-2250 Hz (max)"),
+        "record high-pass shift not caught; failures: {failed:?}"
+    );
 }
 
+#[test]
+fn record_lp_shift_is_caught() {
+    let failed = failed_properties(&checks::check_stage_template(
+        48_000,
+        Stage::Record,
+        &record_lp_mutant,
+    ));
+    assert!(
+        failed.contains(&"loss at 2550 Hz"),
+        "record low-pass shift not caught; failures: {failed:?}"
+    );
+}
+
+#[test]
+fn playback_lp_shift_is_caught() {
+    let failed = failed_properties(&checks::check_stage_template(
+        48_000,
+        Stage::Playback,
+        &playback_lp_mutant,
+    ));
+    assert!(
+        failed.contains(&"loss at 2550 Hz"),
+        "playback low-pass shift not caught; failures: {failed:?}"
+    );
+}
+
+/// Spec 004 SC-007: each mutant also fails the spec 001 golden check. Meaningful once the
+/// golden file is re-blessed for 6 kHz (T038); before that any 6 kHz output differs from the
+/// committed 8 kHz file, so the check passes trivially and must be re-run after T038.
 #[test]
 fn golden_check_catches_shifted_band_edges() {
     let expected = golden::committed();
@@ -76,7 +103,11 @@ fn golden_check_catches_shifted_band_edges() {
         ("playback lp", playback_lp_mutant),
     ] {
         let actual = golden::generate(&mutant);
-        golden::compare(&expected, &actual).expect_err(name);
+        let report = golden::compare(&expected, &actual).expect_err(name);
+        assert!(
+            report.contains("sweep_log/default/48000 Hz differs"),
+            "{name}: {report}"
+        );
     }
 }
 
