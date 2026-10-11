@@ -34,20 +34,20 @@ Decisions for feature 004. They revise [spec 001's research](../001-pipeline-ske
 
 ## R-03 Rate conversion boundary (FR-003, FR-004; 001 R-08 revised)
 
-- **Decision**: same Kaiser polyphase design as 001 R-08 with three constants changed: `CUTOFF_HZ = 2775` (middle of the transition), `TRANSITION_HZ = 450` (2550 → 3000 Hz), `STOPBAND_DB = 70` (unchanged: 10 dB margin over FR-003's 60 dB). Transition choice per the user's decision (Clarifications).
+- **Decision**: same Kaiser polyphase design as 001 R-08 with three constants changed: `CUTOFF_HZ = 2775` (middle of the transition), `TRANSITION_HZ = 450` (2550 → 3000 Hz), `STOPBAND_DB = 70` (unchanged: 10 dB margin over FR-003's 60 dB). Transition choice per the user's decision (Clarifications). **Implementation finding (T005/T010, 2026-10-11)**: the Kaiser length formula is approximate; at the 450 Hz transition its first stopband lobe read −69.7 dB at 3025 Hz, 0.3 dB short of the 70 dB design check at every converting rate. `rate.rs` now estimates the length for `STOPBAND_DB + KAISER_LENGTH_MARGIN_DB` (2 dB, engineering target) while the window shape stays at 70 dB; the realized stopband then clears 70 dB from 3000 Hz. The tables below are the realized plans, printed by the `resample::tests` with `--nocapture`.
 - **Prototype sizes** (Kaiser estimate as `rate.rs` computes it, rounded so each converter's delay is a whole number of host samples):
 
   | Host | Taps | Delay per converter | Boundary total | MAC per device sample (down, N/l) | MAC per host sample (up, N/m) |
   |---|---|---|---|---|---|
-  | 8 000 | 235 | 39 samples = 4.88 ms | 9.75 ms | ≈ 78 | ≈ 58 |
-  | 16 000 | 463 | 77 = 4.81 ms | 9.62 ms | ≈ 154 | ≈ 57 |
-  | 44 100 | 8 481 | 212 = 4.81 ms | 9.61 ms | ≈ 424 | ≈ 57 |
-  | 48 000 | 463 | 231 = 4.81 ms | 9.62 ms | ≈ 463 | ≈ 57 |
-  | 88 200 | 8 481 | 424 = 4.81 ms | 9.61 ms | ≈ 848 | ≈ 57 |
-  | 96 000 | 923 | 461 = 4.80 ms | 9.60 ms | ≈ 923 | ≈ 57 |
+  | 8 000 | 241 | 40 samples = 5.00 ms | 10.00 ms | ≈ 80 | ≈ 60 |
+  | 16 000 | 481 | 80 = 5.00 ms | 10.00 ms | ≈ 160 | ≈ 60 |
+  | 44 100 | 8 761 | 219 = 4.97 ms | 9.93 ms | ≈ 438 | ≈ 60 |
+  | 48 000 | 477 | 238 = 4.96 ms | 9.92 ms | ≈ 477 | ≈ 60 |
+  | 88 200 | 8 741 | 437 = 4.95 ms | 9.91 ms | ≈ 874 | ≈ 59 |
+  | 96 000 | 953 | 476 = 4.96 ms | 9.92 ms | ≈ 953 | ≈ 60 |
 
-  Compared with today: the 44.1 and 88.2 kHz prototypes shrink from about 38 000 taps to about 8 500 (prototype rate 882 kHz instead of 3.528 MHz), so construction time and memory fall by about 4.5×; the per-converter delay falls from about 5.4 to about 4.8 ms.
-- **Default latency** (FR-004): 2 × 4.81 ms + (τ_rec + τ_play) at 1 kHz ≈ 9.62 + 0.11 + 0.07 ≈ 9.8 ms. Prototype values in host samples: about **1 at 6 kHz** (identity: only the stages' ≈ 1.0 device sample of group delay), **78 at 8 kHz**, **157 at 16 kHz**, **433 at 44.1 kHz**, **471 at 48 kHz** (was 541), **866 at 88.2 kHz**, **942 at 96 kHz**. The harness measures the final values and the CHANGELOG records them.
+  Compared with 0.3: the 44.1 and 88.2 kHz prototypes shrink from about 38 000 taps to about 8 750 (prototype rate 882 kHz instead of 3.528 MHz), so construction time and memory fall by about 4.3×; the per-converter delay falls from about 5.4 to about 5.0 ms.
+- **Default latency** (FR-004): 2 × 4.96 ms + (τ_rec + τ_play) at 1 kHz ≈ 9.92 + 0.09 + 0.05 ≈ 10.1 ms. Estimated values in host samples (realized plans plus the stages' 0.85 device samples of 1 kHz group delay): about **1 at 6 kHz** (identity), **81 at 8 kHz**, **162 at 16 kHz**, **444 at 44.1 kHz**, **483 at 48 kHz** (was 541), **887 at 88.2 kHz**, **966 at 96 kHz**. The harness measures the final values (T026) and the CHANGELOG records them.
 - **0.3 baseline (measured 2026-10-11 at commit 75734b7, T003; the "old" column of the CHANGELOG table)**: default latency 8 kHz **4** samples (0.50 ms; identity), 16 kHz **181** (11.31 ms), 44.1 kHz **498** (11.29 ms), 48 kHz **541** (11.27 ms), 88.2 kHz **993** (11.26 ms), 96 kHz **1081** (11.26 ms).
 - **Harness restatement** (FR-003): `check_fr005_boundary` → `check_fr003_boundary`: flatness 50–2550 Hz within ±0.1 dB; rejection ≥ 60 dB at 3000 Hz, 3450 Hz, 6000 Hz and 20 kHz where below Nyquist; alias/image products ≤ −60 dB on a 1 kHz tone. Skipped at the 6 kHz host rate except the identity assertion.
 - **Rationale**: linear-phase boundary keeps the per-stage minimum-phase checks clean (001 R-08). A 300 Hz transition (2700 → 3000 Hz) would cost about 6.0 ms per converter, 12.1 ms boundary, 14 ms default: legal but eats most of the budget for no template benefit, since the templates end at 2550 Hz.
@@ -175,7 +175,7 @@ Decisions for feature 004. They revise [spec 001's research](../001-pipeline-ske
 
 ## R-14 Engineering-target constants (FR-015; SC-008)
 
-Labeled `// engineering target (004 FR-015)` in code and tests, or with the spec FR they come from: the ±0.1 dB reference-gain and ±0.2 dB cascade tolerances; the test frequency set and the anti-alias set; the −0.15 dB lower bound on the playback template; the report-only frequencies 2700 and 2900 Hz; the ±5° phase tolerance and the 2 ms group delay (A-016); `CUTOFF_HZ`, `TRANSITION_HZ`, `STOPBAND_DB` (FR-003); the ±0.3 dB / −40 dB cascade figures (FR-009); the 20 ms budget and ±1 sample (FR-004); the −60 dBFS DC edge case and the 0.5 s tail; the 100 Hz mutation shifts (SC-007); the edge-search rule's ±0.1 dB and 0.015 ms margins (R-04; the 0.015 ms is a design margin against the datasheet limit, not a measurement margin: the harness's GDD bias is ≤ 0.001 ms at every host rate); the 32 dB stopband attenuation (R-04: S-005's typical discrimination, used as a design parameter); the 2 ms group-delay ceiling at 2550 Hz (FR-005, FR-008); the 40 dB DC attenuation if G.712 does not state it (R-13); the Chebyshev-II family and order (R-04, R-05: design choices inside the template, labeled as such in the coefficient file); the phase rule (R-08) and the 5 minutes in SC-001. Datasheet-derived values cite `A-027` (and `S-005`), the DC attenuation `S-007`, the rate `A-026`.
+Labeled `// engineering target (004 FR-015)` in code and tests, or with the spec FR they come from: the ±0.1 dB reference-gain and ±0.2 dB cascade tolerances; the test frequency set and the anti-alias set; the −0.15 dB lower bound on the playback template; the report-only frequencies 2700 and 2900 Hz; the ±5° phase tolerance and the 2 ms group delay (A-016); `CUTOFF_HZ`, `TRANSITION_HZ`, `STOPBAND_DB` (FR-003); the ±0.3 dB / −40 dB cascade figures (FR-009); the 20 ms budget and ±1 sample (FR-004); the −60 dBFS DC edge case and the 0.5 s tail; the 100 Hz mutation shifts (SC-007); the edge-search rule's ±0.1 dB and 0.015 ms margins (R-04; the 0.015 ms is a design margin against the datasheet limit, not a measurement margin: the harness's GDD bias is ≤ 0.001 ms at every host rate); the 32 dB stopband attenuation (R-04: S-005's typical discrimination, used as a design parameter); `KAISER_LENGTH_MARGIN_DB` = 2 dB (R-03); the 2 ms group-delay ceiling at 2550 Hz (FR-005, FR-008); the 40 dB DC attenuation if G.712 does not state it (R-13); the Chebyshev-II family and order (R-04, R-05: design choices inside the template, labeled as such in the coefficient file); the phase rule (R-08) and the 5 minutes in SC-001. Datasheet-derived values cite `A-027` (and `S-005`), the DC attenuation `S-007`, the rate `A-026`.
 
 ## R-15 Known deviations not modeled (FR-007, FR-018)
 

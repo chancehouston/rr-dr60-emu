@@ -145,7 +145,8 @@ pub struct RrDr60VasEvent {
 pub struct RrDr60Settings {
     /// Must be `sizeof(RrDr60Settings)`. Lets the struct grow in later versions.
     pub struct_size: u32,
-    /// Host sample rate in Hz: 8000, 16000, 44100, 48000, 88200 or 96000.
+    /// Host sample rate in Hz: 6000, 8000, 16000, 44100, 48000, 88200 or 96000 (spec 004
+    /// FR-002; 6000 is the device rate, A-026, and needs no rate conversion).
     pub host_rate_hz: u32,
     /// Signal-chain stage 4 on (true, default) or bypassed.
     pub record_stage_enabled: bool,

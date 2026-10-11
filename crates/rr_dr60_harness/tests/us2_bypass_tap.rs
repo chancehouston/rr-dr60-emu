@@ -57,12 +57,13 @@ fn response(settings: Settings, f: f64) -> Complex64 {
     analysis::gain_and_phase(&x, &y, f, fs, settings.host_rate_hz as usize / 5)
 }
 
-/// Analytic voice-band stage magnitude in dB at `f` Hz (8 kHz device rate, A-001).
-fn analytic_stage_db(f: f64) -> f64 {
-    let w = std::f64::consts::TAU * f / 8000.0;
+/// Analytic magnitude in dB at `f` Hz of a stage given by its sections, at the 6 kHz device
+/// rate (A-026; spec 004 research R-06).
+fn analytic_stage_db(sos: &[[f64; 5]], f: f64) -> f64 {
+    let w = std::f64::consts::TAU * f / f64::from(rr_dr60::DEVICE_RATE_HZ);
     let z1 = Complex64::from_polar(1.0, -w);
     let z2 = Complex64::from_polar(1.0, -2.0 * w);
-    let h: Complex64 = rr_dr60::__test_hooks::voiceband_sos()
+    let h: Complex64 = sos
         .iter()
         .map(|&[b0, b1, b2, a1, a2]| (b0 + b1 * z1 + b2 * z2) / (1.0 + a1 * z1 + a2 * z2))
         .product();
@@ -76,7 +77,7 @@ fn as1_record_stage_alone_matches_its_analytic_response() {
             let stage =
                 response(config("record_only", host), f) / response(config("bypass_all", host), f);
             let measured = analysis::db(stage.norm());
-            let want = analytic_stage_db(f);
+            let want = analytic_stage_db(&rr_dr60::__test_hooks::record_sos(), f);
             assert!(
                 (measured - want).abs() <= 0.3,
                 "{host} Hz host, {f} Hz: {measured:.3} dB vs analytic {want:.3}"

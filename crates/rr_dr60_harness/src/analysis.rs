@@ -524,7 +524,7 @@ mod spectrum_tests {
 
     #[test]
     fn minimum_phase_cascade_has_small_deviation() {
-        let ir = filter(&rr_dr60::__test_hooks::voiceband_sos(), &impulse(65_536));
+        let ir = filter(&rr_dr60::__test_hooks::record_sos(), &impulse(65_536));
         let s = Spectrum::from_impulse_response(&ir, 8000.0, 65_536);
         let d = phase_deviation_deg(&s, 400.0, 3200.0);
         assert!(d <= 0.5, "min-phase cascade deviates {d:.3} deg");

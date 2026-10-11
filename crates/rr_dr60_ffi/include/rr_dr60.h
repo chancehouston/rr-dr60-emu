@@ -162,7 +162,8 @@ typedef struct RrDr60Pipeline RrDr60Pipeline;
 typedef struct RrDr60Settings {
   // Must be `sizeof(RrDr60Settings)`. Lets the struct grow in later versions.
   uint32_t struct_size;
-  // Host sample rate in Hz: 8000, 16000, 44100, 48000, 88200 or 96000.
+  // Host sample rate in Hz: 6000, 8000, 16000, 44100, 48000, 88200 or 96000 (spec 004
+  // FR-002; 6000 is the device rate, A-026, and needs no rate conversion).
   uint32_t host_rate_hz;
   // Signal-chain stage 4 on (true, default) or bypassed.
   bool record_stage_enabled;

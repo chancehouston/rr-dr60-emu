@@ -25,14 +25,14 @@ Every millisecond value in `AgcSettings` and `VasSettings` converts to device sa
 | Host | Plan | l | m | Prototype rate | Taps (R-03) | Delay per converter | Lead bound ⌈host/6000⌉ |
 |---|---|---|---|---|---|---|---|
 | 6 000 | Identity | — | — | — | — | 0 | 1 |
-| 8 000 | Convert | 3 | 4 | 24 000 | 235 | 39 | 2 |
-| 16 000 | Convert | 3 | 8 | 48 000 | 463 | 77 | 3 |
-| 44 100 | Convert | 20 | 147 | 882 000 | 8 481 | 212 | 8 |
-| 48 000 | Convert | 1 | 8 | 48 000 | 463 | 231 | 8 |
-| 88 200 | Convert | 10 | 147 | 882 000 | 8 481 | 424 | 15 |
-| 96 000 | Convert | 1 | 16 | 96 000 | 923 | 461 | 16 |
+| 8 000 | Convert | 3 | 4 | 24 000 | 241 | 40 | 2 |
+| 16 000 | Convert | 3 | 8 | 48 000 | 481 | 80 | 3 |
+| 44 100 | Convert | 20 | 147 | 882 000 | 8 761 | 219 | 8 |
+| 48 000 | Convert | 1 | 8 | 48 000 | 477 | 238 | 8 |
+| 88 200 | Convert | 10 | 147 | 882 000 | 8 741 | 437 | 15 |
+| 96 000 | Convert | 1 | 16 | 96 000 | 953 | 476 | 16 |
 
-Taps and delays are the Kaiser estimates `rate.rs` computes (the code is the source of truth). Boundary constants: `CUTOFF_HZ` 3800 → **2775**, `TRANSITION_HZ` 400 → **450**, `STOPBAND_DB` 70 (unchanged).
+Taps and delays are the realized plans `rate.rs` computes with its 2 dB Kaiser length margin (research R-03; the code is the source of truth). Boundary constants: `CUTOFF_HZ` 3800 → **2775**, `TRANSITION_HZ` 400 → **450**, `STOPBAND_DB` 70 (unchanged).
 
 - **Validation**: `Settings::validate` and `Pipeline::new` reject any rate not in the list with `Error::UnsupportedHostRate`, whose Display lists the seven rates (001 FR-002, spec FR-002).
 - **Integer-ratio rates** (lengths exact in spec FR-012): 6000, 48 000, 96 000.
@@ -120,7 +120,7 @@ For a steady tone of frequency f that divides 6000, used to measure a sample-pea
 | 001 FR-010 phase check rate | 8 kHz | 6 kHz |
 | 001 FR-011 cascade range | 100–3900 Hz, 1 kHz gain | 50–2900 Hz, 765 Hz gain |
 | 001 edge case DC | ≤ −60 dBFS default (two stages) | ≤ −60 dBFS default (record stage alone); playback-only passes DC |
-| 001 latency, default at 48 kHz | 541 samples (11.3 ms) | ≈ 471 samples (≈ 9.8 ms); all rates in the CHANGELOG |
+| 001 latency, default at 48 kHz | 541 samples (11.3 ms) | ≈ 483 samples (≈ 10.1 ms); all rates in the CHANGELOG |
 | 002 A-019 detector band | up to 4 kHz | up to 3 kHz |
 | 002 FR-006 exact-gain method rate | 8 kHz | 6 kHz |
 | 002 FR-008 tones | 300, 500, 1000, 2000, 2667, 3400 Hz; phases at 2000, 2667 | 225, 375, 750, 1000, 1500, 2000, 2550 Hz; phases at 1500, 2000 |

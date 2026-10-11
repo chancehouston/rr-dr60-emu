@@ -144,8 +144,8 @@ pub fn c_default_002(host_rate_hz: u32) -> RrDr60Settings {
     }
 }
 
-/// All six supported host rates (FR-002).
-pub fn all_rates() -> [u32; 6] {
+/// All seven supported host rates (spec 004 FR-002; 6 kHz is the identity rate).
+pub fn all_rates() -> [u32; 7] {
     SUPPORTED_HOST_RATES
 }
 
@@ -219,7 +219,10 @@ mod tests {
         assert!(!c_default_001(48_000).vas_enabled);
         assert!(c_default_002(48_000).agc_enabled);
         assert!(!c_default_002(48_000).vas_enabled);
-        assert_eq!(all_rates(), [8000, 16000, 44100, 48000, 88200, 96000]);
+        assert_eq!(
+            all_rates(),
+            [6000, 8000, 16000, 44100, 48000, 88200, 96000] // 004 FR-002
+        );
     }
 
     #[test]
