@@ -219,7 +219,7 @@ mod tests {
                     "{rate} Hz step {step}: off by {diff} (> one device sample)"
                 );
                 if pause_left == 0 && since_resume > device_period {
-                    let tol = if exact { 0 } else { 1 };
+                    let tol = if exact { 0 } else { 1 }; // ±1 host sample, 003 FR-004
                     assert!(
                         diff.abs() <= tol,
                         "{rate} Hz step {step}: off by {diff} after settling"

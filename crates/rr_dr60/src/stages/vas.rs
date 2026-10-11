@@ -254,10 +254,11 @@ mod tests {
         assert!(stage.is_paused());
 
         let t1k = lowest_kept(1000.0, |_| {});
+        // 0.05 dB: the bisection resolution, engineering target (003 R-15); −18 dBFS: A-022.
         assert!((t1k + 18.0).abs() <= 0.05, "1 kHz threshold {t1k}");
         for f in [300.0, 3400.0] {
             let t = lowest_kept(f, |_| {});
-            assert!((t - t1k).abs() <= 1.0, "{f} Hz: {t} vs {t1k}");
+            assert!((t - t1k).abs() <= 1.0, "{f} Hz: {t} vs {t1k}"); // ±1 dB, 003 FR-006
         }
     }
 
@@ -266,6 +267,7 @@ mod tests {
     fn sensitivity_moves_the_threshold_3_db_per_level() {
         let t1 = lowest_kept(1000.0, |s| s.sensitivity = 1);
         let t5 = lowest_kept(1000.0, |s| s.sensitivity = 5);
+        // ±0.05 dB bisection (003 R-15); −12 / −24 dBFS: 3 dB per level, A-022.
         assert!((t1 + 12.0).abs() <= 0.05, "level 1: {t1}");
         assert!((t5 + 24.0).abs() <= 0.05, "level 5: {t5}");
     }

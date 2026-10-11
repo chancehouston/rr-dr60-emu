@@ -172,16 +172,19 @@ fn partitioned_events(
 
 /// Spec 003 FR-014, SC-003: for every block partition the concatenated output, the events and
 /// the final `paused` are bit-identical. 100 seeded partitions of each VAS golden stimulus with
-/// `vas_only` at 8 and 48 kHz; 10 for `vas_mute`, `default_vas` and the other rates.
+/// `vas_only` at 8 and 48 kHz; 10 for `vas_mute`, `default_vas` and the other rates. Under
+/// coverage instrumentation (unoptimized, `cfg(coverage)`) 10 and 2: the paths are the same and
+/// the CI coverage job stays within its budget (003 T050).
 #[test]
 fn vas_partitions() {
     let mut rng = Pcg32::new(0x0D60, 5);
+    let (many, few) = if cfg!(coverage) { (10, 2) } else { (100, 10) };
     for rate in configs::all_rates() {
         for config in configs::VAS_CONFIGS {
             let partitions = if config == "vas_only" && (rate == 8000 || rate == 48_000) {
-                100
+                many
             } else {
-                10
+                few
             };
             let s = configs::settings(config, rate);
             for stim in golden::VAS_STIMULI {

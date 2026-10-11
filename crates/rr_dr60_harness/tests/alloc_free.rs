@@ -132,8 +132,14 @@ fn processing_never_touches_the_heap() {
 
         // Spec 003 SC-004, FR-014: the VAS configurations and a 50 ms hang time, with a
         // burst-gap input so blocks are dropped entirely and others hold several splices,
-        // through `process_with_events` and `rr_dr60_process_with_events`.
-        vas_cases(rate, &sizes);
+        // through `process_with_events` and `rr_dr60_process_with_events`. Under coverage
+        // instrumentation, 200 blocks instead of 1000 (same paths; 003 T050).
+        let vas_sizes = if cfg!(coverage) {
+            &sizes[..200]
+        } else {
+            &sizes[..]
+        };
+        vas_cases(rate, vas_sizes);
     }
 }
 

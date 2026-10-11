@@ -416,6 +416,7 @@ pub fn check_fr006_threshold(rate: u32, case: &Case, make: Make<'_>) -> Vec<Meas
     // Peak-responding detector: noise 5 dB below the threshold is kept, 15 dB below is dropped
     // (its peaks read about 8–9 dB above its AES17 level). Only for hang times ≥ 0.5 s.
     if case.vas.hang_ms >= 500.0 {
+        // 003 FR-013: the noise checks apply only for hang times of at least 0.5 s.
         let len = (secs * fs) as usize;
         let kept = run(
             make,
@@ -557,6 +558,7 @@ pub fn onset_stimulus(vas: &VasSettings, fs: f64) -> (Vec<f32>, Vec<f64>) {
     } else {
         let mut b = vec![0.5 * o];
         if vas.onset_ms >= 3.0 {
+            // 003 FR-009: the onset − 2 ms burst, only when the onset is at least 3 ms.
             b.push(o - 0.002);
         }
         b.push(1.5 * o);
@@ -603,7 +605,7 @@ pub fn check_fr009_onset(rate: u32, case: &Case, make: Make<'_>) -> Vec<Measurem
         ),
         r.events.len() as f64,
         "events",
-        Tolerance::Exact(long.len() as f64),
+        Tolerance::Exact(long.len() as f64), // 003 FR-009: one splice per long burst
     )];
     // The output before the first splice is the hang time kept from the initial silence.
     let regions = r.regions();
@@ -694,7 +696,7 @@ pub fn check_fr010_splices(rate: u32, case: &Case, make: Make<'_>) -> Vec<Measur
             format!("{}: 3 bursts, 2 long gaps", case.label),
             r.events.len() as f64,
             "events",
-            Tolerance::Exact(2.0),
+            Tolerance::Exact(2.0), // two long gaps, two splices (003 FR-010 stimulus)
         ),
     ]
 }

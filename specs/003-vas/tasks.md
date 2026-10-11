@@ -364,7 +364,7 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
 
 ## Phase 7: Polish & cross-cutting concerns
 
-- [ ] T046 [P] Update `CHANGELOG.md` `[Unreleased]`:
+- [X] T046 [P] Update `CHANGELOG.md` `[Unreleased]`:
   - **Added**: VAS (stage 5, spec 003); `VasSettings`, `VasMode`, `Tap::AfterVas`, `BlockInfo`, `VasEvent`, `process_with_events` and `max_events`; the C VAS fields, `RrDr60VasMode`, `RR_DR60_TAP_AFTER_VAS`, `RrDr60BlockInfo`, `RrDr60VasEvent`, `rr_dr60_process_with_events` and `rr_dr60_max_events`; and `golden-vas-v1.json`.
   - **Changed**:
     - **Default output now drops pauses**, so it can be shorter than the input (the line was added on 2026-10-10; extend it, don't duplicate it). State the input-referred threshold (about −58 dBFS at level 3) and that the default pauses only on near-silence; no quiet-room claim.
@@ -372,9 +372,9 @@ description: "Task list for 003 Voice Activated System (VAS) on the Record Path"
     - `rr_dr60_process` takes `out_info`.
     - The C struct is 72 bytes.
   - **Assumptions**: A-021 (manual), A-022 – A-025, and A-020's correction.
-- [ ] T047 [P] Update `docs/hardware/signal-chain.md`: row 5 already links spec 003 (evidence pass, 2026-10-10); add the IDs "A-022 – A-025" to that link and keep its A-033 note. Leave the A-022 to A-025 status in `docs/hardware/assumptions.md` as `assumed`.
-- [ ] T048 [P] Update the "Current status" section of `CLAUDE.md` with feature 003, the new test names (`us1_vas`, `us2_vas_settings`, `vas_matrix`, `vas_edge_cases`, `golden_vas`), the VAS bless command, and the measurement lesson: measure VAS by output length and events (003 R-11).
-- [ ] T049 Traceability audit (SC-008, FR-017): list every numeric literal in the code and tests added by this feature, **including test literals** (the `#[cfg(test)]` modules of `stages/vas.rs`, `pipeline.rs` and `resample/up.rs`, and every new file under `crates/rr_dr60_harness/tests/`; e.g. the burst lengths 80/144/159/160/161/240/8000 in T017 must say "O − 80, O − 16 (onset − 2 ms), O − 1, O, O + 1, 1.5 O, 50 O (FR-009)"). Check each one has an A-/S- ID or an engineering-target comment (`// engineering target (003 FR-017)` or `(003 R-15)`), and fix any that don't. Record the check in the PR description. Search: `git diff main -- crates/ | grep -E '^\+.*[0-9]+\.[0-9]+|^\+.*\b[0-9]{2,}\b' | grep -v -E 'A-0|S-0|engineering target|FR-0|R-[0-9]'`. Also run `scripts/check-traceability.sh`.
+- [X] T047 [P] Update `docs/hardware/signal-chain.md`: row 5 already links spec 003 (evidence pass, 2026-10-10); add the IDs "A-022 – A-025" to that link and keep its A-033 note. Leave the A-022 to A-025 status in `docs/hardware/assumptions.md` as `assumed`.
+- [X] T048 [P] Update the "Current status" section of `CLAUDE.md` with feature 003, the new test names (`us1_vas`, `us2_vas_settings`, `vas_matrix`, `vas_edge_cases`, `golden_vas`), the VAS bless command, and the measurement lesson: measure VAS by output length and events (003 R-11).
+- [X] T049 Traceability audit (SC-008, FR-017): list every numeric literal in the code and tests added by this feature, **including test literals** (the `#[cfg(test)]` modules of `stages/vas.rs`, `pipeline.rs` and `resample/up.rs`, and every new file under `crates/rr_dr60_harness/tests/`; e.g. the burst lengths 80/144/159/160/161/240/8000 in T017 must say "O − 80, O − 16 (onset − 2 ms), O − 1, O, O + 1, 1.5 O, 50 O (FR-009)"). Check each one has an A-/S- ID or an engineering-target comment (`// engineering target (003 FR-017)` or `(003 R-15)`), and fix any that don't. Record the check in the PR description. Search: `git diff main -- crates/ | grep -E '^\+.*[0-9]+\.[0-9]+|^\+.*\b[0-9]{2,}\b' | grep -v -E 'A-0|S-0|engineering target|FR-0|R-[0-9]'`. Also run `scripts/check-traceability.sh`.
 - [ ] T050 Run every step of `specs/003-vas/quickstart.md` § 1–6 and the coverage gate `cargo llvm-cov --all-features --workspace --fail-under-lines 80`. Fix anything that fails.
 - [ ] T051 Ask the speckit-coach for a final review, then ask the user before merging the PR.
 ---

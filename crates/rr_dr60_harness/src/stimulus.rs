@@ -366,7 +366,7 @@ mod tests {
             assert!(x[b2 + n(0.5)..].iter().all(|v| v.to_bits() == 0));
             let peak = x[..n(1.0)].iter().fold(0.0f32, |m, &v| m.max(v.abs()));
             assert!(
-                (f64::from(peak) - amplitude(-8.0)).abs() < 1e-3,
+                (f64::from(peak) - amplitude(-8.0)).abs() < 1e-3, // engineering target (003 R-15)
                 "{fs}: {peak}"
             );
             assert_eq!(x, burst_gap(1000.0, -8.0, &seg, fs));
