@@ -23,7 +23,9 @@ use rr_dr60_detmath::exp;
 use crate::settings::{DEVICE_RATE_HZ, VasSettings};
 
 /// Longest gap, in device samples, between sound samples that still continues a sound run:
-/// 4 ms, longer than the half period of a 300 Hz tone (engineering target, 003 R-15).
+/// 32 samples = 5.3 ms at 6 kHz, longer than the half period of the lowest in-band tone
+/// (225 Hz: 13.3 samples). The invariant is the sample count, not the time (engineering target,
+/// 003 R-15; restated by spec 004 research R-10).
 pub(crate) const W: u64 = 32;
 /// Threshold change per sensitivity level, in dB (A-022).
 const DB_PER_LEVEL: f64 = 3.0;
@@ -170,28 +172,29 @@ mod tests {
     use rr_dr60_detmath::{TAU, ln, sin};
     use std::vec::Vec;
 
-    const FS: f64 = 8000.0; // A-001: the VAS runs at the device rate (003 R-01)
-    const H: usize = 8000; // A-023: 1.0 s
-    const O: usize = 160; // A-024: 20 ms
+    const FS: f64 = 6000.0; // A-026: the VAS runs at the device rate (003 R-01; 004 R-01)
+    const H: usize = 6000; // A-023: 1.0 s
+    const O: usize = 120; // A-024: 20 ms
 
     fn amp(dbfs: f64) -> f64 {
         exp(dbfs * ln(10.0) / 20.0)
     }
 
-    /// `n` samples of a tone at `dbfs` starting at phase 0 (sample peaks hit the true peak at
-    /// 1 kHz, where a cycle is exactly 8 samples).
+    /// `n` samples of a tone at `dbfs` with a half-sample phase offset (spec 004 research R-08):
+    /// at 1 kHz a cycle is exactly 6 samples, and the offset puts samples at 30°, 90°, 150° …,
+    /// so a sample lands on the true peak. At phase 0 the peak would read 1.25 dB low.
     fn tone(freq: f64, dbfs: f64, n: usize) -> Vec<f64> {
         (0..n)
-            .map(|k| amp(dbfs) * sin(TAU * ((freq * k as f64 / FS) % 1.0)))
+            .map(|k| amp(dbfs) * sin(TAU * ((freq * (k as f64 + 0.5) / FS) % 1.0)))
             .collect()
     }
 
     /// `n` samples of a 1 kHz tone at −8 dBFS (threshold + 10 dB) with a half-sample phase
-    /// offset, so every sample is a sound sample: |sin| ≥ sin(22.5°) = 0.38, and
-    /// 0.38 · 0.398 > 0.126 = A_thr. Burst lengths are then exact sound-run lengths.
+    /// offset, so every sample is a sound sample: |sin| ≥ sin(30°) = 0.5, and
+    /// 0.5 · 0.398 > 0.126 = A_thr. Burst lengths are then exact sound-run lengths.
     fn loud(n: usize) -> Vec<f64> {
         (0..n)
-            .map(|k| amp(-8.0) * sin(TAU * (((k % 8) as f64 + 0.5) / 8.0)))
+            .map(|k| amp(-8.0) * sin(TAU * (((k % 6) as f64 + 0.5) / 6.0)))
             .collect()
     }
 
@@ -228,7 +231,7 @@ mod tests {
         while hi - lo > 0.05 {
             let mid = 0.5 * (lo + hi);
             let mut stage = with(settings);
-            let d = run(&mut stage, &tone(freq, mid, 16_000));
+            let d = run(&mut stage, &tone(freq, mid, 12_000));
             if kept(&d) == d.len() {
                 hi = mid;
             } else {
@@ -239,16 +242,17 @@ mod tests {
     }
 
     /// 003 FR-006 (A-022): +3 dB is kept for 10 s; −3 dB keeps exactly H, then drops.
-    /// 300 and 3400 Hz have the same threshold as 1 kHz within ±1 dB.
+    /// 225 and 2550 Hz (the band edges at 6 kHz, 004 FR-012) have the same threshold as 1 kHz
+    /// within ±1 dB.
     #[test]
     fn threshold_keeps_above_and_drops_below() {
         let mut stage = VasStage::new(&VasSettings::DEVICE);
-        let d = run(&mut stage, &tone(1000.0, -15.0, 80_000));
-        assert_eq!(kept(&d), 80_000);
+        let d = run(&mut stage, &tone(1000.0, -15.0, 60_000));
+        assert_eq!(kept(&d), 60_000);
         assert!(!stage.is_paused());
 
         let mut stage = VasStage::new(&VasSettings::DEVICE);
-        let d = run(&mut stage, &tone(1000.0, -21.0, 20_000));
+        let d = run(&mut stage, &tone(1000.0, -21.0, 15_000));
         assert_eq!(kept(&d), H);
         assert!(d[..H].iter().all(|&v| v == VasDecision::Keep));
         assert!(stage.is_paused());
@@ -256,7 +260,7 @@ mod tests {
         let t1k = lowest_kept(1000.0, |_| {});
         // 0.05 dB: the bisection resolution, engineering target (003 R-15); −18 dBFS: A-022.
         assert!((t1k + 18.0).abs() <= 0.05, "1 kHz threshold {t1k}");
-        for f in [300.0, 3400.0] {
+        for f in [225.0, 2550.0] {
             let t = lowest_kept(f, |_| {});
             assert!((t - t1k).abs() <= 1.0, "{f} Hz: {t} vs {t1k}"); // ±1 dB, 003 FR-006
         }
@@ -277,7 +281,7 @@ mod tests {
     fn hang_time_keeps_exactly_h() {
         for gap in [H - 40, H, H + 1, H + 40] {
             let mut stage = VasStage::new(&VasSettings::DEVICE);
-            let x = cat(&[loud(800), silence(gap), loud(800)]);
+            let x = cat(&[loud(600), silence(gap), loud(600)]);
             let d = run(&mut stage, &x);
             let dropped = x.len() - kept(&d);
             if gap <= H {
@@ -295,9 +299,10 @@ mod tests {
     /// resume, not even in the silence after them; longer bursts keep exactly burst − O.
     #[test]
     fn onset_time_and_short_bursts() {
-        for burst in [80, 144, 159, 160, 161, 240, 8000] {
+        // O − 60, O − 12 (onset − 2 ms), O − 1, O, O + 1, 1.5 O, 50 O (003 FR-009, at 6 kHz).
+        for burst in [60, 108, 119, 120, 121, 180, 6000] {
             let mut stage = VasStage::new(&VasSettings::DEVICE);
-            let x = cat(&[silence(H + 100), loud(burst), silence(4000)]);
+            let x = cat(&[silence(H + 100), loud(burst), silence(3000)]);
             let d = run(&mut stage, &x);
             let after_lead = &d[H + 100..];
             let kept_burst = kept(&after_lead[..burst]);
@@ -308,7 +313,7 @@ mod tests {
             } else {
                 assert_eq!(kept_burst, burst - O, "burst {burst}");
                 assert_eq!(after_lead[O], VasDecision::Resume, "burst {burst}");
-                assert_eq!(kept_after, 4000, "the trailing silence is within H");
+                assert_eq!(kept_after, 3000, "the trailing silence is within H");
             }
         }
     }
@@ -326,12 +331,13 @@ mod tests {
         assert_eq!(resumes(&d), 0);
     }
 
-    /// 003 R-02: a 300 Hz tone at threshold + 3 dB resumes exactly O samples after its first
-    /// sound sample, because W bridges its troughs; gaps longer than W restart the run.
+    /// 003 R-02: a 225 Hz tone (the lowest in-band tone at 6 kHz) at threshold + 3 dB resumes
+    /// exactly O samples after its first sound sample, because W bridges its troughs; gaps longer
+    /// than W restart the run.
     #[test]
     fn w_bridges_troughs_and_longer_gaps_restart_the_run() {
         let mut stage = VasStage::new(&VasSettings::DEVICE);
-        let x = cat(&[silence(H + 10), tone(300.0, -15.0, 4000)]);
+        let x = cat(&[silence(H + 10), tone(225.0, -15.0, 3000)]);
         let first_sound = x[H + 10..]
             .iter()
             .position(|v| v.abs() >= stage.threshold)
