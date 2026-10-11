@@ -39,7 +39,7 @@ description: "Task list for 004 6 kHz Device Rate and Codec Filter Templates"
 
 **Purpose**: Version, the new source, and the baseline numbers the CHANGELOG and the CI-time comparison need.
 
-- [ ] T001 Bump the workspace version to 0.4.0:
+- [X] T001 Bump the workspace version to 0.4.0:
   - `version = "0.4.0"` in `[workspace.package]` and in the three internal dependency entries of `Cargo.toml`.
   - `RR_DR60_VERSION_MINOR = 4` in `crates/rr_dr60_ffi/src/lib.rs`.
   - Regenerate `crates/rr_dr60_ffi/include/rr_dr60.h` (see `crates/rr_dr60_ffi/cbindgen.toml`).
