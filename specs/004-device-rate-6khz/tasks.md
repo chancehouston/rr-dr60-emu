@@ -182,7 +182,7 @@ description: "Task list for 004 6 kHz Device Rate and Codec Filter Templates"
 ## Phase 6: CI and cross-platform golden files (SC-004, SC-006; research R-12)
 
 - [ ] T042 (SC-003) Ask the user, then push `004-device-rate-6khz` and open a **draft PR** against `main` with the T003 baseline and the new numbers (suite time, timing rows, latency table, matrix row count). The workflow needs no change (the seven rates come from the code). Confirm all 11 jobs green: `check` (ubuntu, macos), `coverage`, the six `golden` targets, `ios`, `msrv`. Record the coverage job's wall time against 003's 16 min and the `check` job's test time against T003; if either grew by more than 25 %, say so in the PR and propose the cause.
-- [ ] T043 [P] Release-mode checks locally (SC-006; 001 FR-022): `cargo test -p rr_dr60_harness --release --test timing -- --ignored --nocapture` shows ≥ 20× real time for `default_vas` at 48 kHz (expect faster than 0.3); paste the ns/sample rows into the PR beside T003's; `scripts/ios-device-golden.sh` is unchanged and still lists the three golden files (release gate, `docs/release-checklist.md`).
+- [X] T043 [P] Release-mode checks locally (SC-006; 001 FR-022): `cargo test -p rr_dr60_harness --release --test timing -- --ignored --nocapture` shows ≥ 20× real time for `default_vas` at 48 kHz (expect faster than 0.3); paste the ns/sample rows into the PR beside T003's; `scripts/ios-device-golden.sh` is unchanged and still lists the three golden files (release gate, `docs/release-checklist.md`).
 
 **Checkpoint**: CI green on every automated target; the time comparison is in the PR; the iOS-device check stays a manual release gate.
 
