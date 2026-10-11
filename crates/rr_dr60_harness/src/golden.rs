@@ -4,12 +4,15 @@
 //! golden file serves every platform (FR-014). This module stays under the clippy R-04 ban.
 //!
 //! Spec 004 (the 6 kHz device rate; contracts/golden-format.md, research R-11): the generators
-//! cover the seven host rates, so the three files hold 112, 42 and 63 entries. Only two
-//! stimulus definitions changed, both through the band of `stimulus::bandlimited_noise`
-//! (225–2550 Hz, A-027): `agc_noise_burst` and `vas_noise_gaps`. No other stimulus changed:
-//! `sweep_log` is defined relative to the host rate, and the VAS bursts stay at 1 kHz,
-//! −8 dBFS, phase 0 (research R-08: the phase rule applies to threshold bisections, not to
-//! bursts 10 dB above the threshold).
+//! cover the seven host rates, so the three files hold 112, 42 and 63 entries.
+//!
+//! Spec 005 (the limiter; contracts/golden-format.md, research R-10): the three AGC stimuli are
+//! replaced (`agc_onset`, `agc_rearm`, `agc_staircase`: 1 kHz at the host-grid peak phase,
+//! [`stimulus::peak_phase`], so the detector reads the true peaks at every rate), the VAS
+//! bursts move from −8 to −30 dBFS with the re-anchored threshold (A-022 revised; still 1 kHz
+//! at phase 0, 003 R-08), `agc_only` is the host-rate "after AGC" tap and `default_vas` runs
+//! the limiter and the clamp. `golden-v1.json` is unchanged (the 001 configurations have the
+//! limiter bypassed and no 001 stimulus reaches full scale, R-06).
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -26,10 +29,13 @@ pub const STIMULI: [&str; 4] = ["impulse", "noise_seed_0d60", "sweep_log", "tone
 /// Golden configurations, in sorted order.
 pub const CONFIGS: [&str; 4] = ["bypass_all", "default", "playback_only", "record_only"];
 
-/// Spec 002 AGC golden stimuli, in sorted order (specs/002-agc/contracts/golden-format.md).
-pub const AGC_STIMULI: [&str; 3] = ["agc_noise_burst", "agc_start_m10", "agc_step"];
+/// Spec 005 AGC golden stimuli, in sorted order (specs/005-limiter-agc/contracts/golden-format.md;
+/// research R-10). The 0.4 stimuli `agc_noise_burst`, `agc_start_m10` and `agc_step` measured
+/// the spec 002 compressor and are retired.
+pub const AGC_STIMULI: [&str; 3] = ["agc_onset", "agc_rearm", "agc_staircase"];
 
-/// Spec 002 AGC golden configurations, in sorted order.
+/// Spec 005 AGC golden configurations, in sorted order: the limiter alone at the host-rate
+/// "after AGC" tap, and the 0.5 default with the VAS off.
 pub const AGC_CONFIGS: [&str; 2] = ["agc_only", "default_agc"];
 
 /// Spec 003 VAS golden stimuli, in sorted order (specs/003-vas/contracts/golden-format.md).
@@ -96,15 +102,43 @@ pub fn stimulus(name: &str, fs: u32) -> Vec<f32> {
         "tone_1k_m20" => stimulus::tone(1000.0, 0.1, f, secs(0.5)),
         "sweep_log" => stimulus::log_sweep(20.0, 0.45 * f, 0.25, f, secs(1.0)),
         "noise_seed_0d60" => stimulus::noise(0x0D60, secs(0.5)),
-        // Spec 002 (contracts/golden-format.md).
-        "agc_noise_burst" => crate::agc_checks::noise_burst_stimulus(f),
-        "agc_start_m10" => stimulus::step(1000.0, &[-10.0], &[0.5], f),
-        "agc_step" => stimulus::step(1000.0, &[-40.0, -10.0, -40.0], &[3.0, 1.0, 4.0], f),
-        // Spec 003 (contracts/golden-format.md). Bursts are 1 kHz at −8 dBFS: the default
-        // threshold (A-022) + 10 dB (engineering target, 003 R-15).
+        // Spec 005 (contracts/golden-format.md; research R-10): 1 kHz level steps at the
+        // host-grid peak phase (R-08; the coach's MVP review: a phase-0 tone on the 6 kHz grid
+        // reads 1.25 dB low). Levels are absolute (engineering target, 005 FR-016): +11 dBFS is
+        // 12 dB over the −1 dBFS knee (A-028; the levels were set for the +1 dBFS knee of the
+        // first design and kept at the second re-bless).
+        // The onset: dead time, ceiling, then the release.
+        "agc_onset" => stimulus::step_at_phase(
+            1000.0,
+            &[-20.0, 11.0, -20.0],
+            &[0.1, 0.4, 2.0],
+            stimulus::peak_phase(1000.0, fs),
+            f,
+        ),
+        // Arming: a burst, 2 s of quiet, the burst again (the second onset is limited within
+        // half a millisecond, FR-005).
+        "agc_rearm" => stimulus::step_at_phase(
+            1000.0,
+            &[11.0, -20.0, 11.0, -20.0],
+            &[0.2, 2.0, 0.2, 0.6],
+            stimulus::peak_phase(1000.0, fs),
+            f,
+        ),
+        // The knee region and the ceiling (the clipped onset in `default_agc`): −20, 0, +3, +5,
+        // +8, +14 dBFS for 0.4 s each. The levels were chosen for a phase-0 tone, where 0 and
+        // +2 dBFS would both read below the +1 dBFS onset on the 6 kHz grid (plan review P12);
+        // at the peak phase no level is inert at any rate, and the levels are kept.
+        "agc_staircase" => stimulus::staircase(
+            &[-20.0, 0.0, 3.0, 5.0, 8.0, 14.0],
+            0.4,
+            f,
+            stimulus::peak_phase(1000.0, fs),
+        ),
+        // Spec 003 (contracts/golden-format.md). Bursts are 1 kHz at −30 dBFS: the default
+        // threshold (A-022, −40 dBFS since spec 005) + 10 dB (engineering target, 003 R-15).
         "vas_burst_gap" => stimulus::burst_gap(
             1000.0,
-            -8.0,
+            -30.0,
             &[
                 (true, 1.0),
                 (false, 0.6),
@@ -116,12 +150,12 @@ pub fn stimulus(name: &str, fs: u32) -> Vec<f32> {
             f,
         ),
         "vas_noise_gaps" => {
-            let bursts = stimulus::tone_bursts(1000.0, -8.0, 1.0, 3.0, 2, f);
+            let bursts = stimulus::tone_bursts(1000.0, -30.0, 1.0, 3.0, 2, f);
             let noise = stimulus::bandlimited_noise(0x0D60, bursts.len(), f, -70.0);
             bursts.iter().zip(&noise).map(|(b, n)| b + n).collect()
         }
         "vas_short_bursts" => {
-            stimulus::short_bursts(1000.0, -8.0, 2.0, &[10.0, 30.0, 200.0], 2.0, f)
+            stimulus::short_bursts(1000.0, -30.0, 2.0, &[10.0, 30.0, 200.0], 2.0, f)
         }
         other => panic!("unknown stimulus {other:?}"),
     }
@@ -185,18 +219,19 @@ pub fn entry_vas(
     e
 }
 
-/// Generates every spec 001 entry (4 stimuli × 4 configurations × 6 rates), each stimulus
-/// processed in one block. The configurations have the AGC bypassed (spec 002 FR-018).
+/// Generates every spec 001 entry (4 stimuli × 4 configurations × 7 rates), each stimulus
+/// processed in one block. The configurations have the limiter bypassed (spec 005 FR-016).
 pub fn generate(make: Make<'_>) -> GoldenFile {
     generate_set(&STIMULI, &CONFIGS, make)
 }
 
-/// Generates every spec 002 AGC entry (3 stimuli × 2 configurations × 6 rates).
+/// Generates every spec 005 AGC entry (3 stimuli × 2 configurations × 7 rates): `agc_only` is
+/// the host-rate "after AGC" tap, so its entries have the stimulus's length and no conversion.
 pub fn generate_agc(make: Make<'_>) -> GoldenFile {
     generate_set(&AGC_STIMULI, &AGC_CONFIGS, make)
 }
 
-/// Generates every spec 003 VAS entry (3 stimuli × 3 configurations × 6 rates), each stimulus
+/// Generates every spec 003 VAS entry (3 stimuli × 3 configurations × 7 rates), each stimulus
 /// processed in one block with events; `n_samples` and `sha256` cover the produced samples.
 pub fn generate_vas(make: Make<'_>) -> GoldenFile {
     let mut entries = Vec::new();
@@ -311,7 +346,7 @@ pub fn path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-v1.json")
 }
 
-/// The committed spec 002 AGC golden file, embedded at compile time like [`committed`].
+/// The committed spec 005 AGC golden file, embedded at compile time like [`committed`].
 ///
 /// # Panics
 ///
@@ -321,7 +356,7 @@ pub fn committed_agc() -> GoldenFile {
         .expect("valid embedded AGC golden file")
 }
 
-/// Path of the committed spec 002 AGC golden file. Bless it only with
+/// Path of the committed spec 005 AGC golden file. Bless it only with
 /// `RR_DR60_BLESS=agc cargo test -p rr_dr60_harness --test golden_agc`, with a CHANGELOG entry.
 pub fn path_agc() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-agc-v1.json")
@@ -419,9 +454,10 @@ mod tests {
         assert_eq!(stimulus("tone_1k_m20", 6000).len(), 3000);
         assert_eq!(stimulus("sweep_log", 6000).len(), 6000);
         assert_eq!(stimulus("noise_seed_0d60", 6000).len(), 3000);
-        assert_eq!(stimulus("agc_step", 6000).len(), 48_000);
-        assert_eq!(stimulus("agc_start_m10", 6000).len(), 3000);
-        assert_eq!(stimulus("agc_noise_burst", 6000).len(), 60_000);
+        // Spec 005: 2.5 s, 3.0 s and 2.4 s (contracts/golden-format.md).
+        assert_eq!(stimulus("agc_onset", 6000).len(), 15_000);
+        assert_eq!(stimulus("agc_rearm", 6000).len(), 18_000);
+        assert_eq!(stimulus("agc_staircase", 6000).len(), 14_400);
         assert_eq!(stimulus("vas_burst_gap", 6000).len(), 51_600);
         assert_eq!(stimulus("vas_noise_gaps", 6000).len(), 48_000);
         assert_eq!(stimulus("vas_short_bursts", 6000).len(), 49_440);
@@ -429,9 +465,22 @@ mod tests {
         assert_eq!(stimulus("tone_1k_m20", 48_000).len(), 24_000);
         assert_eq!(stimulus("sweep_log", 44_100).len(), 44_100);
         assert_eq!(stimulus("noise_seed_0d60", 8000).len(), 4000);
-        assert_eq!(stimulus("agc_step", 8000).len(), 64_000);
-        assert_eq!(stimulus("agc_start_m10", 16_000).len(), 8000);
-        assert_eq!(stimulus("agc_noise_burst", 8000).len(), 80_000);
+        assert_eq!(stimulus("agc_onset", 8000).len(), 20_000);
+        assert_eq!(stimulus("agc_rearm", 16_000).len(), 48_000);
+        assert_eq!(stimulus("agc_staircase", 8000).len(), 19_200);
+        // The AGC stimuli start at the host-grid peak phase (005 R-08): the first sample of the
+        // staircase is the −20 dBFS peak at 8 kHz (phase 0 … sin(π/6) at 6 kHz).
+        let a = stimulus::amplitude(-20.0) as f32;
+        assert_eq!(stimulus("agc_staircase", 8000)[0], 0.0);
+        assert_eq!(stimulus("agc_staircase", 8000)[2], a);
+        assert!((stimulus("agc_staircase", 6000)[1] - a).abs() < 1e-7);
+        // The VAS bursts are at −30 dBFS (A-022 revised): the first burst's peak.
+        let v = stimulus("vas_burst_gap", 48_000);
+        let peak = v[..48_000].iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+        assert!(
+            (f64::from(peak) - stimulus::amplitude(-30.0)).abs() < 1e-6,
+            "{peak}"
+        );
         // Spec 003: 8.6 s, 8 s and 8.24 s (contracts/golden-format.md).
         assert_eq!(stimulus("vas_burst_gap", 8000).len(), 68_800);
         assert_eq!(stimulus("vas_noise_gaps", 8000).len(), 64_000);

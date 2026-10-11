@@ -11,8 +11,9 @@ use rr_dr60::{BlockInfo, Pipeline, SUPPORTED_HOST_RATES, Settings, Tap, VasEvent
 use rr_dr60_harness::{configs, stimulus};
 
 const FS: u32 = 48_000;
-/// The burst level: the default threshold (−18 dBFS, A-022) + 10 dB (spec 003 definitions).
-const BURST_DBFS: f64 = -8.0;
+/// The burst level: the default threshold (−40 dBFS, A-022 revised by spec 005 FR-012) + 10 dB
+/// (spec 003 definitions; restated by 005 FR-012, was −8 dBFS).
+const BURST_DBFS: f64 = -30.0;
 
 /// Processes `x` in one block; returns the output, its events and the block result.
 fn run(settings: Settings, x: &[f32]) -> (Vec<f32>, Vec<VasEvent>, BlockInfo) {
@@ -39,7 +40,8 @@ fn burst_gap(segments: &[(bool, f64)]) -> Vec<f32> {
 /// 10 s, bit-identical to the VAS-bypassed run.
 #[test]
 fn as1_tone_above_threshold_is_kept() {
-    let x = stimulus::step(1000.0, &[-15.0], &[10.0], f64::from(FS));
+    // Threshold + 3 dB: −37 dBFS (restated by 005 FR-012; was −15 against −18).
+    let x = stimulus::step(1000.0, &[-37.0], &[10.0], f64::from(FS));
     let settings = configs::settings("vas_only", FS);
     let (y, ev, _) = run(settings, &x);
     assert_eq!(y.len(), x.len());

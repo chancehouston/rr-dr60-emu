@@ -96,22 +96,34 @@ fn c_api_identity_at_6k() {
     unsafe { rr_dr60_destroy(p) };
 }
 
-/// Spec 002 FR-014, US2 AS6: C and Rust output are bit-identical with the AGC on, for the
-/// AGC configurations and for the minimum and maximum of every AGC setting.
+/// Spec 005 FR-015 (US3 AS4): C and Rust output are bit-identical with the limiter on, for
+/// the AGC configurations, every FR-011 settings-matrix case, the minimum and maximum of every
+/// limiter setting, and the clamp off; `c_default_005` is the `default_agc` configuration.
 #[test]
 fn c_api_matches_rust_api_with_agc() {
     let rate = 48_000;
-    let x = stimulus::step(1000.0, &[-40.0, -10.0, -40.0], &[0.1, 0.1, 0.2], 48_000.0);
+    // The onset stimulus: sub-knee, 10 dB over the knee, sub-knee (the dead time, the ceiling
+    // and the start of the release all inside 0.4 s).
+    let x = stimulus::step_at_phase(
+        1000.0,
+        &[-20.0, 11.0, -20.0],
+        &[0.1, 0.1, 0.2],
+        stimulus::peak_phase(1000.0, rate),
+        48_000.0,
+    );
     let mut cases: Vec<rr_dr60::Settings> = configs::AGC_CONFIGS
         .iter()
         .map(|c| configs::settings(c, rate))
         .collect();
-    let extremes: [fn(&mut rr_dr60::AgcSettings, bool); 5] = [
-        |a, hi| a.target_dbfs = if hi { 0.0 } else { -30.0 },
-        |a, hi| a.max_gain_db = if hi { 60.0 } else { 0.0 },
-        |a, hi| a.max_attenuation_db = if hi { 40.0 } else { 0.0 },
-        |a, hi| a.attack_ms = if hi { 100.0 } else { 1.0 },
-        |a, hi| a.release_ms = if hi { 10_000.0 } else { 50.0 },
+    for case in &rr_dr60_harness::agc_checks::matrix()[1..] {
+        let mut s = configs::settings("agc_only", rate);
+        s.agc = case.agc;
+        cases.push(s);
+    }
+    let extremes: [fn(&mut rr_dr60::AgcSettings, bool); 3] = [
+        |a, hi| a.knee_dbfs = if hi { 3.0 } else { -40.0 }, // 005 FR-010 range
+        |a, hi| a.attack_ms = if hi { 50.0 } else { 1.0 },
+        |a, hi| a.release_ms = if hi { 10_000.0 } else { 200.0 },
     ];
     for set in extremes {
         for hi in [false, true] {
@@ -120,6 +132,13 @@ fn c_api_matches_rust_api_with_agc() {
             cases.push(s);
         }
     }
+    let mut clamp_off = configs::settings("default_agc", rate);
+    clamp_off.adc_clamp_enabled = false; // 005 FR-008
+    cases.push(clamp_off);
+    assert_eq!(
+        configs::c_default_005(rate),
+        configs::c_settings(&configs::settings("default_agc", rate))
+    );
     for s in cases {
         let mut want = vec![0.0; x.len()];
         let produced = Pipeline::new(s)
@@ -160,20 +179,94 @@ fn validate(s: &RrDr60Settings) -> (RrDr60Status, RrDr60SettingField) {
     (status, field)
 }
 
-/// Spec 002 US2 AS5, FR-014 (contracts/c-api.md): invalid AGC settings are rejected with
+/// Spec 005 contracts/c-api.md: the 0.5 layout is 80 bytes with the 0.4 offsets kept; the
+/// defaults are the limiter's (A-028, A-034, A-035), the clamp on (A-030) and the VAS
+/// threshold −40 dBFS (A-022 revised); the two reserved slots are ignored by validation and by
+/// processing; a 72-byte (0.4-layout) struct is rejected as `STRUCT_SIZE`.
+#[test]
+fn c_api_005_layout_defaults_and_reserved_fields() {
+    assert_eq!(size_of::<RrDr60Settings>(), 80);
+    assert_eq!(std::mem::offset_of!(RrDr60Settings, agc_knee_dbfs), 28);
+    assert_eq!(std::mem::offset_of!(RrDr60Settings, reserved_agc_1), 32);
+    assert_eq!(std::mem::offset_of!(RrDr60Settings, reserved_agc_2), 36);
+    assert_eq!(std::mem::offset_of!(RrDr60Settings, agc_attack_ms), 40);
+    assert_eq!(std::mem::offset_of!(RrDr60Settings, agc_release_ms), 44);
+    assert_eq!(std::mem::offset_of!(RrDr60Settings, adc_clamp_enabled), 72);
+    let d = rr_dr60_settings_default(48_000);
+    assert_eq!(d.struct_size, 80);
+    assert_eq!(d.agc_knee_dbfs, -1.0); // A-028
+    assert_eq!(d.agc_attack_ms, 3.0); // A-034
+    assert_eq!(d.agc_release_ms, 1370.0); // A-035
+    assert!(d.adc_clamp_enabled); // A-030
+    assert_eq!(d.vas_threshold_dbfs, -40.0); // A-022 revised
+    assert_eq!((d.reserved_agc_1, d.reserved_agc_2), (0.0, 0.0));
+    assert_eq!(RrDr60SettingField::AgcKneeDbfs as u32, 4);
+    assert_eq!(RrDr60SettingField::AgcAttackMs as u32, 7);
+    assert_eq!(RrDr60SettingField::AgcReleaseMs as u32, 8);
+
+    // The reserved slots are ignored: garbage there validates and changes nothing.
+    let x = stimulus::step_at_phase(
+        1000.0,
+        &[-20.0, 11.0],
+        &[0.1, 0.2],
+        stimulus::peak_phase(1000.0, 48_000),
+        48_000.0,
+    );
+    let mut garbage = d;
+    garbage.reserved_agc_1 = f32::NAN;
+    garbage.reserved_agc_2 = 999.0;
+    assert_eq!(
+        validate(&garbage),
+        (RrDr60Status::Ok, RrDr60SettingField::None)
+    );
+    let (p, q) = (create(&d), create(&garbage));
+    let (mut a, mut b) = (vec![0.0f32; x.len()], vec![0.0f32; x.len()]);
+    // SAFETY: live handles; valid non-overlapping buffers of x.len() floats.
+    unsafe {
+        assert_eq!(
+            rr_dr60_process(p, x.as_ptr(), a.as_mut_ptr(), x.len(), std::ptr::null_mut()),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_process(q, x.as_ptr(), b.as_mut_ptr(), x.len(), std::ptr::null_mut()),
+            RrDr60Status::Ok
+        );
+        rr_dr60_destroy(p);
+        rr_dr60_destroy(q);
+    }
+    assert_eq!(a, b, "the reserved slots changed the output");
+
+    // A 0.4-layout struct (72 bytes, `struct_size = 72`): rejected as STRUCT_SIZE after reading
+    // only the first field.
+    #[repr(C, align(8))]
+    struct Layout04([u8; 72]);
+    let mut old = Layout04([0; 72]);
+    old.0[..4].copy_from_slice(&72u32.to_ne_bytes());
+    let settings = (&raw const old).cast::<RrDr60Settings>();
+    let mut field = RrDr60SettingField::None;
+    let mut out = std::ptr::null_mut();
+    // SAFETY: the functions read only `struct_size` before rejecting a too-small struct
+    // (contracts/c-api.md), and the 72 bytes are readable and aligned.
+    unsafe {
+        assert_eq!(
+            rr_dr60_settings_validate(settings, &mut field),
+            RrDr60Status::InvalidArgument
+        );
+        assert_eq!(field, RrDr60SettingField::StructSize);
+        assert_eq!(
+            rr_dr60_create(settings, &mut out),
+            RrDr60Status::InvalidArgument
+        );
+        assert!(out.is_null());
+    }
+}
+
+/// Spec 005 FR-010, FR-015 (contracts/c-api.md): invalid limiter settings are rejected with
 /// INVALID_SETTING, and `rr_dr60_settings_validate` names the field.
 #[test]
 fn c_api_names_invalid_agc_settings() {
-    let cases: [BreakCase; 5] = [
-        (RrDr60SettingField::AgcTargetDbfs, |s| {
-            s.agc_target_dbfs = 1.0
-        }),
-        (RrDr60SettingField::AgcMaxGainDb, |s| {
-            s.agc_max_gain_db = f32::NAN
-        }),
-        (RrDr60SettingField::AgcMaxAttenuationDb, |s| {
-            s.agc_max_attenuation_db = 41.0
-        }),
+    let cases: [BreakCase; 3] = [
+        (RrDr60SettingField::AgcKneeDbfs, |s| s.agc_knee_dbfs = 4.0),
         (RrDr60SettingField::AgcAttackMs, |s| s.agc_attack_ms = 0.0),
         (RrDr60SettingField::AgcReleaseMs, |s| {
             s.agc_release_ms = f32::INFINITY
@@ -222,8 +315,8 @@ fn c_api_validate_agrees_with_create() {
         agc_attack_ms: 0.0,
         ..base
     };
-    let bad_target_and_release = RrDr60Settings {
-        agc_target_dbfs: 5.0,
+    let bad_knee_and_release = RrDr60Settings {
+        agc_knee_dbfs: 5.0, // above the +3 dBFS cap (005 FR-010)
         agc_release_ms: 1.0,
         ..base
     };
@@ -249,9 +342,9 @@ fn c_api_validate_agrees_with_create() {
             RrDr60SettingField::HostRate,
         ),
         (
-            bad_target_and_release,
+            bad_knee_and_release,
             RrDr60Status::InvalidSetting,
-            RrDr60SettingField::AgcTargetDbfs,
+            RrDr60SettingField::AgcKneeDbfs,
         ),
     ];
     for (s, status, field) in expected {
@@ -537,7 +630,7 @@ fn c_api_matches_rust_api_with_vas() {
     let rate = 48_000;
     let x = stimulus::burst_gap(
         1000.0,
-        -8.0, // threshold + 10 dB (spec 003 definitions)
+        -30.0, // threshold + 10 dB (spec 003 definitions; −40 dBFS since spec 005, A-022)
         &[
             (true, 0.5),
             (false, 2.0),

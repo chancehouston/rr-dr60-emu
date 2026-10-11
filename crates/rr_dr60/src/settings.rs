@@ -15,14 +15,17 @@ pub const SUPPORTED_HOST_RATES: [u32; 7] = [6000, 8000, 16000, 44100, 48000, 882
 /// the device. Supersedes A-001's assumed 8 kHz (spec 004).
 pub const DEVICE_RATE_HZ: u32 = 6000;
 
-/// Where the pipeline output is taken (FR-007; spec 002 FR-003).
+/// Where the pipeline output is taken (FR-007; spec 002 FR-003; spec 005 FR-001).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum Tap {
-    /// After signal-chain stage 3 (AGC). Stages 4 and 10 are not run, whatever their settings
-    /// (spec 002 FR-003).
+    /// After signal-chain stage 3 (the limiter), **at the host rate**: the limiter's output
+    /// sample for sample. The rate conversion, the band-limit stages, the ADC clamp and the VAS
+    /// are not run, whatever their settings; latency is 0 and no VAS events occur (spec 005
+    /// FR-001; since 0.5 this tap is before the rate conversion, where the limiter runs).
     AfterAgc,
-    /// After signal-chain stage 4 (record band-limit). Stages 5 (VAS) and 10 are not run.
+    /// After signal-chain stage 4 (record band-limit) and the ADC's full-scale clamp (spec 005
+    /// FR-008). Stages 5 (VAS) and 10 are not run.
     AfterRecord,
     /// After signal-chain stage 5 (VAS). Stage 10 is not run, whatever its setting
     /// (spec 003 FR-003). In drop mode the output can be shorter than the input.
@@ -33,41 +36,51 @@ pub enum Tap {
     AfterPlayback,
 }
 
-/// Record-path automatic gain control, signal-chain stage 3 (spec 002).
+/// Record-path automatic gain control, signal-chain stage 3: a **limiter** (spec 005; replaces
+/// the spec 002 compressor).
 ///
-/// Modeled on an *assumed* AGC: every default below is a low-confidence assumption
-/// (A-017 – A-020, `docs/hardware/assumptions.md`) until captures from a real unit exist.
-/// The AGC raises quiet input and lowers loud input toward [`target_dbfs`](Self::target_dbfs)
-/// with a fixed 10:1 slope (A-017). Its side effects are level "pumping" after loud sounds and
-/// background noise that rises during pauses.
+/// Modeled on the limiter in the service manual's schematic (S-002; A-028 adopted): a shunt
+/// transistor driven by a peak detector on the codec's input. Below the knee the stage is the
+/// identity, bit for bit (quiet input is **not** raised and nothing happens in pauses); above
+/// it the output is held at a ceiling at the knee level, with a dead time of a few
+/// milliseconds on a loud onset (the whole onset passes at full level first, so the codec
+/// clips it), a shorter dead time for a few seconds after a loud sound, and a release of
+/// about 1.4 s. The component values are the schematic's; the transistor parameters are
+/// estimates (A-028, A-034 – A-036, `docs/hardware/assumptions.md`), so the dead time, the
+/// release and the knee carry low confidence until captures from a real unit exist. The stage
+/// runs at the host rate, before the rate conversion, so content above the device's band also
+/// drives it (spec 005 FR-007).
 ///
 /// # Output level
 ///
-/// Right after the pipeline is created or reset, or after a long silence, the gain is at
-/// [`max_gain_db`](Self::max_gain_db). A loud first sound then comes out up to that many dB
-/// above its final level (+40 dB, ×100 amplitude, with the defaults; +60 dB at most) for about
-/// one attack time. The output is not clipped. Limit or clip it yourself before converting to
-/// a fixed-point format such as 16-bit PCM. Inputs above 0 dBFS are valid AGC input.
+/// 0 dBFS (a sine of peak amplitude 1.0, AES17) is the codec's full scale (A-030). Sustained
+/// input above the knee comes out at about −1 dBFS, just below full scale, so only the dead
+/// time of a loud onset reaches the ADC clamp ([`Settings::adc_clamp_enabled`]). Inputs above
+/// 0 dBFS are within the limiter's normal operating range. Where speech sits against the knee
+/// depends on the mic chain's gain, which is the least certain number in the register (A-029:
+/// roughly 10–35 dB below full scale at a conversational distance), so the limiter acts on
+/// loud sounds and, at the high end of that estimate, on the peaks of ordinary speech.
 ///
-/// Levels use the AES17 convention: a sine with peak amplitude 1.0 is 0 dBFS. Ranges are
-/// inclusive; values outside them, NaN and ±Inf are rejected by
-/// [`Pipeline::new`](crate::Pipeline::new) (spec 002 FR-011), even when the AGC is bypassed.
+/// Ranges are inclusive; values outside them, NaN and ±Inf are rejected by
+/// [`Pipeline::new`](crate::Pipeline::new) (spec 002 FR-011, kept by spec 005), even when the
+/// stage is bypassed.
 ///
 /// # Example
 ///
 /// ```
 /// use rr_dr60::{Error, Pipeline, Setting, Settings, Tap};
 ///
-/// // Bypass the AGC (the spec 001 sound: band-limiting only).
+/// // Bypass the limiter (the spec 001 sound: band-limiting only).
 /// let mut s = Settings::new(48_000);
 /// s.agc.enabled = false;
 /// Pipeline::new(s)?;
 ///
-/// // Keep the AGC, but recover more slowly after loud sounds, and hear only the AGC.
+/// // Move the knee down so ordinary speech reaches it, and hear only the limiter.
 /// let mut s = Settings::new(48_000);
-/// s.agc.release_ms = 3000.0;
+/// s.agc.knee_dbfs = -6.0;
 /// s.tap = Tap::AfterAgc;
 /// let mut p = Pipeline::new(s)?;
+/// assert_eq!(p.latency_samples(), 0);
 /// let mut buffer = vec![0.0f32; 512];
 /// p.process_in_place(&mut buffer);
 ///
@@ -84,30 +97,29 @@ pub enum Tap {
 pub struct AgcSettings {
     /// On (`true`, default) or bypassed. A-020: the device's AGC is assumed always active.
     pub enabled: bool,
-    /// Target level in dBFS: a steady input at this level gets 0 dB of gain.
-    /// Default −10.0 (A-017). Range −30.0 to 0.0.
-    pub target_dbfs: f32,
-    /// Maximum gain in dB. Default 40.0 (A-017). Range 0.0 to 60.0.
-    pub max_gain_db: f32,
-    /// Maximum attenuation in dB, as a positive number. Default 20.0 (A-017). Range 0.0 to 40.0.
-    pub max_attenuation_db: f32,
-    /// Attack time in ms: after an upward level step, the time for the output to settle within
-    /// 2/27 of its dB excursion. Default 10.0 (A-018). Range 1.0 to 100.0.
+    /// The knee in dBFS: the input level at which the limiter begins to act, and the level its
+    /// output is held at above it; modeled at −1 dBFS (A-028, ±2 dB: the detector's steady-state
+    /// threshold puts the ceiling just below the codec's full scale). Default −1.0. Range −40.0
+    /// to 3.0 (above about +4.7 dBFS the detector could never conduct, spec 005 research R-05).
+    pub knee_dbfs: f32,
+    /// Attack, in ms, as the **dead time** at 10 dB over the knee: how long a loud onset passes
+    /// at full level before the limiter acts (A-034). Longer at smaller overdrives (about 20–25 ms
+    /// at 2 dB over the knee), shorter (≤ 0.5 ms) for a few seconds after a loud sound.
+    /// Default 3.0. Range 1.0 to 50.0 (the circuit floors it near 1 ms, research R-05).
     pub attack_ms: f32,
-    /// Release time in ms, defined like the attack time for a downward step.
-    /// Default 1000.0 (A-018). Range 50.0 to 10000.0.
+    /// Release, in ms: the time to return within 1 dB of unity from 10 dB of attenuation
+    /// (A-035), fast at first and slower near unity. Default 1370.0. Range 200.0 to 10000.0.
+    /// The arming memory (how long the shorter dead time lasts) scales with it.
     pub release_ms: f32,
 }
 
 impl AgcSettings {
-    /// The assumed device values (A-017, A-018, A-020).
+    /// The modeled device values (A-020, A-028, A-034, A-035).
     pub const DEVICE: Self = Self {
-        enabled: true,            // A-020
-        target_dbfs: -10.0,       // A-017
-        max_gain_db: 40.0,        // A-017
-        max_attenuation_db: 20.0, // A-017
-        attack_ms: 10.0,          // A-018
-        release_ms: 1000.0,       // A-018
+        enabled: true,      // A-020
+        knee_dbfs: -1.0,    // A-028: the knee just below the codec's full scale
+        attack_ms: 3.0,     // A-034: dead time at 10 dB over the knee
+        release_ms: 1370.0, // A-035: to −1 dB from 10 dB of attenuation
     };
 }
 
@@ -187,8 +199,10 @@ pub struct VasSettings {
     /// Microphone sensitivity level, 1 to 5. Default 3 (S-001, A-021). In this version it moves
     /// only the VAS threshold: 3 dB per level, and higher levels record quieter sounds (A-022).
     pub sensitivity: u8,
-    /// VAS threshold at sensitivity level 3, in dBFS (sine peak, AES17). Default −18.0 (A-022).
-    /// Range −60.0 to 0.0.
+    /// VAS threshold at sensitivity level 3, in dBFS (sine peak, AES17). Default −40.0 (A-022,
+    /// revised by spec 005: about 40 dB below the limiter's knee, around the level of quiet
+    /// speech at a conversational distance, A-029, low confidence). Range −60.0 to 0.0. Below the limiter's knee the
+    /// threshold is input-referred one to one (spec 005 FR-012).
     pub threshold_dbfs: f32,
     /// Hang time in ms: how long the input must stay below the threshold before recording
     /// pauses. Default 1000.0 (A-023). Range 50.0 to 10000.0.
@@ -204,7 +218,7 @@ impl VasSettings {
         enabled: true,         // S-001, A-008
         mode: VasMode::Drop,   // S-001, A-008
         sensitivity: 3,        // S-001, A-021
-        threshold_dbfs: -18.0, // A-022
+        threshold_dbfs: -40.0, // A-022 (revised by spec 005): −40 dBFS at level 3, 3 dB per step
         hang_ms: 1000.0,       // A-023
         onset_ms: 20.0,        // A-024
     };
@@ -233,6 +247,12 @@ pub struct Settings {
     /// Stage 10 (playback DAC + reconstruction filter) on (`true`, default, A-002) or bypassed.
     /// Ignored when `tap` is [`Tap::AfterRecord`].
     pub playback_stage_enabled: bool,
+    /// The ADC's full-scale saturation after stage 4: output beyond ±1.0 is clamped to ±1.0
+    /// (`true`, default; A-030: the codec cannot record more than full scale) or passed
+    /// unchanged. The limiter holds sustained loud input about 1 dB below full scale, so with
+    /// both on the codec clips only the dead time of a loud onset (spec 005 FR-008). Not applied
+    /// at [`Tap::AfterAgc`].
+    pub adc_clamp_enabled: bool,
     /// Output tap point. Default [`Tap::AfterPlayback`].
     pub tap: Tap,
     /// Seed for stochastic stages (FR-009). No stage is stochastic in this version, so the
@@ -245,8 +265,8 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// Default settings for the given host rate: AGC and VAS on with the device values, both
-    /// band-limit stages on, tap after playback, seed 0.
+    /// Default settings for the given host rate: the limiter and the VAS on with the device
+    /// values, both band-limit stages and the ADC clamp on, tap after playback, seed 0.
     ///
     /// The rate is not validated here. [`Pipeline::new`](crate::Pipeline::new) validates it.
     pub const fn new(host_rate_hz: u32) -> Self {
@@ -254,16 +274,18 @@ impl Settings {
             host_rate_hz,
             record_stage_enabled: true,   // A-002
             playback_stage_enabled: true, // A-002
+            adc_clamp_enabled: true,      // A-030
             tap: Tap::AfterPlayback,
             seed: 0,                  // FR-009
-            agc: AgcSettings::DEVICE, // A-017, A-018, A-020
+            agc: AgcSettings::DEVICE, // A-020, A-028, A-034, A-035
             vas: VasSettings::DEVICE, // S-001, A-008, A-021 – A-024
         }
     }
 
     /// Checks these settings without creating a pipeline: the host rate first (FR-002), then
-    /// every AGC field (spec 002 FR-011), then every VAS field (spec 003 FR-012). [`Pipeline::new`](crate::Pipeline::new) runs the
-    /// same check. Never allocates.
+    /// every AGC field (spec 002 FR-011; knee, attack, release since spec 005), then every VAS
+    /// field (spec 003 FR-012). [`Pipeline::new`](crate::Pipeline::new) runs the same check.
+    /// Never allocates.
     ///
     /// # Errors
     ///
@@ -325,18 +347,26 @@ mod tests {
         }
     }
 
+    /// 005 T004 (spec 005 FR-002, FR-010; contracts/rust-api.md; data-model › Settings): the
+    /// limiter's device values. Replaces the spec 002 compressor defaults (A-017, A-018
+    /// superseded).
     #[test]
-    fn agc_defaults_cite_a017_a018_a020() {
-        // 002 T004 / data-model.md › AgcSettings.
+    fn agc_defaults_cite_a020_a028_a034_a035() {
         let d = AgcSettings::DEVICE;
         assert!(d.enabled); // A-020
-        assert_eq!(d.target_dbfs, -10.0); // A-017
-        assert_eq!(d.max_gain_db, 40.0); // A-017
-        assert_eq!(d.max_attenuation_db, 20.0); // A-017
-        assert_eq!(d.attack_ms, 10.0); // A-018
-        assert_eq!(d.release_ms, 1000.0); // A-018
+        assert_eq!(d.knee_dbfs, -1.0); // A-028: the knee just below the codec's full scale
+        assert_eq!(d.attack_ms, 3.0); // A-034: dead time at 10 dB over the knee
+        assert_eq!(d.release_ms, 1370.0); // A-035: to −1 dB from 10 dB of attenuation
         assert_eq!(AgcSettings::default(), AgcSettings::DEVICE);
         assert_eq!(Settings::new(48_000).agc, AgcSettings::DEVICE);
+    }
+
+    /// 005 T004 (spec 005 FR-008; A-030): the ADC's full-scale clamp is its own setting, on by
+    /// default.
+    #[test]
+    fn adc_clamp_is_on_by_default() {
+        assert!(Settings::new(48_000).adc_clamp_enabled); // A-030
+        assert!(Settings::new(6000).adc_clamp_enabled);
     }
 
     #[test]
@@ -347,12 +377,12 @@ mod tests {
 
     #[test]
     fn vas_defaults_cite_s001_a008_a021_to_a024() {
-        // 003 T003 / data-model.md › VasSettings.
+        // 003 T003 / data-model.md › VasSettings; the threshold restated by 005 T004 (FR-012).
         let d = VasSettings::DEVICE;
         assert!(d.enabled); // S-001, A-008: no VAS switch on the device
         assert_eq!(d.mode, VasMode::Drop); // S-001, A-008
         assert_eq!(d.sensitivity, 3); // S-001, A-021
-        assert_eq!(d.threshold_dbfs, -18.0); // A-022
+        assert_eq!(d.threshold_dbfs, -40.0); // A-022 (revised by spec 005): −40 dBFS at level 3
         assert_eq!(d.hang_ms, 1000.0); // A-023
         assert_eq!(d.onset_ms, 20.0); // A-024
         assert_eq!(VasSettings::default(), VasSettings::DEVICE);

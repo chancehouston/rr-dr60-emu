@@ -111,21 +111,25 @@ fn golden_check_catches_shifted_band_edges() {
     }
 }
 
-/// Spec 002 SC-008: a deliberate change of the default release time by 50 %, or of the target
-/// level by 3 dB, is caught by both a tolerance check and the AGC golden check. The mutants are
-/// built through the harness's `Make` factory with altered public settings (research.md R-12).
+/// Spec 005 SC-007 (T035): a deliberate doubling of the default release, or a 3 dB shift of
+/// the knee, is caught by both a tolerance check and the AGC golden check. The mutants are
+/// built through the harness's `Make` factory with altered public settings (005 research R-08);
+/// the plan's `__with_limiter_mutation` hook was not needed and was not kept
+/// (contracts/rust-api.md › Test hooks).
 mod agc {
     use rr_dr60::{Pipeline, Settings};
     use rr_dr60_harness::agc_checks;
     use rr_dr60_harness::golden;
 
-    fn release_x1_5(mut s: Settings) -> Pipeline {
-        s.agc.release_ms *= 1.5;
+    fn release_x2(mut s: Settings) -> Pipeline {
+        s.agc.release_ms *= 2.0; // engineering target (005 SC-007)
         Pipeline::new(s).unwrap()
     }
 
-    fn target_plus_3(mut s: Settings) -> Pipeline {
-        s.agc.target_dbfs += 3.0;
+    /// −3 dB (the default is −1 dBFS; +3 would also be in range since the knee moved, but −3
+    /// stays the mutant the golden file was blessed against).
+    fn knee_minus_3(mut s: Settings) -> Pipeline {
+        s.agc.knee_dbfs -= 3.0; // engineering target (005 SC-007)
         Pipeline::new(s).unwrap()
     }
 
@@ -141,46 +145,37 @@ mod agc {
 
     #[test]
     fn release_change_is_caught() {
-        let defaults = agc_checks::matrix()[0];
-        let failed = failed_properties(&agc_checks::check_fr006_timing(
-            48_000,
-            &defaults,
-            &release_x1_5,
-        ));
+        // The FR-006 −1 dB release-time row: 2.72 s against 0.82–1.92 s.
+        let failed = failed_properties(&agc_checks::check_fr006_release(48_000, &release_x2));
         assert!(
-            failed.contains(&"release time"),
+            failed.contains(&"release time to -1 dB"),
             "not caught; failures: {failed:?}"
         );
-        let diff = golden::compare(
-            &golden::committed_agc(),
-            &golden::generate_agc(&release_x1_5),
-        );
+        let diff = golden::compare(&golden::committed_agc(), &golden::generate_agc(&release_x2));
         assert!(diff.is_err(), "AGC golden check missed the release change");
     }
 
     #[test]
-    fn target_change_is_caught() {
-        let defaults = agc_checks::matrix()[0];
-        let failed = failed_properties(&agc_checks::check_fr004_regulation(
-            48_000,
-            &defaults,
-            &target_plus_3,
-        ));
+    fn knee_change_is_caught() {
+        // The ceiling rows cannot catch a knee shift (the ceiling is derived from the bisected
+        // knee); the knee row does (005 T035).
+        let failed = failed_properties(&agc_checks::check_fr004_static(48_000, &knee_minus_3));
         assert!(
-            failed.contains(&"output level on the regulation line"),
+            failed.contains(&"knee (-1 dB gain point) by bisection"),
             "not caught; failures: {failed:?}"
         );
         let diff = golden::compare(
             &golden::committed_agc(),
-            &golden::generate_agc(&target_plus_3),
+            &golden::generate_agc(&knee_minus_3),
         );
-        assert!(diff.is_err(), "AGC golden check missed the target change");
+        assert!(diff.is_err(), "AGC golden check missed the knee change");
     }
 }
 
-/// Spec 003 SC-007: a deliberate change of the default hang time by 20 %, or of the threshold
-/// by 3 dB, is caught by both a tolerance check and the VAS golden check. The mutants are built
-/// through the harness's `Make` factory with altered public settings, with no hidden hooks.
+/// Spec 003 SC-007, kept by spec 005 SC-007 (T035): a deliberate change of the default hang
+/// time by 20 %, or of the threshold by 3 dB (−40 → −37 dBFS since spec 005, A-022 revised),
+/// is caught by both a tolerance check and the VAS golden check. The mutants are built through
+/// the harness's `Make` factory with altered public settings, with no hidden hooks.
 mod vas {
     use rr_dr60::{Pipeline, Settings};
     use rr_dr60_harness::golden;

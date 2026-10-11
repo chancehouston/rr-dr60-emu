@@ -1,23 +1,22 @@
-//! Settings validation (spec 002 FR-011, spec 003 FR-012; data-model.md › AgcSettings,
-//! VasSettings).
+//! Settings validation (spec 002 FR-011 as restated by spec 005 FR-010, spec 003 FR-012;
+//! data-model.md › Settings).
 
 use crate::error::{Error, Setting};
 use crate::rate::RatePlan;
 use crate::settings::Settings;
 
-/// Checks `settings`: the host rate first (FR-002), then every AGC field, then every VAS field,
-/// each in struct order. Ranges are inclusive; NaN and ±Inf fail. Fields are checked even when
-/// their stage is bypassed, so a bad value is always reported.
+/// Checks `settings`: the host rate first (FR-002), then every AGC field (knee, attack,
+/// release), then every VAS field, each in struct order. Ranges are inclusive
+/// ([`Setting::range`]); NaN and ±Inf fail. Fields are checked even when their stage is
+/// bypassed, so a bad value is always reported. The two `bool` settings need no validation.
 pub(crate) fn validate(settings: &Settings) -> Result<(), Error> {
     RatePlan::for_host(settings.host_rate_hz)?;
     let a = &settings.agc;
     let v = &settings.vas;
     for (setting, value) in [
-        (Setting::AgcTargetDbfs, a.target_dbfs),
-        (Setting::AgcMaxGainDb, a.max_gain_db),
-        (Setting::AgcMaxAttenuationDb, a.max_attenuation_db),
-        (Setting::AgcAttackMs, a.attack_ms),
-        (Setting::AgcReleaseMs, a.release_ms),
+        (Setting::AgcKneeDbfs, a.knee_dbfs), // A-028; 005 R-05: −40 … +3 dBFS
+        (Setting::AgcAttackMs, a.attack_ms), // A-034; 005 R-05: 1 … 50 ms
+        (Setting::AgcReleaseMs, a.release_ms), // A-035: 200 … 10 000 ms
         (Setting::VasSensitivity, f32::from(v.sensitivity)),
         (Setting::VasThresholdDbfs, v.threshold_dbfs),
         (Setting::VasHangMs, v.hang_ms),
@@ -47,17 +46,14 @@ mod tests {
     }
 
     /// (field, inclusive min, inclusive max, setter) for every AGC field, with the ranges quoted
-    /// from data-model.md (engineering targets, 002 FR-015).
+    /// from spec 005 data-model.md › Settings (engineering targets, 005 FR-010; research R-05):
+    /// knee −40 … +3 dBFS, attack 1 … 50 ms, release 200 … 10 000 ms. 005 T004.
     #[allow(clippy::type_complexity)]
-    fn fields() -> [(Setting, f32, f32, fn(&mut AgcSettings, f32)); 5] {
+    fn fields() -> [(Setting, f32, f32, fn(&mut AgcSettings, f32)); 3] {
         [
-            (Setting::AgcTargetDbfs, -30.0, 0.0, |a, v| a.target_dbfs = v),
-            (Setting::AgcMaxGainDb, 0.0, 60.0, |a, v| a.max_gain_db = v),
-            (Setting::AgcMaxAttenuationDb, 0.0, 40.0, |a, v| {
-                a.max_attenuation_db = v
-            }),
-            (Setting::AgcAttackMs, 1.0, 100.0, |a, v| a.attack_ms = v),
-            (Setting::AgcReleaseMs, 50.0, 10_000.0, |a, v| {
+            (Setting::AgcKneeDbfs, -40.0, 3.0, |a, v| a.knee_dbfs = v),
+            (Setting::AgcAttackMs, 1.0, 50.0, |a, v| a.attack_ms = v),
+            (Setting::AgcReleaseMs, 200.0, 10_000.0, |a, v| {
                 a.release_ms = v
             }),
         ]
@@ -126,12 +122,50 @@ mod tests {
 
     #[test]
     fn release_shorter_than_attack_is_allowed() {
-        // Spec 002 FR-012: any combination of valid values.
+        // Spec 002 FR-012 (kept by 005): any combination of valid values.
         let s = with_agc(|a| {
-            a.attack_ms = 100.0;
-            a.release_ms = 50.0;
+            a.attack_ms = 50.0;
+            a.release_ms = 200.0;
         });
         assert_eq!(validate(&s), Ok(()));
+    }
+
+    /// 005 T004 (FR-010): the knee range is checked at its edges in both directions, and the
+    /// order among the AGC fields is knee, attack, release.
+    #[test]
+    fn knee_range_and_agc_field_order() {
+        assert_eq!(validate(&with_agc(|a| a.knee_dbfs = -40.0)), Ok(()));
+        assert_eq!(validate(&with_agc(|a| a.knee_dbfs = 3.0)), Ok(()));
+        for bad in [-40.001, 3.001, 4.0, f32::NAN] {
+            assert_eq!(
+                validate(&with_agc(|a| a.knee_dbfs = bad)),
+                Err(Error::InvalidSetting {
+                    setting: Setting::AgcKneeDbfs
+                }),
+                "knee {bad}"
+            );
+        }
+        let s = with_agc(|a| {
+            a.knee_dbfs = 10.0;
+            a.attack_ms = 0.0;
+            a.release_ms = 0.0;
+        });
+        assert_eq!(
+            validate(&s),
+            Err(Error::InvalidSetting {
+                setting: Setting::AgcKneeDbfs
+            })
+        );
+        let s = with_agc(|a| {
+            a.attack_ms = 0.0;
+            a.release_ms = 0.0;
+        });
+        assert_eq!(
+            validate(&s),
+            Err(Error::InvalidSetting {
+                setting: Setting::AgcAttackMs
+            })
+        );
     }
 
     fn with_vas(f: impl Fn(&mut VasSettings)) -> Settings {
@@ -231,7 +265,7 @@ mod tests {
         assert_eq!(next(&s), Setting::VasSensitivity);
         s.vas.sensitivity = 3;
         assert_eq!(next(&s), Setting::VasThresholdDbfs);
-        s.vas.threshold_dbfs = -18.0;
+        s.vas.threshold_dbfs = -40.0; // A-022 (revised by spec 005)
         assert_eq!(next(&s), Setting::VasHangMs);
         s.vas.hang_ms = 1000.0;
         assert_eq!(next(&s), Setting::VasOnsetMs);
@@ -275,11 +309,15 @@ mod tests {
     fn setting_display_names_field_and_range() {
         let text = Setting::AgcAttackMs.to_string();
         assert!(text.contains("agc.attack_ms"), "{text}");
-        assert!(text.contains('1') && text.contains("100"), "{text}");
+        assert!(text.contains('1') && text.contains("50"), "{text}"); // 005 FR-010
+        let text = Setting::AgcKneeDbfs.to_string();
+        assert!(text.contains("agc.knee_dbfs"), "{text}");
+        assert!(text.contains("-40") && text.contains('3'), "{text}"); // 005 FR-010
         let err = Error::InvalidSetting {
             setting: Setting::AgcReleaseMs,
         }
         .to_string();
         assert!(err.contains("agc.release_ms"), "{err}");
+        assert!(err.contains("200") && err.contains("10000"), "{err}"); // 005 FR-010
     }
 }

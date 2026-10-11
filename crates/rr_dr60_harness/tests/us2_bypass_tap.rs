@@ -16,7 +16,8 @@ use rr_dr60_harness::configs::{self, c_default_001};
 use rr_dr60_harness::stimulus;
 
 /// The five named configurations (data-model.md), with the AGC and the VAS bypassed (spec 002
-/// FR-018, spec 003 FR-020).
+/// FR-018, spec 003 FR-020) and, since spec 005, the ADC clamp on except in `bypass_all`
+/// (spec 005 research R-06).
 fn config(name: &str, host: u32) -> Settings {
     let mut s = Settings::new(host);
     s.agc.enabled = false;
@@ -29,6 +30,7 @@ fn config(name: &str, host: u32) -> Settings {
         "bypass_all" => {
             s.record_stage_enabled = false;
             s.playback_stage_enabled = false;
+            s.adc_clamp_enabled = false; // 005 R-06: bypass_all passes beyond full scale
         }
         other => panic!("unknown config {other}"),
     }

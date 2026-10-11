@@ -85,10 +85,23 @@ fn non_finite_input_is_treated_as_zero() {
 
 #[test]
 fn over_full_scale_is_not_clipped() {
+    // Spec 001 Edge Cases, restated by spec 005 FR-008 (A-030): the band-limit stages pass
+    // input beyond full scale unclipped, which now shows with the ADC clamp off; through the
+    // `default` configuration (clamp on) the codec saturates the tone at ±1.0 and the playback
+    // stage reconstructs the flat tops with overshoot (a full-scale square wave's fundamental is
+    // 4/π = 1.27), so the peak lies between 1.0 and 1.5 (engineering target, 005 R-06).
     let x = stimulus::tone(1000.0, 4.0, 48_000.0, 48_000);
+    let mut unclamped = configs::settings("default", 48_000);
+    unclamped.adc_clamp_enabled = false;
+    let y = run(&mut Pipeline::new(unclamped).unwrap(), &x);
+    let peak = y[9600..].iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    assert!(peak > 3.8 && peak < 4.2, "unclamped peak {peak}");
     let y = run(&mut fresh(48_000), &x);
     let peak = y[9600..].iter().fold(0.0f32, |m, v| m.max(v.abs()));
-    assert!(peak > 3.8 && peak < 4.2, "peak {peak}");
+    assert!(
+        (1.0..1.5).contains(&peak),
+        "clamped peak {peak} (005 FR-008)"
+    );
 }
 
 #[test]

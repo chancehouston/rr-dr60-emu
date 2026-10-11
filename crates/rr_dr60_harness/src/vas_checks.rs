@@ -23,6 +23,8 @@ const DEVICE_RATE: f64 = 6000.0;
 /// Bisection resolution for the threshold search (engineering target, 003 R-15).
 const BISECT_DB: f64 = 0.05;
 /// The burst level above the threshold (spec 003 definitions; engineering target, 003 R-15).
+/// Since spec 005 the default threshold is −40 dBFS (A-022 revised, 005 FR-012), so the
+/// default bursts are at −30 dBFS (were −8).
 const BURST_ABOVE_DB: f64 = 10.0;
 
 /// A named VAS setting for the matrix (spec 003 FR-012, FR-013).
@@ -804,75 +806,88 @@ pub fn check_rate_self_test(rate: u32, case: &Case, make: Make<'_>) -> Vec<Measu
     ]
 }
 
-/// The US3 AS3 floor-sweep stimulus at `fs` and `floor_dbfs`: three groups of four 1 kHz
-/// bursts at −20 dBFS (300 ms on, 150 ms between bursts), the groups separated by 5 s gaps,
-/// over band-limited noise at the floor throughout; a 0.5 s lead (under the hang time, so it
-/// never pauses) and a 1 s tail (engineering targets, FR-017).
-pub fn interplay_stimulus(fs: f64, floor_dbfs: f64) -> Vec<f32> {
-    let mut segments = vec![(false, 0.5)];
-    for g in 0..3 {
-        for b in 0..4 {
-            segments.push((true, 0.3));
-            if b < 3 {
-                segments.push((false, 0.15));
-            }
-        }
-        segments.push((false, if g < 2 { 5.0 } else { 1.0 }));
-    }
-    let bursts = stimulus::burst_gap(1000.0, -20.0, &segments, fs);
-    let noise = stimulus::bandlimited_noise(0x0D60, bursts.len(), fs, floor_dbfs);
-    bursts.iter().zip(&noise).map(|(b, n)| b + n).collect()
+/// The US3 AS3 floor-sweep stimulus (restated by spec 005 FR-012, T028): the speech-like
+/// pattern of `chain_checks` (three groups of four 1 kHz bursts at `burst_dbfs`, 300 ms on and
+/// 150 ms apart, 5 s gaps, a 0.5 s lead and a 1 s tail) over band-limited noise at
+/// `floor_dbfs`. Returns the samples and the group ranges.
+pub fn interplay_stimulus(
+    rate: u32,
+    floor_dbfs: f64,
+    burst_dbfs: f64,
+) -> (Vec<f32>, Vec<(usize, usize)>) {
+    crate::chain_checks::speech_like_pattern(rate, burst_dbfs, floor_dbfs, 0x0D60)
 }
 
-/// The input-referred VAS threshold implied by spec 002's static curve (A-017, A-022): the
-/// post-AGC threshold mapped back through the regulation line, or through the maximum gain
-/// below the regulated range.
+/// The input-referred VAS threshold (spec 005 FR-012): the identity below the limiter's knee,
+/// where the limiter is unity gain (A-028), so the configured threshold at the current
+/// sensitivity level **is** the input level. The spec 003 R-03 mapping through the spec 002
+/// compressor's curve ("about −58 dBFS") is withdrawn.
 pub fn input_referred_threshold_dbfs(settings: &Settings) -> f64 {
-    let t_out = effective_threshold_dbfs(&settings.vas);
-    let target = f64::from(settings.agc.target_dbfs);
-    let max_gain = f64::from(settings.agc.max_gain_db);
-    let range_low_out = target - max_gain / 0.9 + max_gain;
-    if t_out >= range_low_out {
-        target + 10.0 * (t_out - target)
-    } else {
-        t_out - max_gain
-    }
+    effective_threshold_dbfs(&settings.vas)
 }
 
-/// US3 AS3 (report only, no tolerance): the floor sweep through the default pipeline. Returns
-/// lines for the report: the kept part of each 5 s gap at each floor (from the splices'
-/// removed lengths, R-11), and the input-referred threshold at each sensitivity level.
+/// US3 AS3 (report only, no tolerance; rewritten by spec 005 FR-012): the floor sweep through
+/// the default pipeline at level 3, floors −70 … −35 dBFS RMS in 5 dB steps with the
+/// speech-like bursts at −30 dBFS on top. Per floor: the kept fraction of each 5 s gap (from the
+/// splices' removed lengths, R-11) and whether any splice fell inside a burst group; then the
+/// threshold at each sensitivity level, which is input-referred one to one.
 pub fn interplay_report(rate: u32, make: Make<'_>) -> Vec<String> {
     let fs = f64::from(rate);
     let settings = configs::settings("default_vas", rate);
     let o = onset_s(&settings.vas);
+    let lat = f64::from(Pipeline::new(settings).unwrap().latency_samples());
     let mut lines = vec![format!(
-        "US3 AS3 interplay at {rate} Hz (default pipeline: AGC + VAS); report only, no tolerance"
+        "005 FR-012 interplay at {rate} Hz (default pipeline: limiter + clamp + VAS, level 3; bursts -30 dBFS); report only"
     )];
-    for floor in [-40.0, -50.0, -60.0, -70.0] {
-        let x = interplay_stimulus(fs, floor);
+    let mut floor = -70.0;
+    while floor <= -35.0 + 1e-9 {
+        let (x, groups) = interplay_stimulus(rate, floor, -30.0);
         let r = run(make, settings, &x);
         let gaps: Vec<String> = r
             .events
             .iter()
-            .map(|e| format!("{:.3} s kept", 5.0 - e.input_length as f64 / fs + o))
+            .map(|e| {
+                format!(
+                    "{:.0} %",
+                    100.0 * (5.0 - e.input_length as f64 / fs + o) / 5.0
+                )
+            })
             .collect();
+        // A splice is "inside a group" unless its resume maps back to a group start + onset
+        // (within the chain latency + 1 ms).
+        let mut removed = 0u64;
+        let inside = r.events.iter().enumerate().any(|(k, e)| {
+            removed += e.input_length;
+            let resume_in = e.output_position as f64 + removed as f64;
+            !groups.get(k + 1).is_some_and(|&(start, _)| {
+                (resume_in - (start as f64 + o * fs)).abs() <= lat + 0.001 * fs
+            })
+        });
         lines.push(format!(
-            "  floor {floor:>4} dBFS RMS: {} splice(s) in two 5 s gaps: {}",
+            "  floor {floor:>4} dBFS RMS: {} splice(s); kept part of the two 5 s gaps: {}{}",
             r.events.len(),
             if gaps.is_empty() {
-                "both kept in full (never paused)".to_string()
+                "100 %, 100 % (never paused)".to_string()
             } else {
                 gaps.join(", ")
+            },
+            if inside {
+                "; a splice fell inside a burst group"
+            } else {
+                ""
             }
         ));
+        floor += 5.0;
     }
-    lines.push("  input-referred threshold (spec 002 static curve, A-017; A-022):".to_string());
+    lines.push(
+        "  threshold per sensitivity level (input-referred one to one: the limiter is unity below its knee, A-028; 005 FR-012):"
+            .to_string(),
+    );
     for level in 1..=5u8 {
         let mut s = settings;
         s.vas.sensitivity = level;
         lines.push(format!(
-            "    sensitivity {level}: post-AGC {:>5.1} dBFS -> input {:>6.1} dBFS peak",
+            "    sensitivity {level}: {:>5.1} dBFS (input-referred {:>5.1} dBFS)",
             effective_threshold_dbfs(&s.vas),
             input_referred_threshold_dbfs(&s)
         ));
@@ -888,20 +903,22 @@ mod tests {
     fn matrix_thresholds_and_rounding() {
         assert_eq!(matrix().len(), 11);
         assert!(matrix()[0].is_default() && !matrix()[1].is_default());
+        // A-022 (revised by spec 005 FR-012): −40 dBFS at level 3, 3 dB per level.
         let d = VasSettings::DEVICE;
-        assert_eq!(effective_threshold_dbfs(&d), -18.0);
+        assert_eq!(effective_threshold_dbfs(&d), -40.0);
         let mut v = d;
         v.sensitivity = 1;
-        assert_eq!(effective_threshold_dbfs(&v), -12.0);
+        assert_eq!(effective_threshold_dbfs(&v), -34.0);
         v.sensitivity = 5;
-        assert_eq!(effective_threshold_dbfs(&v), -24.0);
+        assert_eq!(effective_threshold_dbfs(&v), -46.0);
         assert_eq!(hang_s(&d), 1.0);
         assert_eq!(onset_s(&d), 0.02);
+        // 005 FR-012: input-referred == configured below the knee (restated from −58 / −30).
         let s = Settings::new(48_000);
-        assert!((input_referred_threshold_dbfs(&s) + 58.0).abs() < 1e-9);
+        assert!((input_referred_threshold_dbfs(&s) + 40.0).abs() < 1e-9);
         let mut s1 = s;
         s1.vas.sensitivity = 1;
-        assert!((input_referred_threshold_dbfs(&s1) + 30.0).abs() < 1e-9);
+        assert!((input_referred_threshold_dbfs(&s1) + 34.0).abs() < 1e-9);
         // At the 6 kHz device rate (spec 004): 2 s lead, bursts of 10, 18, 30 and 1000 ms, each
         // followed by 2 s (was 16_000 + 80 + 144 + 240 + 8000 + 4 × 16_000 at 8 kHz).
         let (x, bursts) = onset_stimulus(&d, 6000.0);

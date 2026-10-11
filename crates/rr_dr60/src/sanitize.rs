@@ -23,7 +23,8 @@ pub(crate) fn sanitize_in(x: f32) -> f64 {
 /// Internal f64 sample to f32 output, rounding to nearest. Results that would be f32
 /// subnormals become 0.0, so the output never contains subnormals (spec Edge Cases).
 /// Results beyond the f32 range saturate to ±`f32::MAX` instead of becoming ±Inf, so the
-/// output is always finite even with up to +60 dB of AGC gain (spec 002 R-07).
+/// output is always finite whatever the input level (spec 002 R-07, kept by spec 005: the
+/// limiter never amplifies, but a host may feed values near the f32 range).
 #[inline]
 pub(crate) fn narrow_out(y: f64) -> f32 {
     let v = y as f32;
@@ -52,8 +53,8 @@ pub(crate) fn flush_state(x: f64) -> f64 {
 mod tests {
     use super::*;
 
-    /// 002 T007 / research.md R-07: with up to +60 dB of AGC gain, huge finite inputs must not
-    /// become ±Inf on narrowing; they saturate to ±f32::MAX.
+    /// 002 T007 / research.md R-07: huge finite inputs must not become ±Inf on narrowing; they
+    /// saturate to ±f32::MAX.
     #[test]
     fn narrow_out_saturates_instead_of_overflowing() {
         assert_eq!(narrow_out(1e300).to_bits(), f32::MAX.to_bits());

@@ -7,8 +7,9 @@
 use rr_dr60::{BlockInfo, Error, Pipeline, Setting, Settings, Tap, VasEvent, VasMode};
 use rr_dr60_harness::{configs, golden, stimulus};
 
-/// The burst level: the default threshold (−18 dBFS, A-022) + 10 dB (spec 003 definitions).
-const BURST_DBFS: f64 = -8.0;
+/// The burst level: the default threshold (−40 dBFS, A-022 revised by spec 005 FR-012) + 10 dB
+/// (spec 003 definitions; restated by 005 FR-012, was −8 dBFS).
+const BURST_DBFS: f64 = -30.0;
 
 /// Processes `x` in one block; returns the output, its events and the block result.
 fn run(settings: Settings, x: &[f32]) -> (Vec<f32>, Vec<VasEvent>, BlockInfo) {
@@ -25,14 +26,14 @@ fn burst_gap(segments: &[(bool, f64)], rate: u32) -> Vec<f32> {
     stimulus::burst_gap(1000.0, BURST_DBFS, segments, f64::from(rate))
 }
 
-/// US2 AS1 (FR-002, FR-020, SC-003): with the VAS bypassed, every spec 001 and 002 golden entry
+/// US2 AS1 (FR-002, FR-020, SC-003): with the VAS bypassed, every spec 001 golden entry
 /// matches with zero differences, and every block produces exactly as many samples as it
-/// consumed.
+/// consumed. The spec 002 AGC golden file is re-blessed by spec 005 (FR-016), so its match is
+/// `tests/golden_agc.rs`'s own check, not this scenario's (restated by 005 FR-012, T026).
 #[test]
-fn as1_bypassed_vas_reproduces_the_001_and_002_golden_files() {
+fn as1_bypassed_vas_reproduces_the_001_golden_file() {
     let make = |s| Pipeline::new(s).unwrap();
     golden::compare(&golden::committed(), &golden::generate(&make)).unwrap();
-    golden::compare(&golden::committed_agc(), &golden::generate_agc(&make)).unwrap();
 
     for rate in configs::all_rates() {
         let x = golden::stimulus("sweep_log", rate);
@@ -100,14 +101,15 @@ fn lowest_kept_level_dbfs(settings: Settings, mut lo: f64, mut hi: f64) -> f64 {
     hi
 }
 
-/// US2 AS3 (FR-007, A-022): at sensitivity 1 and 5 the threshold is 6 dB above and 6 dB below
-/// the level-3 threshold (−12 and −24 dBFS), each ±1 dB.
+/// US2 AS3 (FR-007, A-022; restated by 005 FR-012, US2 AS4): at sensitivity 1 and 5 the
+/// threshold is 6 dB above and 6 dB below the level-3 threshold (−34 and −46 dBFS; were −12 and
+/// −24 against −18), each ±1 dB.
 #[test]
 fn as3_sensitivity_1_and_5_move_the_threshold_by_6_db() {
-    for (level, want) in [(1u8, -12.0), (5u8, -24.0)] {
+    for (level, want) in [(1u8, -34.0), (5u8, -46.0)] {
         let mut s = configs::settings("vas_only", 48_000);
         s.vas.sensitivity = level;
-        let got = lowest_kept_level_dbfs(s, -40.0, 0.0);
+        let got = lowest_kept_level_dbfs(s, -60.0, -20.0); // the −60 … 0 dBFS setting range
         eprintln!("US2 AS3: sensitivity {level}: threshold {got:.2} dBFS (want {want} ± 1)");
         let tol = 1.0; // ±1 dB, engineering target (003 FR-017)
         assert!((got - want).abs() <= tol, "level {level}: {got} dBFS");

@@ -1,8 +1,14 @@
-//! Spec 002 edge cases (tasks.md T036; spec Edge Cases; research.md R-07, R-11).
+//! Spec 005 edge cases (tasks.md T019; spec › Edge Cases; research R-03, R-14).
+//!
+//! Every limiter observation is at the host-rate "after AGC" tap of the AGC-isolated
+//! configuration (`agc_only`), with the exact per-sample gain.
 
-use rr_dr60::{AgcSettings, Pipeline, Settings};
-use rr_dr60_harness::analysis::{db, from_db, gain_trajectory_exact, single_bin};
-use rr_dr60_harness::{agc_checks, configs, stimulus};
+use rr_dr60::{__test_hooks, Pipeline, Settings};
+use rr_dr60_harness::agc_checks;
+use rr_dr60_harness::analysis::db;
+use rr_dr60_harness::checks::{Tolerance, standard};
+use rr_dr60_harness::stimulus::{self, Pcg32};
+use rr_dr60_harness::{configs, report};
 
 fn run(settings: Settings, x: &[f32]) -> Vec<f32> {
     let mut y = vec![0.0; x.len()];
@@ -15,43 +21,166 @@ fn run(settings: Settings, x: &[f32]) -> Vec<f32> {
     y
 }
 
-fn agc_only(rate: u32, agc: AgcSettings) -> Settings {
-    let mut s = configs::settings("agc_only", rate);
-    s.agc = agc;
-    s
+/// A 1 kHz tone at the host-grid peak phase (005 R-08).
+fn tone(level_dbfs: f64, secs: f64, rate: u32) -> Vec<f32> {
+    let fs = f64::from(rate);
+    stimulus::tone_at_phase(
+        1000.0,
+        level_dbfs,
+        stimulus::peak_phase(1000.0, rate),
+        fs,
+        (secs * fs) as usize,
+    )
 }
 
-/// 002 FR-013, A-019: a fresh pipeline applies exactly the maximum gain to its first non-zero
-/// sample (6 kHz, where the rate conversion is the identity; was 8 kHz before spec 004).
+/// The onset stimulus: −20 dBFS 0.1 s, then +11 dBFS 0.4 s (data-model.md › Attack step).
+fn onset(rate: u32) -> Vec<f32> {
+    stimulus::step_at_phase(
+        1000.0,
+        &[-20.0, 11.0],
+        &[0.1, 0.4],
+        stimulus::peak_phase(1000.0, rate),
+        f64::from(rate),
+    )
+}
+
+/// Spec Edge Cases › Input that never reaches the knee: 60 s of a −6 dBFS tone at 6 kHz is
+/// returned bit for bit, with no drift (FR-003).
 #[test]
-fn starts_at_maximum_gain() {
-    let x = stimulus::step(1000.0, &[-10.0], &[0.01], 6000.0);
-    let y = run(agc_only(6000, AgcSettings::DEVICE), &x);
-    let n = x.iter().position(|&v| v != 0.0).unwrap();
-    let gain = db(f64::from(y[n]) / f64::from(x[n]));
+fn never_reaches_the_knee_for_60_s_is_bit_exact() {
+    let x = tone(-6.0, 60.0, 6000);
+    let y = run(configs::settings("agc_only", 6000), &x);
+    let differing = x
+        .iter()
+        .zip(&y)
+        .filter(|(a, b)| a.to_bits() != b.to_bits())
+        .count();
+    assert_eq!(differing, 0, "{differing} differing samples in 60 s");
+}
+
+/// Spec Edge Cases › Input within 1.5 dB of the knee: the FR-004 row for a tone 0.5 dB above
+/// the measured knee is a report row, not a pass/fail row. The level is taken relative to the
+/// bisected knee rather than fixed at +1.5 dBFS, so the test asserts the band rule itself and
+/// not where the knee happens to read.
+#[test]
+fn tone_within_the_knee_band_is_reported_not_failed() {
+    let rate = 48_000;
+    let knee = agc_checks::knee_bisection(rate, &standard, 0.0);
+    let rows = agc_checks::static_curve_rows(rate, &standard, &[knee + 0.5], knee);
+    report::print(&rows);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].tolerance, Tolerance::Report, "{}", rows[0]);
+    assert!(rows[0].passed);
+}
+
+/// Spec Edge Cases › Input far above the knee: +20 dBFS is held at the ceiling, the default
+/// knee (within the FR-004 tolerance).
+#[test]
+fn plus_20_dbfs_is_held_at_the_ceiling() {
+    let knee = f64::from(rr_dr60::AgcSettings::DEVICE.knee_dbfs); // A-028
+    for rate in [6000, 48_000] {
+        let x = tone(20.0, 5.0, rate);
+        let y = run(configs::settings("agc_only", rate), &x);
+        let tail = &y[y.len() - rate as usize..];
+        let peak = db(f64::from(tail.iter().fold(0.0f32, |m, v| m.max(v.abs()))));
+        eprintln!("{rate} Hz: +20 dBFS in -> peak {peak:+.3} dBFS (ceiling {knee:+.1})");
+        assert!((peak - knee).abs() <= 0.5, "{rate} Hz: peak {peak} dBFS"); // 005 FR-004; A-028
+    }
+}
+
+/// Spec Edge Cases › Input far above the knee: +40 dBFS, beyond the device's own range, stays
+/// finite with the gain at or above the 40 dB limit (engineering target).
+#[test]
+fn plus_40_dbfs_stays_stable() {
+    let rate = 48_000;
+    let x = tone(40.0, 2.0, rate);
+    let trace = agc_checks::gain_trace(&standard, rate, "agc_only", &x, stimulus::amplitude(40.0));
+    let y = run(configs::settings("agc_only", rate), &x);
+    assert!(y.iter().all(|v| v.is_finite()));
+    let gmin = trace
+        .iter()
+        .copied()
+        .filter(|g| !g.is_nan())
+        .fold(f64::INFINITY, f64::min);
+    eprintln!("+40 dBFS: minimum gain {gmin:.3} dB");
+    assert!(gmin >= -40.0 - 1e-3, "gain {gmin} dB"); // engineering target (005 FR-004)
+}
+
+/// Spec Edge Cases › DC offset: a −30 dBFS offset added to the static-curve tones moves the
+/// bisected knee by under 0.3 dB. The detector's 7 Hz DC block is not modeled (R-14).
+#[test]
+fn dc_offset_shifts_the_knee_under_0_3_db() {
+    let rate = 48_000;
+    let plain = agc_checks::knee_bisection(rate, &standard, 0.0);
+    let offset = agc_checks::knee_bisection(rate, &standard, stimulus::amplitude(-30.0));
+    eprintln!("knee without offset {plain:+.3} dBFS, with a -30 dBFS DC offset {offset:+.3} dBFS");
+    // engineering target (005 Edge Cases): under 0.3 dB
     assert!(
-        (gain - 40.0).abs() <= 0.01,
-        "first-sample gain {gain:.4} dB"
+        (offset - plain).abs() < 0.3,
+        "knee shift {} dB",
+        offset - plain
     );
 }
 
-/// 002 FR-013: after a loud tone, `reset()` and `reconfigure(same settings)` each behave like a
-/// freshly created pipeline, bit for bit.
+/// Spec Edge Cases › DC offset above the knee: a +2 dBFS DC level alone keeps the limiter
+/// engaged (steady gain below 0 dB; reported).
 #[test]
-fn reset_and_reconfigure_equal_fresh() {
-    let s = configs::settings("default_agc", 48_000);
-    let loud = stimulus::step(1000.0, &[0.0], &[0.3], 48_000.0);
-    let x = stimulus::step(1000.0, &[-30.0, -10.0], &[0.2, 0.2], 48_000.0);
-    let fresh = run(s, &x);
+fn dc_offset_above_the_knee_keeps_the_limiter_engaged() {
+    let rate = 48_000;
+    let level = stimulus::amplitude(2.0) as f32; // +2 dBFS, 3 dB above the −1 dBFS knee (A-028)
+    let x = stimulus::dc(level, 3 * rate as usize);
+    let y = run(configs::settings("agc_only", rate), &x);
+    let tail = &y[y.len() - 4800..];
+    let mean = tail.iter().map(|&v| f64::from(v)).sum::<f64>() / tail.len() as f64;
+    let gain = db(mean / f64::from(level));
+    eprintln!("+2 dBFS DC alone: steady gain {gain:.3} dB (report)");
+    assert!(gain < 0.0, "the limiter did not engage on DC: {gain} dB");
+    assert!(gain > -3.0, "implausible DC gain {gain} dB");
+}
+
+/// Spec Edge Cases › Non-finite input: NaN, ±Inf and subnormal samples in a +11 dBFS tone act
+/// as 0.0 before the detector sees them: the output equals the same tone with 0.0 in their
+/// place.
+#[test]
+fn non_finite_input_is_zeroed_before_the_detector() {
+    let rate = 48_000;
+    let clean = tone(11.0, 0.5, rate);
+    let (mut bad, mut zeroed) = (clean.clone(), clean);
+    for (i, v) in [
+        (4_000, f32::NAN),
+        (9_000, f32::INFINITY),
+        (15_000, f32::NEG_INFINITY),
+        (15_001, f32::from_bits(1)),
+    ] {
+        bad[i] = v;
+        zeroed[i] = 0.0;
+    }
+    let s = configs::settings("agc_only", rate);
+    let y = run(s, &bad);
+    assert!(y.iter().all(|v| v.is_finite()));
+    assert_eq!(y, run(s, &zeroed));
+}
+
+/// Spec Edge Cases › Reset or reconfigure mid-attack: the control returns to the discharged
+/// state and the next onset has the full dead time, bit for bit as a fresh pipeline.
+#[test]
+fn reset_mid_attack_restores_the_full_dead_time() {
     for how in ["reset", "reconfigure"] {
+        let rate = 48_000;
+        let s = configs::settings("agc_only", rate);
+        let x = onset(rate);
+        let fresh = run(s, &x);
         let mut p = Pipeline::new(s).unwrap();
-        let mut warm = loud.clone();
-        let produced = p.process_in_place(&mut warm).produced;
-        warm.truncate(produced);
+        // 1 ms into the +11 dBFS segment: mid dead time (3 ms).
+        let cut = (0.1 * f64::from(rate)) as usize + 48;
+        let mut partial = x[..cut].to_vec();
+        let _ = p.process_in_place(&mut partial);
+        assert!(__test_hooks::limiter_state(&p) > 0.0, "{how}: not charging");
         match how {
             "reset" => p.reset(),
             _ => p.reconfigure(s).unwrap(),
         }
+        assert_eq!(__test_hooks::limiter_state(&p), 0.0, "{how}");
         let mut y = vec![0.0; x.len()];
         let produced = p.process(&x, &mut y).unwrap().produced;
         y.truncate(produced);
@@ -59,201 +188,60 @@ fn reset_and_reconfigure_equal_fresh() {
     }
 }
 
-/// Spec Edge Cases: with maximum gain and maximum attenuation both 0 dB, output equals input
-/// within ±0.01 dB at every level (here: bit for bit, since the gain is exactly 0 dB).
+/// Spec Edge Cases › Reconfigure while armed: 2 s after a loud burst the control is still
+/// charged; `reconfigure` discharges it and the next onset again has the full dead time.
 #[test]
-fn zero_gain_range_is_unity() {
-    let mut agc = AgcSettings::DEVICE;
-    agc.max_gain_db = 0.0;
-    agc.max_attenuation_db = 0.0;
-    for rate in [6000, 48_000] {
-        let mut off = agc_only(rate, agc);
-        off.agc.enabled = false;
-        for level in [-60.0, -10.0, 10.0] {
-            let x = stimulus::step(1000.0, &[level], &[0.3], f64::from(rate));
-            let (y, y_ref) = (run(agc_only(rate, agc), &x), run(off, &x));
-            let worst = y
-                .iter()
-                .zip(&y_ref)
-                .filter(|(_, r)| r.abs() > 0.0)
-                .map(|(a, r)| db(f64::from(*a) / f64::from(*r)).abs())
-                .fold(0.0, f64::max);
-            assert!(worst <= 0.01, "{rate} Hz, {level} dBFS: {worst} dB");
-            assert_eq!(
-                y, y_ref,
-                "{rate} Hz, {level} dBFS: expected bit-exact unity gain"
-            );
+fn reconfigure_discharges() {
+    let rate = 6000;
+    let s = configs::settings("agc_only", rate);
+    let mut p = Pipeline::new(s).unwrap();
+    let mut armed = stimulus::step_at_phase(
+        1000.0,
+        &[11.0, -20.0],
+        &[0.2, 2.0],
+        stimulus::peak_phase(1000.0, rate),
+        f64::from(rate),
+    );
+    let _ = p.process_in_place(&mut armed);
+    let state = __test_hooks::limiter_state(&p);
+    assert!(state > 0.5, "not armed: {state} V"); // A-028: armed between about 0.5 and 1.1 V
+    p.reconfigure(s).unwrap();
+    assert_eq!(__test_hooks::limiter_state(&p), 0.0);
+    let x = onset(rate);
+    let mut y = vec![0.0; x.len()];
+    let produced = p.process(&x, &mut y).unwrap().produced;
+    y.truncate(produced);
+    assert_eq!(y, run(s, &x));
+}
+
+/// Spec Edge Cases › Block boundaries (FR-014): at 44.1 kHz the onset stimulus in 50 random
+/// partitions gives identical output and identical limiter state.
+#[test]
+fn block_partitions_give_identical_output_and_state() {
+    let rate = 44_100;
+    let s = configs::settings("agc_only", rate);
+    let x = onset(rate);
+    let mut whole = Pipeline::new(s).unwrap();
+    let mut want = vec![0.0; x.len()];
+    let _ = whole.process(&x, &mut want).unwrap();
+    let want_state = __test_hooks::limiter_state(&whole);
+    let mut rng = Pcg32::new(0x0D60, 7);
+    for i in 0..50 {
+        let mut p = Pipeline::new(s).unwrap();
+        let mut out = Vec::with_capacity(x.len());
+        let mut pos = 0;
+        while pos < x.len() {
+            let n = (rng.below(4097) as usize).min(x.len() - pos);
+            let mut y = vec![0.0; n];
+            let produced = p.process(&x[pos..pos + n], &mut y).unwrap().produced;
+            out.extend_from_slice(&y[..produced]);
+            pos += n;
         }
+        assert_eq!(out, want, "partition {i}");
+        assert_eq!(
+            __test_hooks::limiter_state(&p).to_bits(),
+            want_state.to_bits(),
+            "partition {i}: state"
+        );
     }
-}
-
-/// research.md R-07 and spec Edge Cases › Long silence, 10 minutes each (slow in debug):
-/// (a) maximum attenuation 0 with a 0 dBFS tone: the gain decays from 40 dB, flushes to exactly
-///     0 dB, and from then on output equals input bit for bit; no subnormal output;
-/// (b) 10 minutes of digital silence after a loud tone: exact zeros out, then the gain is at
-///     maximum within 1e-9 dB.
-#[test]
-#[ignore = "slow: 10 + 10 minutes of audio; run in release mode (CI check job)"]
-fn ten_minute_flush_and_long_silence() {
-    let fs = 6000.0; // the identity rate (spec 004 FR-002); the durations are unchanged
-    let ten_min = (600.0 * fs) as usize;
-    let mut agc = AgcSettings::DEVICE;
-    agc.max_attenuation_db = 0.0;
-    let x: Vec<f32> = stimulus::step(1000.0, &[0.0], &[600.0], fs);
-    let y = run(agc_only(6000, agc), &x);
-    assert!(y.iter().all(|v| !v.is_subnormal()));
-    let last_diff = y
-        .iter()
-        .zip(&x)
-        .rposition(|(a, b)| a.to_bits() != b.to_bits());
-    let flushed_from = last_diff.map_or(0, |i| i + 1);
-    assert!(
-        flushed_from < ten_min - 6000, // flushed at least 1 s before the end
-        "gain never flushed to 0 dB (last diff {last_diff:?})"
-    );
-
-    let mut p = Pipeline::new(agc_only(6000, AgcSettings::DEVICE)).unwrap();
-    let mut loud = stimulus::step(1000.0, &[0.0], &[1.0], fs);
-    let produced = p.process_in_place(&mut loud).produced;
-    loud.truncate(produced);
-    let mut quiet = stimulus::silence(ten_min);
-    let produced = p.process_in_place(&mut quiet).produced;
-    quiet.truncate(produced);
-    assert!(
-        quiet.iter().all(|v| v.to_bits() == 0),
-        "silence must stay exactly 0.0"
-    );
-    let probe = stimulus::step(1000.0, &[-80.0], &[0.001], fs);
-    let mut out = probe.clone();
-    let produced = p.process_in_place(&mut out).produced;
-    out.truncate(produced);
-    let n = probe.iter().position(|&v| v != 0.0).unwrap();
-    let gain = db(f64::from(out[n]) / f64::from(probe[n]));
-    assert!(
-        (gain - 40.0).abs() <= 1e-6,
-        "gain after long silence {gain} dB"
-    );
-}
-
-/// Spec Edge Cases › DC: DC counts as level. DC of amplitude 0.1 reads like a sine of peak 0.1
-/// (−20 dBFS), so the target gain is +9 dB and the steady output is 0.1 · 10^(9/20) ± 1 dB
-/// (engineering target, R-11).
-#[test]
-fn dc_drives_the_gain() {
-    let x = stimulus::dc(0.1, 48_000);
-    let y = run(agc_only(48_000, AgcSettings::DEVICE), &x);
-    let tail = &y[y.len() - 12_000..];
-    let mean = tail.iter().map(|&v| f64::from(v)).sum::<f64>() / tail.len() as f64;
-    let err = db(mean / (0.1 * from_db(9.0)));
-    eprintln!("DC 0.1 → {mean:.5} ({err:+.3} dB vs expected)");
-    assert!(err.abs() <= 1.0, "DC output {mean} ({err:+.3} dB)");
-}
-
-/// Spec Edge Cases › Out-of-band low frequencies: a 50 Hz tone at −20 dBFS drives the AGC
-/// even though stage 4 would remove it: the mean gain is at least 20 dB below the silence
-/// gain (engineering target, R-11).
-#[test]
-fn low_frequencies_drive_the_gain() {
-    let rate = 48_000;
-    let fs = f64::from(rate);
-    let s = agc_only(rate, AgcSettings::DEVICE);
-    let x = stimulus::step(50.0, &[-20.0], &[2.0], fs);
-    let mut off = s;
-    off.agc.enabled = false;
-    let traj = gain_trajectory_exact(&run(off, &x), &run(s, &x), 5.0 * stimulus::amplitude(-20.0));
-    let tail: Vec<f64> = traj
-        .iter()
-        .filter(|p| p.0 > (1.5 * fs) as usize)
-        .map(|p| p.1)
-        .collect();
-    let mean = tail.iter().sum::<f64>() / tail.len() as f64;
-    eprintln!("50 Hz −20 dBFS: mean gain {mean:.2} dB (silence gain 40 dB)");
-    assert!(mean <= 40.0 - 20.0, "mean gain {mean:.2} dB");
-}
-
-/// Spec 002 Edge Cases › Content above the device band (above 3 kHz since spec 004, A-019
-/// restated; was "above 4 kHz"): at 48 kHz, adding a 6 kHz tone at −10 dBFS to a 1 kHz tone
-/// at −40 dBFS leaves the 1 kHz output level unchanged within 0.1 dB (engineering target;
-/// A-019: the AGC acts on the device band).
-///
-/// Measured over the last 0.25 s of 6 s: switching the 6 kHz tone on abruptly is a click with
-/// in-band energy, which the AGC (starting at +40 dB) reacts to; the gain needs a few release
-/// times to recover from that onset (T036).
-#[test]
-fn content_above_the_device_band_does_not_affect_the_gain() {
-    let fs = 48_000.0;
-    let s = agc_only(48_000, AgcSettings::DEVICE);
-    let base = stimulus::step(1000.0, &[-40.0], &[6.0], fs);
-    let hf = stimulus::step(6000.0, &[-10.0], &[6.0], fs);
-    let both: Vec<f32> = base.iter().zip(&hf).map(|(a, b)| a + b).collect();
-    let level = |y: &[f32]| {
-        let len = 12_000;
-        db(single_bin(y, 1000.0, fs, y.len() - len, len).norm())
-    };
-    let (a, b) = (level(&run(s, &base)), level(&run(s, &both)));
-    eprintln!("1 kHz alone {a:.3} dBFS, with 6 kHz {b:.3} dBFS");
-    assert!((a - b).abs() <= 0.1, "{a:.3} vs {b:.3}");
-}
-
-/// Spec Edge Cases › Non-finite input: NaN, +Inf and −Inf mid-stream give output bit-identical
-/// to the same stream with 0.0 in their place; no reset needed.
-#[test]
-fn non_finite_input_acts_as_zero() {
-    let fs = 48_000.0;
-    let s = configs::settings("default_agc", 48_000);
-    let clean = stimulus::step(1000.0, &[-20.0], &[0.5], fs);
-    let (mut bad, mut zeroed) = (clean.clone(), clean);
-    for (i, v) in [
-        (4_000, f32::NAN),
-        (9_000, f32::INFINITY),
-        (15_000, f32::NEG_INFINITY),
-    ] {
-        bad[i] = v;
-        zeroed[i] = 0.0;
-    }
-    let y = run(s, &bad);
-    assert!(y.iter().all(|v| v.is_finite()));
-    assert_eq!(y, run(s, &zeroed));
-}
-
-/// Spec Edge Cases › Overshoot: the start-at-maximum peak passes unclipped and finite (about
-/// +30 dBFS for a −10 dBFS input at defaults); a huge finite input saturates instead of
-/// becoming Inf (R-07).
-#[test]
-fn overshoot_is_unclipped_and_finite() {
-    let fs = 48_000.0;
-    let s = agc_only(48_000, AgcSettings::DEVICE);
-    let y = run(s, &stimulus::step(1000.0, &[-10.0], &[0.5], fs));
-    let peak = y.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-    eprintln!("start-at-maximum peak {:.2} dBFS", db(f64::from(peak)));
-    assert!(peak > 10.0, "overshoot looks clipped: peak {peak}");
-    assert!(y.iter().all(|v| v.is_finite()));
-    // "About one attack time": the output is more than 6 dB above its steady peak for at most
-    // 2 × the attack time after the boundary latency (engineering target; expected about 7 ms,
-    // since the gain falls from +40 dB exponentially in dB with τ = attack / ln 13.5).
-    let steady = y[y.len() - 4800..]
-        .iter()
-        .fold(0.0f32, |m, v| m.max(v.abs()));
-    let lat = Pipeline::new(s).unwrap().latency_samples() as usize;
-    let last_hot = y.iter().rposition(|v| v.abs() > 2.0 * steady).unwrap();
-    let hot_ms = (last_hot.saturating_sub(lat)) as f64 / fs * 1000.0;
-    eprintln!("overshoot more than 6 dB above steady for {hot_ms:.2} ms");
-    assert!(
-        hot_ms <= 20.0,
-        "overshoot lasted {hot_ms:.2} ms (attack 10 ms)"
-    );
-    let huge = run(s, &stimulus::dc(1e37, 4800));
-    assert!(
-        huge.iter().all(|v| v.is_finite()),
-        "huge input produced Inf"
-    );
-}
-
-/// The FR-009 stimulus is bit-reproducible (it feeds the golden file).
-#[test]
-fn noise_burst_stimulus_is_reproducible() {
-    assert_eq!(
-        agc_checks::noise_burst_stimulus(16_000.0),
-        agc_checks::noise_burst_stimulus(16_000.0)
-    );
 }

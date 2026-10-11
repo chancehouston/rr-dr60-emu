@@ -6,7 +6,10 @@
 //! Per-sample processing and research.md R-02 – R-04:
 //!
 //! - **Detector** (A-022, R-02): a sample is "sound" when |x| ≥ A_thr. A sine's peak equals its
-//!   AES17 level, so a sample peak compares directly against the sine-level threshold.
+//!   AES17 level, so a sample peak compares directly against the sine-level threshold. The
+//!   VAS input is the clamped record-stage output (spec 005 FR-008); below the limiter's knee
+//!   the limiter is the identity, so the threshold (−40 dBFS at level 3, A-022 revised by spec
+//!   005) is input-referred one to one (005 FR-012).
 //! - **Pause** (A-023): after more than H consecutive non-sound samples. The first H are kept.
 //! - **Resume** (A-024): on a sound sample, once a "sound run" has lasted O + 1 samples. A run
 //!   continues across gaps of at most W samples between sound samples, which bridges the troughs
@@ -189,12 +192,13 @@ mod tests {
             .collect()
     }
 
-    /// `n` samples of a 1 kHz tone at −8 dBFS (threshold + 10 dB) with a half-sample phase
-    /// offset, so every sample is a sound sample: |sin| ≥ sin(30°) = 0.5, and
-    /// 0.5 · 0.398 > 0.126 = A_thr. Burst lengths are then exact sound-run lengths.
+    /// `n` samples of a 1 kHz tone at −30 dBFS (threshold + 10 dB; restated from −8 dBFS by
+    /// spec 005 FR-012) with a half-sample phase offset, so every sample is a sound sample:
+    /// |sin| ≥ sin(30°) = 0.5, and 0.5 · 0.0316 > 0.01 = A_thr. Burst lengths are then exact
+    /// sound-run lengths.
     fn loud(n: usize) -> Vec<f64> {
         (0..n)
-            .map(|k| amp(-8.0) * sin(TAU * (((k % 6) as f64 + 0.5) / 6.0)))
+            .map(|k| amp(-30.0) * sin(TAU * (((k % 6) as f64 + 0.5) / 6.0)))
             .collect()
     }
 
@@ -227,7 +231,7 @@ mod tests {
     /// The lowest level (bisection to 0.05 dB) at which `freq` is kept in full for 2 s
     /// (longer than H, so a level below threshold would pause).
     fn lowest_kept(freq: f64, settings: impl Fn(&mut VasSettings) + Copy) -> f64 {
-        let (mut lo, mut hi) = (-40.0, 0.0);
+        let (mut lo, mut hi) = (-60.0, 0.0); // the −60 … 0 dBFS setting range (003 FR-012)
         while hi - lo > 0.05 {
             let mid = 0.5 * (lo + hi);
             let mut stage = with(settings);
@@ -241,39 +245,41 @@ mod tests {
         hi
     }
 
-    /// 003 FR-006 (A-022): +3 dB is kept for 10 s; −3 dB keeps exactly H, then drops.
-    /// 225 and 2550 Hz (the band edges at 6 kHz, 004 FR-012) have the same threshold as 1 kHz
-    /// within ±1 dB.
+    /// 003 FR-006 (A-022; the default restated to −40 dBFS by spec 005 FR-012): +3 dB is kept
+    /// for 10 s; −3 dB keeps exactly H, then drops. 225 and 2550 Hz (the band edges at 6 kHz,
+    /// 004 FR-012) have the same threshold as 1 kHz within ±1 dB.
     #[test]
     fn threshold_keeps_above_and_drops_below() {
         let mut stage = VasStage::new(&VasSettings::DEVICE);
-        let d = run(&mut stage, &tone(1000.0, -15.0, 60_000));
+        let d = run(&mut stage, &tone(1000.0, -37.0, 60_000));
         assert_eq!(kept(&d), 60_000);
         assert!(!stage.is_paused());
 
         let mut stage = VasStage::new(&VasSettings::DEVICE);
-        let d = run(&mut stage, &tone(1000.0, -21.0, 15_000));
+        let d = run(&mut stage, &tone(1000.0, -43.0, 15_000));
         assert_eq!(kept(&d), H);
         assert!(d[..H].iter().all(|&v| v == VasDecision::Keep));
         assert!(stage.is_paused());
 
         let t1k = lowest_kept(1000.0, |_| {});
-        // 0.05 dB: the bisection resolution, engineering target (003 R-15); −18 dBFS: A-022.
-        assert!((t1k + 18.0).abs() <= 0.05, "1 kHz threshold {t1k}");
+        // 0.05 dB: the bisection resolution, engineering target (003 R-15); −40 dBFS: A-022
+        // (revised by spec 005).
+        assert!((t1k + 40.0).abs() <= 0.05, "1 kHz threshold {t1k}");
         for f in [225.0, 2550.0] {
             let t = lowest_kept(f, |_| {});
             assert!((t - t1k).abs() <= 1.0, "{f} Hz: {t} vs {t1k}"); // ±1 dB, 003 FR-006
         }
     }
 
-    /// 003 FR-007 (A-022): 3 dB per level; level 1 is −12 dBFS and level 5 is −24 dBFS.
+    /// 003 FR-007 (A-022; restated by spec 005 FR-012): 3 dB per level; level 1 is −34 dBFS
+    /// and level 5 is −46 dBFS.
     #[test]
     fn sensitivity_moves_the_threshold_3_db_per_level() {
         let t1 = lowest_kept(1000.0, |s| s.sensitivity = 1);
         let t5 = lowest_kept(1000.0, |s| s.sensitivity = 5);
-        // ±0.05 dB bisection (003 R-15); −12 / −24 dBFS: 3 dB per level, A-022.
-        assert!((t1 + 12.0).abs() <= 0.05, "level 1: {t1}");
-        assert!((t5 + 24.0).abs() <= 0.05, "level 5: {t5}");
+        // ±0.05 dB bisection (003 R-15); −34 / −46 dBFS: 3 dB per level, A-022 (revised).
+        assert!((t1 + 34.0).abs() <= 0.05, "level 1: {t1}");
+        assert!((t5 + 46.0).abs() <= 0.05, "level 5: {t5}");
     }
 
     /// 003 FR-008 (A-023): a gap of g silent samples keeps min(g, H) of it; g ≤ H never pauses.
@@ -337,7 +343,7 @@ mod tests {
     #[test]
     fn w_bridges_troughs_and_longer_gaps_restart_the_run() {
         let mut stage = VasStage::new(&VasSettings::DEVICE);
-        let x = cat(&[silence(H + 10), tone(225.0, -15.0, 3000)]);
+        let x = cat(&[silence(H + 10), tone(225.0, -37.0, 3000)]); // threshold + 3 dB
         let first_sound = x[H + 10..]
             .iter()
             .position(|v| v.abs() >= stage.threshold)

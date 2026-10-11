@@ -34,15 +34,11 @@ pub enum Error {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Setting {
-    /// `agc.target_dbfs`, valid −30 to 0 dBFS.
-    AgcTargetDbfs,
-    /// `agc.max_gain_db`, valid 0 to 60 dB.
-    AgcMaxGainDb,
-    /// `agc.max_attenuation_db`, valid 0 to 40 dB.
-    AgcMaxAttenuationDb,
-    /// `agc.attack_ms`, valid 1 to 100 ms.
+    /// `agc.knee_dbfs`, valid −40 to 3 dBFS (spec 005; replaces the spec 002 target level).
+    AgcKneeDbfs,
+    /// `agc.attack_ms` (the dead time at 10 dB over the knee), valid 1 to 50 ms (spec 005).
     AgcAttackMs,
-    /// `agc.release_ms`, valid 50 to 10000 ms.
+    /// `agc.release_ms` (to −1 dB from 10 dB of attenuation), valid 200 to 10000 ms (spec 005).
     AgcReleaseMs,
     /// `vas.sensitivity`, valid 1 to 5 (spec 003).
     VasSensitivity,
@@ -55,27 +51,27 @@ pub enum Setting {
 }
 
 impl Setting {
-    /// Inclusive valid range (002 and 003 data-model.md; engineering targets, 002 FR-015 and
-    /// 003 FR-017).
+    /// Inclusive valid range (005 and 003 data-model.md; engineering targets, 005 FR-010 and
+    /// 003 FR-017). The AGC bounds come from the circuit model (005 research R-05): above
+    /// about +4.7 dBFS the detector could never conduct because the codec amp's rail bounds its
+    /// overdrive, so the knee is capped at +3 with its ±2 dB tolerance inside the usable range;
+    /// the R12 charge-current limit floors the realizable dead time near 1.1 ms, so the attack
+    /// starts at 1 ms.
     pub(crate) const fn range(self) -> (f32, f32) {
         match self {
-            Setting::AgcTargetDbfs => (-30.0, 0.0), // engineering target (002 FR-011)
-            Setting::AgcMaxGainDb => (0.0, 60.0),   // engineering target (002 FR-011)
-            Setting::AgcMaxAttenuationDb => (0.0, 40.0), // engineering target (002 FR-011)
-            Setting::AgcAttackMs => (1.0, 100.0),   // engineering target (002 FR-011)
-            Setting::AgcReleaseMs => (50.0, 10_000.0), // engineering target (002 FR-011)
-            Setting::VasSensitivity => (1.0, 5.0),  // S-001, A-021: five levels
+            Setting::AgcKneeDbfs => (-40.0, 3.0), // engineering target (005 FR-010; R-05); A-028
+            Setting::AgcAttackMs => (1.0, 50.0),  // engineering target (005 FR-010; R-05); A-034
+            Setting::AgcReleaseMs => (200.0, 10_000.0), // engineering target (005 FR-010); A-035
+            Setting::VasSensitivity => (1.0, 5.0), // S-001, A-021: five levels
             Setting::VasThresholdDbfs => (-60.0, 0.0), // engineering target (003 FR-012)
             Setting::VasHangMs => (50.0, 10_000.0), // engineering target (003 FR-012)
-            Setting::VasOnsetMs => (0.0, 200.0),    // engineering target (003 FR-012)
+            Setting::VasOnsetMs => (0.0, 200.0),  // engineering target (003 FR-012)
         }
     }
 
     const fn name_and_unit(self) -> (&'static str, &'static str) {
         match self {
-            Setting::AgcTargetDbfs => ("agc.target_dbfs", "dBFS"),
-            Setting::AgcMaxGainDb => ("agc.max_gain_db", "dB"),
-            Setting::AgcMaxAttenuationDb => ("agc.max_attenuation_db", "dB"),
+            Setting::AgcKneeDbfs => ("agc.knee_dbfs", "dBFS"),
             Setting::AgcAttackMs => ("agc.attack_ms", "ms"),
             Setting::AgcReleaseMs => ("agc.release_ms", "ms"),
             Setting::VasSensitivity => ("vas.sensitivity", ""),
