@@ -1,12 +1,15 @@
 //! Spec 003 edge cases (tasks.md T036; spec Edge Cases; research.md R-04, R-09, R-11).
 //!
-//! At 8 and 48 kHz unless stated. Everything is measured from output lengths and events (R-11).
+//! At the 6 kHz identity rate and at 48 kHz unless stated (spec 004 FR-012: 8 kHz was the
+//! identity before). Everything is measured from output lengths and events (R-11).
 
-use rr_dr60::{Pipeline, Settings, Tap, VasEvent, VasMode, VasSettings};
+use rr_dr60::{DEVICE_RATE_HZ, Pipeline, Settings, Tap, VasEvent, VasMode, VasSettings};
 use rr_dr60_harness::vas_checks::{self, Run, hang_s, onset_s};
 use rr_dr60_harness::{configs, stimulus};
 
-const RATES: [u32; 2] = [8000, 48_000];
+const RATES: [u32; 2] = [DEVICE_RATE_HZ, 48_000];
+/// One device sample, in seconds (A-026).
+const DEVICE_SAMPLE_S: f64 = 1.0 / 6000.0;
 /// Burst level: the default threshold (−18 dBFS, A-022) + 10 dB (spec 003 definitions).
 const BURST_DBFS: f64 = -8.0;
 
@@ -104,7 +107,7 @@ fn short_sounds_leave_nothing() {
 fn gap_exactly_the_hang_time_is_kept() {
     for rate in RATES {
         let s = configs::settings("vas_only", rate);
-        let gap = hang_s(&s.vas) - 1.0 / 8000.0;
+        let gap = hang_s(&s.vas) - DEVICE_SAMPLE_S;
         let x = burst_gap(&[(true, 0.5), (false, gap), (true, 0.5)], rate);
         let r = run(s, &x);
         assert!(r.events.is_empty(), "{rate} Hz: {:?}", r.events);
@@ -113,17 +116,23 @@ fn gap_exactly_the_hang_time_is_kept() {
 }
 
 /// Level hovering at the threshold ± 0.5 dB with random dropouts: at most one pause per
-/// hang time + 2 device samples.
+/// hang time + 2 device samples. The 1 kHz tone has 6 samples per cycle at the device rate,
+/// so it starts at the aligned phase (spec 004 FR-012, research R-08) and its peaks read
+/// exactly at the threshold.
 #[test]
 fn hovering_level_pauses_at_most_once_per_hang_time() {
     for rate in RATES {
         let fs = f64::from(rate);
         let mut s = configs::settings("vas_only", rate);
-        s.vas.hang_ms = 50.0; // many pauses in a short run; H = 400 device samples
+        s.vas.hang_ms = 50.0; // many pauses in a short run; H = 300 device samples
         let secs = 20.0;
         let n = (secs * fs) as usize;
         let mut rng = stimulus::Pcg32::new(0x0D60, 7);
-        let mut x: Vec<f32> = stimulus::step(1000.0, &[-18.0], &[secs], fs);
+        let bypass = Pipeline::new(configs::settings("bypass_all", rate))
+            .unwrap()
+            .latency_samples();
+        let phase = stimulus::aligned_phase(1000.0, rate, bypass);
+        let mut x: Vec<f32> = stimulus::tone_at_phase(1000.0, -18.0, phase, fs, n);
         // Random ±0.5 dB segments and dropouts, 20 ms each (engineering target, 003 R-15).
         let seg = (0.02 * fs) as usize;
         for chunk in x.chunks_mut(seg) {
@@ -138,7 +147,7 @@ fn hovering_level_pauses_at_most_once_per_hang_time() {
             }
         }
         let r = run(s, &x[..n]);
-        let spacing = (hang_s(&s.vas) + 2.0 / 8000.0) * fs;
+        let spacing = (hang_s(&s.vas) + 2.0 * DEVICE_SAMPLE_S) * fs;
         let max_pauses = (n as f64 / spacing).ceil() as usize + 1;
         assert!(
             r.events.len() <= max_pauses,
@@ -181,14 +190,15 @@ fn non_finite_input_acts_as_zero() {
     }
 }
 
-/// Long silence (release only): 1 hour at 8 kHz gives H zeros, then nothing, block by block.
+/// Long silence (release only): 1 hour at the 6 kHz identity rate gives H zeros, then nothing,
+/// block by block (one-second blocks).
 #[test]
 #[ignore = "slow: one hour of silence; run in release mode"]
 fn one_hour_of_silence_gives_one_hang_time() {
-    let s = configs::settings("vas_only", 8000);
+    let s = configs::settings("vas_only", DEVICE_RATE_HZ);
     let mut p = Pipeline::new(s).unwrap();
-    let block = vec![0.0f32; 8000];
-    let mut y = vec![0.0f32; 8000];
+    let block = vec![0.0f32; DEVICE_RATE_HZ as usize];
+    let mut y = vec![0.0f32; DEVICE_RATE_HZ as usize];
     let mut total = 0usize;
     for second in 0..3600 {
         let info = p.process(&block, &mut y).unwrap();
@@ -199,7 +209,7 @@ fn one_hour_of_silence_gives_one_hang_time() {
             assert!(info.paused);
         }
     }
-    assert_eq!(total, 8000);
+    assert_eq!(total, DEVICE_RATE_HZ as usize); // H = 1 s
 }
 
 /// Long sound (release only): a 10-minute tone at the threshold + 10 dB keeps every block in
@@ -207,11 +217,12 @@ fn one_hour_of_silence_gives_one_hang_time() {
 #[test]
 #[ignore = "slow: ten minutes of tone; run in release mode"]
 fn ten_minutes_of_tone_is_kept_in_full() {
-    let s = configs::settings("vas_only", 8000);
+    let rate = DEVICE_RATE_HZ;
+    let s = configs::settings("vas_only", rate);
     let mut p = Pipeline::new(s).unwrap();
-    let x = stimulus::step(1000.0, &[BURST_DBFS], &[600.0], 8000.0);
-    let mut y = vec![0.0f32; 8000];
-    for (i, chunk) in x.chunks(8000).enumerate() {
+    let x = stimulus::step(1000.0, &[BURST_DBFS], &[600.0], f64::from(rate));
+    let mut y = vec![0.0f32; rate as usize];
+    for (i, chunk) in x.chunks(rate as usize).enumerate() {
         let info = p.process(chunk, &mut y[..chunk.len()]).unwrap();
         assert_eq!(info.produced, chunk.len(), "block {i}");
         assert_eq!(info.events, 0);
@@ -279,7 +290,7 @@ fn mute_with_playback_stage_keeps_length_and_may_ring() {
     }
 }
 
-/// The AGC keeps running while the VAS is paused (FR-016, A-025). At 8 kHz, where the rate
+/// The AGC keeps running while the VAS is paused (FR-016, A-025). At 6 kHz, where the rate
 /// conversion is the identity, every kept sample is bit-identical to the VAS-bypassed output at
 /// its input index (tap after VAS, stage 4 off). At 48 kHz the interpolator's memory differs
 /// after each splice, so the comparison is made only before the first splice.
@@ -304,7 +315,7 @@ fn agc_runs_while_paused() {
         let mut off = s;
         off.vas.enabled = false;
         let reference = run(off, &x).y;
-        if rate == 8000 {
+        if rate == DEVICE_RATE_HZ {
             let mut removed = 0usize;
             let mut next = 0;
             for (n, v) in r.y.iter().enumerate() {
@@ -315,7 +326,7 @@ fn agc_runs_while_paused() {
                 assert_eq!(
                     v.to_bits(),
                     reference[n + removed].to_bits(),
-                    "8 kHz: output {n}"
+                    "6 kHz: output {n}"
                 );
             }
         } else {

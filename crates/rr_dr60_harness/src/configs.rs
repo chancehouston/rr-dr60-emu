@@ -144,8 +144,8 @@ pub fn c_default_002(host_rate_hz: u32) -> RrDr60Settings {
     }
 }
 
-/// All six supported host rates (FR-002).
-pub fn all_rates() -> [u32; 6] {
+/// All seven supported host rates (spec 004 FR-002; 6 kHz is the identity rate).
+pub fn all_rates() -> [u32; 7] {
     SUPPORTED_HOST_RATES
 }
 
@@ -204,22 +204,38 @@ mod tests {
             assert_eq!(c.record_stage_enabled, s.record_stage_enabled, "{name}");
         }
         assert_eq!(
-            c_settings(&settings("agc_only", 8000)).tap,
+            c_settings(&settings("agc_only", 6000)).tap,
             RrDr60Tap::AfterAgc as u32
         );
         assert_eq!(
-            c_settings(&settings("vas_mute", 8000)).vas_mode,
+            c_settings(&settings("vas_mute", 6000)).vas_mode,
             RrDr60VasMode::Mute as u32
         );
         assert_eq!(
-            c_settings(&settings("vas_only", 8000)).tap,
+            c_settings(&settings("vas_only", 6000)).tap,
             RrDr60Tap::AfterVas as u32
         );
         assert!(!c_default_001(48_000).agc_enabled);
         assert!(!c_default_001(48_000).vas_enabled);
         assert!(c_default_002(48_000).agc_enabled);
         assert!(!c_default_002(48_000).vas_enabled);
-        assert_eq!(all_rates(), [8000, 16000, 44100, 48000, 88200, 96000]);
+        // Spec 004 FR-002 (data-model.md › Host rates and rate plans): seven rates, 6 kHz first
+        // and the identity (bypass_all reports latency 0 and passes a block unchanged).
+        assert_eq!(
+            all_rates(),
+            [6000, 8000, 16000, 44100, 48000, 88200, 96000] // 004 FR-002
+        );
+        assert_eq!(all_rates()[0], rr_dr60::DEVICE_RATE_HZ); // A-026
+        for rate in all_rates() {
+            let p = rr_dr60::Pipeline::new(settings("bypass_all", rate)).unwrap();
+            let identity = rate == rr_dr60::DEVICE_RATE_HZ;
+            assert_eq!(p.latency_samples() == 0, identity, "{rate} Hz");
+        }
+        let x: Vec<f32> = (0..600).map(|i| i as f32 * 0.001 - 0.3).collect();
+        let mut p = rr_dr60::Pipeline::new(settings("bypass_all", 6000)).unwrap();
+        let mut y = vec![0.0f32; x.len()];
+        assert_eq!(p.process(&x, &mut y).unwrap().produced, x.len());
+        assert_eq!(x, y, "6 kHz bypass_all is the identity (004 FR-002)");
     }
 
     #[test]

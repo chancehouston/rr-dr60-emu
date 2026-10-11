@@ -50,11 +50,12 @@ fn as2_tap_after_agc_ignores_stage_settings() {
     }
 }
 
-/// US2 AS3 (002 FR-012): a 3 s release measures 3 s ± 20 % (exact gain at 8 kHz).
+/// US2 AS3 (002 FR-012): a 3 s release measures 3 s ± 20 % (exact gain at the 6 kHz identity
+/// rate; 8 kHz before spec 004. The release time and tolerance are unchanged).
 #[test]
 fn as3_release_three_seconds() {
-    let fs = 8000.0;
-    let mut s = configs::settings("agc_only", 8000);
+    let fs = 6000.0;
+    let mut s = configs::settings("agc_only", 6000);
     s.agc.release_ms = 3000.0;
     // 002 step stimulus: 0.5 s low, ≥ 20 × attack high, ≥ 1.5 × release + 0.5 s low.
     let x = stimulus::step(1000.0, &[-40.0, -10.0, -40.0], &[0.5, 0.3, 5.0], fs);

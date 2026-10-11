@@ -5,12 +5,13 @@
 //! specs/002-agc/research.md R-02 – R-07 and data-model.md › Per-sample processing:
 //!
 //! 1. **Detector** (A-019): the squared envelope is the larger of the analytic envelope
-//!    x[n−31]² + h[n]² (h from a 63-tap Hilbert FIR) and a peak hold over the last 32 samples.
+//!    x[n−31]² + h[n]² (h from a 63-tap Hilbert FIR; 31 samples = 5.17 ms at the 6 kHz device
+//!    rate, A-026) and a peak hold over the last 32 samples.
 //! 2. **Gain computer** (A-017): a 10:1 slope through the target, clamped to the gain limits.
 //! 3. **Smoother** (A-018): one pole on the gain in dB, with separate attack and release
 //!    coefficients, so the gain approaches its target exponentially in the dB domain.
 //!
-//! The stage runs at the 8 kHz device rate (A-001, R-01), adds no latency (FR-010), and uses
+//! The stage runs at the 6 kHz device rate (A-026; spec 004), adds no latency (FR-010), and uses
 //! only basic IEEE operations plus `rr_dr60_detmath::{ln, exp}`, so it is bit-identical on
 //! every platform (R-06).
 
@@ -163,7 +164,7 @@ mod tests {
     use rr_dr60_detmath::{TAU, ln, sin};
     use std::vec::Vec;
 
-    const FS: f64 = 8000.0; // A-001: the AGC runs at the device rate (002 R-01)
+    const FS: f64 = 6000.0; // A-026: the AGC runs at the device rate (002 R-01; 004 R-01)
 
     fn amp(dbfs: f64) -> f64 {
         rr_dr60_detmath::exp(dbfs * ln(10.0) / 20.0)
@@ -173,13 +174,15 @@ mod tests {
         20.0 * ln(ratio) / ln(10.0)
     }
 
-    /// 1 kHz tone sample `n` at `dbfs` (AES17: peak amplitude). At 8 kHz a 1 kHz tone has
-    /// exactly 8 samples per cycle, so sample peaks hit the true peak.
+    /// 1 kHz tone sample `n` at `dbfs` (AES17: peak amplitude). At 6 kHz a 1 kHz tone has
+    /// exactly 6 samples per cycle; the half-sample phase offset puts samples at 30°, 90°, 150° …
+    /// so a sample hits the true peak (spec 004 research R-08; at phase 0 it would read 1.25 dB
+    /// low).
     fn tone(dbfs: f64, n: usize) -> f64 {
         if dbfs == f64::NEG_INFINITY {
             return 0.0; // digital silence (+0.0, not 0 · sin = −0.0)
         }
-        amp(dbfs) * sin(TAU * ((n % 8) as f64) / 8.0)
+        amp(dbfs) * sin(TAU * ((n % 6) as f64 + 0.5) / 6.0)
     }
 
     /// Runs `levels` (dBFS, seconds) through a stage, returning (output, gain dB per sample).
@@ -255,9 +258,9 @@ mod tests {
         );
         let (_, g) = run(&mut stage, &[(0.0, 1.0), (f64::NEG_INFINITY, 10.0)]);
         assert!(
-            g[8000] < 10.0,
+            g[6000] < 10.0, // the first sample after 1 s of loud tone
             "loud tone should pull the gain down: {}",
-            g[8000]
+            g[6000]
         );
         assert!(
             (g[g.len() - 1] - 40.0).abs() < 0.1,
@@ -273,11 +276,11 @@ mod tests {
     fn attack_release_and_shape_at_defaults() {
         let mut stage = AgcStage::new(&AgcSettings::DEVICE);
         let (_, g) = run(&mut stage, &[(-40.0, 0.5), (-10.0, 0.3), (-40.0, 2.0)]);
-        let (s1, s2) = (4000, 4000 + 2400);
+        let (s1, s2) = (3000, 3000 + 1800); // 0.5 s and 0.3 s at 6 kHz
         let up = &g[s1..s2];
         let attack = settle(up, up[up.len() - 1], g[s1 - 1] - up[up.len() - 1]);
         let attack_ms = attack as f64 / FS * 1000.0;
-        std::eprintln!("AGC stage at 8 kHz: attack {attack_ms:.3} ms");
+        std::eprintln!("AGC stage at 6 kHz: attack {attack_ms:.3} ms");
         assert!((attack_ms - 10.0).abs() <= 2.0, "attack {attack_ms:.3} ms");
 
         let down = &g[s2..];
@@ -286,7 +289,7 @@ mod tests {
         let release_s = release as f64 / FS;
         assert!((release_s - 1.0).abs() <= 0.2, "release {release_s:.4} s");
         let frac = (down[release / 4] - start) / (fin - start);
-        std::eprintln!("AGC stage at 8 kHz: release {release_s:.4} s, midpoint {frac:.3}");
+        std::eprintln!("AGC stage at 6 kHz: release {release_s:.4} s, midpoint {frac:.3}");
         assert!((0.35..=0.65).contains(&frac), "midpoint fraction {frac:.3}");
     }
 

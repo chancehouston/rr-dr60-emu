@@ -7,12 +7,12 @@ use crate::sanitize::{narrow_out, sanitize_in};
 use crate::settings::{DEVICE_RATE_HZ, Settings, Tap, VasMode};
 use crate::stages::agc::AgcStage;
 use crate::stages::vas::{VasDecision, VasStage};
-use crate::stages::voiceband::VoiceBandStage;
+use crate::stages::voiceband::{PlaybackStage, RecordStage};
 use crate::validate::validate;
 
 /// One emulator instance: host-rate mono audio in, host-rate mono audio out.
 ///
-/// Internally, each sample goes through the 8 kHz device-rate domain (A-001), the record-path
+/// Internally, each sample goes through the 6 kHz device-rate domain (A-026), the record-path
 /// AGC (signal-chain stage 3, spec 002), the record band-limit stage (stage 4), the Voice
 /// Activated System (VAS, stage 5, spec 003) and the playback band-limit stage (stage 10). Each
 /// stage can be bypassed, and the output can be taken after the AGC, stage 4 or the VAS instead
@@ -130,7 +130,7 @@ enum DeviceOut {
 /// Stream counters that place VAS events in the output (spec 003 research R-05, R-06).
 #[derive(Clone, Debug)]
 struct EventCounters {
-    /// Host samples per device sample is `m / l` (`l = m = 1` at the 8 kHz identity rate).
+    /// Host samples per device sample is `m / l` (`l = m = 1` at the 6 kHz identity rate).
     l: u64,
     m: u64,
     /// Device samples kept (fed to the interpolator) since the stream started.
@@ -239,8 +239,10 @@ struct DeviceChain {
     run_vas: bool,
     /// Stage 5 mutes paused audio instead of dropping it (spec 003 FR-004; research R-09).
     mute: bool,
-    record: VoiceBandStage,
-    playback: VoiceBandStage,
+    /// Stage 4: the record band-pass (5 sections; spec 004 research R-06).
+    record: RecordStage,
+    /// Stage 10: the playback low-pass (3 sections; spec 004 research R-06).
+    playback: PlaybackStage,
     /// Stage 4 runs: enabled and the tap is not after the AGC (FR-007; spec 002 FR-003).
     run_record: bool,
     /// Stage 10 runs: enabled and the tap is after playback (data-model.md › Tap).
@@ -256,8 +258,8 @@ impl DeviceChain {
             run_vas: settings.vas.enabled
                 && matches!(settings.tap, Tap::AfterVas | Tap::AfterPlayback),
             mute: settings.vas.mode == VasMode::Mute,
-            record: VoiceBandStage::new(),
-            playback: VoiceBandStage::new(),
+            record: RecordStage::record(),
+            playback: PlaybackStage::playback(),
             run_record: settings.record_stage_enabled && settings.tap != Tap::AfterAgc,
             run_playback: settings.playback_stage_enabled && settings.tap == Tap::AfterPlayback,
         }
@@ -411,7 +413,7 @@ impl Pipeline {
     /// An `events` length for [`process_with_events`](Self::process_with_events) that is always
     /// enough for a block of `frames` input samples with the current settings (spec 003 R-07).
     /// Splices are at least H + 2 device samples apart, and `frames` host samples hold at most
-    /// ⌊frames·l/m⌋ + 1 device samples (+ 2 at 44.1 and 88.2 kHz); the "+ 2" also covers a
+    /// ⌊frames·l/m⌋ + 1 device samples (+ 2 at the non-integer rates (8, 16, 44.1 and 88.2 kHz)); the "+ 2" also covers a
     /// splice on the block's first device sample (engineering target, 003 R-15). Never allocates.
     pub fn max_events(&self, frames: usize) -> usize {
         let (l, m) = (u128::from(self.events.l), u128::from(self.events.m));
@@ -516,24 +518,29 @@ impl Pipeline {
 
 #[cfg(feature = "__test-hooks")]
 impl Pipeline {
-    /// Test-only (hidden): a pipeline whose voice-band stages use `sos` instead of the
-    /// committed coefficients. Used by the SC-008 mutation test (tasks.md T057).
+    /// Test-only (hidden): a pipeline whose band-limit stages use `record` and `playback`
+    /// instead of the committed coefficients. Used by the SC-007 mutation tests (spec 004
+    /// tasks.md T024; spec 004 research R-06).
     ///
     /// # Errors
     ///
     /// As [`Pipeline::new`].
     #[doc(hidden)]
-    pub fn __with_stage_sos(settings: Settings, sos: [[f64; 5]; 6]) -> Result<Self, Error> {
+    pub fn __with_stage_sos(
+        settings: Settings,
+        record: [[f64; 5]; 5],
+        playback: [[f64; 5]; 3],
+    ) -> Result<Self, Error> {
         let mut p = Self::new(settings)?;
-        p.chain.record = VoiceBandStage::with_sos(sos);
-        p.chain.playback = VoiceBandStage::with_sos(sos);
+        p.chain.record = RecordStage::with_sos(record);
+        p.chain.playback = PlaybackStage::with_sos(playback);
         let plan = RatePlan::for_host(settings.host_rate_hz)?;
         p.latency = latency_samples(&plan, &settings, &p.chain);
         Ok(p)
     }
 }
 
-/// R-10: round(D_down + D_up + (τ_rec + τ_play) · host / 8000). A bypassed stage contributes
+/// 001 R-10: round(D_down + D_up + (τ_rec + τ_play) · host / DEVICE_RATE_HZ). A bypassed stage contributes
 /// 0, and with the tap after the record stage τ_play is not included.
 fn latency_samples(plan: &RatePlan, settings: &Settings, chain: &DeviceChain) -> u32 {
     let stages = chain.group_delay_1k_samples();
@@ -736,8 +743,9 @@ mod vas_event_tests {
         s
     }
 
-    /// 1 kHz at −8 dBFS (threshold + 10 dB) with a half-sample phase offset at 8 kHz, so every
-    /// device sample is a sound sample and burst lengths are exact (see `stages::vas` tests).
+    /// 1 kHz at −8 dBFS (threshold + 10 dB) with a half-sample phase offset at the 6 kHz device
+    /// rate (spec 004 research R-08), so every device sample is a sound sample and burst lengths
+    /// are exact (see `stages::vas` tests).
     fn loud(n: usize, fs: f64) -> Vec<f32> {
         let amp = exp(-8.0 * ln(10.0) / 20.0);
         (0..n)
@@ -759,50 +767,50 @@ mod vas_event_tests {
         (y, ev, info)
     }
 
-    /// 003 T018 (FR-004, FR-005; research R-06): at 8 kHz, burst 1 s, gap 5 s, burst 1 s keeps
-    /// 8000 + 8000 (hang) + 8000 − 160 (onset) samples, with one splice at output 16000 that
-    /// removed 40000 − 8000 + 160 input samples.
+    /// 003 T018 (FR-004, FR-005; research R-06), restated at 6 kHz by 004 FR-012: at the
+    /// identity rate, burst 1 s, gap 5 s, burst 1 s keeps 6000 + 6000 (hang) + 6000 − 120 (onset)
+    /// samples, with one splice at output 12000 that removed 30000 − 6000 + 120 input samples.
     #[test]
-    fn splice_at_8k_is_exact() {
-        let x = burst_gap_burst(8000.0);
-        let mut p = Pipeline::new(vas_only(8000)).unwrap();
+    fn splice_at_6k_is_exact() {
+        let x = burst_gap_burst(6000.0);
+        let mut p = Pipeline::new(vas_only(6000)).unwrap();
         let (y, ev, info) = run_all(&mut p, &x);
-        assert_eq!(y.len(), 8000 + 8000 + 8000 - 160);
+        assert_eq!(y.len(), 6000 + 6000 + 6000 - 120);
         assert_eq!(
             ev,
             [VasEvent {
-                output_position: 16_000,
-                input_length: 32_160
+                output_position: 12_000,
+                input_length: 24_120
             }]
         );
         assert_eq!(info.events, 1);
         assert!(!info.paused);
         assert_eq!(ev[0].input_length as usize + y.len(), x.len());
         // The kept samples are the input, bit for bit: the first burst and the hang time, then
-        // the second burst minus the onset (8 kHz is the device rate; nothing else is in the path).
-        assert_eq!(&y[..16_000], &x[..16_000]);
-        assert_eq!(&y[16_000..], &x[16_000 + 32_160..]);
+        // the second burst minus the onset (6 kHz is the device rate; nothing else is in the path).
+        assert_eq!(&y[..12_000], &x[..12_000]);
+        assert_eq!(&y[12_000..], &x[12_000 + 24_120..]);
     }
 
-    /// 003 T018: at 48 kHz (m/l = 6) the removed lengths and the output add up to the input
+    /// 003 T018: at 48 kHz (m/l = 8) the removed lengths and the output add up to the input
     /// exactly, the removed length is a whole number of device samples and within one device
-    /// sample of 6 × the 8 kHz value (the decimator's edge smear can move the pause by one device
-    /// sample; research R-11 › Measured). The position also carries the decimator's delay, so
-    /// only its alignment is checked.
+    /// sample of 8 × the 6 kHz value (the decimator's edge smear can move the pause by one device
+    /// sample; 003 research R-11 › Measured). The position also carries the decimator's delay,
+    /// so only its alignment is checked.
     #[test]
     fn splice_at_48k_adds_up() {
         let x = burst_gap_burst(48_000.0);
         let mut p = Pipeline::new(vas_only(48_000)).unwrap();
         let (y, ev, _) = run_all(&mut p, &x);
         assert_eq!(ev.len(), 1);
-        assert_eq!(ev[0].input_length % 6, 0);
+        assert_eq!(ev[0].input_length % 8, 0);
         let removed: u64 = ev.iter().map(|e| e.input_length).sum();
         assert_eq!(removed as usize + y.len(), x.len());
-        assert_eq!(ev[0].output_position % 6, 0);
-        let device = 6; // ± one device sample, engineering target (003 FR-017)
+        assert_eq!(ev[0].output_position % 8, 0);
+        let device = 8; // ± one device sample, engineering target (003 FR-017)
         let length = i64::try_from(ev[0].input_length).unwrap();
         assert!(
-            (length - 6 * 32_160).abs() <= device,
+            (length - 8 * 24_120).abs() <= device,
             "{}",
             ev[0].input_length
         );
@@ -811,8 +819,8 @@ mod vas_event_tests {
     /// 003 T018: a too-short event slice still counts the event, and writes nothing.
     #[test]
     fn short_event_slice_counts_but_does_not_write() {
-        let x = burst_gap_burst(8000.0);
-        let mut p = Pipeline::new(vas_only(8000)).unwrap();
+        let x = burst_gap_burst(6000.0);
+        let mut p = Pipeline::new(vas_only(6000)).unwrap();
         let mut y = std::vec![0.0f32; x.len()];
         let info = p.process_with_events(&x, &mut y, &mut []).unwrap();
         assert_eq!(info.events, 1);
@@ -863,13 +871,13 @@ mod vas_event_tests {
     /// 003 T018: `paused` is true at the end of a block that ends in a dropped stretch.
     #[test]
     fn paused_flag_reports_the_end_of_the_block() {
-        let mut p = Pipeline::new(vas_only(8000)).unwrap();
+        let mut p = Pipeline::new(vas_only(6000)).unwrap();
         let mut y = std::vec![0.0f32; 20_000];
-        let info = p.process(&loud(20_000, 8000.0), &mut y).unwrap();
+        let info = p.process(&loud(20_000, 6000.0), &mut y).unwrap();
         assert!(!info.paused);
         let info = p.process(&[0.0; 10_000], &mut y[..10_000]).unwrap();
         assert!(info.paused);
-        assert_eq!(info.produced, 8000);
+        assert_eq!(info.produced, 6000); // one hang time (A-023) at 6 kHz
         p.reset();
         let info = p.process(&[0.0; 10], &mut y[..10]).unwrap();
         assert!(!info.paused && info.produced == 10);
@@ -878,15 +886,16 @@ mod vas_event_tests {
     /// 003 T052 (FR-005; research R-07): the densest possible splice train. With `onset_ms = 0`
     /// a single sound sample resumes recording, and a gap of exactly H + 1 silent device samples
     /// pauses it again, so splices are H + 2 device samples apart: the spacing `max_events`
-    /// assumes. At 8 kHz the bursts are one device sample; at the other rates one millisecond
-    /// (8 device samples), so they survive the decimator. Every block's event count stays within
+    /// assumes. At the 6 kHz identity rate the bursts are one device sample; at the other rates
+    /// one millisecond (6 device samples), so they survive the decimator. Every block's event
+    /// count stays within
     /// `max_events(n)`, for block sizes including 1, and the total is one splice per burst.
     #[test]
     fn max_events_holds_for_the_densest_splice_train() {
         for rate in crate::SUPPORTED_HOST_RATES {
             let fs = f64::from(rate);
             let mut s = vas_only(rate);
-            s.vas.hang_ms = 50.0; // H = 400 device samples
+            s.vas.hang_ms = 50.0; // H = 300 device samples at 6 kHz
             s.vas.onset_ms = 0.0;
             let mut p = Pipeline::new(s).unwrap();
             let h = p.chain.vas.hang_samples() as usize;
@@ -894,7 +903,7 @@ mod vas_event_tests {
             let (l, m) = (u128::from(p.events.l), u128::from(p.events.m));
             let host = |n: usize| (n as u128 * m).div_ceil(l) as usize;
             let identity = l == m;
-            let burst = if identity { 1 } else { host(8) }; // 1 device sample, or 1 ms
+            let burst = if identity { 1 } else { host(6) }; // 1 device sample, or 1 ms
             // H + 1 device samples (one more than the hang, FR-008); H + 2 where m/l is not an
             // integer, so rounding can't shorten the gap.
             let gap = host(if m % l == 0 { h + 1 } else { h + 2 });
@@ -941,9 +950,9 @@ mod vas_event_tests {
     /// the rest are counted but not written.
     #[test]
     fn short_event_slices_count_every_splice() {
-        let fs = 8000.0;
+        let fs = 6000.0;
         let s = fs as usize;
-        // burst, gap, burst, gap, burst: two splices (the 8 kHz T018 geometry, twice).
+        // burst, gap, burst, gap, burst: two splices (the 6 kHz T018 geometry, twice).
         let x = [
             loud(s, fs),
             std::vec![0.0; 5 * s],
@@ -952,7 +961,7 @@ mod vas_event_tests {
             loud(s, fs),
         ]
         .concat();
-        let mut p = Pipeline::new(vas_only(8000)).unwrap();
+        let mut p = Pipeline::new(vas_only(6000)).unwrap();
         let (_, want, _) = run_all(&mut p, &x);
         assert_eq!(want.len(), 2);
         for len in 0..=2 {
@@ -993,7 +1002,8 @@ mod op_count_tests {
     }
 
     /// FR-015 bounded work: no host sample costs more than one full decimator branch, one
-    /// interpolator branch, both band-limit stages (2 × 6 sections × 5 multiply-adds) and one
+    /// interpolator branch, both band-limit stages (5 + 3 sections × 5 multiply-adds, spec 004
+    /// research R-06) and one
     /// AGC update (spec 002) and one VAS decision (spec 003), and the total is independent of
     /// how the input is split into blocks. The default settings have the AGC and the VAS on, and
     /// the input has long gaps, so the VAS both keeps and drops samples.
@@ -1014,7 +1024,7 @@ mod op_count_tests {
             // + the AGC's fixed per-device-sample work (002 T024: 32 Hilbert multiply-adds,
             // 33 compares and 12 scalar operations) + the VAS's (003 T023: one compare and a few
             // counter updates).
-            let bound = taps_down + taps_up + 60 + 77 + 4;
+            let bound = taps_down + taps_up + 40 + 77 + 4;
             let mut worst = 0;
             for &v in &x {
                 let before = one.ops();

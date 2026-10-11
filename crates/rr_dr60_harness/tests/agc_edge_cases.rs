@@ -22,11 +22,11 @@ fn agc_only(rate: u32, agc: AgcSettings) -> Settings {
 }
 
 /// 002 FR-013, A-019: a fresh pipeline applies exactly the maximum gain to its first non-zero
-/// sample (8 kHz, where the rate conversion is the identity).
+/// sample (6 kHz, where the rate conversion is the identity; was 8 kHz before spec 004).
 #[test]
 fn starts_at_maximum_gain() {
-    let x = stimulus::step(1000.0, &[-10.0], &[0.01], 8000.0);
-    let y = run(agc_only(8000, AgcSettings::DEVICE), &x);
+    let x = stimulus::step(1000.0, &[-10.0], &[0.01], 6000.0);
+    let y = run(agc_only(6000, AgcSettings::DEVICE), &x);
     let n = x.iter().position(|&v| v != 0.0).unwrap();
     let gain = db(f64::from(y[n]) / f64::from(x[n]));
     assert!(
@@ -66,7 +66,7 @@ fn zero_gain_range_is_unity() {
     let mut agc = AgcSettings::DEVICE;
     agc.max_gain_db = 0.0;
     agc.max_attenuation_db = 0.0;
-    for rate in [8000, 48_000] {
+    for rate in [6000, 48_000] {
         let mut off = agc_only(rate, agc);
         off.agc.enabled = false;
         for level in [-60.0, -10.0, 10.0] {
@@ -95,12 +95,12 @@ fn zero_gain_range_is_unity() {
 #[test]
 #[ignore = "slow: 10 + 10 minutes of audio; run in release mode (CI check job)"]
 fn ten_minute_flush_and_long_silence() {
-    let fs = 8000.0;
+    let fs = 6000.0; // the identity rate (spec 004 FR-002); the durations are unchanged
     let ten_min = (600.0 * fs) as usize;
     let mut agc = AgcSettings::DEVICE;
     agc.max_attenuation_db = 0.0;
     let x: Vec<f32> = stimulus::step(1000.0, &[0.0], &[600.0], fs);
-    let y = run(agc_only(8000, agc), &x);
+    let y = run(agc_only(6000, agc), &x);
     assert!(y.iter().all(|v| !v.is_subnormal()));
     let last_diff = y
         .iter()
@@ -108,11 +108,11 @@ fn ten_minute_flush_and_long_silence() {
         .rposition(|(a, b)| a.to_bits() != b.to_bits());
     let flushed_from = last_diff.map_or(0, |i| i + 1);
     assert!(
-        flushed_from < ten_min - 8000,
+        flushed_from < ten_min - 6000, // flushed at least 1 s before the end
         "gain never flushed to 0 dB (last diff {last_diff:?})"
     );
 
-    let mut p = Pipeline::new(agc_only(8000, AgcSettings::DEVICE)).unwrap();
+    let mut p = Pipeline::new(agc_only(6000, AgcSettings::DEVICE)).unwrap();
     let mut loud = stimulus::step(1000.0, &[0.0], &[1.0], fs);
     let produced = p.process_in_place(&mut loud).produced;
     loud.truncate(produced);
@@ -171,15 +171,16 @@ fn low_frequencies_drive_the_gain() {
     assert!(mean <= 40.0 - 20.0, "mean gain {mean:.2} dB");
 }
 
-/// Spec Edge Cases › Content above 4 kHz: at 48 kHz, adding a 6 kHz tone at −10 dBFS to a
-/// 1 kHz tone at −40 dBFS leaves the 1 kHz output level unchanged within 0.1 dB
-/// (engineering target; A-019: the AGC acts on the device band).
+/// Spec 002 Edge Cases › Content above the device band (above 3 kHz since spec 004, A-019
+/// restated; was "above 4 kHz"): at 48 kHz, adding a 6 kHz tone at −10 dBFS to a 1 kHz tone
+/// at −40 dBFS leaves the 1 kHz output level unchanged within 0.1 dB (engineering target;
+/// A-019: the AGC acts on the device band).
 ///
 /// Measured over the last 0.25 s of 6 s: switching the 6 kHz tone on abruptly is a click with
 /// in-band energy, which the AGC (starting at +40 dB) reacts to; the gain needs a few release
 /// times to recover from that onset (T036).
 #[test]
-fn content_above_4khz_does_not_affect_the_gain() {
+fn content_above_the_device_band_does_not_affect_the_gain() {
     let fs = 48_000.0;
     let s = agc_only(48_000, AgcSettings::DEVICE);
     let base = stimulus::step(1000.0, &[-40.0], &[6.0], fs);

@@ -24,6 +24,43 @@ pub fn tone(freq_hz: f64, amp: f64, fs: f64, len: usize) -> Vec<f32> {
         .collect()
 }
 
+/// A tone at `level_dbfs` starting at `phase_rad`: `A · sin(2π·freq·n/fs + φ)`, n = 0..len,
+/// bit-reproducible (detmath). The cycle count is reduced to one cycle before `sin`.
+pub fn tone_at_phase(
+    freq_hz: f64,
+    level_dbfs: f64,
+    phase_rad: f64,
+    fs: f64,
+    len: usize,
+) -> Vec<f32> {
+    let amp = amplitude(level_dbfs);
+    (0..len)
+        .map(|n| (amp * sin(TAU * frac(freq_hz * n as f64 / fs) + phase_rad)) as f32)
+        .collect()
+}
+
+/// The starting phase that puts a device sample on the peak of a tone at `freq_hz` (spec 004
+/// FR-012, research R-08): for a tone whose frequency divides the 6 kHz device rate (A-026),
+/// such as 1 kHz with only 6 samples per cycle, a sample-peak detector reads up to 1.25 dB low
+/// unless some device sample lands on the peak.
+///
+/// Derivation: the host-to-device decimator has a delay of `D = bypass_latency_samples / 2`
+/// host samples (the rate conversion boundary is two equal linear-phase converters, 001 R-10;
+/// `D = 0` at the 6 kHz host rate), so device sample `k` sees the input at time
+/// `k / 6000 − D / host` and has phase `2π·f·k/6000 − 2π·f·D/host + φ`. Choosing
+///
+/// `φ = (π/2 + 2π·f·D/host) mod (2π·f/6000)`
+///
+/// puts the phase of some device sample at exactly π/2. At 6 kHz with f = 1 kHz this is π/6.
+/// `bypass_latency_samples` is `Pipeline::new(bypass_all settings).latency_samples()` at the
+/// host rate. The rule is an engineering target (004 FR-015).
+pub fn aligned_phase(freq_hz: f64, host_hz: u32, bypass_latency_samples: u32) -> f64 {
+    let d = f64::from(bypass_latency_samples) / 2.0;
+    let period = TAU * freq_hz / f64::from(rr_dr60::DEVICE_RATE_HZ); // A-026
+    let raw = TAU / 4.0 + TAU * freq_hz * d / f64::from(host_hz);
+    raw - (raw / period) as u64 as f64 * period
+}
+
 /// A unit impulse: 1.0 at n = 0, otherwise 0.
 pub fn impulse(len: usize) -> Vec<f32> {
     let mut x = vec![0.0; len];
@@ -75,6 +112,30 @@ pub fn step(freq_hz: f64, levels_dbfs: &[f64], durations_s: &[f64], fs: f64) -> 
         let start = out.len();
         out.extend(
             (start..start + (secs * fs) as usize).map(|n| tone_sample(freq_hz, amp, fs, n) as f32),
+        );
+    }
+    out
+}
+
+/// [`step`] with a starting phase: `A_i · sin(2π·freq·n/fs + φ)` (spec 004 research R-08, applied
+/// to the AGC timing step: with 6 device samples per 1 kHz cycle, the AGC's peak-hold branch
+/// reads a phase-0 tone 1.25 dB low for the first 31 device samples after a step unless a
+/// device sample lands on a peak). Segment `i` has `(durations_s[i] · fs) as usize` samples.
+pub fn step_at_phase(
+    freq_hz: f64,
+    levels_dbfs: &[f64],
+    durations_s: &[f64],
+    phase_rad: f64,
+    fs: f64,
+) -> Vec<f32> {
+    assert_eq!(levels_dbfs.len(), durations_s.len());
+    let mut out = Vec::new();
+    for (&level, &secs) in levels_dbfs.iter().zip(durations_s) {
+        let amp = amplitude(level);
+        let start = out.len();
+        out.extend(
+            (start..start + (secs * fs) as usize)
+                .map(|n| (amp * sin(TAU * frac(freq_hz * n as f64 / fs) + phase_rad)) as f32),
         );
     }
     out
@@ -143,8 +204,9 @@ pub fn short_bursts(
     burst_gap(freq_hz, level_dbfs, &segments, fs)
 }
 
-/// Seeded white noise band-limited to 300–3400 Hz and scaled to `level_dbfs` by the AES17
-/// convention (RMS = 10^(L/20) / √2), for spec 002 FR-009.
+/// Seeded white noise band-limited to the 225–2550 Hz device band (A-027) and scaled to
+/// `level_dbfs` by the AES17 convention (RMS = 10^(L/20) / √2), for spec 002 FR-009 (restated
+/// by spec 004 FR-011) and spec 003 FR-006 (restated by 004 FR-012).
 ///
 /// The band-pass is a Kaiser-windowed (β = 8) sinc FIR of about 10 ms, designed here with
 /// detmath. It never uses `rr_dr60`'s own filters, so the stimulus does not depend on
@@ -153,7 +215,7 @@ pub fn short_bursts(
 pub fn bandlimited_noise(seed: u64, len: usize, fs: f64, level_dbfs: f64) -> Vec<f32> {
     let taps = ((fs * 0.01) as usize) | 1;
     let mid = (taps - 1) as f64 / 2.0;
-    let (f1, f2) = (300.0 / fs, 3400.0 / fs);
+    let (f1, f2) = (225.0 / fs, 2550.0 / fs); // A-027 device band; 002 FR-009 restated by 004 FR-011
     let lowpass = |fc: f64, m: f64| {
         if m == 0.0 {
             2.0 * fc
@@ -389,6 +451,43 @@ mod tests {
             x,
             short_bursts(1000.0, -8.0, 2.0, &[10.0, 30.0, 200.0], 2.0, 8000.0)
         );
+    }
+
+    /// 004 T032 (research R-08): the phase rule puts a device sample on the peak.
+    #[test]
+    fn aligned_phase_rule() {
+        // At the 6 kHz identity rate, 1 kHz: π/2 mod π/3 = π/6 (the spec's example).
+        assert!((aligned_phase(1000.0, 6000, 0) - PI / 6.0).abs() < 1e-12);
+        // Formula check at 48 kHz with a hypothetical bypass latency of 462 samples (D = 231;
+        // the realized 48 kHz figure is 476):
+        // (0.25 + 1000·231/48000) cycles mod 1/6 cycle = 1.0625 mod 0.1667 = 0.0625 cycles = 22.5°.
+        let phi = aligned_phase(1000.0, 48_000, 462);
+        assert!((phi - TAU * 0.0625).abs() < 1e-12, "{phi}");
+        // The generated tone, seen on the device grid (host index 8k − D), peaks exactly.
+        let x = tone_at_phase(1000.0, 0.0, phi, 48_000.0, 48_000);
+        let peak = (0..6000)
+            .filter_map(|k: usize| (8 * k).checked_sub(231))
+            .map(|i| f64::from(x[i]))
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!((peak - 1.0).abs() < 1e-7, "device-grid peak {peak}");
+        // Without alignment, 1 kHz at phase 0 on the 6 kHz grid never reaches the peak.
+        let x0 = tone(1000.0, 1.0, 6000.0, 6000);
+        let peak0 = x0.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+        assert!((f64::from(peak0) - 0.866).abs() < 1e-3, "{peak0}");
+        let xa = tone_at_phase(1000.0, 0.0, aligned_phase(1000.0, 6000, 0), 6000.0, 6000);
+        let peaka = xa.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+        assert!((f64::from(peaka) - 1.0).abs() < 1e-7, "{peaka}");
+        // Phase 0 reproduces `tone` and `step`.
+        assert_eq!(
+            tone_at_phase(440.0, 0.0, 0.0, 48_000.0, 100),
+            tone(440.0, 1.0, 48_000.0, 100)
+        );
+        assert_eq!(
+            step_at_phase(1000.0, &[-40.0, -10.0], &[0.5, 0.25], 0.0, 6000.0),
+            step(1000.0, &[-40.0, -10.0], &[0.5, 0.25], 6000.0)
+        );
+        let x = step_at_phase(1000.0, &[0.0], &[0.01], PI / 6.0, 6000.0);
+        assert!((f64::from(x[1]) - 1.0).abs() < 1e-7, "{}", x[1]);
     }
 
     #[test]

@@ -1,4 +1,5 @@
-//! Spec Edge Cases, one test each (tasks.md T051).
+//! Spec Edge Cases, one test each (001 tasks.md T051; restated for the 6 kHz device rate by
+//! spec 004 FR-010 and its Edge Cases, 004 tasks.md T025).
 
 use rr_dr60::{Error, Pipeline, Settings};
 use rr_dr60_harness::{analysis, configs, stimulus};
@@ -14,6 +15,17 @@ fn fresh(rate: u32) -> Pipeline {
     Pipeline::new(configs::settings("default", rate)).unwrap()
 }
 
+/// Steady-state RMS of `y` from `from` on, in dBFS.
+fn tail_dbfs(y: &[f32], from: usize) -> f64 {
+    let tail = &y[from..];
+    let mean_square = tail
+        .iter()
+        .map(|&v| f64::from(v) * f64::from(v))
+        .sum::<f64>()
+        / tail.len() as f64;
+    analysis::db(rr_dr60_detmath::sqrt(mean_square))
+}
+
 #[test]
 fn block_of_size_zero_is_a_no_op() {
     let x = stimulus::noise(7, 4800);
@@ -26,21 +38,23 @@ fn block_of_size_zero_is_a_no_op() {
 
 #[test]
 fn large_block_equals_small_blocks() {
-    // 30 s at 48 kHz in one block vs 4096-sample blocks (FR-014). The 10-minute case is in
-    // timing.rs (release mode).
-    let x = stimulus::noise(0x0D60, 30 * 48_000);
-    let whole = run(&mut fresh(48_000), &x);
-    let mut p = fresh(48_000);
-    let mut pieces = Vec::with_capacity(x.len());
-    for chunk in x.chunks(4096) {
-        pieces.extend(run(&mut p, chunk));
+    // 30 s in one block vs 4096-sample blocks (001 FR-014) at the 6 kHz identity rate and at
+    // 48 kHz. The 10-minute case is in timing.rs (release mode).
+    for rate in [6000, 48_000] {
+        let x = stimulus::noise(0x0D60, 30 * rate as usize);
+        let whole = run(&mut fresh(rate), &x);
+        let mut p = fresh(rate);
+        let mut pieces = Vec::with_capacity(x.len());
+        for chunk in x.chunks(4096) {
+            pieces.extend(run(&mut p, chunk));
+        }
+        assert_eq!(whole, pieces, "{rate} Hz");
     }
-    assert_eq!(whole, pieces);
 }
 
 #[test]
 fn non_finite_input_is_treated_as_zero() {
-    for rate in [8000, 48_000] {
+    for rate in [6000, 48_000] {
         let mut x = stimulus::tone(1000.0, 0.5, f64::from(rate), rate as usize);
         for (i, bad) in [
             f32::NAN,
@@ -79,31 +93,41 @@ fn over_full_scale_is_not_clipped() {
 
 #[test]
 fn dc_is_removed() {
-    // 0 dBFS DC in the default configuration: steady state <= -60 dBFS (FR-010 DC, A-014).
+    // 0 dBFS DC in the default configuration: steady state <= -60 dBFS (spec 004 Edge Cases,
+    // restating 001; engineering target). Since spec 004 the rejection comes from the record
+    // stage alone (the transmit template's zeros at DC, A-027): the playback stage is a
+    // low-pass that passes DC (FR-008), so it contributes nothing here.
     let y = run(&mut fresh(48_000), &stimulus::dc(1.0, 96_000));
+    let residue = tail_dbfs(&y, 48_000);
+    assert!(residue <= -60.0, "DC residue {residue:.1} dBFS");
+}
+
+#[test]
+fn dc_passes_through_playback_only() {
+    // Spec 004 FR-008 (S-005 receive template, A-027): the playback stage has no low-frequency
+    // rejection. 0 dBFS DC through `playback_only` at 48 kHz settles to a level within
+    // -0.15 / +0.25 dB of the input (the template's in-band loss limits).
+    let mut p = Pipeline::new(configs::settings("playback_only", 48_000)).unwrap();
+    let y = run(&mut p, &stimulus::dc(1.0, 96_000));
     let tail = &y[48_000..];
-    let mean_square = tail
-        .iter()
-        .map(|&v| f64::from(v) * f64::from(v))
-        .sum::<f64>()
-        / tail.len() as f64;
-    let rms = rr_dr60_detmath::sqrt(mean_square);
+    let mean = tail.iter().map(|&v| f64::from(v)).sum::<f64>() / tail.len() as f64;
+    let loss_db = -analysis::db(mean);
     assert!(
-        analysis::db(rms) <= -60.0,
-        "DC residue {:.1} dBFS",
-        analysis::db(rms)
+        (-0.15..=0.25).contains(&loss_db),
+        "playback_only DC loss {loss_db:+.3} dB (must pass DC, 004 FR-008)"
     );
 }
 
 #[test]
 fn tail_decays_then_reaches_exact_zero() {
-    for rate in [8000, 44_100, 96_000] {
+    // The 6 kHz identity rate, a non-integer conversion and the 48 kHz integer conversion.
+    for rate in [6000, 44_100, 48_000] {
         let fs = f64::from(rate);
         let mut x = stimulus::log_sweep(20.0, 0.45 * fs, 1.0, fs, rate as usize);
         let stop = x.len();
         x.extend(stimulus::silence(3 * rate as usize));
         let y = run(&mut fresh(rate), &x);
-        let half_second = stop + rate as usize / 2;
+        let half_second = stop + rate as usize / 2; // 0.5 s flush, engineering target
         let worst = y[half_second..].iter().fold(0.0f32, |m, v| m.max(v.abs()));
         assert!(
             f64::from(worst) < 1e-6,
@@ -120,19 +144,28 @@ fn tail_decays_then_reaches_exact_zero() {
 
 #[test]
 fn reset_equals_new() {
-    let x = stimulus::noise(3, 9600);
-    let mut p = fresh(88_200);
-    run(&mut p, &stimulus::noise(4, 5000));
-    p.reset();
-    assert_eq!(run(&mut p, &x), run(&mut fresh(88_200), &x));
+    for rate in [6000, 48_000, 88_200] {
+        let x = stimulus::noise(3, 9600);
+        let mut p = fresh(rate);
+        run(&mut p, &stimulus::noise(4, 5000));
+        p.reset();
+        assert_eq!(run(&mut p, &x), run(&mut fresh(rate), &x), "{rate} Hz");
+    }
 }
 
 #[test]
 fn unsupported_rate_error_names_supported_rates() {
-    let e = Pipeline::new(Settings::new(22_050)).unwrap_err();
-    assert_eq!(e, Error::UnsupportedHostRate { requested: 22_050 });
-    let text = e.to_string();
-    for r in rr_dr60::SUPPORTED_HOST_RATES {
-        assert!(text.contains(&r.to_string()), "{text}");
+    // Spec 004 FR-002: the seven rates, 6 kHz included, are named in the error text.
+    for requested in [7000, 22_050] {
+        let e = Pipeline::new(Settings::new(requested)).unwrap_err();
+        assert_eq!(e, Error::UnsupportedHostRate { requested });
+        let text = e.to_string();
+        assert_eq!(rr_dr60::SUPPORTED_HOST_RATES.len(), 7);
+        for r in [6000, 8000, 16_000, 44_100, 48_000, 88_200, 96_000] {
+            assert!(
+                rr_dr60::SUPPORTED_HOST_RATES.contains(&r) && text.contains(&r.to_string()),
+                "{text} should name {r}"
+            );
+        }
     }
 }

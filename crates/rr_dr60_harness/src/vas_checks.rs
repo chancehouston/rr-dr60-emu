@@ -17,8 +17,9 @@ const T_A023: &[&str] = &["A-023", "engineering target"];
 const T_A024: &[&str] = &["A-024", "engineering target"];
 const T_A025: &[&str] = &["A-025"];
 const T_ENG: &[&str] = &["engineering target"];
-/// The device rate: hang and onset times are rounded to whole samples of it (A-001, R-04).
-const DEVICE_RATE: f64 = 8000.0;
+/// The device rate: hang and onset times are rounded to whole samples of it (003 R-04); 6 kHz
+/// since spec 004 (A-026, S-002; was 8 kHz, A-001).
+const DEVICE_RATE: f64 = 6000.0;
 /// Bisection resolution for the threshold search (engineering target, 003 R-15).
 const BISECT_DB: f64 = 0.05;
 /// The burst level above the threshold (spec 003 definitions; engineering target, 003 R-15).
@@ -131,9 +132,22 @@ fn kept_in_full(r: &Run) -> bool {
     r.y.len() == r.info.produced && r.events.is_empty() && !r.info.paused && !r.y.is_empty()
 }
 
-/// A steady tone at `freq_hz` and `level_dbfs` for `secs`, starting at phase 0.
-fn tone(freq_hz: f64, level_dbfs: f64, secs: f64, fs: f64) -> Vec<f32> {
-    stimulus::step(freq_hz, &[level_dbfs], &[secs], fs)
+/// A steady tone at `freq_hz` and `level_dbfs` for `secs` at host rate `rate`. A tone whose
+/// frequency divides the 6 kHz device rate (1 kHz: 6 samples per cycle) starts at the aligned
+/// phase that puts a device sample on its peak, so the VAS's sample-peak detector reads its
+/// level exactly (spec 004 FR-012, research R-08); other tones (225 and 2550 Hz: 3/80 and
+/// 17/40 cycles per sample, worst-case read error ≤ 0.03 dB) start at phase 0.
+fn tone(freq_hz: f64, level_dbfs: f64, secs: f64, rate: u32) -> Vec<f32> {
+    let fs = f64::from(rate);
+    let phase = if (f64::from(rr_dr60::DEVICE_RATE_HZ) / freq_hz).fract() == 0.0 {
+        let bypass = Pipeline::new(configs::settings("bypass_all", rate))
+            .expect("supported rate")
+            .latency_samples();
+        stimulus::aligned_phase(freq_hz, rate, bypass)
+    } else {
+        0.0
+    };
+    stimulus::tone_at_phase(freq_hz, level_dbfs, phase, fs, (secs * fs) as usize)
 }
 
 /// A burst-gap stimulus at the case's burst level (threshold + 10 dB).
@@ -155,9 +169,9 @@ pub fn lowest_kept_level_dbfs(
     mut lo: f64,
     mut hi: f64,
 ) -> f64 {
-    let fs = f64::from(settings.host_rate_hz);
+    let rate = settings.host_rate_hz;
     let secs = hang_s(&settings.vas) + 1.0;
-    let kept = |level: f64| kept_in_full(&run(make, settings, &tone(freq_hz, level, secs, fs)));
+    let kept = |level: f64| kept_in_full(&run(make, settings, &tone(freq_hz, level, secs, rate)));
     if kept(lo) || !kept(hi) {
         return f64::NAN;
     }
@@ -236,10 +250,10 @@ pub fn check_fr004_length(rate: u32, case: &Case, make: Make<'_>) -> Vec<Measure
     ]
 }
 
-/// 003 FR-005: the removed lengths add up to input − output (±1 host sample, exact at 8, 16,
-/// 48 and 96 kHz) for a stream ending while recording; mute-mode region lengths equal drop
-/// mode's removed lengths (exact at those rates, ±1 at 44.1 and 88.2 kHz); `paused` is
-/// correct at the end.
+/// 003 FR-005 (rates restated by spec 004 FR-012): the removed lengths add up to input −
+/// output (±1 host sample, exact at 6, 48 and 96 kHz, the integer conversion ratios) for a
+/// stream ending while recording; mute-mode region lengths equal drop mode's removed lengths
+/// (exact at those rates, ±1 at 8, 16, 44.1 and 88.2 kHz); `paused` is correct at the end.
 pub fn check_fr005_events(rate: u32, case: &Case, make: Make<'_>) -> Vec<MeasurementResult> {
     let settings = vas_only(rate, &case.vas);
     let fs = f64::from(rate);
@@ -248,7 +262,7 @@ pub fn check_fr005_events(rate: u32, case: &Case, make: Make<'_>) -> Vec<Measure
     let mut mute_settings = settings;
     mute_settings.vas.mode = VasMode::Mute;
     let (mute, _) = hang_run(make, mute_settings, 3.0 * h);
-    let integer_ratio = rate % 8000 == 0;
+    let integer_ratio = rate % rr_dr60::DEVICE_RATE_HZ == 0; // 6, 48 and 96 kHz (004 R-02)
     let tol = if integer_ratio { 0.0 } else { 1.0 }; // ±1 host sample, engineering target (003 FR-017)
     let stim = || format!("{}: burst 1 s, gap 3 H, burst 1 s", case.label);
     let mut out = vec![
@@ -338,10 +352,12 @@ pub fn check_fr005_events(rate: u32, case: &Case, make: Make<'_>) -> Vec<Measure
     out
 }
 
-/// 003 FR-006: the threshold. Bisection to 0.05 dB at 300, 1000 and 3400 Hz, within ±1 dB of
-/// each other and of the nominal (reported per rate); a tone at +3 dB is kept in full and one at
-/// −3 dB is dropped after the hang time; band-limited noise at T − 5 dB is kept and at T − 15 dB
-/// dropped, for hang times ≥ 0.5 s (FR-013).
+/// 003 FR-006 (frequencies restated by spec 004 FR-012): the threshold. Bisection to 0.05 dB
+/// at 225, 1000 and 2550 Hz (the 003 set scaled into the 6 kHz device band; the 1 kHz tone is
+/// phase-aligned, research R-08), within ±1 dB of each other and of the nominal (reported per
+/// rate); a tone at +3 dB is kept in full and one at −3 dB is dropped after the hang time;
+/// band-limited noise at T − 5 dB is kept and at T − 15 dB dropped, for hang times ≥ 0.5 s
+/// (FR-013). The threshold, hang time and tolerances are unchanged.
 pub fn check_fr006_threshold(rate: u32, case: &Case, make: Make<'_>) -> Vec<MeasurementResult> {
     let settings = vas_only(rate, &case.vas);
     let fs = f64::from(rate);
@@ -364,7 +380,8 @@ pub fn check_fr006_threshold(rate: u32, case: &Case, make: Make<'_>) -> Vec<Meas
         "dB",
         Tolerance::Range(-1.0, 1.0), // engineering target (003 FR-017); A-022
     ));
-    for f in [300.0, 3400.0] {
+    // 225 and 2550 Hz: 3/80 and 17/40 cycles per device sample need no alignment (004 R-08).
+    for f in [225.0, 2550.0] {
         out.push(MeasurementResult::new(
             "003/FR-006",
             "threshold at f − threshold at 1 kHz",
@@ -378,7 +395,7 @@ pub fn check_fr006_threshold(rate: u32, case: &Case, make: Make<'_>) -> Vec<Meas
         ));
     }
     // +3 dB kept in full; −3 dB dropped after the hang time.
-    let above = run(make, settings, &tone(1000.0, t + 3.0, secs, fs));
+    let above = run(make, settings, &tone(1000.0, t + 3.0, secs, rate));
     out.push(MeasurementResult::new(
         "003/FR-006",
         "tone at threshold + 3 dB kept in full",
@@ -390,7 +407,7 @@ pub fn check_fr006_threshold(rate: u32, case: &Case, make: Make<'_>) -> Vec<Meas
         "flag",
         Tolerance::Exact(1.0),
     ));
-    let below = run(make, settings, &tone(1000.0, t - 3.0, secs, fs));
+    let below = run(make, settings, &tone(1000.0, t - 3.0, secs, rate));
     out.push(MeasurementResult::new(
         "003/FR-006",
         "output length for a tone at threshold − 3 dB (one hang time)",
@@ -649,11 +666,11 @@ pub fn check_fr009_onset(rate: u32, case: &Case, make: Make<'_>) -> Vec<Measurem
     out
 }
 
-/// 003 FR-010 (8 kHz, where the rate conversion is the identity): every kept output sample is
-/// bit-identical to the VAS-bypassed output at its input index, which follows from the events'
-/// removed lengths. Empty at other rates.
+/// 003 FR-010 (at the 6 kHz device rate, where the rate conversion is the identity; spec 004
+/// FR-012): every kept output sample is bit-identical to the VAS-bypassed output at its input
+/// index, which follows from the events' removed lengths. Empty at other rates.
 pub fn check_fr010_splices(rate: u32, case: &Case, make: Make<'_>) -> Vec<MeasurementResult> {
-    if rate != 8000 {
+    if rate != rr_dr60::DEVICE_RATE_HZ {
         return Vec::new();
     }
     let settings = vas_only(rate, &case.vas);
@@ -743,9 +760,9 @@ pub fn check_fr011_latency(rate: u32) -> Vec<MeasurementResult> {
     .collect()
 }
 
-/// 003 R-11 self-test: the kept lengths measured at `rate` agree with the 8 kHz measurement
-/// within the FR-008/FR-009 tolerances (±1 ms): the hang kept gap (gap 3 H) and the longest
-/// onset burst's kept region.
+/// 003 R-11 self-test: the kept lengths measured at `rate` agree with the 6 kHz identity-rate
+/// measurement (8 kHz before spec 004) within the FR-008/FR-009 tolerances (±1 ms): the hang
+/// kept gap (gap 3 H) and the longest onset burst's kept region.
 pub fn check_rate_self_test(rate: u32, case: &Case, make: Make<'_>) -> Vec<MeasurementResult> {
     let h = hang_s(&case.vas);
     let kept_gap_s = |r: u32| {
@@ -759,27 +776,28 @@ pub fn check_rate_self_test(rate: u32, case: &Case, make: Make<'_>) -> Vec<Measu
         let run = run(make, vas_only(r, &case.vas), &x);
         run.regions().last().copied().unwrap_or(0) as f64 / fs
     };
-    let stim = || format!("{}: host rate vs 8 kHz", case.label);
+    let identity = rr_dr60::DEVICE_RATE_HZ;
+    let stim = || format!("{}: host rate vs 6 kHz", case.label);
     vec![
         MeasurementResult::new(
             "003/R-11",
-            "hang kept gap: rate − 8 kHz",
+            "hang kept gap: rate − 6 kHz",
             T_ENG,
             rate,
             CONFIG,
             stim(),
-            (kept_gap_s(rate) - kept_gap_s(8000)) * 1000.0,
+            (kept_gap_s(rate) - kept_gap_s(identity)) * 1000.0,
             "ms",
             Tolerance::Range(-1.0, 1.0), // engineering target (003 FR-017)
         ),
         MeasurementResult::new(
             "003/R-11",
-            "onset kept region: rate − 8 kHz",
+            "onset kept region: rate − 6 kHz",
             T_ENG,
             rate,
             CONFIG,
             stim(),
-            (last_region_s(rate) - last_region_s(8000)) * 1000.0,
+            (last_region_s(rate) - last_region_s(identity)) * 1000.0,
             "ms",
             Tolerance::Range(-1.0, 1.0), // engineering target (003 FR-017)
         ),
@@ -884,10 +902,12 @@ mod tests {
         let mut s1 = s;
         s1.vas.sensitivity = 1;
         assert!((input_referred_threshold_dbfs(&s1) + 30.0).abs() < 1e-9);
-        let (x, bursts) = onset_stimulus(&d, 8000.0);
+        // At the 6 kHz device rate (spec 004): 2 s lead, bursts of 10, 18, 30 and 1000 ms, each
+        // followed by 2 s (was 16_000 + 80 + 144 + 240 + 8000 + 4 × 16_000 at 8 kHz).
+        let (x, bursts) = onset_stimulus(&d, 6000.0);
         for (got, want) in bursts.iter().zip([0.01, 0.018, 0.03, 1.0]) {
             assert!((got - want).abs() < 1e-12, "{got} vs {want}");
         }
-        assert_eq!(x.len(), 16_000 + 80 + 144 + 240 + 8000 + 4 * 16_000);
+        assert_eq!(x.len(), 12_000 + 60 + 108 + 180 + 6000 + 4 * 12_000);
     }
 }

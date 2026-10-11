@@ -1,5 +1,5 @@
 /*
- * C smoke test for rr_dr60.h (tasks.md T038; contracts/c-api.md).
+ * C smoke test for rr_dr60.h (001 tasks.md T038; spec 004 contracts/c-api.md, T029).
  * Build and run with crates/rr_dr60_ffi/tests/c/run_smoke.sh.
  */
 #include "rr_dr60.h"
@@ -13,6 +13,8 @@
 #define FS 48000
 #define PI 3.14159265358979323846 /* M_PI is not part of strict C11 */
 #define N (FS / 2)
+#define FS6 6000 /* the device rate (A-026): the rate conversion boundary is the identity */
+#define N6 (FS6 / 10)
 
 static int failures = 0;
 
@@ -48,14 +50,35 @@ int main(void) {
   RrDr60Pipeline *p = NULL;
   CHECK(rr_dr60_create(&s, &p) == RR_DR60_STATUS_OK && p != NULL, "create");
 
-  /* 1 kHz at -20 dBFS keeps its level within 0.2 dB (US1 AS1, A-015). */
+  /* 1 kHz at -20 dBFS keeps its level within +/-0.2 dB of unity (001 US1 AS1, A-015). Spec 004
+   * keeps 1 kHz as the reference here: the two codec templates lose about 0.03 dB there combined,
+   * well inside the tolerance (004 FR-009). */
   CHECK(rr_dr60_process(p, in, out, N, NULL) == RR_DR60_STATUS_OK, "process");
   double gain_db = 20.0 * log10(rms(out, N / 2, N) / rms(in, N / 2, N));
-  CHECK(fabs(gain_db) <= 0.2, "1 kHz gain %.3f dB", gain_db);
+  CHECK(fabs(gain_db) <= 0.2, "1 kHz gain %.3f dB (must be within +/-0.2 dB of unity, A-015)", gain_db);
 
   uint32_t latency = 0;
   CHECK(rr_dr60_latency_samples(p, &latency) == RR_DR60_STATUS_OK, "latency");
-  CHECK(latency > 0 && latency <= FS / 50, "latency %u samples (must be <= 20 ms, FR-013)", latency);
+  CHECK(latency > 0 && latency <= FS / 50, "latency %u samples (must be <= 20 ms, 004 FR-004)", latency);
+
+  /* Spec 004 FR-002, FR-017 (contracts/c-api.md): at the 6 kHz device rate the rate conversion
+   * boundary is the identity, so with every stage bypassed the output equals the input sample
+   * for sample and the reported latency is 0. */
+  static float in6[N6], out6[N6];
+  for (size_t i = 0; i < N6; i++) in6[i] = (float)(0.25 * sin(2.0 * PI * 1000.0 * (double)i / FS6));
+  RrDr60Settings s6 = rr_dr60_settings_default(FS6);
+  s6.agc_enabled = false;
+  s6.vas_enabled = false;
+  s6.record_stage_enabled = false;
+  s6.playback_stage_enabled = false;
+  RrDr60Pipeline *p6 = NULL;
+  CHECK(rr_dr60_create(&s6, &p6) == RR_DR60_STATUS_OK && p6 != NULL, "create at 6000 Hz");
+  CHECK(rr_dr60_process(p6, in6, out6, N6, NULL) == RR_DR60_STATUS_OK, "process at 6000 Hz");
+  CHECK(memcmp(in6, out6, sizeof in6) == 0, "6000 Hz with every stage bypassed is not the identity (004 FR-002)");
+  uint32_t latency6 = 99;
+  CHECK(rr_dr60_latency_samples(p6, &latency6) == RR_DR60_STATUS_OK && latency6 == 0,
+        "6000 Hz bypassed latency %u samples (must be 0, 004 FR-002)", latency6);
+  rr_dr60_destroy(p6);
 
   /* Error table from contracts/c-api.md (rows that do not need reconfigure). */
   RrDr60Pipeline *sentinel = (RrDr60Pipeline *)(uintptr_t)0x1;
@@ -63,6 +86,11 @@ int main(void) {
   CHECK(rr_dr60_create(NULL, &q) == RR_DR60_STATUS_NULL_POINTER && q == sentinel, "create(NULL)");
   RrDr60Settings bad = rr_dr60_settings_default(22050);
   CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_UNSUPPORTED_HOST_RATE && q == sentinel, "22050 Hz");
+  /* Spec 004 FR-002: 7000 Hz is not one of the seven supported rates; the pipeline stays NULL. */
+  bad = rr_dr60_settings_default(7000);
+  q = NULL;
+  CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_UNSUPPORTED_HOST_RATE && q == NULL, "7000 Hz");
+  q = sentinel;
   bad = rr_dr60_settings_default(FS);
   bad.tap = 7;
   CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_INVALID_ARGUMENT && q == sentinel, "tap = 7");

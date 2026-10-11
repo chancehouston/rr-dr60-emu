@@ -18,10 +18,12 @@
 //!   A-021 – A-025) and is on by default; see [`VasSettings`]. And
 //! - **Stage 10**, the playback-side DAC and reconstruction filter.
 //!
-//! Stages 4 and 10 are modeled on the OKI MSM7702 voice-band codec. They are
-//! *assumed* to follow a telephone-style 300–3400 Hz band-pass (A-002, A-014)
-//! at the device's internal rate of 8 kHz (A-001). None of these values has yet
-//! been measured against a real unit. See `docs/hardware/assumptions.md`.
+//! Stages 4 and 10 are modeled on the OKI MSM7702 voice-band codec at the device's internal
+//! rate of 6 kHz (A-026, verified from the service manual, S-002). They follow the codec
+//! family's datasheet templates scaled to that clock (A-027, medium confidence): the record
+//! stage is a band-pass (about 225 to 2550 Hz) and the playback stage a low-pass that passes
+//! DC. None of these values has yet been measured against a real unit. See
+//! `docs/hardware/assumptions.md`.
 //!
 //! The crate describes signal processing only: gain control, band-limiting,
 //! voice-activated pausing, latency and level. It makes no claims about what recorded audio contains.
@@ -72,10 +74,15 @@ pub use settings::{
 #[cfg(feature = "__test-hooks")]
 #[doc(hidden)]
 pub mod __test_hooks {
-    /// The committed voice-band stage coefficients, `[b0, b1, b2, a1, a2]` per section, so the
-    /// harness can compare measured responses with the analytic one (tasks.md T040, T048).
-    pub fn voiceband_sos() -> [[f64; 5]; 6] {
-        crate::stages::voiceband_coeffs::VOICEBAND_SOS
+    /// The committed record-stage coefficients (stage 4), `[b0, b1, b2, a1, a2]` per section,
+    /// so the harness can compare measured responses with the analytic one (spec 004 R-06).
+    pub fn record_sos() -> [[f64; 5]; 5] {
+        crate::stages::voiceband_coeffs::RECORD_SOS
+    }
+
+    /// The committed playback-stage coefficients (stage 10; spec 004 R-06).
+    pub fn playback_sos() -> [[f64; 5]; 3] {
+        crate::stages::voiceband_coeffs::PLAYBACK_SOS
     }
 }
 

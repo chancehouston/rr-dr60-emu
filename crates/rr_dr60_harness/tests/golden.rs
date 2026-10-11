@@ -9,7 +9,7 @@ use rr_dr60_harness::golden;
 #[test]
 fn output_matches_golden_file() {
     let actual = golden::generate(&standard);
-    assert_eq!(actual.entries.len(), 96);
+    assert_eq!(actual.entries.len(), 112); // 4 × 4 × 7 rates (004 contracts/golden-format.md)
     let path = golden::path();
     if std::env::var("RR_DR60_BLESS").as_deref() == Ok("1") {
         golden::bless(&path, &actual).unwrap();

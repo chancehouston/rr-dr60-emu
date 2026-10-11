@@ -1,4 +1,5 @@
-//! No heap activity while processing (FR-015, FR-022, SC-004; tasks.md T053).
+//! No heap activity while processing (001 FR-015, FR-022, SC-004; 001 tasks.md T053), at all
+//! seven host rates including the 6 kHz identity rate (spec 004 FR-016; 004 tasks.md T028).
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;

@@ -10,11 +10,12 @@ pub(crate) mod voiceband_coeffs;
 #[cfg(test)]
 mod agc_hilbert_tests {
     use super::agc_hilbert_coeffs::AGC_HILBERT;
+    use crate::settings::DEVICE_RATE_HZ;
     use rr_dr60_detmath::{PI, cos, ln, sin};
 
-    /// |H(f)| in dB at the 8 kHz device rate (A-001), evaluated analytically with detmath.
+    /// |H(f)| in dB at the 6 kHz device rate (A-026), evaluated analytically with detmath.
     fn magnitude_db(freq_hz: f64) -> f64 {
-        let w = 2.0 * PI * freq_hz / 8000.0;
+        let w = 2.0 * PI * freq_hz / f64::from(DEVICE_RATE_HZ);
         let (mut re, mut im) = (0.0, 0.0);
         for (k, &h) in AGC_HILBERT.iter().enumerate() {
             re += h * cos(w * k as f64);
@@ -24,10 +25,10 @@ mod agc_hilbert_tests {
     }
 
     /// 002 T008 / research.md R-03: within ±0.01 dB (engineering target, 002 R-15) at the
-    /// FR-008 test frequencies.
+    /// 002 FR-008 test frequencies, restated at 6 kHz by 004 FR-011.
     #[test]
     fn magnitude_is_flat_over_the_test_band() {
-        for f in [300.0, 500.0, 1000.0, 2000.0, 8000.0 / 3.0, 3400.0] {
+        for f in [225.0, 375.0, 750.0, 1000.0, 1500.0, 2000.0, 2550.0] {
             let m = magnitude_db(f);
             assert!(m.abs() <= 0.01, "{f} Hz: {m:+.5} dB");
         }

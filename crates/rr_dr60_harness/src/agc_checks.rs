@@ -8,7 +8,7 @@
 //! properties are engineering targets (spec 002 FR-015, R-15).
 
 use rr_dr60::{AgcSettings, Pipeline, Settings, Tap};
-use rr_dr60_detmath::{TAU, sin};
+use rr_dr60_detmath::TAU;
 
 use crate::analysis::{db, gain_trajectory_exact, level_dbfs_aes17, single_bin, thd_n_db};
 use crate::checks::{Make, MeasurementResult, Tolerance};
@@ -19,8 +19,9 @@ const T_A017: &[&str] = &["A-017", "engineering target"];
 const T_A018: &[&str] = &["A-018", "engineering target"];
 const T_A019: &[&str] = &["A-019"];
 const T_ENG: &[&str] = &["engineering target"];
-/// The AGC detector's delay at the device rate: 31 samples at 8 kHz (research.md R-03).
-const DETECTOR_DELAY_S: f64 = 31.0 / 8000.0;
+/// The AGC detector's delay at the device rate: 31 samples (002 research R-03) at 6 kHz
+/// (A-026; 5.17 ms, was 3.875 ms at 8 kHz; spec 004 FR-011).
+const DETECTOR_DELAY_S: f64 = 31.0 / 6000.0;
 
 /// A named AGC setting for the matrix (spec 002 FR-012).
 #[derive(Clone, Copy, Debug)]
@@ -168,14 +169,16 @@ pub struct Timing {
     pub attack_s: f64,
     /// Release time in seconds.
     pub release_s: f64,
-    /// Fraction of the release excursion reached at 25 % of the release time.
+    /// Fraction of the release excursion reached 25 % of the way through the release, measured
+    /// from the end of the detector dead time (spec 004 FR-011, research R-09).
     pub midpoint: f64,
     /// Steady gain at the high level, dB.
     pub high_gain_db: f64,
 }
 
-/// Runs the timing step and measures it. `exact` uses y/x directly (valid only at 8 kHz,
-/// where the rate conversion is the identity); otherwise the reference ratio.
+/// Runs the timing step and measures it. `exact` uses y/x directly (valid only at the 6 kHz
+/// device rate, where the rate conversion is the identity; 002 FR-006 restated by 004 FR-011);
+/// otherwise the reference ratio.
 pub fn measure_timing(make: Make<'_>, rate: u32, agc: &AgcSettings, exact: bool) -> Option<Timing> {
     let (low, high) = step_levels(agc)?;
     let fs = f64::from(rate);
@@ -188,18 +191,36 @@ pub fn measure_timing(make: Make<'_>, rate: u32, agc: &AgcSettings, exact: bool)
         (20.0 * attack).max(0.2),
         3.0 * release + 0.5,
     ];
-    let x = stimulus::step(1000.0, &[low, high, low], &d, fs);
+    // Spec 004 research R-08 (implementation finding, T036): the step starts at the phase that
+    // puts a device sample on the 1 kHz peak. With 6 device samples per cycle, the AGC's
+    // peak-hold branch, which sets the detector for the first 31 device samples after a step,
+    // reads a phase-0 tone 1.25 dB low (cos 30°), so the exact y/x attack at the identity rate
+    // settled 2 device samples (0.33 ms) later than the reference-ratio measurement at 48 kHz.
+    // At 8 kHz a phase-0 sample sat on the peak. The AGC's levels, times and tolerances are
+    // unchanged; only the stimulus phase is restated (engineering target, 004 FR-015).
+    let bypass = Pipeline::new(configs::settings("bypass_all", rate))
+        .expect("supported rate")
+        .latency_samples();
+    let phase = stimulus::aligned_phase(1000.0, rate, bypass);
+    let x = stimulus::step_at_phase(1000.0, &[low, high, low], &d, phase, fs);
     let settings = agc_only(rate, agc);
     // Gate each segment at 0.5 × its own amplitude (engineering target, R-15). When the gain
     // changes within the rate converter's kernel span (fast attacks), output ÷ reference has a
     // small absolute error that becomes a ±2–4 dB spike near the reference's zero crossings.
     // Keeping only |reference| ≥ 0.5·A removes them and still leaves a sample at least every
-    // 1/6 cycle (0.17 ms at 1 kHz), finer than FR-006's attack/4 resolution (T035).
+    // 1/6 cycle (0.17 ms at 1 kHz), finer than FR-006's attack/4 resolution (T035). The exact
+    // y/x at the 6 kHz identity rate has no such spikes and is gated at 0.4·A instead, so that
+    // the aligned-phase samples at 30° (exactly 0.5·A) are kept and the exact trajectory has
+    // every device sample (0.17 ms grid; engineering target, 004 FR-015).
     let trajectory = |level: f64| {
         // `gain_trajectory_exact` keeps |reference| ≥ 0.1 × its `amp` argument.
-        let gate = 5.0 * stimulus::amplitude(level);
+        let gate = if exact { 4.0 } else { 5.0 } * stimulus::amplitude(level);
         if exact {
-            assert_eq!(rate, 8000, "exact y/x is valid only at the 8 kHz host rate");
+            assert_eq!(
+                rate,
+                rr_dr60::DEVICE_RATE_HZ,
+                "exact y/x is valid only at the 6 kHz host rate"
+            );
             gain_trajectory_exact(&x, &run(make, settings, &x), gate)
         } else {
             ratio_trajectory(make, settings, &x, gate)
@@ -219,9 +240,16 @@ pub fn measure_timing(make: Make<'_>, rate: u32, agc: &AgcSettings, exact: bool)
     let fin = mean(&window(&traj, end - tail - s(0.05), end - s(0.05)));
     let down = window(&traj, s2, end - s(0.05));
     let release_n = settle(&down, fin, fin - high_gain);
+    // Spec 004 FR-011 (research R-09, implementation finding): the shape's 25 % point is taken
+    // from the end of the detector dead time (31 device samples, `DETECTOR_DELAY_S`), not from
+    // the step, because the dead time grew from 3.875 to 5.17 ms at 6 kHz and at the 50 ms
+    // minimum release the fraction read 0.33 (was 0.373) against 002 FR-006's 35–65 % window.
+    // The release time itself still counts from the step. The exponential-in-dB law (A-018)
+    // predicts 1 − 13.5^(−1/4) ≈ 0.48 at every setting; a steady-dB recovery would read ≈ 0.25.
+    let dead = s(DETECTOR_DELAY_S);
     let at = down
         .iter()
-        .find(|&&(n, _)| n >= release_n / 4)
+        .find(|&&(n, _)| n >= dead + release_n.saturating_sub(dead) / 4)
         .map_or(fin, |p| p.1);
     Some(Timing {
         attack_s,
@@ -345,7 +373,7 @@ pub fn check_fr006_timing(rate: u32, case: &Case, make: Make<'_>) -> Vec<Measure
         ),
         MeasurementResult::new(
             "002/FR-006",
-            "release recovered at 25 % of release time",
+            "release recovered at 25 % of release time after the detector dead time",
             T_A018,
             rate,
             CONFIG,
@@ -365,12 +393,12 @@ fn scale(t: Tolerance, k: f64) -> Tolerance {
 }
 
 /// 002 R-11 self-check: the reference-ratio method at `rate` agrees with the exact y/x at
-/// 8 kHz: attack within 0.25 ms, release within 1 %, steady gain within 0.1 dB (engineering
+/// 6 kHz: attack within 0.25 ms, release within 1 %, steady gain within 0.1 dB (engineering
 /// targets; release uses a relative tolerance because the gain approaches its final value
 /// too slowly for a 0.25 ms bound to be measurable, T034).
 pub fn check_ratio_self_test(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
     let agc = AgcSettings::DEVICE;
-    let exact = measure_timing(make, 8000, &agc, true).expect("default step");
+    let exact = measure_timing(make, rr_dr60::DEVICE_RATE_HZ, &agc, true).expect("default step");
     let ratio = measure_timing(make, rate, &agc, false).expect("default step");
     let r = |property, measured, unit, tol| {
         MeasurementResult::new(
@@ -379,7 +407,7 @@ pub fn check_ratio_self_test(rate: u32, make: Make<'_>) -> Vec<MeasurementResult
             T_ENG,
             rate,
             CONFIG,
-            "defaults: step, reference ratio vs exact 8 kHz",
+            "defaults: step, reference ratio vs exact 6 kHz",
             measured,
             unit,
             tol,
@@ -460,20 +488,16 @@ pub fn check_fr007_silence(rate: u32, case: &Case, make: Make<'_>) -> Vec<Measur
     ]
 }
 
-/// A tone with a starting phase, bit-reproducible (detmath).
+/// A tone with a starting phase, bit-reproducible (detmath): `stimulus::tone_at_phase`.
 pub fn tone_with_phase(freq_hz: f64, level_dbfs: f64, phase: f64, fs: f64, len: usize) -> Vec<f32> {
-    let amp = stimulus::amplitude(level_dbfs);
-    (0..len)
-        .map(|n| {
-            let cycles = freq_hz * n as f64 / fs;
-            (amp * sin(TAU * (cycles - (cycles as u64) as f64) + phase)) as f32
-        })
-        .collect()
+    stimulus::tone_at_phase(freq_hz, level_dbfs, phase, fs, len)
 }
 
-/// 002 FR-008: steady level within ±0.5 dB of the 1 kHz value and THD+N ≤ 1 % (−40 dB), at
-/// 300, 500, 1000, 2000, 8000/3 and 3400 Hz and −30, −10, 0 dBFS, with 4 starting phases at
-/// 2000 and 8000/3 Hz. Defaults only.
+/// 002 FR-008 (tones restated by spec 004 FR-011, research R-09): steady level within ±0.5 dB
+/// of the 1 kHz value and THD+N ≤ 1 % (−40 dB), at 225, 375, 750, 1000, 1500, 2000 and 2550 Hz
+/// (the 002 set scaled into the 6 kHz device band, A-026/A-027) and −30, −10, 0 dBFS, with 4
+/// starting phases at 1500 and 2000 Hz (4 and 3 samples per cycle, where the 002 set used
+/// 2000 and 2667 Hz). The levels, tolerances and the A-017/A-018 values are unchanged.
 pub fn check_fr008_frequency_thdn(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
     let fs = f64::from(rate);
     let agc = AgcSettings::DEVICE;
@@ -488,8 +512,9 @@ pub fn check_fr008_frequency_thdn(rate: u32, make: Make<'_>) -> Vec<MeasurementR
     let mut out = Vec::new();
     for level in [-30.0, -10.0, 0.0] {
         let (ref_level, _) = measure(1000.0, level, 0.0);
-        for f in [300.0, 500.0, 1000.0, 2000.0, 8000.0 / 3.0, 3400.0] {
-            let phases: &[f64] = if f == 2000.0 || f == 8000.0 / 3.0 {
+        for f in [225.0, 375.0, 750.0, 1000.0, 1500.0, 2000.0, 2550.0] {
+            // 4 and 3 samples per cycle at 6 kHz: sweep the starting phase (002 FR-008).
+            let phases: &[f64] = if f == 1500.0 || f == 2000.0 {
                 &[0.0, TAU / 8.0, TAU / 4.0, 3.0 * TAU / 8.0]
             } else {
                 &[0.0]
