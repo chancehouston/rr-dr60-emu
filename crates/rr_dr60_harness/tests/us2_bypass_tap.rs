@@ -1,5 +1,7 @@
 //! User Story 2 acceptance tests: bypass, tap, latency per configuration, reconfigure
-//! (spec.md US2 AS1–AS4, FR-007, FR-008, FR-012; tasks.md T040, T041).
+//! (spec 001 US2 AS1–AS4, FR-007, FR-008, FR-012; 001 tasks.md T040, T041), restated for the
+//! 6 kHz device rate and the two codec templates by spec 004 FR-002 to FR-005, FR-008 and
+//! FR-010 (004 tasks.md T018, T027).
 //!
 //! Per-stage checks subtract the fully bypassed baseline (FR-010), so they don't depend on
 //! the other stage's behavior (Constitution VII).
@@ -10,7 +12,7 @@ use rr_dr60_ffi::{
     rr_dr60_process, rr_dr60_reconfigure, rr_dr60_settings_default,
 };
 use rr_dr60_harness::analysis::{self, Complex64};
-use rr_dr60_harness::configs::c_default_001;
+use rr_dr60_harness::configs::{self, c_default_001};
 use rr_dr60_harness::stimulus;
 
 /// The five named configurations (data-model.md), with the AGC and the VAS bypassed (spec 002
@@ -154,23 +156,34 @@ fn as2_tap_after_record_equals_record_only() {
 }
 
 #[test]
-fn as3_bypass_all_is_flat_and_exact_at_8k() {
-    for f in [50.0, 300.0, 1000.0, 3000.0, 3600.0] {
+fn as3_bypass_all_is_flat_and_exact_at_6k() {
+    // Spec 004 FR-003 (engineering targets): at 48 kHz the boundary alone is flat within
+    // ±0.1 dB from 50 to 2550 Hz and rejects 3000 Hz and above by at least 60 dB.
+    for f in [50.0, 225.0, 1000.0, 2250.0, 2550.0] {
         let g = analysis::db(response(config("bypass_all", 48_000), f).norm());
         assert!(
             g.abs() <= 0.1,
-            "48 kHz bypass_all: {g:.3} dB at {f} Hz (FR-005)"
+            "48 kHz bypass_all: {g:.3} dB at {f} Hz (004 FR-003)"
         );
     }
-    // FR-002: at 8 kHz the boundary is the identity, so bypass_all is an exact pass-through,
-    // except non-finite and subnormal samples, which become 0.0.
-    let mut x = stimulus::noise(0x0D60, 8000);
+    for f in [3000.0, 3450.0, 20_000.0] {
+        let g = analysis::db(response(config("bypass_all", 48_000), f).norm());
+        assert!(
+            g <= -60.0,
+            "48 kHz bypass_all: {g:.1} dB at {f} Hz, must be <= -60 dB (004 FR-003)"
+        );
+    }
+    // Spec 004 FR-002: at the 6 kHz device rate (A-026) the boundary is the identity, so
+    // bypass_all is an exact pass-through, except non-finite and subnormal samples, which
+    // become 0.0.
+    let mut x = stimulus::noise(0x0D60, 6000);
     x[10] = f32::NAN;
     x[20] = f32::INFINITY;
     x[30] = f32::NEG_INFINITY;
     x[40] = f32::from_bits(1);
     x[50] = 3.5; // over full scale: passed through, not clipped
-    let y = run(config("bypass_all", 8000), &x);
+    let y = run(config("bypass_all", 6000), &x);
+    assert_eq!(y.len(), x.len(), "identity: N in, N out");
     for (i, (&a, &b)) in x.iter().zip(&y).enumerate() {
         let want = if a.is_finite() && !a.is_subnormal() {
             a
@@ -187,7 +200,10 @@ fn as3_bypass_all_is_flat_and_exact_at_8k() {
 
 #[test]
 fn as4_reported_latency_matches_measured_group_delay() {
-    for host in [48_000, 8000] {
+    // Spec 004 FR-004 (001 FR-012 unchanged in form): at all seven host rates, for every spec
+    // 001 configuration, the reported latency equals the measured 1 kHz group delay within
+    // ±1 host sample. At the 6 kHz identity rate bypass_all reports 0.
+    for host in configs::all_rates() {
         for name in CONFIGS {
             let s = config(name, host);
             let reported = Pipeline::new(s).unwrap().latency_samples();
@@ -195,15 +211,19 @@ fn as4_reported_latency_matches_measured_group_delay() {
                 analysis::group_delay_samples(|f| response(s, f), 1000.0, f64::from(host));
             assert!(
                 (f64::from(reported) - measured).abs() <= 1.0,
-                "{host} Hz {name}: reported {reported}, measured {measured:.2} (FR-012)"
+                "{host} Hz {name}: reported {reported}, measured {measured:.2} (004 FR-004)"
             );
+            if host == rr_dr60::DEVICE_RATE_HZ && name == "bypass_all" {
+                assert_eq!(reported, 0, "6 kHz bypass_all is the identity (004 FR-002)");
+            }
         }
     }
 }
 
 #[test]
 fn reconfigure_equals_new() {
-    let x = stimulus::log_sweep(20.0, 3900.0, 0.25, 8000.0, 8000);
+    // One second of sweep (nominally at the 6 kHz device rate) fed at every host rate below.
+    let x = stimulus::log_sweep(20.0, 2700.0, 0.25, 6000.0, 6000);
     let mut p = Pipeline::new(config("default", 48_000)).unwrap();
     let mut scratch = vec![0.0; 4800];
     let produced = p
@@ -211,11 +231,15 @@ fn reconfigure_equals_new() {
         .unwrap()
         .produced; // dirty the state first
     scratch.truncate(produced);
+    // Includes reconfigures between the 48 kHz conversion and the 6 kHz identity rate in both
+    // directions (spec 004 FR-002, T027).
     for s in [
         config("default", 44_100),
         config("record_only", 8000),
         config("tap_after_record", 48_000),
-        config("default", 8000),
+        config("bypass_all", 6000),
+        config("default", 48_000),
+        config("default", 6000),
     ] {
         p.reconfigure(s).unwrap();
         assert_eq!(p.settings(), &s);

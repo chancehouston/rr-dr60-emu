@@ -1,4 +1,5 @@
-//! Measurement results and one check function per spec requirement (tasks.md T022, T048).
+//! Measurement results and one check function per spec requirement (001 tasks.md T022, T048;
+//! spec 004 tasks.md T019–T022, T030).
 //!
 //! Every result carries the requirement it verifies and its trace (A-/S- IDs, or
 //! "engineering target"), as FR-020 requires.
@@ -240,64 +241,95 @@ impl Stage {
     }
 }
 
-/// FR-005: the rate conversion boundary (`bypass_all`) is flat from 50 to 3600 Hz within
-/// ±0.1 dB, rejects 4000 Hz up to Nyquist by ≥ 60 dB, and keeps alias and image products
-/// ≥ 60 dB down. All engineering targets. Checks at or above host Nyquist are skipped.
-pub fn check_fr005_boundary(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
+/// Trace: the rate conversion boundary's engineering targets (spec 004 FR-003).
+const BOUNDARY_TARGET: &[&str] = &["engineering target (004 FR-003)"];
+/// Rejection frequencies for the boundary (spec 004 FR-003), used where below host Nyquist.
+const BOUNDARY_REJECT_HZ: [f64; 4] = [3000.0, 3450.0, 6000.0, 20_000.0];
+
+/// Spec 004 FR-003 (engineering targets, replacing 001 FR-005): the rate conversion boundary
+/// (`bypass_all`) is flat from 50 to 2550 Hz within ±0.1 dB (minimum and maximum reported
+/// separately), rejects 3000 Hz, 3450 Hz, 6000 Hz and 20 kHz by ≥ 60 dB where they lie below
+/// the host Nyquist frequency, and keeps alias and image products ≥ 60 dB below a 1 kHz tone.
+/// At the 6 kHz host rate the boundary is the identity (FR-002), so the only row is an exact
+/// pass-through assertion on a noise stimulus.
+pub fn check_fr003_boundary(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
     let base = configs::settings("bypass_all", rate);
     let fs = f64::from(rate);
+    let mr = |property, stim: &str, measured, unit, tol| {
+        MeasurementResult::new(
+            "004/FR-003",
+            property,
+            BOUNDARY_TARGET,
+            rate,
+            "bypass_all",
+            stim,
+            measured,
+            unit,
+            tol,
+        )
+    };
+    if rate == rr_dr60::DEVICE_RATE_HZ {
+        // Identity (FR-002): N in, N out, every output bit equals its input bit.
+        let x = stimulus::noise(0x0D60, rate as usize);
+        let y = run(make, base, &x);
+        let differing = if y.len() == x.len() {
+            x.iter()
+                .zip(&y)
+                .filter(|(a, b)| a.to_bits() != b.to_bits())
+                .count()
+        } else {
+            x.len().max(y.len())
+        };
+        return vec![mr(
+            "identity: samples differing from input",
+            "noise 1 s",
+            differing as f64,
+            "samples",
+            Tolerance::Exact(0.0), // 004 FR-002
+        )];
+    }
     let sb = Spectrum::from_impulse_response(&impulse_response(make, base), fs, IR_LEN);
-    let flat = sb
-        .range(50.0, 3600.0)
-        .map(|k| analysis::db(sb.bins[k].norm()).abs())
-        .fold(0.0, f64::max);
-    let mut out = vec![MeasurementResult::new(
-        "FR-005",
-        "flatness 50-3600 Hz (max |dev|)",
-        TARGET,
-        rate,
-        "bypass_all",
-        "impulse",
-        flat,
-        "dB",
-        Tolerance::AtMost(0.1), // FR-005, engineering target
-    )];
-    for f in [
-        4000.0,
-        4600.0,
-        6000.0,
-        8000.0,
-        12_000.0,
-        20_000.0,
-        0.45 * fs,
-    ] {
-        if f >= 4000.0 && f < fs / 2.0 {
-            let a = -tone_power_db(make, base, f);
-            out.push(MeasurementResult::new(
-                "FR-005",
-                "rejection >= 4000 Hz",
-                TARGET,
-                rate,
-                "bypass_all",
-                format!("tone {f} Hz"),
-                a,
+    let (mut g_min, mut g_max) = (f64::INFINITY, f64::NEG_INFINITY);
+    for k in sb.range(50.0, 2550.0) {
+        let g = analysis::db(sb.bins[k].norm());
+        g_min = g_min.min(g);
+        g_max = g_max.max(g);
+    }
+    let mut out = vec![
+        mr(
+            "flatness 50-2550 Hz (min)",
+            "impulse",
+            g_min,
+            "dB",
+            Tolerance::AtLeast(-0.1), // 004 FR-003, engineering target
+        ),
+        mr(
+            "flatness 50-2550 Hz (max)",
+            "impulse",
+            g_max,
+            "dB",
+            Tolerance::AtMost(0.1), // 004 FR-003, engineering target
+        ),
+    ];
+    for f in BOUNDARY_REJECT_HZ {
+        if f < fs / 2.0 {
+            out.push(mr(
+                "rejection >= 3000 Hz",
+                &format!("tone {f} Hz"),
+                -tone_power_db(make, base, f),
                 "dB",
-                Tolerance::AtLeast(60.0), // FR-005, engineering target
+                Tolerance::AtLeast(60.0), // 004 FR-003, engineering target
             ));
         }
     }
     let x = stimulus::tone(1000.0, 0.25, fs, rate as usize);
     let r = -analysis::residual_power_db(&x, &run(make, base, &x), 1000.0, fs, rate as usize / 5);
-    out.push(MeasurementResult::new(
-        "FR-005",
+    out.push(mr(
         "alias/image products below tone",
-        TARGET,
-        rate,
-        "bypass_all",
         "tone 1000 Hz",
         r,
         "dB",
-        Tolerance::AtLeast(60.0), // FR-005, engineering target
+        Tolerance::AtLeast(60.0), // 004 FR-003, engineering target
     ));
     out
 }
@@ -725,45 +757,51 @@ pub fn check_fr009_cascade(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> 
     ]
 }
 
-/// FR-012: reported latency equals the measured group delay at 1 kHz within ±1 sample.
-pub fn check_fr012_latency(
-    rate: u32,
-    config: &'static str,
-    make: Make<'_>,
-) -> Vec<MeasurementResult> {
-    let s = configs::settings(config, rate);
-    let reported = f64::from(make(s).latency_samples());
-    let measured =
-        analysis::group_delay_samples(|f| tone_response(make, s, f), 1000.0, f64::from(rate));
-    vec![MeasurementResult::new(
-        "FR-012",
-        "reported minus measured latency",
-        TARGET,
-        rate,
-        config,
-        format!("tones 999/1001 Hz; reported {reported}"),
-        reported - measured,
-        "samples",
-        Tolerance::Range(-1.0, 1.0), // FR-012, engineering target
-    )]
-}
+/// Trace: the latency requirement (spec 004 FR-004, 001 FR-012/FR-013 unchanged in form).
+const LATENCY_TARGET: &[&str] = &["engineering target (004 FR-004)"];
 
-/// FR-013: default-configuration latency is at most 20 ms.
-pub fn check_fr013_latency(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
+/// Spec 004 FR-004 (001 FR-012 and FR-013 unchanged in form; SC-005): for each spec 001
+/// configuration the reported latency equals the measured 1 kHz group delay within ±1 host
+/// sample, and the default configuration's latency is at most 20 ms.
+pub fn check_fr004_latency(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
+    let mut out: Vec<MeasurementResult> = configs::CONFIGS
+        .into_iter()
+        .map(|config| {
+            let s = configs::settings(config, rate);
+            let reported = f64::from(make(s).latency_samples());
+            let measured = analysis::group_delay_samples(
+                |f| tone_response(make, s, f),
+                1000.0,
+                f64::from(rate),
+            );
+            MeasurementResult::new(
+                "004/FR-004",
+                "reported minus measured latency",
+                LATENCY_TARGET,
+                rate,
+                config,
+                format!("tones 999/1001 Hz; reported {reported}"),
+                reported - measured,
+                "samples",
+                Tolerance::Range(-1.0, 1.0), // 004 FR-004, ±1 sample engineering target
+            )
+        })
+        .collect();
     let ms = f64::from(make(configs::settings("default", rate)).latency_samples())
         / f64::from(rate)
         * 1000.0;
-    vec![MeasurementResult::new(
-        "FR-013",
+    out.push(MeasurementResult::new(
+        "004/FR-004",
         "default latency",
-        TARGET,
+        LATENCY_TARGET,
         rate,
         "default",
         "reported",
         ms,
         "ms",
-        Tolerance::AtMost(20.0), // FR-013, engineering target
-    )]
+        Tolerance::AtMost(20.0), // 004 FR-004, 20 ms budget (001 FR-013)
+    ));
+    out
 }
 
 #[cfg(test)]

@@ -1,4 +1,6 @@
-//! C API parity and error contract (FR-023, FR-024; contracts/c-api.md; tasks.md T054).
+//! C API parity and error contract (001 FR-023, FR-024; contracts/c-api.md; 001 tasks.md T054),
+//! at all seven host rates including the 6 kHz identity rate (spec 004 FR-016, FR-017; 004
+//! tasks.md T028).
 
 use rr_dr60::Pipeline;
 use rr_dr60_ffi::*;
@@ -48,6 +50,50 @@ fn c_api_matches_rust_api_everywhere() {
             unsafe { rr_dr60_destroy(p) };
         }
     }
+}
+
+/// Spec 004 FR-002, FR-017 (contracts/c-api.md): at the 6 kHz device rate (A-026) with every
+/// stage bypassed, the C API returns the input sample for sample (non-finite and subnormal
+/// samples become 0.0), reports latency 0, and is bit-identical to the Rust API.
+#[test]
+fn c_api_identity_at_6k() {
+    let mut x = stimulus::noise(0x0D60, 6000);
+    x[10] = f32::NAN;
+    x[20] = f32::INFINITY;
+    x[30] = f32::from_bits(1);
+    x[40] = 3.5; // over full scale: passed through, not clipped
+    let s = configs::settings("bypass_all", 6000);
+    let mut want = vec![0.0f32; x.len()];
+    let mut rust = Pipeline::new(s).unwrap();
+    let produced = rust.process(&x, &mut want).unwrap().produced;
+    assert_eq!(produced, x.len());
+    let p = create(&configs::c_settings(&s));
+    let mut got = vec![0.0f32; x.len()];
+    let mut info = RrDr60BlockInfo::default();
+    // SAFETY: live handle; valid non-overlapping buffers; info is writable.
+    assert_eq!(
+        unsafe { rr_dr60_process(p, x.as_ptr(), got.as_mut_ptr(), x.len(), &mut info) },
+        RrDr60Status::Ok
+    );
+    assert_eq!(info.produced, x.len());
+    for (i, ((&a, &b), &c)) in x.iter().zip(&got).zip(&want).enumerate() {
+        let identity = if a.is_finite() && !a.is_subnormal() {
+            a
+        } else {
+            0.0
+        };
+        assert_eq!(b.to_bits(), identity.to_bits(), "sample {i}: C vs input");
+        assert_eq!(b.to_bits(), c.to_bits(), "sample {i}: C vs Rust");
+    }
+    let mut lat = 7;
+    // SAFETY: live handle.
+    assert_eq!(
+        unsafe { rr_dr60_latency_samples(p, &mut lat) },
+        RrDr60Status::Ok
+    );
+    assert_eq!((lat, rust.latency_samples()), (0, 0));
+    // SAFETY: from rr_dr60_create.
+    unsafe { rr_dr60_destroy(p) };
 }
 
 /// Spec 002 FR-014, US2 AS6: C and Rust output are bit-identical with the AGC on, for the
@@ -599,9 +645,11 @@ fn c_api_names_invalid_vas_settings() {
 /// `STRUCT_SIZE` after reading only its first field.
 #[test]
 fn c_api_out_info_on_early_returns_and_old_struct_size() {
-    let p = create(&configs::c_settings(&configs::settings("vas_only", 8_000)));
-    let silence = vec![0.0f32; 16_000]; // two hang times: ends paused
-    let mut y = vec![0.0f32; 16_000];
+    // At the 6 kHz identity rate (spec 004 FR-002): two hang times of silence (2 × 6000
+    // samples) end paused, with exactly one hang time produced (003 FR-004 exactness).
+    let p = create(&configs::c_settings(&configs::settings("vas_only", 6_000)));
+    let silence = vec![0.0f32; 12_000]; // two hang times: ends paused
+    let mut y = vec![0.0f32; 12_000];
     let stale = RrDr60BlockInfo {
         produced: 77,
         events: 77,
@@ -611,10 +659,10 @@ fn c_api_out_info_on_early_returns_and_old_struct_size() {
     // SAFETY (all below): p is live; buffers are valid for their stated lengths.
     unsafe {
         assert_eq!(
-            rr_dr60_process(p, silence.as_ptr(), y.as_mut_ptr(), 16_000, &mut info),
+            rr_dr60_process(p, silence.as_ptr(), y.as_mut_ptr(), 12_000, &mut info),
             RrDr60Status::Ok
         );
-        assert_eq!(info.produced, 8_000);
+        assert_eq!(info.produced, 6_000);
         assert!(info.paused);
 
         let idle = RrDr60BlockInfo {

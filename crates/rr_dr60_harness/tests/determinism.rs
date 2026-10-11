@@ -1,5 +1,6 @@
 //! Determinism: block-partition invariance, in-place equivalence, seed independence
-//! (FR-009, FR-014, SC-003; tasks.md T052).
+//! (001 FR-009, FR-014, SC-003; 001 tasks.md T052), at all seven host rates including the
+//! 6 kHz identity rate (spec 004 FR-016; 004 tasks.md T028).
 
 use rr_dr60::{Pipeline, VasEvent};
 use rr_dr60_harness::stimulus::Pcg32;
@@ -97,7 +98,8 @@ fn seed_does_not_change_output() {
 
 /// Spec 002 SC-003, FR-013: the AGC is block-partition invariant. 100 random partitions
 /// (including sizes 0 and 1) of each AGC golden stimulus, for the AGC configurations and two
-/// extreme settings, at 8 kHz (where the stimuli are shortest), plus 10 partitions at 48 kHz.
+/// extreme settings, at the 6 kHz identity rate (where the stimuli are shortest; spec 004
+/// FR-002), plus 10 partitions at 48 kHz.
 #[test]
 fn agc_partitions() {
     let mut rng = Pcg32::new(0x0D60, 4);
@@ -113,7 +115,7 @@ fn agc_partitions() {
             ("release max", release_max),
         ]
     };
-    for (rate, partitions) in [(8000, 100), (48_000, 10)] {
+    for (rate, partitions) in [(6000, 100), (48_000, 10)] {
         for (name, s) in cases(rate) {
             for stim in golden::AGC_STIMULI {
                 let x = golden::stimulus(stim, rate);
@@ -172,7 +174,8 @@ fn partitioned_events(
 
 /// Spec 003 FR-014, SC-003: for every block partition the concatenated output, the events and
 /// the final `paused` are bit-identical. 100 seeded partitions of each VAS golden stimulus with
-/// `vas_only` at 8 and 48 kHz; 10 for `vas_mute`, `default_vas` and the other rates. Under
+/// `vas_only` at 6 and 48 kHz (the identity rate, spec 004 FR-002, and the integer-ratio host
+/// rate); 10 for `vas_mute`, `default_vas` and the other rates. Under
 /// coverage instrumentation (unoptimized, `cfg(coverage)`) 10 and 2: the paths are the same and
 /// the CI coverage job stays within its budget (003 T050).
 #[test]
@@ -181,7 +184,7 @@ fn vas_partitions() {
     let (many, few) = if cfg!(coverage) { (10, 2) } else { (100, 10) };
     for rate in configs::all_rates() {
         for config in configs::VAS_CONFIGS {
-            let partitions = if config == "vas_only" && (rate == 8000 || rate == 48_000) {
+            let partitions = if config == "vas_only" && (rate == 6000 || rate == 48_000) {
                 many
             } else {
                 few
