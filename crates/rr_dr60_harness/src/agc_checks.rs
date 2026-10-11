@@ -31,6 +31,10 @@ const T_POLARITY: &[&str] = &["A-036", "A-028", "engineering target"];
 /// Trace: the codec's full scale (A-030).
 const T_CLAMP: &[&str] = &["A-030", "engineering target"];
 const T_ENG: &[&str] = &["engineering target"];
+/// The codec input amp's swing limit in dBFS (A-028: `V_RAIL` 1.2 V at GSX against the 0.7 V
+/// full scale, research R-02): it caps the detector's overdrive, so a step that reaches it has
+/// no "small overdrive" left for the 2 dB-over ratio to measure (T033, coach review).
+const RAIL_DBFS: f64 = 4.7; // A-028 (research R-02)
 
 /// Static-curve tone length, s (FR-004: 5 s, the last second measured); 1 s under coverage
 /// instrumentation (003 T050 pattern).
@@ -464,11 +468,12 @@ pub fn check_fr005_attack(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
 
 /// [`check_fr005_attack`] for explicit settings: `expected_ms` is the configured dead time at
 /// 10 dB over the configured knee; the default tolerance is ±1.5 ms (FR-005), the matrix's
-/// ± max(50 %, 0.5 ms) (FR-011). With a non-default attack setting the ramp (≤ 1 ms) and the
-/// armed dead time (≤ 0.5 ms) are **reported**, not toleranced: FR-011 restates the dead time
-/// only, and both scale with the detector's charge rate (a 50 ms setting charges 17× slower
-/// than the default, so its ramp is about 7 ms and its armed dead time about 8–9 ms; T033).
-/// The over-attenuation guard and the 2 dB-over ratio are relative rules and stay pass/fail.
+/// ± max(50 %, 0.5 ms) (FR-011). With any non-default setting the ramp (≤ 1 ms) and the armed
+/// dead time (≤ 0.5 ms) are **reported**, not toleranced: they are default-settings figures and
+/// both scale with the detector's charge rate (a 50 ms attack charges 17× slower than the
+/// default, so its ramp is about 7 ms and its armed dead time about 8–9 ms; at knee −10 dBFS the
+/// ramp reads 1.04 ms at 48 kHz; T033, coach review). The over-attenuation guard and the 2
+/// dB-over ratio are relative rules and stay pass/fail at every setting.
 pub fn check_fr005_attack_settings(
     settings: Settings,
     config: &'static str,
@@ -486,15 +491,15 @@ pub fn check_fr005_attack_settings(
     } else {
         (0.5 * expected_ms).max(0.5) // engineering target (005 FR-011): ± max(50 %, 0.5 ms)
     };
-    // The ramp and armed figures are FR-005's default-attack figures (T033: reported for a
-    // non-default attack setting, which scales both with the charge rate).
-    let default_attack = settings.agc.attack_ms == AgcSettings::DEVICE.attack_ms;
-    let ramp_tol = if default_attack {
+    // The ramp and armed figures are FR-005's default-settings figures (T033: reported for any
+    // non-default setting; both scale with the charge rate).
+    let defaults = settings.agc == AgcSettings::DEVICE;
+    let ramp_tol = if defaults {
         Tolerance::AtMost(1.0) // engineering target (005 FR-005): ≤ 1 ms
     } else {
         Tolerance::Report
     };
-    let armed_tol = if default_attack {
+    let armed_tol = if defaults {
         Tolerance::AtMost(0.5) // A-028; engineering target (005 FR-005): ≤ 0.5 ms
     } else {
         Tolerance::Report
@@ -572,7 +577,11 @@ pub fn check_fr005_attack_settings(
             _ => f64::NAN,
         },
         "ratio",
-        Tolerance::AtLeast(3.0), // A-034; engineering target (005 FR-005): ≥ 3× (model 5×)
+        if near < RAIL_DBFS {
+            Tolerance::AtLeast(3.0) // A-034; engineering target (005 FR-005): ≥ 3× (model 5×)
+        } else {
+            Tolerance::Report // the 2 dB-over step reaches the rail (A-028; FR-011)
+        },
     ));
 
     // Armed: a 0.2 s burst, 2 s quiet, the step again; steady = the last 50 ms of the second burst.
@@ -605,7 +614,8 @@ pub fn check_fr006_release(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> 
 /// the arming is checked too, as FR-011 asks ("the arming MUST scale with the release
 /// setting"): the armed step's 2 s gap is scaled by the same factor and the armed dead time
 /// must still be ≤ 0.5 ms (the discharge sets how long the control stays near its turn-on
-/// point, R-02; T033).
+/// point, R-02; T033), and the same step with the **unscaled** 2 s gap is reported as the
+/// converse (a 200 ms release is no longer armed after 2 s: about 2.2–2.3 ms; coach review).
 pub fn check_fr006_release_settings(
     settings: Settings,
     config: &'static str,
@@ -677,6 +687,21 @@ pub fn check_fr006_release_settings(
             dead_time_s(&g, fs, t_on, steady_armed).map_or(f64::NAN, |s| s * 1e3),
             "ms",
             Tolerance::AtMost(0.5), // A-028; engineering target (005 FR-005, FR-011): ≤ 0.5 ms
+        ));
+        // The converse, reported: the default 2 s gap, unscaled.
+        let x = step(&[loud, quiet, loud], &[0.2, 2.0, 0.2], rate);
+        let g = gain_trace_settings(make, settings, &x, gate);
+        let steady_armed = steady_db(&g, fs, 2.35, 2.4);
+        out.push(MeasurementResult::new(
+            "005/FR-011",
+            "dead time, armed (default 2 s gap, unscaled; reported)",
+            &["A-028", "A-035", "engineering target"],
+            rate,
+            config,
+            format!("{label}1 kHz {loud:+.0} 0.2 s, {quiet:+.0} 2 s, {loud:+.0} dBFS"),
+            dead_time_s(&g, fs, 2.2, steady_armed).map_or(f64::NAN, |s| s * 1e3),
+            "ms",
+            Tolerance::Report,
         ));
     }
     if settings.agc == AgcSettings::DEVICE {
@@ -1033,7 +1058,9 @@ pub fn check_fr001_latency(rate: u32) -> Vec<MeasurementResult> {
 /// 005 FR-011 (T033): the settings matrix, one non-default setting per case with the others at
 /// the defaults, through `agc_only`. For a knee case: the FR-004 ceiling-and-knee check with
 /// the measured knee expected at the configured knee + 1 ± 2 dB and the static-curve set
-/// shifted with the knee. For an attack case: the FR-005 dead-time check with the expected
+/// shifted with the knee, then the FR-005 and FR-006 checks at that knee with the default
+/// attack and release (the knee-aware attack mapping, research R-05; coach review after
+/// Phase 5). For an attack case: the FR-005 dead-time check with the expected
 /// dead time at the configured value ± max(50 %, 0.5 ms), the step relative to the configured
 /// knee. For a release case: the FR-006 release check at the configured value ± 40 %, with the
 /// −6 ± 2 dB and −3 ± 1.5 dB points scaled in time by `release / 1370`. Every row reports
@@ -1064,6 +1091,21 @@ pub fn check_fr011_settings(rate: u32, case: &Case, make: Make<'_>) -> Vec<Measu
         let levels: Vec<f64> = static_curve_levels().iter().map(|l| l + shift).collect();
         out.extend(static_curve_rows_settings(
             settings, CONFIG, &label, make, &levels, knee,
+        ));
+        // FR-005 and FR-006 at the configured knee, default attack and release (FR-011).
+        out.extend(check_fr005_attack_settings(
+            settings,
+            CONFIG,
+            &label,
+            make,
+            f64::from(d.attack_ms),
+        ));
+        out.extend(check_fr006_release_settings(
+            settings,
+            CONFIG,
+            &label,
+            make,
+            f64::from(d.release_ms) / 1000.0,
         ));
     }
     if case.agc.attack_ms != d.attack_ms {

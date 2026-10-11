@@ -92,7 +92,7 @@ Latency: `AfterAgc` 0; every other tap as spec 004 (unchanged with the limiter o
 | Release | +11 dBFS 1 s (or +18 dBFS), then −20 dBFS 3 s | FR-006 |
 | Asymmetric | `sin(ωt) + 0.5 cos(2ωt)` at 1 kHz (peaks +0.75 and −1.5), scaled so the larger peak is +4 dBFS and the smaller −2 dBFS; and its negation | FR-007 |
 | Bandwidth | 1 kHz at −20 dBFS plus 6 kHz at +6 dBFS, 3 s, at host rates > 12 kHz | FR-007 |
-| Clamp | +11 dBFS 1 kHz 1 s through `record_only`; the attack step through `default` (clipped-sample duty: ≥ 60 % in the first 2 ms, ≤ 40 % after 20 ms) | FR-008 |
+| Clamp | +11 dBFS 1 kHz 1 s through `record_only`; the attack step through `record_path_agc` (the record-path tap, where samples are exactly ±1.0; research R-06; clipped-sample duty: ≥ 60 % in the first 2 ms, ≤ 40 % after 20 ms) | FR-008 |
 | Speech-like pattern | three groups of four 300 ms 1 kHz bursts at −30 dBFS peak, 150 ms apart, 5 s gaps, over a band-limited noise floor (225–2550 Hz) at −60 or −45 dBFS RMS; 0.5 s lead, 1 s tail | FR-012 (i), (ii) |
 | Loud-after-floor | 30 s of the −60 dBFS floor, then +6 dBFS 1 s, then 1 s floor | FR-012 (iii) |
 
