@@ -96,6 +96,21 @@ Latency: `AfterAgc` 0; every other tap as spec 004 (unchanged with the limiter o
 | Speech-like pattern | three groups of four 300 ms 1 kHz bursts at −30 dBFS peak, 150 ms apart, 5 s gaps, over a band-limited noise floor (225–2550 Hz) at −60 or −45 dBFS RMS; 0.5 s lead, 1 s tail | FR-012 (i), (ii) |
 | Loud-after-floor | 30 s of the −60 dBFS floor, then +6 dBFS 1 s, then 1 s floor | FR-012 (iii) |
 
+## Named harness configurations (changed; research R-06, R-08)
+
+The harness's `configs.rs` table (`configs_match_data_model_table` asserts it). Every configuration not listed keeps its 003 meaning.
+
+| Name | Limiter | Record stage | ADC clamp | VAS | Playback stage | Tap | Used by |
+|---|---|---|---|---|---|---|---|
+| `default`, `record_only`, `playback_only`, `tap_after_record` (spec 001) | off | as 001 | **on** | off | as 001 | as 001 | 001 checks, `golden-v1.json` (unchanged: no 001 stimulus reaches full scale, R-06) |
+| `bypass_all` (spec 001) | off | off | **off** | off | off | AfterPlayback | 001 identity checks |
+| `record_only_clamp_off` (new) | off | on | off | off | off | AfterPlayback | FR-008 (the un-clamped peak exceeds 1.0) |
+| `agc_only` (the AGC-isolated configuration) | on | off | off | off | off | **AfterAgc** (host rate, latency 0) | every limiter check (FR-003 – FR-007, FR-011), `golden-agc-v1.json` |
+| `default_agc` | on | on | on | off | on | AfterPlayback | FR-007 bandwidth, FR-008 duty, FR-009 reports, `golden-agc-v1.json` |
+| `default_vas` (the 0.5 default) | on | on | on | on | on | AfterPlayback | FR-012 chain scenarios, 003 checks, `golden-vas-v1.json` |
+| `vas_only`, `vas_mute` (VAS-isolated) | off | off | off | on | off | AfterVas | 003 checks, `golden-vas-v1.json` |
+| retired: `agc_isolated_after_playback`, `agc_tap_stages_on` | — | — | — | — | — | — | removed with 002 R-11 (research R-08) |
+
 ## Golden stimuli and configurations (changed; contracts/golden-format.md)
 
 AGC: `agc_onset`, `agc_rearm`, `agc_staircase` × `agc_only`, `default_agc` × 7 rates = 42. VAS: `vas_burst_gap`, `vas_noise_gaps`, `vas_short_bursts` (bursts at −30 dBFS) × `default_vas`, `vas_mute`, `vas_only` × 7 = 63. Spec 001: unchanged (96 → 112 entries were 004's; still 112, byte-identical).
