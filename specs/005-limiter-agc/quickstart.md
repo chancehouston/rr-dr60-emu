@@ -8,7 +8,7 @@ Every step is runnable from the repository root on the feature branch. Prerequis
 python3 tools/agc-model/limiter_model.py
 ```
 
-Expected: the static curve with unity gain through +1 dBFS and the ceiling at about +1 dBFS above it, the knee at about +2 dBFS, dead times of about 2.4 ms (+10 dB, detector gain 300) and 50 ms (+2 dB), an armed dead time near 0, the release to −1 dB in about 1.37 s from 10 dB, and the 3 dB polarity difference.
+Expected (about 8 s): the static curve with unity gain through +1 dBFS and the ceiling at +1.0 dBFS above it, the knee at about +2 dBFS; a reference dead time of 2.17 ms at detector gain 300, the default attack setting mapping to a gain of about 217 and realizing about 3.2 ms (2.3 ms on the 6 kHz grid), about 16 ms at 2 dB over the knee and 0.25 ms when armed, with no over-attenuation at any host rate; the knee-aware mapping holding the dead time near 3 ms from −40 to +3 dBFS; the release to −1 dB in 1.36 s from 10 dB and scaling one-to-one with the setting; the unity floor 0.171 V; the 3 dB polarity difference; the 5.4 dB bandwidth expectation; and the clipped-onset duty of about 79 % then 29 %.
 
 ## 2. Story 1: hear the limiter (FR-003 – FR-009)
 
@@ -17,7 +17,7 @@ cargo test -p rr_dr60 stages::limiter stages::clamp
 cargo test -p rr_dr60_harness --test us1_agc --test agc_matrix -- --nocapture
 ```
 
-Expected: bit-exact passthrough below the knee at all seven rates; the ceiling within ±0.5 dB from knee + 1.5 dB to +20 dBFS; the knee at +2 ± 2 dBFS; dead time 3 ± 1.5 ms, armed ≤ 0.5 ms, no over-attenuation; release 1.3 s ± 40 %; polarity 3 ± 0.5 dB; the 6 kHz bandwidth row at 16 kHz and above; the clamp rows; THD+N report rows.
+Expected: bit-exact passthrough below the knee at all seven rates; the ceiling within ±0.5 dB from knee + 1.5 dB to +20 dBFS; the knee at +2 ± 2 dBFS; dead time 3 ± 1.5 ms (at least 3× longer at 2 dB over the knee), armed ≤ 0.5 ms, no over-attenuation; release 1.37 s ± 40 %; polarity 3 ± 0.5 dB; the 6 kHz bandwidth row at 16 kHz and above; the clamp rows; THD+N report rows.
 
 ## 3. Story 2: the record chain still records speech (FR-012)
 
@@ -35,7 +35,7 @@ cargo test -p rr_dr60_harness --test us2_agc_settings --test agc_edge_cases --te
 crates/rr_dr60_ffi/tests/c/run_smoke.sh
 ```
 
-Expected: the settings matrix (knee −10 / +4 dBFS, attack 0.5 / 10 / 50 ms, release 0.2 / 4 / 10 s) within the FR-011 tolerances; the "after AGC" tap equals the limiter output with latency 0; out-of-range values named; C bit-identical at seven rates; the smoke test's 80-byte struct, defaults, clamp and knee checks.
+Expected: the settings matrix (knee −10 / +3 dBFS, attack 1 / 10 / 50 ms, release 0.2 / 4 / 10 s) within the FR-011 tolerances; the "after AGC" tap equals the limiter output with latency 0; out-of-range values named; C bit-identical at seven rates; the smoke test's 80-byte struct, defaults, clamp and knee checks.
 
 ## 5. Golden files, determinism, mutation (FR-014, FR-016, SC-004, SC-007)
 

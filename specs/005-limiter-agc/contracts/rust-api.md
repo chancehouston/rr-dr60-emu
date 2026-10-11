@@ -7,9 +7,9 @@ Breaking changes (0.4 → 0.5; nothing released). Everything not listed is uncha
 ```text
 #[non_exhaustive] pub struct AgcSettings {
     pub enabled: bool,      // default true (A-020)
-    pub knee_dbfs: f32,     // default 1.0 (A-028); range -40.0 ..= 6.0
-    pub attack_ms: f32,     // dead time at 10 dB over the knee; default 3.0 (A-034); range 0.5 ..= 50.0
-    pub release_ms: f32,    // time to within 1 dB of unity from 10 dB of attenuation; default 1300.0 (A-035); range 200.0 ..= 10_000.0
+    pub knee_dbfs: f32,     // default 1.0 (A-028); range -40.0 ..= 3.0 (above about +4.7 the detector cannot conduct, R-05)
+    pub attack_ms: f32,     // dead time at 10 dB over the knee; default 3.0 (A-034); range 1.0 ..= 50.0 (the circuit floors it near 1 ms, R-05)
+    pub release_ms: f32,    // time to within 1 dB of unity from 10 dB of attenuation; default 1370.0 (A-035); range 200.0 ..= 10_000.0
 }
 impl AgcSettings { pub const DEVICE: Self; }   // the values above
 ```
@@ -36,7 +36,7 @@ The limiter's output at the **host rate**, sample for sample; the rate converter
 
 - With `agc.enabled = false` the limiter is skipped bit-exact. With it on, input whose peaks of the sensed polarity stay 1.5 dB below the knee passes bit-exact (FR-003).
 - `latency_samples()` is unchanged for every tap but `AfterAgc` (spec 004 values).
-- `reset()` discharges the limiter (`vc = 0`). A pipeline whose limiter has fully released is bit-identical in state to a fresh one.
+- `reset()` discharges the limiter (`vc = 0`). A pipeline whose limiter has fully released is bit-identical in state to a fresh one; "fully released" means the capacitor has flushed to 0.0, about 140 s of sub-knee input after a loud burst (the gain is exactly 1.0 again after about 18 s; R-03). Tests assert `limiter_state() == 0.0` or feed > 140 s.
 - The clamp applies after the record stage whenever `adc_clamp_enabled`; the `AfterRecord`, `AfterVas` and `AfterPlayback` outputs see it; `AfterAgc` does not.
 
 ## Crate docs

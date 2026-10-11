@@ -12,9 +12,9 @@ Format unchanged (`rr_dr60-golden`, version 1; the VAS entries' `vas` field as s
 
 | Name | Content |
 |---|---|
-| `agc_onset` | −20 dBFS 0.1 s, +10 dBFS 0.4 s, −20 dBFS 2.0 s (dead time, ceiling, release) |
-| `agc_rearm` | +10 dBFS 0.2 s, −20 dBFS 2.0 s, +10 dBFS 0.2 s, −20 dBFS 0.6 s (arming) |
-| `agc_staircase` | −20, 0, +2, +4, +8, +14 dBFS, 0.4 s each (the knee region and the ceiling; the clamp in `default_agc`) |
+| `agc_onset` | −20 dBFS 0.1 s, +11 dBFS 0.4 s, −20 dBFS 2.0 s (dead time, ceiling, release) |
+| `agc_rearm` | +11 dBFS 0.2 s, −20 dBFS 2.0 s, +11 dBFS 0.2 s, −20 dBFS 0.6 s (arming) |
+| `agc_staircase` | −20, 0, +3, +5, +8, +14 dBFS, 0.4 s each (the knee region and the ceiling; the clamp in `default_agc`). Levels chosen so the stimulus is not inert at the identity rate: at phase 0 on the 6 kHz grid a 1 kHz tone reads 1.25 dB low, so 0 and +2 dBFS would both sit below the +1 dBFS onset (research R-10) |
 
 The 0.4 stimuli `agc_noise_burst`, `agc_start_m10` and `agc_step` are removed (they measured the compressor).
 

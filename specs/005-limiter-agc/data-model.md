@@ -15,9 +15,9 @@ Derived at construction from the settings (R-05) and the constants below:
 | Parameter | From | Meaning |
 |---|---|---|
 | `vbe6` | `knee_dbfs` | detector threshold voltage at Q6's base: `KDIV · V_FS · 10^(knee/20)` |
-| `beta6` | `attack_ms` | detector current gain: `300 · 2.37 / attack_ms` |
-| `k_dis` | `release_ms` | discharge scale on both discharge terms: `1300 / release_ms` |
-| `v_floor` | constants | `vc` below which the shunt's effect is < 1e-9: gain exactly 1.0, no multiply |
+| `beta6` | `attack_ms`, `knee_dbfs` | detector current gain, knee-aware: `300 · (2.17 / attack_ms) · I(+1 dBFS) / I(knee_dbfs)`, where `I(knee)` is the 360-point mean overdrive of a 1 kHz sine at knee + 10 dB (R-05); guarded to [10, 10 000] |
+| `k_dis` | `release_ms` | discharge scale on both discharge terms: `1370 / release_ms` |
+| `v_floor` | constants | `vc` below which `1 − gain(vc)` < 2⁻²⁴ (0.171 V): gain exactly 1.0, no multiply (R-03) |
 | `v_limit` | constants | `vc` giving 40 dB of attenuation (the limit, engineering target) |
 
 ### Circuit constants (R-02)
@@ -62,9 +62,9 @@ Reset and creation: `vc = 0`. The state after a full release (`vc` flushed) equa
 | Setting | Default | Range | Trace | Was (spec 002) |
 |---|---|---|---|---|
 | `agc.enabled` | true | — | A-020 | same |
-| `agc.knee_dbfs` | +1.0 | −40.0 … +6.0 | A-028 | `target_dbfs` −10.0 (−30 … 0) |
-| `agc.attack_ms` (dead time at 10 dB over the knee) | 3.0 | 0.5 … 50.0 | A-034 | attack time 10.0 (1 … 100), settling definition |
-| `agc.release_ms` (to −1 dB from 10 dB of attenuation) | 1300.0 | 200.0 … 10 000.0 | A-035 | release time 1000.0 (50 … 10 000), settling definition |
+| `agc.knee_dbfs` | +1.0 | −40.0 … +3.0 | A-028 | `target_dbfs` −10.0 (−30 … 0) |
+| `agc.attack_ms` (dead time at 10 dB over the knee) | 3.0 | 1.0 … 50.0 | A-034 | attack time 10.0 (1 … 100), settling definition |
+| `agc.release_ms` (to −1 dB from 10 dB of attenuation) | 1370.0 | 200.0 … 10 000.0 | A-035 | release time 1000.0 (50 … 10 000), settling definition |
 | `adc_clamp_enabled` | true | — | A-030 | (new) |
 | `vas.threshold_dbfs` | −40.0 | −60.0 … 0.0 (unchanged) | A-022 revised | −18.0 |
 | removed: `agc.max_gain_db`, `agc.max_attenuation_db` | — | — | — | 40.0 (0 … 60), 20.0 (0 … 40) |
@@ -85,14 +85,14 @@ Latency: `AfterAgc` 0; every other tap as spec 004 (unchanged with the limiter o
 
 | Name | Definition | Used by |
 |---|---|---|
-| Static-curve set | 1 kHz at the aligned phase, −60 … +20 dBFS in 2 dB steps and 1 dB steps from −4 to +6, 5 s each | FR-004 |
+| Static-curve set | 1 kHz at the host-grid peak phase (R-08), −60 … +20 dBFS in 2 dB steps and 1 dB steps from −4 to +6, 5 s each | FR-004 |
 | Knee bisection | 1 kHz 5 s tones, bisection of the −1 dB gain point to 0.1 dB between −4 and +8 dBFS | FR-004 |
-| Attack step | −20 dBFS 0.1 s then +10 dBFS (or +2 dBFS) 0.4 s, fresh pipeline | FR-005 |
-| Armed step | +10 dBFS 0.2 s, −20 dBFS 2.0 s, +10 dBFS 0.2 s | FR-005 |
+| Attack step | −20 dBFS 0.1 s then +11 dBFS (10 dB over the knee; or +3 dBFS, 2 dB over) 0.4 s, fresh pipeline; dead time = first sample whose attenuation exceeds half the steady attenuation | FR-005 |
+| Armed step | +11 dBFS 0.2 s, −20 dBFS 2.0 s, +11 dBFS 0.2 s | FR-005 |
 | Release | +11 dBFS 1 s (or +18 dBFS), then −20 dBFS 3 s | FR-006 |
-| Asymmetric | `sin(ωt) + 0.5 cos(2ωt)` at 1 kHz, scaled so the larger peak is +4 dBFS; and its negation | FR-007 |
+| Asymmetric | `sin(ωt) + 0.5 cos(2ωt)` at 1 kHz (peaks +0.75 and −1.5), scaled so the larger peak is +4 dBFS and the smaller −2 dBFS; and its negation | FR-007 |
 | Bandwidth | 1 kHz at −20 dBFS plus 6 kHz at +6 dBFS, 3 s, at host rates > 12 kHz | FR-007 |
-| Clamp | +10 dBFS 1 kHz 1 s through `record_only`; the attack step through `default` | FR-008 |
+| Clamp | +11 dBFS 1 kHz 1 s through `record_only`; the attack step through `default` (clipped-sample duty: ≥ 60 % in the first 2 ms, ≤ 40 % after 20 ms) | FR-008 |
 | Speech-like pattern | three groups of four 300 ms 1 kHz bursts at −30 dBFS peak, 150 ms apart, 5 s gaps, over a band-limited noise floor (225–2550 Hz) at −60 or −45 dBFS RMS; 0.5 s lead, 1 s tail | FR-012 (i), (ii) |
 | Loud-after-floor | 30 s of the −60 dBFS floor, then +6 dBFS 1 s, then 1 s floor | FR-012 (iii) |
 
@@ -105,8 +105,8 @@ AGC: `agc_onset`, `agc_rearm`, `agc_staircase` × `agc_only`, `default_agc` × 7
 | Item | Was (0.4) | Now (0.5) |
 |---|---|---|
 | AGC model | compressor: target −10 dBFS, 10:1 slope, +40 dB max gain, 20 dB max attenuation (A-017) | limiter: unity below the knee, knee +1 dBFS, ceiling at the knee, ratio unlimited, 40 dB limit (A-028) |
-| Attack | 10 ms settling (A-018) | dead time ≈ 3 ms at 10 dB over the knee, ≤ 0.5 ms when armed (A-034) |
-| Release | 1.0 s settling, exponential in dB (A-018) | ≈ 1.3 s to −1 dB from 10 dB, fast then slow (A-035); arming memory ≈ 10 s |
+| Attack | 10 ms settling (A-018) | dead time ≈ 3 ms at 10 dB over the knee, ≈ 16 ms at 2 dB over, ≤ 0.5 ms when armed (A-034); setting range 1–50 ms |
+| Release | 1.0 s settling, exponential in dB (A-018) | ≈ 1.4 s (1.37 s default setting) to −1 dB from 10 dB, fast then slow (A-035); arming memory ≈ 10 s |
 | Detector | analytic envelope (Hilbert) + peak hold, device band, starts at +40 dB (A-019) | half-wave on positive samples, host-rate bandwidth, starts at unity (A-019 revised, A-036) |
 | Silence / pauses | gain rises to +40 dB (noise rise) | gain stays at unity |
 | Content above the device band | no effect on the gain | reduces the gain (FR-007) |
@@ -117,7 +117,7 @@ AGC: `agc_onset`, `agc_rearm`, `agc_staircase` × `agc_only`, `default_agc` × 7
 | VAS burst-gap stimuli (harness, golden) | 1 kHz at −8 dBFS | 1 kHz at −30 dBFS |
 | Input-referred VAS threshold (003 R-03) | ≈ −58 dBFS via the compressor's curve | −40 dBFS (identity below the knee) |
 | Settings (Rust) | `target_dbfs`, `max_gain_db`, `max_attenuation_db`, `attack_ms`, `release_ms` | `knee_dbfs`, `attack_ms`, `release_ms`; `adc_clamp_enabled` |
-| C struct | 72 bytes | 80 bytes; `agc_knee_dbfs` at 36; `reserved_agc_1/2` at 40/44; `adc_clamp_enabled` at 72 |
+| C struct | 72 bytes | 80 bytes; `agc_knee_dbfs` at 28; `reserved_agc_1/2` at 32/36; `agc_attack_ms`/`agc_release_ms` at 40/44; `adc_clamp_enabled` at 72 |
 | Golden entries (001 / AGC / VAS) | 112 / 42 / 63 | 112 (unchanged) / 42 / 63 (re-blessed) |
 | Version | 0.4.0 | 0.5.0 |
 
