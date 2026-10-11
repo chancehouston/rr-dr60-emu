@@ -5,8 +5,8 @@ Format unchanged (`rr_dr60-golden`, version 1; the VAS entries' `vas` field as s
 | File | Configurations | Stimuli | Rates | Entries | Change |
 |---|---|---|---|---|---|
 | `golden-v1.json` | bypass_all, default, playback_only, record_only (AGC and VAS bypassed; clamp on except in bypass_all) | impulse, noise_seed_0d60, sweep_log, tone_1k_m20 | 7 | 112 | **none** (byte-identical; research R-06) |
-| `golden-agc-v1.json` | agc_only (tap after AGC, host rate, everything else off), default_agc (limiter, stages, clamp on; VAS off) | agc_onset, agc_rearm, agc_staircase | 7 | 42 | re-blessed once; stimuli replaced |
-| `golden-vas-v1.json` | default_vas, vas_mute, vas_only | vas_burst_gap, vas_noise_gaps, vas_short_bursts | 7 | 63 | re-blessed once; bursts at −30 dBFS |
+| `golden-agc-v1.json` | agc_only (tap after AGC, host rate, everything else off), default_agc (limiter, stages, clamp on; VAS off) | agc_onset, agc_rearm, agc_staircase | 7 | 42 | re-blessed twice on the branch (the limiter, then the knee move); stimuli replaced |
+| `golden-vas-v1.json` | default_vas, vas_mute, vas_only | vas_burst_gap, vas_noise_gaps, vas_short_bursts | 7 | 63 | re-blessed twice on the branch; bursts at −30 dBFS |
 
 ## AGC stimuli (new; 1 kHz at the host-grid peak phase `stimulus::peak_phase(1000, rate)`, research R-08/R-10, bit-reproducible)
 

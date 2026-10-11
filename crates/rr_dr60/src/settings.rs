@@ -103,7 +103,7 @@ pub struct AgcSettings {
     /// to 3.0 (above about +4.7 dBFS the detector could never conduct, spec 005 research R-05).
     pub knee_dbfs: f32,
     /// Attack, in ms, as the **dead time** at 10 dB over the knee: how long a loud onset passes
-    /// at full level before the limiter acts (A-034). Longer at smaller overdrives (about 16 ms
+    /// at full level before the limiter acts (A-034). Longer at smaller overdrives (about 20–25 ms
     /// at 2 dB over the knee), shorter (≤ 0.5 ms) for a few seconds after a loud sound.
     /// Default 3.0. Range 1.0 to 50.0 (the circuit floors it near 1 ms, research R-05).
     pub attack_ms: f32,

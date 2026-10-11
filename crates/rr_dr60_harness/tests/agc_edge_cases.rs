@@ -127,7 +127,7 @@ fn dc_offset_shifts_the_knee_under_0_3_db() {
 #[test]
 fn dc_offset_above_the_knee_keeps_the_limiter_engaged() {
     let rate = 48_000;
-    let level = stimulus::amplitude(2.0) as f32; // +2 dBFS, above the +1 dBFS knee (A-028)
+    let level = stimulus::amplitude(2.0) as f32; // +2 dBFS, 3 dB above the −1 dBFS knee (A-028)
     let x = stimulus::dc(level, 3 * rate as usize);
     let y = run(configs::settings("agc_only", rate), &x);
     let tail = &y[y.len() - 4800..];

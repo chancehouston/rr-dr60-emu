@@ -32,13 +32,13 @@ fn as1_passthrough_below_the_knee() {
 }
 
 /// US1 AS2 (FR-004): the static curve from −60 to +20 dBFS, the ceiling ±0.5 dB above the
-/// knee + 1.5 dB, the knee at +2 ± 2 dBFS by bisection, the knee band reported.
+/// knee + 1.5 dB, the knee at 0 ± 2 dBFS by bisection, the knee band reported.
 #[test]
 fn as2_static_curve_and_knee() {
     finish(at(&RATES, |r| agc_checks::check_fr004_static(r, &standard)));
 }
 
-/// US1 AS3 (FR-005): the dead time of a −20 → +11 dBFS step is 3 ± 1.5 ms, the gain then
+/// US1 AS3 (FR-005): the dead time of a −22 → +9 dBFS step (10 dB over the knee) is 3 ± 1.5 ms, the gain then
 /// settles within 1 ms without over-attenuating by more than 1 dB; the 2 dB-over step takes
 /// at least 3× longer.
 #[test]

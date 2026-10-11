@@ -41,7 +41,7 @@ The limiter's output at the **host rate**, sample for sample; the rate converter
 
 ## Crate docs
 
-`lib.rs`: the record path is "the limiter (stage 3), the host-to-device conversion, the record band-limit (stage 4), the ADC's full-scale saturation, the VAS (stage 5) …"; the level anchor (0 dBFS = the codec's full scale, about 0.196 V peak at the mic-amp output; speech at 30 cm 25–35 dB below); "modeled on the circuit, not measured against a unit".
+`lib.rs`: the record path is "the limiter (stage 3), the host-to-device conversion, the record band-limit (stage 4), the ADC's full-scale saturation, the VAS (stage 5) …"; the level anchor (0 dBFS = the codec's full scale, about 0.196 V peak at the mic-amp output; speech at a conversational distance roughly 10–35 dB below full scale (A-029, ±10 dB)); "modeled on the circuit, not measured against a unit".
 
 ## Test hooks (`__test-hooks` feature; unpublished)
 

@@ -43,7 +43,7 @@ Expected: the settings matrix (knee −10 / +3 dBFS, attack 1 / 10 / 50 ms, rele
 cargo test -p rr_dr60_harness --test golden --test golden_agc --test golden_vas --test determinism --test mutation
 ```
 
-Expected: `golden-v1.json` byte-identical (its SHA guard unchanged); the AGC and VAS files match after the single re-bless; 100 partitions at 48 kHz; the three mutants (knee **−3** dB, since +3 would leave FR-010's range; release ×2; VAS threshold +3 dB) caught by a tolerance check and a golden check each. **T051 walk 2026-10-11: all green** (golden 112 / 42 / 63 entries).
+Expected: `golden-v1.json` byte-identical (its SHA guard unchanged); the AGC and VAS files match after the two re-blesses (the limiter, then the knee move); 100 partitions at 48 kHz; the three mutants (knee **−3** dB, since +3 would leave FR-010's range; release ×2; VAS threshold +3 dB) caught by a tolerance check and a golden check each. **T051 walk 2026-10-11: all green** (golden 112 / 42 / 63 entries).
 
 ## 6. Records (FR-013, FR-019; SC-001, SC-008)
 

@@ -43,7 +43,7 @@ Technical approach:
 - Latency unchanged at every tap but "after AGC" (0); default ≤ 20 ms (SC-006).
 - Bit-identical on 8 targets and across block partitions (FR-014): `exp`/`ln` from detmath only; the capacitor state flushes to 0.0 below a floor.
 - No allocation, locks or I/O while processing; no `unsafe` outside `rr_dr60_ffi`.
-- The AGC and VAS golden files change exactly once, in one commit (FR-016); `golden-v1.json` never.
+- The AGC and VAS golden files change once per adopted model, each in one commit (FR-016; twice on the branch: the limiter, then the knee move); `golden-v1.json` never.
 - The spec's figures carry ±1.5 ms / ±40 % tolerances; the Rust model must land inside them at every host rate, including the coarse 6 kHz grid (R-03).
 
 **Scale/Scope**: About 500 lines of core changes (new `limiter.rs`, pipeline tap and stage order, settings, clamp, tests), about 150 lines of FFI changes, about 900 lines of harness changes (AGC checks rewritten, VAS chain scenarios, stimuli, configs, mutation, golden), the reference model script (about 150 lines), docs, register, CHANGELOG, two regenerated golden files, removal of the Hilbert coefficient file, its tests and its design script.
@@ -58,7 +58,7 @@ There are no open NEEDS CLARIFICATION items. The pre-specification review fixed 
 |---|---|---|---|
 | I. Portable Library First | No new dependencies; the core stays `no_std` + `alloc`. The C struct grows at the end, keeps every existing offset, keeps the field-enum numbers; the header is regenerated; the smoke test covers the new fields (R-09). | ✅ | ✅ |
 | II. Evidence-Based Fidelity | Every component value traces to S-002; every transistor estimate to A-028/A-034/A-035/A-036 with its confidence; the level scale to A-030/A-029; the threshold to A-022 (revised). The register, CHANGELOG, README and signal-chain record the change; the spec 002 model is retired explicitly, not silently (R-11). The reference model is committed so the numbers are reproducible. | ✅ | ✅ |
-| III. Measured, Test-First Verification | Each FR-003 to FR-012 check maps to a harness function measuring the exact gain at the host-rate tap (R-08); core unit tests pin the model to the reference script's figures; golden files re-blessed once, on purpose, with guards and a CHANGELOG entry; three mutations caught (SC-007). | ✅ | ✅ |
+| III. Measured, Test-First Verification | Each FR-003 to FR-012 check maps to a harness function measuring the exact gain at the host-rate tap (R-08); core unit tests pin the model to the reference script's figures; golden files re-blessed on purpose only (twice on the branch, FR-016), with guards and a CHANGELOG entry; three mutations caught (SC-007). | ✅ | ✅ |
 | IV. Deterministic & Real-Time Safe | Per-sample math uses detmath `exp`/`ln` and basic ops; no allocation; the state is one `f64` plus the derived parameters; flush-to-zero gives exact state equality (R-03). | ✅ | ✅ |
 | V. Modular, Traceable Signal Chain | The limiter and the clamp are separate stages, each bypassable, the limiter tap-able; the clamp's enable is a setting (Clarifications). Added complexity is recorded below. | ✅ | ✅ |
 | VI. Neutral, Honest Communication | README, CHANGELOG and register say "modeled on the circuit, not measured against a unit", give the input-level anchor, list what is not modeled (R-14), and describe the clipped onset as a model property with low confidence. | ✅ | ✅ |

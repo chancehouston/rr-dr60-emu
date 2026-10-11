@@ -426,7 +426,7 @@ pub fn check_fr003_passthrough(rate: u32, make: Make<'_>) -> Vec<MeasurementResu
     out
 }
 
-/// 005 FR-004 (A-028): the knee by bisection at +2 ± 2 dBFS, the static-curve set against the
+/// 005 FR-004 (A-028): the knee by bisection at knee + 1 ± 2 dBFS (0 ± 2 at the default), the static-curve set against the
 /// ceiling, and the 40 dB attenuation limit never exceeded.
 pub fn check_fr004_static(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
     let knee_setting = f64::from(configs::settings(CONFIG, rate).agc.knee_dbfs);
@@ -463,7 +463,7 @@ pub fn check_fr004_static(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
     out
 }
 
-/// 005 FR-005 (A-034, A-028): the dead time of a −20 → +11 dBFS step from the discharged state
+/// 005 FR-005 (A-034, A-028): the dead time of a knee − 21 → knee + 10 dB step (−22 → +9 dBFS at the default) from the discharged state
 /// (a fresh pipeline equals 20 s of sub-knee input, R-03), the ramp and the over-attenuation
 /// guard, the 2 dB-over step's dead-time ratio, and the armed dead time.
 pub fn check_fr005_attack(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
@@ -1126,7 +1126,7 @@ pub fn check_fr011_settings(rate: u32, case: &Case, make: Make<'_>) -> Vec<Measu
             "dB re configured",
             Tolerance::Range(-1.0, 3.0), // engineering target (005 FR-011): configured + 1 ± 2 dB
         ));
-        // The static-curve set shifted with the knee (the default set is relative to +1 dBFS).
+        // The static-curve set shifted with the knee (the default set is relative to the default knee, −1 dBFS).
         let shift = configured - f64::from(d.knee_dbfs);
         let levels: Vec<f64> = static_curve_levels().iter().map(|l| l + shift).collect();
         out.extend(static_curve_rows_settings(
