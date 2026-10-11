@@ -20,7 +20,8 @@ pub enum Error {
         /// Output length in samples.
         output: usize,
     },
-    /// A setting is outside its valid range, or is NaN or ±Inf (spec 002 FR-011). Returned by
+    /// A setting is outside its valid range, or is NaN or ±Inf (spec 002 FR-011, spec 003
+    /// FR-012). Returned by
     /// `Pipeline::new` and `Pipeline::reconfigure`; a failed reconfigure changes nothing.
     InvalidSetting {
         /// The offending setting.
@@ -43,10 +44,19 @@ pub enum Setting {
     AgcAttackMs,
     /// `agc.release_ms`, valid 50 to 10000 ms.
     AgcReleaseMs,
+    /// `vas.sensitivity`, valid 1 to 5 (spec 003).
+    VasSensitivity,
+    /// `vas.threshold_dbfs`, valid −60 to 0 dBFS (spec 003).
+    VasThresholdDbfs,
+    /// `vas.hang_ms`, valid 50 to 10000 ms (spec 003).
+    VasHangMs,
+    /// `vas.onset_ms`, valid 0 to 200 ms (spec 003).
+    VasOnsetMs,
 }
 
 impl Setting {
-    /// Inclusive valid range (data-model.md › AgcSettings; engineering targets, 002 FR-015).
+    /// Inclusive valid range (002 and 003 data-model.md; engineering targets, 002 FR-015 and
+    /// 003 FR-017).
     pub(crate) const fn range(self) -> (f32, f32) {
         match self {
             Setting::AgcTargetDbfs => (-30.0, 0.0), // engineering target (002 FR-011)
@@ -54,6 +64,10 @@ impl Setting {
             Setting::AgcMaxAttenuationDb => (0.0, 40.0), // engineering target (002 FR-011)
             Setting::AgcAttackMs => (1.0, 100.0),   // engineering target (002 FR-011)
             Setting::AgcReleaseMs => (50.0, 10_000.0), // engineering target (002 FR-011)
+            Setting::VasSensitivity => (1.0, 5.0),  // S-001, A-021: five levels
+            Setting::VasThresholdDbfs => (-60.0, 0.0), // engineering target (003 FR-012)
+            Setting::VasHangMs => (50.0, 10_000.0), // engineering target (003 FR-012)
+            Setting::VasOnsetMs => (0.0, 200.0),    // engineering target (003 FR-012)
         }
     }
 
@@ -64,6 +78,10 @@ impl Setting {
             Setting::AgcMaxAttenuationDb => ("agc.max_attenuation_db", "dB"),
             Setting::AgcAttackMs => ("agc.attack_ms", "ms"),
             Setting::AgcReleaseMs => ("agc.release_ms", "ms"),
+            Setting::VasSensitivity => ("vas.sensitivity", ""),
+            Setting::VasThresholdDbfs => ("vas.threshold_dbfs", "dBFS"),
+            Setting::VasHangMs => ("vas.hang_ms", "ms"),
+            Setting::VasOnsetMs => ("vas.onset_ms", "ms"),
         }
     }
 }
@@ -72,7 +90,11 @@ impl fmt::Display for Setting {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (name, unit) = self.name_and_unit();
         let (lo, hi) = self.range();
-        write!(f, "{name} (valid range {lo} to {hi} {unit})")
+        if unit.is_empty() {
+            write!(f, "{name} (valid range {lo} to {hi})")
+        } else {
+            write!(f, "{name} (valid range {lo} to {hi} {unit})")
+        }
     }
 }
 

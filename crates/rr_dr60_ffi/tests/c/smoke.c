@@ -40,14 +40,16 @@ int main(void) {
   CHECK(s.struct_size == sizeof(RrDr60Settings), "struct_size %u", s.struct_size);
   CHECK(s.tap == RR_DR60_TAP_AFTER_PLAYBACK, "default tap");
   CHECK(s.agc_enabled, "AGC on by default (spec 002, A-020)");
-  /* The spec 001 checks below run with the AGC bypassed (spec 002 FR-018). */
+  CHECK(s.vas_enabled && s.vas_mode == RR_DR60_VAS_MODE_DROP, "VAS on, drop mode by default (spec 003, A-008)");
+  /* The spec 001 checks below run with the AGC and the VAS bypassed (spec 002 FR-018, 003 FR-020). */
   s.agc_enabled = false;
+  s.vas_enabled = false;
 
   RrDr60Pipeline *p = NULL;
   CHECK(rr_dr60_create(&s, &p) == RR_DR60_STATUS_OK && p != NULL, "create");
 
   /* 1 kHz at -20 dBFS keeps its level within 0.2 dB (US1 AS1, A-015). */
-  CHECK(rr_dr60_process(p, in, out, N) == RR_DR60_STATUS_OK, "process");
+  CHECK(rr_dr60_process(p, in, out, N, NULL) == RR_DR60_STATUS_OK, "process");
   double gain_db = 20.0 * log10(rms(out, N / 2, N) / rms(in, N / 2, N));
   CHECK(fabs(gain_db) <= 0.2, "1 kHz gain %.3f dB", gain_db);
 
@@ -67,16 +69,16 @@ int main(void) {
   bad = rr_dr60_settings_default(FS);
   bad.struct_size = 4;
   CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_INVALID_ARGUMENT && q == sentinel, "struct_size = 4");
-  CHECK(rr_dr60_process(NULL, in, out, 64) == RR_DR60_STATUS_NULL_POINTER, "process(NULL handle)");
-  CHECK(rr_dr60_process(p, NULL, out, 64) == RR_DR60_STATUS_NULL_POINTER, "process(NULL input)");
-  CHECK(rr_dr60_process(p, NULL, NULL, 0) == RR_DR60_STATUS_OK, "frames = 0 with NULLs");
-  CHECK(rr_dr60_process(p, in, in + 1, 64) == RR_DR60_STATUS_INVALID_ARGUMENT, "partial overlap");
+  CHECK(rr_dr60_process(NULL, in, out, 64, NULL) == RR_DR60_STATUS_NULL_POINTER, "process(NULL handle)");
+  CHECK(rr_dr60_process(p, NULL, out, 64, NULL) == RR_DR60_STATUS_NULL_POINTER, "process(NULL input)");
+  CHECK(rr_dr60_process(p, NULL, NULL, 0, NULL) == RR_DR60_STATUS_OK, "frames = 0 with NULLs");
+  CHECK(rr_dr60_process(p, in, in + 1, 64, NULL) == RR_DR60_STATUS_INVALID_ARGUMENT, "partial overlap");
 
   /* In place equals copy mode after reset. */
   static float buf[N];
   memcpy(buf, in, sizeof in);
   CHECK(rr_dr60_reset(p) == RR_DR60_STATUS_OK, "reset");
-  CHECK(rr_dr60_process(p, buf, buf, N) == RR_DR60_STATUS_OK, "in place");
+  CHECK(rr_dr60_process(p, buf, buf, N, NULL) == RR_DR60_STATUS_OK, "in place");
   CHECK(memcmp(buf, out, sizeof out) == 0, "in-place output differs from copy mode");
 
   /* Reconfigure rows (contracts/c-api.md): errors leave the old configuration working. */
@@ -85,10 +87,11 @@ int main(void) {
   uint32_t latency_after = 0;
   CHECK(rr_dr60_latency_samples(p, &latency_after) == RR_DR60_STATUS_OK && latency_after == latency,
         "failed reconfigure changed latency (%u -> %u)", latency, latency_after);
-  CHECK(rr_dr60_process(p, in, out, 64) == RR_DR60_STATUS_OK, "process after failed reconfigure");
+  CHECK(rr_dr60_process(p, in, out, 64, NULL) == RR_DR60_STATUS_OK, "process after failed reconfigure");
   CHECK(rr_dr60_reconfigure(p, NULL) == RR_DR60_STATUS_NULL_POINTER, "reconfigure(NULL)");
   RrDr60Settings bypass = rr_dr60_settings_default(FS);
   bypass.agc_enabled = false;
+  bypass.vas_enabled = false;
   bypass.record_stage_enabled = false;
   bypass.playback_stage_enabled = false;
   CHECK(rr_dr60_reconfigure(p, &bypass) == RR_DR60_STATUS_OK, "reconfigure to bypass_all");
@@ -97,6 +100,7 @@ int main(void) {
 
   /* Spec 002 AGC (US2 AS5, AS6; contracts/c-api.md). */
   RrDr60Settings agc = rr_dr60_settings_default(FS);
+  agc.vas_enabled = false; /* the spec 002 default (spec 003 FR-020) */
   agc.agc_release_ms = 3000.0f;
   agc.tap = RR_DR60_TAP_AFTER_AGC;
   RrDr60SettingField field = RR_DR60_SETTING_FIELD_TAP;
@@ -104,7 +108,7 @@ int main(void) {
             field == RR_DR60_SETTING_FIELD_NONE,
         "validate(AGC release 3000 ms, tap after AGC)");
   CHECK(rr_dr60_reconfigure(p, &agc) == RR_DR60_STATUS_OK, "reconfigure to AGC settings");
-  CHECK(rr_dr60_process(p, in, out, N) == RR_DR60_STATUS_OK, "process with AGC");
+  CHECK(rr_dr60_process(p, in, out, N, NULL) == RR_DR60_STATUS_OK, "process with AGC");
   agc.agc_attack_ms = 0.0f;
   CHECK(rr_dr60_settings_validate(&agc, &field) == RR_DR60_STATUS_INVALID_SETTING &&
             field == RR_DR60_SETTING_FIELD_AGC_ATTACK_MS,
@@ -112,6 +116,52 @@ int main(void) {
   q = sentinel;
   CHECK(rr_dr60_create(&agc, &q) == RR_DR60_STATUS_INVALID_SETTING && q == sentinel,
         "create(attack 0 ms)");
+
+  /* Spec 003 VAS (US2 AS7; contracts/c-api.md rule 8): drop mode, events, mute mode, the
+   * "after VAS" tap, and an invalid sensitivity. VAS-isolated configuration: AGC and both
+   * band-limit stages off. Burst 1 s, gap 5 s, burst 1 s, 1 kHz at -8 dBFS (threshold + 10 dB). */
+  RrDr60Settings vas = rr_dr60_settings_default(FS);
+  vas.agc_enabled = false;
+  vas.record_stage_enabled = false;
+  vas.playback_stage_enabled = false;
+  vas.tap = RR_DR60_TAP_AFTER_VAS;
+  CHECK(rr_dr60_settings_validate(&vas, &field) == RR_DR60_STATUS_OK && field == RR_DR60_SETTING_FIELD_NONE,
+        "validate(tap after VAS)");
+  CHECK(rr_dr60_reconfigure(p, &vas) == RR_DR60_STATUS_OK, "reconfigure to the VAS-isolated settings");
+  CHECK(rr_dr60_latency_samples(p, &latency_after) == RR_DR60_STATUS_OK && latency_after < latency,
+        "tap after VAS skips stage 10: latency %u should be below default %u", latency_after, latency);
+  static float vin[7 * FS], vout[7 * FS];
+  for (size_t i = 0; i < 7 * FS; i++) {
+    int burst = i < (size_t)FS || i >= (size_t)(6 * FS);
+    vin[i] = burst ? (float)(0.398 * sin(2.0 * PI * 1000.0 * (double)(i % FS) / FS)) : 0.0f;
+  }
+  size_t capacity = 0;
+  CHECK(rr_dr60_max_events(p, 7 * FS, &capacity) == RR_DR60_STATUS_OK && capacity >= 1, "max_events");
+  RrDr60VasEvent *events = (RrDr60VasEvent *)malloc(capacity * sizeof *events);
+  CHECK(events != NULL, "malloc");
+  RrDr60BlockInfo info = {0, 0, false};
+  CHECK(rr_dr60_process_with_events(p, vin, vout, 7 * FS, &info, events, capacity) == RR_DR60_STATUS_OK,
+        "process_with_events");
+  /* Kept: burst + hang time (1 s) + burst minus onset (20 ms), minus the end-of-stream latency. */
+  CHECK(info.produced < 7 * (size_t)FS && info.produced > 2 * (size_t)FS,
+        "drop mode produced %zu of %d", info.produced, 7 * FS);
+  CHECK(info.events == 1 && !info.paused, "one splice (events %zu, paused %d)", info.events, (int)info.paused);
+  CHECK(info.events <= capacity && events[0].output_position < info.produced &&
+            events[0].input_length + info.produced <= 7 * (uint64_t)FS,
+        "splice at %llu removed %llu", (unsigned long long)events[0].output_position,
+        (unsigned long long)events[0].input_length);
+  free(events);
+
+  vas.vas_mode = RR_DR60_VAS_MODE_MUTE;
+  CHECK(rr_dr60_reconfigure(p, &vas) == RR_DR60_STATUS_OK, "reconfigure to mute mode");
+  CHECK(rr_dr60_process(p, vin, vout, 7 * FS, &info) == RR_DR60_STATUS_OK, "process in mute mode");
+  CHECK(info.produced == 7 * (size_t)FS && info.events == 1, "mute mode produced %zu, events %zu",
+        info.produced, info.events);
+
+  vas.vas_sensitivity = 259; /* must not wrap to a valid level */
+  CHECK(rr_dr60_settings_validate(&vas, &field) == RR_DR60_STATUS_INVALID_SETTING &&
+            field == RR_DR60_SETTING_FIELD_VAS_SENSITIVITY,
+        "validate(vas_sensitivity = 259) names the field");
 
   CHECK(rr_dr60_version_string() != NULL && strlen(rr_dr60_version_string()) > 0, "version");
   rr_dr60_destroy(p);

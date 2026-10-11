@@ -3,6 +3,7 @@
 pub(crate) mod agc;
 pub(crate) mod agc_hilbert_coeffs;
 mod biquad;
+pub(crate) mod vas;
 pub(crate) mod voiceband;
 pub(crate) mod voiceband_coeffs;
 

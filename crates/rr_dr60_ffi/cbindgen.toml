@@ -19,21 +19,23 @@ header = """
  *     error returns RR_DR60_STATUS_INTERNAL_ERROR and poisons the handle until
  *     rr_dr60_reset (or rr_dr60_reconfigure) succeeds.
  *  2. A failed call changes nothing: out-parameters are untouched and state is unchanged.
+ *     Exception: out_info in rr_dr60_process and rr_dr60_process_with_events is always written
+ *     when not NULL, so a host that only checks `produced` never reads a stale count.
  *  3. The caller owns all buffers; the library never keeps a pointer after a call returns.
  *     Using a handle after rr_dr60_destroy is undefined behavior.
  *  4. A handle must not be used by two threads at the same time; separate handles are
  *     independent.
  *  5. RrDr60Settings only grows at the end; always start from rr_dr60_settings_default().
  *
- * Real-time safe: rr_dr60_process, rr_dr60_reset, rr_dr60_latency_samples,
- *   rr_dr60_settings_validate.
- * Not real-time safe (allocate): rr_dr60_create, rr_dr60_destroy.
+ * Real-time safe: rr_dr60_process, rr_dr60_process_with_events, rr_dr60_max_events,
+ *   rr_dr60_reset, rr_dr60_latency_samples, rr_dr60_settings_validate.
+ * Not real-time safe (allocate): rr_dr60_create, rr_dr60_destroy, rr_dr60_reconfigure.
  *
  * SPDX-License-Identifier: MIT
  */"""
 
 [export]
-include = ["RrDr60Tap"]
+include = ["RrDr60Tap", "RrDr60VasMode"]
 exclude = ["rr_dr60__test_force_panic"]
 
 [enum]

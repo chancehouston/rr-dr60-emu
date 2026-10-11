@@ -24,6 +24,12 @@ pub const AGC_STIMULI: [&str; 3] = ["agc_noise_burst", "agc_start_m10", "agc_ste
 /// Spec 002 AGC golden configurations, in sorted order.
 pub const AGC_CONFIGS: [&str; 2] = ["agc_only", "default_agc"];
 
+/// Spec 003 VAS golden stimuli, in sorted order (specs/003-vas/contracts/golden-format.md).
+pub const VAS_STIMULI: [&str; 3] = ["vas_burst_gap", "vas_noise_gaps", "vas_short_bursts"];
+
+/// Spec 003 VAS golden configurations, in sorted order.
+pub const VAS_CONFIGS: [&str; 3] = ["default_vas", "vas_mute", "vas_only"];
+
 /// The golden file (format `rr_dr60-golden`, version 1).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GoldenFile {
@@ -54,6 +60,19 @@ pub struct GoldenEntry {
     pub head: Vec<String>,
     /// RMS level in dBFS, rounded to 0.01 (diagnostic only; never compared).
     pub rms_dbfs: f64,
+    /// Spec 003: the VAS events and final state. Present in VAS-file entries only; absent (and
+    /// not serialized) in the spec 001 and 002 files, which therefore read unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vas: Option<VasGolden>,
+}
+
+/// The VAS part of a golden entry (specs/003-vas/contracts/golden-format.md).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VasGolden {
+    /// `[output_position, input_length]` pairs, in order (splices or muted regions).
+    pub events: Vec<[u64; 2]>,
+    /// Whether the VAS was paused at the end of the stimulus.
+    pub paused_at_end: bool,
 }
 
 /// A golden stimulus at host rate `fs` (contracts/golden-format.md).
@@ -73,6 +92,29 @@ pub fn stimulus(name: &str, fs: u32) -> Vec<f32> {
         "agc_noise_burst" => crate::agc_checks::noise_burst_stimulus(f),
         "agc_start_m10" => stimulus::step(1000.0, &[-10.0], &[0.5], f),
         "agc_step" => stimulus::step(1000.0, &[-40.0, -10.0, -40.0], &[3.0, 1.0, 4.0], f),
+        // Spec 003 (contracts/golden-format.md). Bursts are 1 kHz at −8 dBFS: the default
+        // threshold (A-022) + 10 dB (engineering target, 003 R-15).
+        "vas_burst_gap" => stimulus::burst_gap(
+            1000.0,
+            -8.0,
+            &[
+                (true, 1.0),
+                (false, 0.6),
+                (true, 0.5),
+                (false, 3.0),
+                (true, 1.0),
+                (false, 2.5),
+            ],
+            f,
+        ),
+        "vas_noise_gaps" => {
+            let bursts = stimulus::tone_bursts(1000.0, -8.0, 1.0, 3.0, 2, f);
+            let noise = stimulus::bandlimited_noise(0x0D60, bursts.len(), f, -70.0);
+            bursts.iter().zip(&noise).map(|(b, n)| b + n).collect()
+        }
+        "vas_short_bursts" => {
+            stimulus::short_bursts(1000.0, -8.0, 2.0, &[10.0, 30.0, 200.0], 2.0, f)
+        }
         other => panic!("unknown stimulus {other:?}"),
     }
 }
@@ -111,7 +153,28 @@ pub fn entry(stimulus: &str, config: &str, host_rate_hz: u32, output: &[f32]) ->
         sha256,
         head,
         rms_dbfs,
+        vas: None,
     }
+}
+
+/// [`entry`] plus the VAS events and final state (spec 003 contracts/golden-format.md).
+pub fn entry_vas(
+    stimulus: &str,
+    config: &str,
+    host_rate_hz: u32,
+    output: &[f32],
+    events: &[rr_dr60::VasEvent],
+    paused_at_end: bool,
+) -> GoldenEntry {
+    let mut e = entry(stimulus, config, host_rate_hz, output);
+    e.vas = Some(VasGolden {
+        events: events
+            .iter()
+            .map(|e| [e.output_position, e.input_length])
+            .collect(),
+        paused_at_end,
+    });
+    e
 }
 
 /// Generates every spec 001 entry (4 stimuli × 4 configurations × 6 rates), each stimulus
@@ -125,6 +188,34 @@ pub fn generate_agc(make: Make<'_>) -> GoldenFile {
     generate_set(&AGC_STIMULI, &AGC_CONFIGS, make)
 }
 
+/// Generates every spec 003 VAS entry (3 stimuli × 3 configurations × 6 rates), each stimulus
+/// processed in one block with events; `n_samples` and `sha256` cover the produced samples.
+pub fn generate_vas(make: Make<'_>) -> GoldenFile {
+    let mut entries = Vec::new();
+    for &s in &VAS_STIMULI {
+        for &c in &VAS_CONFIGS {
+            for rate in configs::all_rates() {
+                let x = stimulus(s, rate);
+                let mut p = make(configs::settings(c, rate));
+                let mut y = vec![0.0; x.len()];
+                let mut events = vec![rr_dr60::VasEvent::default(); p.max_events(x.len())];
+                let info = p
+                    .process_with_events(&x, &mut y, &mut events)
+                    .expect("equal lengths");
+                y.truncate(info.produced);
+                events.truncate(info.events);
+                entries.push(entry_vas(s, c, rate, &y, &events, info.paused));
+            }
+        }
+    }
+    GoldenFile {
+        format: "rr_dr60-golden".into(),
+        version: 1,
+        library_version: rr_dr60::VERSION.into(),
+        entries,
+    }
+}
+
 fn generate_set(stimuli: &[&str], config_names: &[&str], make: Make<'_>) -> GoldenFile {
     let mut entries = Vec::new();
     for &s in stimuli {
@@ -133,7 +224,8 @@ fn generate_set(stimuli: &[&str], config_names: &[&str], make: Make<'_>) -> Gold
                 let x = stimulus(s, rate);
                 let mut p = make(configs::settings(c, rate));
                 let mut y = vec![0.0; x.len()];
-                p.process(&x, &mut y).expect("equal lengths");
+                let produced = p.process(&x, &mut y).expect("equal lengths").produced;
+                y.truncate(produced);
                 entries.push(entry(s, c, rate, &y));
             }
         }
@@ -161,13 +253,22 @@ pub fn compare(expected: &GoldenFile, actual: &GoldenFile) -> Result<(), String>
             Some(got) if got.sha256 != want.sha256 => {
                 let first_diff = want.head.iter().zip(&got.head).position(|(a, b)| a != b);
                 problems.push(format!(
-                    "{}/{}/{} Hz differs: first differing head index {:?}, rms {} -> {} dBFS",
+                    "{}/{}/{} Hz differs: first differing head index {:?}, rms {} -> {} dBFS, {} -> {} samples",
                     want.stimulus,
                     want.config,
                     want.host_rate_hz,
                     first_diff,
                     want.rms_dbfs,
-                    got.rms_dbfs
+                    got.rms_dbfs,
+                    want.n_samples,
+                    got.n_samples
+                ));
+            }
+            // Spec 003: the events and the final state are compared too.
+            Some(got) if got.vas != want.vas => {
+                problems.push(format!(
+                    "{}/{}/{} Hz: VAS events or final state differ: {:?} -> {:?}",
+                    want.stimulus, want.config, want.host_rate_hz, want.vas, got.vas
                 ));
             }
             Some(_) => {}
@@ -216,6 +317,22 @@ pub fn committed_agc() -> GoldenFile {
 /// `RR_DR60_BLESS=agc cargo test -p rr_dr60_harness --test golden_agc`, with a CHANGELOG entry.
 pub fn path_agc() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-agc-v1.json")
+}
+
+/// The committed spec 003 VAS golden file, embedded at compile time like [`committed`].
+///
+/// # Panics
+///
+/// If the embedded file is not valid golden JSON.
+pub fn committed_vas() -> GoldenFile {
+    serde_json::from_str(include_str!("../golden/golden-vas-v1.json"))
+        .expect("valid embedded VAS golden file")
+}
+
+/// Path of the committed spec 003 VAS golden file. Bless it only with
+/// `RR_DR60_BLESS=vas cargo test -p rr_dr60_harness --test golden_vas`, with a CHANGELOG entry.
+pub fn path_vas() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-vas-v1.json")
 }
 
 /// Loads a golden file.
@@ -296,6 +413,36 @@ mod tests {
         assert_eq!(stimulus("agc_step", 8000).len(), 64_000);
         assert_eq!(stimulus("agc_start_m10", 16_000).len(), 8000);
         assert_eq!(stimulus("agc_noise_burst", 8000).len(), 80_000);
+        // Spec 003: 8.6 s, 8 s and 8.24 s (contracts/golden-format.md).
+        assert_eq!(stimulus("vas_burst_gap", 8000).len(), 68_800);
+        assert_eq!(stimulus("vas_noise_gaps", 8000).len(), 64_000);
+        assert_eq!(stimulus("vas_short_bursts", 8000).len(), 65_920);
+    }
+
+    #[test]
+    fn vas_entries_compare_events_and_round_trip() {
+        let mut event = rr_dr60::VasEvent::default();
+        event.output_position = 10;
+        event.input_length = 20;
+        let ev = [event];
+        let a = entry_vas("vas_burst_gap", "vas_only", 8000, &[1.0, 0.0], &ev, false);
+        let mut b = a.clone();
+        b.vas.as_mut().unwrap().paused_at_end = true;
+        let file = |entries: Vec<GoldenEntry>| GoldenFile {
+            format: "rr_dr60-golden".into(),
+            version: 1,
+            library_version: "0".into(),
+            entries,
+        };
+        assert!(compare(&file(vec![a.clone()]), &file(vec![a.clone()])).is_ok());
+        let err = compare(&file(vec![a.clone()]), &file(vec![b])).unwrap_err();
+        assert!(err.contains("VAS events or final state differ"), "{err}");
+        let json = serde_json::to_string(&a).unwrap();
+        assert!(json.contains("\"events\":[[10,20]]") && json.contains("\"paused_at_end\":false"));
+        assert_eq!(serde_json::from_str::<GoldenEntry>(&json).unwrap(), a);
+        // Older entries have no `vas` field and serialize without one.
+        let old = entry("impulse", "default", 8000, &[1.0]);
+        assert!(!serde_json::to_string(&old).unwrap().contains("vas"));
     }
 
     #[test]
