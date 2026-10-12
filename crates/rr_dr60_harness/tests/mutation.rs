@@ -236,3 +236,70 @@ mod vas {
         );
     }
 }
+
+/// Spec 006 SC-002, SC-004 (T039): the two harness-side split mutants (research R-08) against
+/// the golden equivalence: a recording missing its first stored sample no longer reproduces
+/// the golden entry's SHA-256, and a flipped CRC bit is refused at import. The mutants are
+/// transforms of exported bytes (`split_checks::mutants`), never in the core; `us3_export_import`
+/// proves the same two mutants fail the round-trip check.
+mod split {
+    use rr_dr60::Pipeline;
+    use rr_dr60_harness::split_checks::{self, mutants};
+    use rr_dr60_harness::{configs, golden};
+
+    /// The `tone_1k_m20` / `default` golden entry at 48 kHz, recorded, exported, mutated,
+    /// imported into a fresh engine and played: its SHA-256 differs from the entry's.
+    #[test]
+    fn drop_first_sample_breaks_the_golden_equivalence() {
+        let a = golden::applicable_entries()
+            .into_iter()
+            .find(|a| {
+                a.stimulus == "tone_1k_m20" && a.config == "default" && a.host_rate_hz == 48_000
+            })
+            .expect("entry");
+        let x = golden::stimulus(a.stimulus, 48_000);
+        let mut p = Pipeline::new(a.settings).unwrap();
+        p.start_recording().unwrap();
+        let _ = p.record(&x, &mut []).unwrap();
+        let _ = p.stop_recording(&mut []).unwrap();
+        let bytes = split_checks::export_bytes(&p, 1);
+        let n = a.entry.n_samples as usize;
+        // Healthy: reproduced.
+        let mut healthy = Pipeline::new(a.settings).unwrap();
+        assert_eq!(healthy.import(&bytes), Ok(1));
+        let out = split_checks::play_to_end(&mut healthy, 1, 997);
+        let pre = &out[..out.len() - healthy.drain_samples() as usize];
+        assert_eq!(
+            golden::entry(a.stimulus, a.config, 48_000, &pre[..n]).sha256,
+            a.entry.sha256
+        );
+        // Mutant: caught.
+        let mut mutant = Pipeline::new(a.settings).unwrap();
+        assert_eq!(mutant.import(&mutants::drop_first_sample(&bytes)), Ok(1));
+        let out = split_checks::play_to_end(&mut mutant, 1, 997);
+        let pre = &out[..out.len() - mutant.drain_samples() as usize];
+        assert!(
+            pre.len() < n
+                || golden::entry(a.stimulus, a.config, 48_000, &pre[..n]).sha256 != a.entry.sha256
+        );
+    }
+
+    /// A flipped CRC bit never reaches the memory.
+    #[test]
+    fn crc_bit_flip_is_refused() {
+        let mut p = Pipeline::new(configs::settings("default_agc", 48_000)).unwrap();
+        p.start_recording().unwrap();
+        let _ = p
+            .record(&golden::stimulus("tone_1k_m20", 48_000), &mut [])
+            .unwrap();
+        let _ = p.stop_recording(&mut []).unwrap();
+        let bytes = split_checks::export_bytes(&p, 1);
+        let before = p.memory_status();
+        assert_eq!(
+            p.import(&mutants::flip_crc_bit(&bytes)),
+            Err(rr_dr60::Error::Damaged)
+        );
+        assert_eq!(p.memory_status(), before);
+        assert_eq!(p.import(&bytes), Ok(2));
+    }
+}

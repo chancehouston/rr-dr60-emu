@@ -5,7 +5,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
-use rr_dr60::{Pipeline, VasEvent};
+use rr_dr60::{Pipeline, Route, VasEvent};
 use rr_dr60_ffi::{
     RrDr60BlockInfo, RrDr60Pipeline, RrDr60Status, RrDr60VasEvent, rr_dr60_create, rr_dr60_destroy,
     rr_dr60_process, rr_dr60_process_with_events, rr_dr60_reset,
@@ -154,6 +154,78 @@ fn processing_never_touches_the_heap() {
             &sizes[..]
         };
         vas_cases(rate, vas_sizes);
+
+        // Spec 006 FR-017: the record and playback paths' calls and the reads.
+        transport_cases(rate, vas_sizes);
+    }
+}
+
+/// Spec 006 FR-017: no heap activity in `start_recording`, `record`, `stop_recording`,
+/// `start_playback`, `play`, `stop_playback`, `set_route`, the state and figure reads,
+/// `export_len`, the latency and drain reads, `footprint_bytes`, `erase` and `erase_all`
+/// (bounded memmove, no allocation), `export` into a caller buffer and `import` of a
+/// caller buffer, at a 10 s capacity with the VAS configurations and the default with the
+/// limiter.
+fn transport_cases(rate: u32, sizes: &[usize]) {
+    let input = vas_input(rate);
+    let mut output = vec![0.0f32; 1024];
+    let cases: Vec<(&str, rr_dr60::Settings)> = ["default_vas", "vas_mute", "default_agc"]
+        .iter()
+        .map(|c| {
+            (
+                *c,
+                // 300 s: the 1000 blocks are up to 85 s of input at 6 kHz, recorded twice and imported once (mute mode stores it all).
+                configs::memory_capacity(configs::settings(c, rate), 300, 3),
+            )
+        })
+        .collect();
+    for (config, settings) in cases {
+        let mut p = Pipeline::new(settings).unwrap();
+        let mut events = vec![VasEvent::default(); p.max_record_events(1024) + 8];
+        let mut bytes = vec![0u8; 36 + 4 * 600_000];
+        let before = counts();
+        for round in 0..2 {
+            p.start_recording().unwrap();
+            for &n in sizes {
+                let info = p.record(&input[..n], &mut events).unwrap();
+                assert!(
+                    info.stopped.is_none(),
+                    "{rate} Hz {config}: filled a 300 s memory"
+                );
+            }
+            let out = p.stop_recording(&mut events).unwrap();
+            assert!(matches!(out.result, rr_dr60::StopResult::Kept { .. }));
+            let number = round + 1;
+            p.start_playback(number).unwrap();
+            let _ = p.play(&mut output[..512]).unwrap();
+            p.set_route(Route::Earphone);
+            p.stop_playback().unwrap();
+            p.start_playback(number).unwrap();
+            loop {
+                let n = sizes[(round as usize + 1) % sizes.len()].max(1);
+                if p.play(&mut output[..n]).unwrap().finished {
+                    break;
+                }
+            }
+            let _ = (p.state(), p.memory_status(), p.route());
+            let _ = (
+                p.record_latency_samples(),
+                p.playback_latency_samples(),
+                p.drain_samples(),
+            );
+            let _ = (p.footprint_bytes(), p.recording_length(number).unwrap());
+            let len = p.export_len(number).unwrap();
+            assert_eq!(p.export(number, &mut bytes[..len]).unwrap(), len);
+        }
+        assert_eq!(p.import(&bytes[..p.export_len(2).unwrap()]), Ok(3));
+        p.erase(1).unwrap();
+        p.erase_all().unwrap();
+        p.reset();
+        let after = counts();
+        assert_eq!(
+            after, before,
+            "{rate} Hz {config}: heap activity [allocs, deallocs, reallocs] in the transport"
+        );
     }
 }
 

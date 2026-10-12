@@ -104,3 +104,47 @@ fn ten_minute_block_equals_small_blocks() {
         "10-minute single block differs from 4096-sample blocks (FR-014)"
     );
 }
+
+/// Spec 006 SC-006 (T039): the record path plus the playback path versus the one-pass on the
+/// same 60 s stream at 48 kHz with everything on (`default_vas`), five interleaved repeats,
+/// the minimum of each; the ratio is printed and must be ≤ 1.25 (engineering target; the
+/// expectation is about 1.0–1.05, research R-11).
+#[test]
+#[ignore = "release-mode timing; run with --ignored"]
+fn split_costs_no_headroom() {
+    if skip_in_debug() {
+        return;
+    }
+    let x = stimulus::noise(9, 60 * 48_000);
+    let settings = configs::memory_capacity(configs::settings("default_vas", 48_000), 61, 1);
+    let (mut one_pass, mut split) = (f64::MAX, f64::MAX);
+    for _ in 0..5 {
+        let mut p = Pipeline::new(settings).unwrap();
+        let mut buf = x.clone();
+        let t = Instant::now();
+        for chunk in buf.chunks_mut(512) {
+            let _ = p.process_in_place(chunk);
+        }
+        one_pass = one_pass.min(t.elapsed().as_nanos() as f64 / x.len() as f64);
+
+        let mut p = Pipeline::new(settings).unwrap();
+        let mut out = vec![0.0f32; 512];
+        let t = Instant::now();
+        p.start_recording().unwrap();
+        for chunk in x.chunks(512) {
+            let _ = p.record(chunk, &mut []).unwrap();
+        }
+        let _ = p.stop_recording(&mut []).unwrap();
+        p.start_playback(1).unwrap();
+        while !p.play(&mut out).unwrap().finished {}
+        split = split.min(t.elapsed().as_nanos() as f64 / x.len() as f64);
+    }
+    let ratio = split / one_pass;
+    println!(
+        "one-pass {one_pass:.1} ns/sample, record + play {split:.1} ns/sample, ratio {ratio:.3} (SC-006)"
+    );
+    assert!(
+        ratio <= 1.25,
+        "record + play costs {ratio:.2}x the one-pass (SC-006)"
+    );
+}
