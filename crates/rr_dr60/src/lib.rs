@@ -61,6 +61,7 @@
 extern crate alloc;
 
 mod error;
+mod paths;
 mod pipeline;
 mod rate;
 mod resample;
