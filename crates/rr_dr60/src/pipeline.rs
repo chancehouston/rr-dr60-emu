@@ -243,9 +243,22 @@ impl EventCounters {
     }
 }
 
-/// The device-rate part of the chain, in order: stage 4, the ADC clamp, stage 5, stage 10
-/// (spec 005 data-model.md › Pipeline order and taps), and which parts of it run. The tap
-/// after the AGC never enters the chain.
+/// Rounds a kept post-VAS device-rate sample to `f32`: the point where the recording is taken
+/// (spec 006 FR-009; research R-02). The one-pass engine and the record path narrow here
+/// alike, so a 32-bit store and the one-pass processing see the same samples, and the playback
+/// half widens with `f64::from`, which is exact. The physical defence is one of inaudibility,
+/// not fidelity: at this point the device holds an 8-bit µ-law code (A-003), 16 bits coarser
+/// than this rounding. `narrow_out` rounds to nearest, flushes `f32` subnormals to 0.0 and
+/// saturates at ±`f32::MAX` (with the clamp on the sample is within ±1.0, so saturation never
+/// acts).
+#[inline]
+fn narrow_device(d: f64) -> f32 {
+    narrow_out(d)
+}
+
+/// The device-rate part of the chain, in order: stage 4, the ADC clamp, stage 5, the `f32`
+/// narrowing (spec 006 FR-009), stage 10 (spec 005 data-model.md › Pipeline order and taps),
+/// and which parts of it run. The tap after the AGC never enters the chain.
 #[derive(Clone, Debug)]
 struct DeviceChain {
     /// Stage 4: the record band-pass (5 sections; spec 004 research R-06).
@@ -264,11 +277,18 @@ struct DeviceChain {
     playback: PlaybackStage,
     /// Stage 10 runs: enabled and the tap is after playback (data-model.md › Tap).
     run_playback: bool,
+    /// Test-only: `false` keeps the pre-0.6 un-narrowed stream, so `narrowing_delta` can
+    /// measure FR-009's effect (spec 006 research R-02). The shipped build has no flag and no
+    /// branch: it always narrows.
+    #[cfg(any(test, feature = "__test-hooks"))]
+    narrow: bool,
 }
 
 impl DeviceChain {
     fn new(settings: &Settings) -> Self {
         Self {
+            #[cfg(any(test, feature = "__test-hooks"))]
+            narrow: true,
             record: RecordStage::record(),
             run_record: settings.record_stage_enabled,
             clamp: ClampStage::new(settings.adc_clamp_enabled),
@@ -285,7 +305,9 @@ impl DeviceChain {
     /// with no arithmetic (FR-007). The clamp sees stage 4's output, so the VAS and every tap
     /// from "after record" on see clamped samples (spec 005 FR-008); a dropped sample never
     /// reaches stage 10, and a muted sample reaches it as +0.0 (spec 003 Edge Cases: its
-    /// ring-out continues into the region).
+    /// ring-out continues into the region). Every kept sample, the muted +0.0 included, is
+    /// rounded to `f32` after the VAS and before stage 10 (spec 006 FR-009: the recording's
+    /// stored form; `narrow_device`).
     #[inline]
     fn process(&mut self, mut d: f64) -> DeviceOut {
         if self.run_record {
@@ -303,6 +325,7 @@ impl DeviceChain {
             }
             d = 0.0;
         }
+        d = self.narrow(d);
         if self.run_playback {
             d = self.playback.process(d);
         }
@@ -314,6 +337,16 @@ impl DeviceChain {
         } else {
             DeviceOut::Keep(d)
         }
+    }
+
+    /// The FR-009 narrowing of a kept post-VAS sample, widened back for stage 10 (exact).
+    #[inline]
+    fn narrow(&self, d: f64) -> f64 {
+        #[cfg(any(test, feature = "__test-hooks"))]
+        if !self.narrow {
+            return d;
+        }
+        f64::from(narrow_device(d))
     }
 
     /// The VAS runs and is paused.
@@ -581,11 +614,34 @@ impl Pipeline {
     }
 }
 
+#[cfg(feature = "__test-hooks")]
+impl Pipeline {
+    /// Test-only (hidden): a one-pass pipeline with the FR-009 `f32` narrowing of the post-VAS
+    /// device-rate stream enabled (the shipped behaviour) or disabled (the pre-0.6 engine), so
+    /// the harness can measure the narrowing's effect (spec 006 research R-02;
+    /// contracts/rust-api.md › Test hooks).
+    ///
+    /// # Errors
+    ///
+    /// As [`Pipeline::new`].
+    #[doc(hidden)]
+    pub fn __with_device_narrowing(settings: Settings, enabled: bool) -> Result<Self, Error> {
+        Self::with_device_narrowing(settings, enabled)
+    }
+}
+
 #[cfg(any(test, feature = "__test-hooks"))]
 impl Pipeline {
     /// The limiter's hold-capacitor voltage (spec 005 R-03): 0.0 when discharged.
     pub(crate) fn limiter_state(&self) -> f64 {
         self.limiter.state()
+    }
+
+    /// A pipeline with the FR-009 narrowing `enabled` or not (spec 006 research R-02).
+    pub(crate) fn with_device_narrowing(settings: Settings, enabled: bool) -> Result<Self, Error> {
+        let mut p = Self::new(settings)?;
+        p.chain.narrow = enabled;
+        Ok(p)
     }
 }
 
@@ -1240,6 +1296,160 @@ mod vas_event_tests {
             assert_eq!(info.events, 2, "len {len}");
             assert_eq!(ev, want[..len], "len {len}");
         }
+    }
+}
+
+/// 006 T004 (spec 006 FR-009; research R-02): the one `f32` narrowing of the device-rate stream
+/// after the VAS, the point where the recording is taken. Observed through the test-only
+/// un-narrowed path (`with_device_narrowing(settings, false)`).
+#[cfg(test)]
+mod narrowing_tests {
+    extern crate std;
+    use super::*;
+    use crate::stages::voiceband::PlaybackStage;
+    use rr_dr60_detmath::{TAU, exp, ln, sin};
+    use std::vec::Vec;
+
+    /// A 1 kHz tone at `dbfs` for `secs` at the 6 kHz device rate, phase 0 (no sample-peak
+    /// detector is read here, so no aligned phase is needed).
+    fn tone(dbfs: f64, secs: f64) -> Vec<f32> {
+        let amp = exp(dbfs * ln(10.0) / 20.0);
+        let w = TAU * 1000.0 / 6000.0;
+        (0..(secs * 6000.0) as usize)
+            .map(|n| (amp * sin(w * n as f64)) as f32)
+            .collect()
+    }
+
+    fn run(p: &mut Pipeline, x: &[f32]) -> (Vec<f32>, Vec<VasEvent>, BlockInfo) {
+        let mut y = std::vec![0.0f32; x.len()];
+        let mut ev = std::vec![VasEvent::default(); p.max_events(x.len())];
+        let info = p.process_with_events(x, &mut y, &mut ev).unwrap();
+        y.truncate(info.produced);
+        ev.truncate(info.events);
+        (y, ev, info)
+    }
+
+    /// FR-009: with every stage on at 6 kHz, the un-narrowed and the narrowed one-pass differ
+    /// (a −20 dBFS tone is not `f32`-exact after stage 4), and the narrowed output equals a
+    /// manual re-run: the stream taken at the "after VAS" tap (which narrows the kept sample
+    /// exactly as `narrow_device` does) fed through a fresh stage 10 and narrowed again. So
+    /// the rounding sits after the VAS and before stage 10.
+    #[test]
+    fn narrowing_point_is_after_the_vas() {
+        let s = Settings::new(6000); // the limiter, stage 4, the clamp, the VAS and stage 10 on
+        let x = tone(-20.0, 0.5);
+        let (wide, _, _) = run(&mut Pipeline::with_device_narrowing(s, false).unwrap(), &x);
+        let (narrow, _, _) = run(&mut Pipeline::with_device_narrowing(s, true).unwrap(), &x);
+        assert_eq!(wide.len(), narrow.len());
+        let differing = wide
+            .iter()
+            .zip(&narrow)
+            .filter(|(a, b)| a.to_bits() != b.to_bits())
+            .count();
+        assert!(differing > 0, "the narrowing changed nothing at 6 kHz");
+        let (default, _, _) = run(&mut Pipeline::new(s).unwrap(), &x);
+        assert_eq!(default, narrow, "the default pipeline narrows");
+
+        // The manual re-run: the post-VAS stream, narrowed, then stage 10.
+        let mut tap = s;
+        tap.tap = Tap::AfterVas;
+        let (post_vas, _, _) = run(
+            &mut Pipeline::with_device_narrowing(tap, false).unwrap(),
+            &x,
+        );
+        assert_eq!(post_vas.len(), narrow.len());
+        let mut stage10 = PlaybackStage::playback();
+        for (n, (&v, &want)) in post_vas.iter().zip(&narrow).enumerate() {
+            let got = narrow_out(stage10.process(f64::from(v)));
+            assert_eq!(got.to_bits(), want.to_bits(), "sample {n}");
+        }
+    }
+
+    /// FR-009 (research R-02): with every stage bypassed at the 6 kHz identity rate there is no
+    /// arithmetic before the narrowing, so the output is the input bit for bit, beyond ±1.0 too.
+    #[test]
+    fn bypass_all_at_6k_is_bit_identical_to_input() {
+        let x: Vec<f32> = [1.5f32, -2.0, 0.25, 1.0, -1.0, 0.999, 3.0e-39, 1.0e-7]
+            .iter()
+            .copied()
+            .cycle()
+            .take(600)
+            .collect();
+        let mut s = Settings::new(6000);
+        s.agc.enabled = false;
+        s.vas.enabled = false;
+        s.record_stage_enabled = false;
+        s.playback_stage_enabled = false;
+        s.adc_clamp_enabled = false;
+        for narrow in [false, true] {
+            let (y, _, info) = run(&mut Pipeline::with_device_narrowing(s, narrow).unwrap(), &x);
+            assert_eq!(info.produced, x.len());
+            let want: Vec<f32> = x.iter().map(|&v| narrow_out(sanitize_in(v))).collect();
+            assert_eq!(
+                y.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                want.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                "narrowing {narrow}"
+            );
+        }
+    }
+
+    /// FR-009 (spec 005 FR-001): the "after AGC" tap never reaches the device chain, so the
+    /// narrowing cannot touch it: the output is the limiter's `f32` output as today, with the
+    /// narrowing on or off, at the identity and at a converting rate.
+    #[test]
+    fn after_agc_tap_never_narrows() {
+        for rate in [6000, 48_000] {
+            let fs = f64::from(rate);
+            let w = TAU * 1000.0 / fs;
+            let amp = exp(11.0 * ln(10.0) / 20.0);
+            let x: Vec<f32> = (0..(0.5 * fs) as usize)
+                .map(|n| (amp * sin(w * n as f64)) as f32)
+                .collect();
+            let mut s = Settings::new(rate);
+            s.tap = Tap::AfterAgc;
+            let (wide, _, _) = run(&mut Pipeline::with_device_narrowing(s, false).unwrap(), &x);
+            let (narrow, _, _) = run(&mut Pipeline::with_device_narrowing(s, true).unwrap(), &x);
+            assert_eq!(wide, narrow, "{rate} Hz");
+            let mut limiter = Limiter::new(&s.agc, rate);
+            for (n, (&xi, &yi)) in x.iter().zip(&narrow).enumerate() {
+                let want = narrow_out(limiter.process(sanitize_in(xi)));
+                assert_eq!(yi.to_bits(), want.to_bits(), "{rate} Hz: sample {n}");
+            }
+        }
+    }
+
+    /// FR-009 (spec 003 research R-09): in mute mode the muted samples are +0.0 exactly after
+    /// the narrowing (the recording stores them as such), and the region's events are the same
+    /// with the narrowing on or off (the VAS decides before the narrowing).
+    #[test]
+    fn mute_mode_muted_samples_narrow_to_positive_zero() {
+        let mut s = Settings::new(6000);
+        s.agc.enabled = false;
+        s.record_stage_enabled = false;
+        s.playback_stage_enabled = false;
+        s.adc_clamp_enabled = false;
+        s.vas.mode = VasMode::Mute;
+        s.tap = Tap::AfterVas;
+        let x = [tone(-30.0, 1.0), std::vec![0.0; 30_000], tone(-30.0, 1.0)].concat();
+        let (wide, ev_wide, _) = run(&mut Pipeline::with_device_narrowing(s, false).unwrap(), &x);
+        let (narrow, ev, info) = run(&mut Pipeline::with_device_narrowing(s, true).unwrap(), &x);
+        assert_eq!(narrow.len(), x.len(), "mute mode keeps the length");
+        assert_eq!(ev, ev_wide);
+        assert_eq!(ev.len(), 1, "{ev:?}");
+        assert!(!info.paused);
+        let (start, len) = (ev[0].output_position as usize, ev[0].input_length as usize);
+        assert_eq!(start, 6000 + 6000, "the region starts after the hang time");
+        assert!(len > 20_000, "region length {len}");
+        for (n, v) in narrow[start..start + len].iter().enumerate() {
+            assert_eq!(
+                v.to_bits(),
+                0.0f32.to_bits(),
+                "muted sample {n} is not +0.0"
+            );
+        }
+        // Outside the region the kept samples are the input (no arithmetic at 6 kHz).
+        assert_eq!(&narrow[..start], &x[..start]);
+        assert_eq!(wide, narrow, "no arithmetic before the narrowing here");
     }
 }
 

@@ -304,6 +304,25 @@ mod tests {
             .collect()
     }
 
+    /// 006 T005 (spec 006 FR-009; research R-02, plan review P2): ‖h₁₀‖₁, the L1 norm of
+    /// stage 10's impulse response, pinned from the committed `PLAYBACK_SOS`. Rounding error at
+    /// the narrowing point is broadband, so the worst case it can reach at the output is bounded
+    /// by the L1 norms of what follows: the `narrowing_delta` bound of 4 full-scale LSBs is
+    /// derived as 0.5 ulp × (‖h₁₀‖₁ + max‖b‖₁ + …) + 0.5 ulp for the output rounding
+    /// ≈ 0.5 × (2.65 + 2.33) + 0.5 ≈ 2.99 ulp worst case through both, 2.05 at the clamped
+    /// device samples the exposed entries carry (research R-02), with the bound leaving a
+    /// margin. A coefficient change moves this figure and re-derives the bound.
+    #[test]
+    fn playback_stage_l1_norm_is_pinned() {
+        let h = impulse_response(&mut PlaybackStage::playback(), 4000);
+        let l1: f64 = h.iter().map(|v| v.abs()).sum();
+        let want = crate::paths::figures::H10_L1; // 2.65 (006 research R-02)
+        assert!((l1 - want).abs() <= 0.01, "‖h₁₀‖₁ = {l1:.4}, pinned {want}");
+        // The tail past the settling length is negligible for the norm (FR-008's N₁₀ = 121).
+        let tail: f64 = h[121..].iter().map(|v| v.abs()).sum();
+        assert!(tail < 1e-3, "tail {tail:e}");
+    }
+
     #[test]
     fn stage_process_matches_cascade_and_resets() {
         let mut r = RecordStage::record();

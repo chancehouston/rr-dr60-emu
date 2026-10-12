@@ -221,6 +221,32 @@ mod tests {
         assert!(converters(&plan).is_none());
     }
 
+    /// 006 T005 (spec 006 FR-009; research R-02, plan review P2): the largest interpolator
+    /// branch L1 norm at 48 kHz, pinned. Each branch sums to exactly 1 (`polyphase_split`), so
+    /// a norm above 1 measures how much a branch's negative sinc lobes can amplify a
+    /// device-sample rounding error; the `narrowing_delta` bound (4 full-scale LSBs) is derived
+    /// from this norm and ‖h₁₀‖₁ (see `stages::voiceband` tests). 48 kHz has the largest norm
+    /// of the six converting rates, so it sets the bound.
+    #[test]
+    fn interpolator_branch_l1_norm_is_pinned() {
+        let want = crate::paths::figures::MAX_INTERPOLATOR_BRANCH_L1; // 2.33 (006 R-02)
+        let (_, up) = converters(&RatePlan::for_host(48_000).unwrap()).unwrap();
+        let l1 = up.max_branch_l1_norm();
+        assert!(
+            (l1 - want).abs() <= 0.01,
+            "48 kHz: max ‖b‖₁ = {l1:.4}, pinned {want}"
+        );
+        for rate in [8000, 16_000, 44_100, 88_200, 96_000] {
+            let (_, up) = converters(&RatePlan::for_host(rate).unwrap()).unwrap();
+            let other = up.max_branch_l1_norm();
+            assert!(
+                other <= l1 + 0.01,
+                "{rate} Hz: max ‖b‖₁ = {other:.4} > 48 kHz's {l1:.4}"
+            );
+            assert!(other >= 1.0, "{rate} Hz: {other}");
+        }
+    }
+
     #[test]
     fn unsupported_rate_rejected() {
         assert_eq!(

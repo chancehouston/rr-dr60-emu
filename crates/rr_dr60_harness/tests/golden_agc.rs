@@ -3,11 +3,11 @@
 
 use sha2::{Digest, Sha256};
 
-/// SHA-256 of `golden/golden-v1.json` as committed by spec 004 (the one re-bless for the 6 kHz
-/// device rate, 004 FR-013; it was unchanged from spec 001 through spec 003, and spec 005 left
-/// it byte-identical, 005 FR-016). No later feature may change it without a CHANGELOG-recorded
-/// re-bless (002 FR-017, FR-018).
-const GOLDEN_V1_SHA256: &str = "ae921d771a43903a638bd547143da2d0000c173679a7a2ec7849dab654ba86a5";
+/// SHA-256 of `golden/golden-v1.json` as committed by spec 006 (the one re-bless for the `f32`
+/// narrowing of the post-VAS device-rate stream, 006 FR-009, T010; spec 004 re-blessed it for
+/// the 6 kHz device rate, and specs 001–003 and 005 left it byte-identical). No later feature
+/// may change it without a CHANGELOG-recorded re-bless (002 FR-017, FR-018; 006 FR-009).
+const GOLDEN_V1_SHA256: &str = "c8ba66679bd074b955768be43c54553a3d4ffb5ab81048a6b34df26532c8ea78";
 
 #[test]
 fn golden_v1_unchanged() {
@@ -15,15 +15,16 @@ fn golden_v1_unchanged() {
     let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         hex, GOLDEN_V1_SHA256,
-        "golden-v1.json changed; it must stay byte-identical to the spec 004 re-bless"
+        "golden-v1.json changed; it must stay byte-identical to the spec 006 re-bless"
     );
 }
 
-/// SHA-256 of `golden/golden-agc-v1.json` as committed by spec 005 (the one re-bless for the
-/// limiter, 005 FR-016, T044; spec 004 re-blessed it before for the 6 kHz rate). No later
-/// feature may change it without a CHANGELOG-recorded re-bless (005 FR-016; research R-10).
+/// SHA-256 of `golden/golden-agc-v1.json` as committed by spec 006 (the one re-bless for the
+/// `f32` narrowing, 006 FR-009, T010; spec 005 re-blessed it for the limiter and spec 004 for
+/// the 6 kHz rate before that). No later feature may change it without a CHANGELOG-recorded
+/// re-bless (005 FR-016; 006 FR-009).
 const GOLDEN_AGC_V1_SHA256: &str =
-    "a60156dd6967764c03abea63fb2a89e72cb128f28882cd84f7bd6cc7e4d15182";
+    "009cc127e695d252ac4fd85abeacdacc53543f76030a0d5ceb4836362f51a17e";
 
 #[test]
 fn golden_agc_v1_unchanged() {
@@ -31,7 +32,7 @@ fn golden_agc_v1_unchanged() {
     let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         hex, GOLDEN_AGC_V1_SHA256,
-        "golden-agc-v1.json changed; it must stay byte-identical to the spec 005 re-bless"
+        "golden-agc-v1.json changed; it must stay byte-identical to the spec 006 re-bless"
     );
 }
 

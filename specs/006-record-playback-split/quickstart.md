@@ -9,7 +9,7 @@ cargo test -p rr_dr60_harness --test narrowing_delta -- --nocapture
 cargo test -p rr_dr60_harness --test golden --test golden_agc --test golden_vas
 ```
 
-Expected: the delta report (share of changed samples per file, maximum |Δ| ≤ 4 full-scale LSBs, expected about 2; exactly the 6 kHz `bypass_all` and the `agc_only` entries unchanged); after the re-bless commit the three golden tests pass with `library_version` 0.6.0 and the entry counts 112 / 42 / 63. The CHANGELOG's 0.6.0 entry quotes the report's figures.
+Expected: the delta report (share of changed samples per file, maximum |Δ| ≤ 4 full-scale LSBs, measured 1.87; exactly the 39 entries the narrowing cannot move unchanged: the 21 `agc_only`, and at 6 kHz `bypass_all`, `playback_only`, `vas_only`, `vas_mute` and `record_only`; research R-02); after the re-bless commit the three golden tests pass with `library_version` 0.6.0 and the entry counts 112 / 42 / 63. The CHANGELOG's 0.6.0 entry quotes the report's figures.
 
 ## 2. Story 1: record, stop, play (FR-001 – FR-009)
 
