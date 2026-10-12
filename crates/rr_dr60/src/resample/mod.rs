@@ -19,9 +19,8 @@ pub(crate) const TRANSITION_HZ: f64 = 450.0;
 /// Kaiser design stopband: 70 dB, a 10 dB margin over FR-003's 60 dB (engineering target).
 pub(crate) const STOPBAND_DB: f64 = 70.0;
 
-/// Builds the decimator and interpolator for `plan`, or `None` for the identity plan.
-/// Allocates; called only at construction and reconfiguration (FR-015).
-pub(crate) fn converters(plan: &RatePlan) -> Option<(PolyphaseDown, PolyphaseUp)> {
+/// The shared prototype low-pass for a converting `plan`, with its `(l, m)`.
+fn prototype(plan: &RatePlan) -> Option<(alloc::vec::Vec<f64>, u32, u32)> {
     let RatePlan::Convert {
         l,
         m,
@@ -37,12 +36,30 @@ pub(crate) fn converters(plan: &RatePlan) -> Option<(PolyphaseDown, PolyphaseUp)
         CUTOFF_HZ / prototype_rate,
         design::kaiser_beta(STOPBAND_DB),
     );
-    let (down_branches, down_taps) = design::polyphase_split(&h, l as usize);
-    let (up_branches, up_taps) = design::polyphase_split(&h, m as usize);
-    Some((
-        PolyphaseDown::new(down_branches, down_taps, l, m),
-        PolyphaseUp::new(up_branches, up_taps, l, m),
-    ))
+    Some((h, l, m))
+}
+
+/// Builds the decimator for `plan`, or `None` for the identity plan. Allocates; called only at
+/// construction and reconfiguration (FR-015).
+pub(crate) fn decimator(plan: &RatePlan) -> Option<PolyphaseDown> {
+    let (h, l, m) = prototype(plan)?;
+    let (branches, taps) = design::polyphase_split(&h, l as usize);
+    Some(PolyphaseDown::new(branches, taps, l, m))
+}
+
+/// Builds the interpolator for `plan`, or `None` for the identity plan. Allocates; called only
+/// at construction and reconfiguration (FR-015).
+pub(crate) fn interpolator(plan: &RatePlan) -> Option<PolyphaseUp> {
+    let (h, l, m) = prototype(plan)?;
+    let (branches, taps) = design::polyphase_split(&h, m as usize);
+    Some(PolyphaseUp::new(branches, taps, l, m))
+}
+
+/// Builds the decimator and interpolator for `plan`, or `None` for the identity plan.
+/// Allocates; test and design-time use (the paths build each converter on its own).
+#[cfg(test)]
+pub(crate) fn converters(plan: &RatePlan) -> Option<(PolyphaseDown, PolyphaseUp)> {
+    Some((decimator(plan)?, interpolator(plan)?))
 }
 
 #[cfg(test)]

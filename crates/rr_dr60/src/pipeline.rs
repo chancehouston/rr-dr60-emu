@@ -1,15 +1,11 @@
 //! The per-sample processing engine (data-model.md; research.md R-09, R-10; spec 005 research
-//! R-01: the limiter runs at the host rate, before the rate conversion).
+//! R-01: the limiter runs at the host rate, before the rate conversion; spec 006 research R-01:
+//! the one-pass is a record path feeding a playback path).
 
 use crate::error::Error;
+use crate::paths::{PlaybackPath, RecordPath};
 use crate::rate::RatePlan;
-use crate::resample::{self, PolyphaseDown, PolyphaseUp};
-use crate::sanitize::{narrow_out, sanitize_in};
-use crate::settings::{DEVICE_RATE_HZ, Settings, Tap, VasMode};
-use crate::stages::clamp::ClampStage;
-use crate::stages::limiter::Limiter;
-use crate::stages::vas::{VasDecision, VasStage};
-use crate::stages::voiceband::{PlaybackStage, RecordStage};
+use crate::settings::{DEVICE_RATE_HZ, Settings, Tap};
 use crate::validate::validate;
 
 /// One emulator instance: host-rate mono audio in, host-rate mono audio out.
@@ -24,6 +20,10 @@ use crate::validate::validate;
 /// the "after AGC" tap, which is before the conversion. The band-limit stages are modeled on the
 /// MSM7702 codec family's templates (A-027); the limiter on the schematic's circuit (A-028,
 /// A-034 – A-036); the VAS on the owner's manual and assumed values (A-008, A-021 – A-025).
+///
+/// Since 0.6 the device-rate stream is rounded to 32-bit precision after the VAS, the point
+/// where a recording is taken (spec 006 FR-009; in the device an 8-bit µ-law code sits there,
+/// A-003); the one-pass processing and record-then-play therefore agree bit for bit.
 ///
 /// # Output length
 ///
@@ -73,18 +73,10 @@ use crate::validate::validate;
 #[derive(Clone, Debug)]
 pub struct Pipeline {
     settings: Settings,
-    /// Stage 3 at the host rate, before the conversion (spec 005 research R-01).
-    limiter: Limiter,
-    /// Stage 3 runs: the AGC is enabled (spec 002 FR-002; spec 005 FR-002).
-    run_limiter: bool,
-    /// The output is the limiter's, at the host rate: nothing after it runs (spec 005 FR-001).
-    tap_after_agc: bool,
-    /// `None` at the 6 kHz identity rate (spec 004 FR-002) and at the "after AGC" tap.
-    converters: Option<(PolyphaseDown, PolyphaseUp)>,
-    chain: DeviceChain,
+    /// The one-pass stream: its own record and playback path instances (spec 006 research
+    /// R-01; Complexity Tracking row 1).
+    one_pass: OnePass,
     latency: u32,
-    /// Stream counters for VAS events (spec 003 research R-05, R-06).
-    events: EventCounters,
 }
 
 // Contract (contracts/rust-api.md): `Pipeline` is Send + Sync. Fails to compile if a future
@@ -114,7 +106,8 @@ pub struct BlockInfo {
 /// A VAS splice (drop mode) or muted region (mute mode) (spec 003 FR-005).
 ///
 /// Positions count output samples from the start of the stream (creation, reset or
-/// reconfigure), so they don't depend on how the input was split into blocks.
+/// reconfigure), so they don't depend on how the input was split into blocks. The record path
+/// of spec 006 reports them in the recording's device samples from its start instead.
 ///
 /// `repr(C)`, so the C API can hand the core a caller-provided event buffer without copying.
 #[repr(C)]
@@ -128,249 +121,58 @@ pub struct VasEvent {
     pub input_length: u64,
 }
 
-/// What the device chain did with one device sample.
-#[derive(Clone, Copy, Debug)]
-enum DeviceOut {
-    /// Kept (recording).
-    Keep(f64),
-    /// Kept, and the first sample after a pause (a splice, or the end of a muted region).
-    Resume(f64),
-    /// Dropped by the VAS (paused, drop mode).
-    Drop,
-    /// Muted by the VAS (paused, mute mode): +0.0 fed onward, so the output keeps its length
-    /// (spec 003 FR-004; research R-09). Carries stage 10's output when that stage runs.
-    Mute(f64),
-}
-
-/// Stream counters that place VAS events in the output (spec 003 research R-05, R-06).
+/// The one-pass stream: a record path feeding a playback path sample by sample (spec 006
+/// research R-01). Both honour the tap; the counters live in the record path.
 #[derive(Clone, Debug)]
-struct EventCounters {
-    /// Host samples per device sample is `m / l` (`l = m = 1` at the 6 kHz identity rate).
-    l: u64,
-    m: u64,
-    /// Device samples kept (fed to the interpolator) since the stream started.
-    kept: u64,
-    /// Device samples dropped since the stream started.
-    dropped: u64,
-    /// ⌊dropped·m/l⌋ at the previous splice (the cumulative-floor rule, R-06).
-    removed_reported: u64,
-    /// Mute mode: the output position of the open muted region's first sample (R-09).
-    mute_start: Option<u64>,
-    /// An event generated at this step, waiting to be reported by the block loop.
-    pending: Option<VasEvent>,
-}
-
-impl EventCounters {
-    fn new(plan: &RatePlan) -> Self {
-        let (l, m) = match *plan {
-            RatePlan::Identity => (1, 1),
-            RatePlan::Convert { l, m, .. } => (u64::from(l), u64::from(m)),
-        };
-        Self {
-            l,
-            m,
-            kept: 0,
-            dropped: 0,
-            removed_reported: 0,
-            mute_start: None,
-            pending: None,
-        }
-    }
-
-    fn reset(&mut self) {
-        self.kept = 0;
-        self.dropped = 0;
-        self.removed_reported = 0;
-        self.mute_start = None;
-        self.pending = None;
-    }
-
-    /// The output position of the kept sample with index `kept`: the first output n with
-    /// ⌊n·l/m⌋ ≥ kept, i.e. ⌈kept·m/l⌉ (R-06).
-    #[inline]
-    fn position(&self) -> u64 {
-        (u128::from(self.kept) * u128::from(self.m)).div_ceil(u128::from(self.l)) as u64
-    }
-
-    /// Records one device sample's outcome; returns the sample to feed onward, if any.
-    #[inline]
-    fn record(&mut self, out: DeviceOut) -> Option<f64> {
-        match out {
-            DeviceOut::Keep(d) => {
-                self.kept += 1;
-                Some(d)
-            }
-            DeviceOut::Drop => {
-                self.dropped += 1;
-                None
-            }
-            DeviceOut::Mute(d) => {
-                // R-09: a muted sample counts as kept, so the emission schedule stays
-                // one-in-one-out. The region starts at this sample's output position.
-                if self.mute_start.is_none() {
-                    self.mute_start = Some(self.position());
-                }
-                self.kept += 1;
-                Some(d)
-            }
-            DeviceOut::Resume(d) => {
-                // R-06: the splice is at the first output whose newest device sample is this one
-                // (kept index j), i.e. the first n with ⌊n·l/m⌋ ≥ j: n = ⌈j·m/l⌉.
-                let position = self.position();
-                self.pending = Some(match self.mute_start.take() {
-                    // Mute mode: the region ends here; its length is in output samples (R-09).
-                    Some(start) => VasEvent {
-                        output_position: start,
-                        input_length: position - start,
-                    },
-                    // Drop mode: the removed length uses the cumulative floor, so the integers
-                    // add up at 44.1/88.2 kHz.
-                    None => {
-                        let removed = (u128::from(self.dropped) * u128::from(self.m)
-                            / u128::from(self.l)) as u64;
-                        let event = VasEvent {
-                            output_position: position,
-                            input_length: removed - self.removed_reported,
-                        };
-                        self.removed_reported = removed;
-                        event
-                    }
-                });
-                self.kept += 1;
-                Some(d)
-            }
-        }
-    }
-}
-
-/// Rounds a kept post-VAS device-rate sample to `f32`: the point where the recording is taken
-/// (spec 006 FR-009; research R-02). The one-pass engine and the record path narrow here
-/// alike, so a 32-bit store and the one-pass processing see the same samples, and the playback
-/// half widens with `f64::from`, which is exact. The physical defence is one of inaudibility,
-/// not fidelity: at this point the device holds an 8-bit µ-law code (A-003), 16 bits coarser
-/// than this rounding. `narrow_out` rounds to nearest, flushes `f32` subnormals to 0.0 and
-/// saturates at ±`f32::MAX` (with the clamp on the sample is within ±1.0, so saturation never
-/// acts).
-#[inline]
-fn narrow_device(d: f64) -> f32 {
-    narrow_out(d)
-}
-
-/// The device-rate part of the chain, in order: stage 4, the ADC clamp, stage 5, the `f32`
-/// narrowing (spec 006 FR-009), stage 10 (spec 005 data-model.md › Pipeline order and taps),
-/// and which parts of it run. The tap after the AGC never enters the chain.
-#[derive(Clone, Debug)]
-struct DeviceChain {
-    /// Stage 4: the record band-pass (5 sections; spec 004 research R-06).
-    record: RecordStage,
-    /// Stage 4 runs: enabled (FR-007).
-    run_record: bool,
-    /// The ADC's full-scale saturation after stage 4 (spec 005 FR-008; A-030); bypassed when
-    /// `Settings::adc_clamp_enabled` is false.
-    clamp: ClampStage,
-    vas: VasStage,
-    /// Stage 5 runs: the VAS is enabled and the tap is after it (spec 003 FR-003; research R-01).
-    run_vas: bool,
-    /// Stage 5 mutes paused audio instead of dropping it (spec 003 FR-004; research R-09).
-    mute: bool,
-    /// Stage 10: the playback low-pass (3 sections; spec 004 research R-06).
-    playback: PlaybackStage,
-    /// Stage 10 runs: enabled and the tap is after playback (data-model.md › Tap).
-    run_playback: bool,
-    /// Test-only: `false` keeps the pre-0.6 un-narrowed stream, so `narrowing_delta` can
-    /// measure FR-009's effect (spec 006 research R-02). The shipped build has no flag and no
-    /// branch: it always narrows.
+struct OnePass {
+    rec: RecordPath,
+    play: PlaybackPath,
+    /// The output is the limiter's, at the host rate: nothing after it runs (spec 005 FR-001).
+    tap_after_agc: bool,
+    /// Test-only: `false` runs the pre-0.6 un-narrowed route, so `narrowing_delta` can measure
+    /// FR-009's effect (spec 006 research R-02). The shipped build has no flag and no branch.
     #[cfg(any(test, feature = "__test-hooks"))]
     narrow: bool,
 }
 
-impl DeviceChain {
-    fn new(settings: &Settings) -> Self {
+impl OnePass {
+    fn new(settings: &Settings, plan: &RatePlan) -> Self {
         Self {
+            rec: RecordPath::new(settings, plan, true, false),
+            play: PlaybackPath::new(settings, plan, true),
+            tap_after_agc: settings.tap == Tap::AfterAgc,
             #[cfg(any(test, feature = "__test-hooks"))]
             narrow: true,
-            record: RecordStage::record(),
-            run_record: settings.record_stage_enabled,
-            clamp: ClampStage::new(settings.adc_clamp_enabled),
-            vas: VasStage::new(&settings.vas),
-            run_vas: settings.vas.enabled
-                && matches!(settings.tap, Tap::AfterVas | Tap::AfterPlayback),
-            mute: settings.vas.mode == VasMode::Mute,
-            playback: PlaybackStage::playback(),
-            run_playback: settings.playback_stage_enabled && settings.tap == Tap::AfterPlayback,
         }
     }
 
-    /// One device-rate sample. A bypassed stage passes the sample through bit-exactly,
-    /// with no arithmetic (FR-007). The clamp sees stage 4's output, so the VAS and every tap
-    /// from "after record" on see clamped samples (spec 005 FR-008); a dropped sample never
-    /// reaches stage 10, and a muted sample reaches it as +0.0 (spec 003 Edge Cases: its
-    /// ring-out continues into the region). Every kept sample, the muted +0.0 included, is
-    /// rounded to `f32` after the VAS and before stage 10 (spec 006 FR-009: the recording's
-    /// stored form; `narrow_device`).
+    /// One host sample through the engine (data-model.md steps 1–3; spec 005 data-model.md ›
+    /// Pipeline order and taps). Returns the host sample emitted at this step, if any (spec 003
+    /// research R-05).
     #[inline]
-    fn process(&mut self, mut d: f64) -> DeviceOut {
-        if self.run_record {
-            d = self.record.process(d);
+    fn tick(&mut self, x: f32) -> Option<f32> {
+        if self.tap_after_agc {
+            // The limiter's output sample for sample: no conversion, no chain, no events
+            // (spec 005 FR-001).
+            return Some(self.rec.limiter_only(x));
         }
-        d = self.clamp.process(d);
-        let decision = if self.run_vas {
-            self.vas.process(d)
-        } else {
-            VasDecision::Keep
-        };
-        if decision == VasDecision::Drop {
-            if !self.mute {
-                return DeviceOut::Drop;
-            }
-            d = 0.0;
-        }
-        d = self.narrow(d);
-        if self.run_playback {
-            d = self.playback.process(d);
-        }
-        if decision == VasDecision::Drop {
-            return DeviceOut::Mute(d);
-        }
-        if decision == VasDecision::Resume {
-            DeviceOut::Resume(d)
-        } else {
-            DeviceOut::Keep(d)
-        }
-    }
-
-    /// The FR-009 narrowing of a kept post-VAS sample, widened back for stage 10 (exact).
-    #[inline]
-    fn narrow(&self, d: f64) -> f64 {
         #[cfg(any(test, feature = "__test-hooks"))]
         if !self.narrow {
-            return d;
+            if let Some(d) = self.rec.push_wide(x) {
+                self.play.push_device_wide(d);
+            }
+            return self.play.try_next_host();
         }
-        f64::from(narrow_device(d))
-    }
-
-    /// The VAS runs and is paused.
-    fn paused(&self) -> bool {
-        self.run_vas && self.vas.is_paused()
-    }
-
-    /// Group delay at 1 kHz of the stages that run, in device samples (R-10).
-    fn group_delay_1k_samples(&self) -> f64 {
-        let mut tau = 0.0;
-        if self.run_record {
-            tau += self.record.group_delay_1k_samples();
+        // No let-chains: MSRV 1.85 (001 R-01).
+        if let Some(kept) = self.rec.push(x) {
+            self.play.push_device(kept);
         }
-        if self.run_playback {
-            tau += self.playback.group_delay_1k_samples();
-        }
-        tau
+        self.play.try_next_host()
     }
 
     fn reset(&mut self) {
-        self.record.reset();
-        self.clamp.reset();
-        self.vas.reset();
-        self.playback.reset();
+        self.rec.reset();
+        self.play.reset();
     }
 }
 
@@ -381,28 +183,17 @@ impl Pipeline {
     ///
     /// [`Error::UnsupportedHostRate`] if `settings.host_rate_hz` is not in
     /// [`SUPPORTED_HOST_RATES`](crate::SUPPORTED_HOST_RATES), checked first.
-    /// [`Error::InvalidSetting`] if an AGC or VAS setting is out of range or not finite
-    /// (spec 002 FR-011, spec 003 FR-012).
+    /// [`Error::InvalidSetting`] if an AGC, VAS or memory setting is out of range or not
+    /// finite (spec 002 FR-011, spec 003 FR-012, spec 006 FR-010).
     pub fn new(settings: Settings) -> Result<Self, Error> {
         validate(&settings)?;
         let plan = RatePlan::for_host(settings.host_rate_hz)?;
-        let chain = DeviceChain::new(&settings);
-        let latency = latency_samples(&plan, &settings, &chain);
-        let tap_after_agc = settings.tap == Tap::AfterAgc;
+        let one_pass = OnePass::new(&settings, &plan);
+        let latency = latency_samples(&plan, &settings, &one_pass);
         Ok(Self {
             settings,
-            limiter: Limiter::new(&settings.agc, settings.host_rate_hz),
-            run_limiter: settings.agc.enabled,
-            tap_after_agc,
-            // The "after AGC" tap never converts, so its converters are not built (R-01).
-            converters: if tap_after_agc {
-                None
-            } else {
-                resample::converters(&plan)
-            },
-            chain,
+            one_pass,
             latency,
-            events: EventCounters::new(&plan),
         })
     }
 
@@ -474,13 +265,7 @@ impl Pipeline {
     /// splice on the block's first device sample (engineering target, 003 R-15). 0 at the
     /// "after AGC" tap, where the VAS never runs (spec 005 FR-001). Never allocates.
     pub fn max_events(&self, frames: usize) -> usize {
-        if self.tap_after_agc {
-            return 0;
-        }
-        let (l, m) = (u128::from(self.events.l), u128::from(self.events.m));
-        let device = frames as u128 * l / m;
-        let spacing = u128::from(self.chain.vas.hang_samples()) + 2;
-        usize::try_from(device / spacing + 2).unwrap_or(usize::MAX)
+        self.one_pass.rec.max_events(frames)
     }
 
     /// The one block loop behind every processing call. Reads `input[i]` (or `out[i]` when
@@ -498,11 +283,11 @@ impl Pipeline {
                 Some(input) => input[i],
                 None => out[i],
             };
-            if let Some(y) = self.tick(x) {
+            if let Some(y) = self.one_pass.tick(x) {
                 out[produced] = y;
                 produced += 1;
             }
-            if let Some(event) = self.events.pending.take() {
+            if let Some(event) = self.one_pass.rec.take_event() {
                 if let Some(slot) = events.get_mut(count) {
                     *slot = event;
                 }
@@ -512,7 +297,7 @@ impl Pipeline {
         BlockInfo {
             produced,
             events: count,
-            paused: self.chain.paused(),
+            paused: self.one_pass.rec.paused(),
         }
     }
 
@@ -528,13 +313,7 @@ impl Pipeline {
     /// Returns the pipeline to its freshly created state, without allocating (FR-017): the
     /// limiter's capacitor is discharged, every filter and the VAS reset.
     pub fn reset(&mut self) {
-        self.limiter.reset();
-        if let Some((down, up)) = &mut self.converters {
-            down.reset();
-            up.reset();
-        }
-        self.chain.reset();
-        self.events.reset();
+        self.one_pass.reset();
     }
 
     /// Applies new settings and resets all state, as if the pipeline had been created anew
@@ -547,8 +326,8 @@ impl Pipeline {
     /// # Errors
     ///
     /// [`Error::UnsupportedHostRate`] if `settings.host_rate_hz` is not supported, or
-    /// [`Error::InvalidSetting`] if an AGC or VAS setting is invalid (spec 002 FR-011,
-    /// spec 003 FR-012).
+    /// [`Error::InvalidSetting`] if an AGC, VAS or memory setting is invalid (spec 002 FR-011,
+    /// spec 003 FR-012, spec 006 FR-010).
     pub fn reconfigure(&mut self, settings: Settings) -> Result<(), Error> {
         *self = Self::new(settings)?;
         Ok(())
@@ -557,36 +336,6 @@ impl Pipeline {
     /// The current settings.
     pub fn settings(&self) -> &Settings {
         &self.settings
-    }
-
-    /// One host sample through the engine (data-model.md steps 1–3; spec 005 data-model.md ›
-    /// Pipeline order and taps). Returns the host sample emitted at this step, if any (spec 003
-    /// research R-05).
-    #[inline]
-    fn tick(&mut self, x: f32) -> Option<f32> {
-        let mut x = sanitize_in(x);
-        // Stage 3 at the host rate (spec 005 R-01). Bypassed: no arithmetic (FR-002).
-        if self.run_limiter {
-            x = self.limiter.process(x);
-        }
-        if self.tap_after_agc {
-            // The limiter's output sample for sample: no conversion, no chain, no events
-            // (spec 005 FR-001).
-            return Some(narrow_out(x));
-        }
-        let y = match &mut self.converters {
-            None => self.events.record(self.chain.process(x))?,
-            Some((down, up)) => {
-                if let Some(d) = down.push(x) {
-                    // No let-chains: MSRV 1.85 (001 R-01).
-                    if let Some(kept) = self.events.record(self.chain.process(d)) {
-                        up.push_device(kept);
-                    }
-                }
-                up.try_next_host()?
-            }
-        };
-        Some(narrow_out(y))
     }
 }
 
@@ -605,17 +354,19 @@ impl Pipeline {
         record: [[f64; 5]; 5],
         playback: [[f64; 5]; 3],
     ) -> Result<Self, Error> {
+        use crate::stages::voiceband::{PlaybackStage, RecordStage};
         let mut p = Self::new(settings)?;
-        p.chain.record = RecordStage::with_sos(record);
-        p.chain.playback = PlaybackStage::with_sos(playback);
         let plan = RatePlan::for_host(settings.host_rate_hz)?;
-        p.latency = latency_samples(&plan, &settings, &p.chain);
+        p.one_pass
+            .rec
+            .replace_record_stage(RecordStage::with_sos(record), &plan);
+        p.one_pass
+            .play
+            .replace_playback_stage(PlaybackStage::with_sos(playback), &plan);
+        p.latency = latency_samples(&plan, &settings, &p.one_pass);
         Ok(p)
     }
-}
 
-#[cfg(feature = "__test-hooks")]
-impl Pipeline {
     /// Test-only (hidden): a one-pass pipeline with the FR-009 `f32` narrowing of the post-VAS
     /// device-rate stream enabled (the shipped behaviour) or disabled (the pre-0.6 engine), so
     /// the harness can measure the narrowing's effect (spec 006 research R-02;
@@ -634,26 +385,28 @@ impl Pipeline {
 impl Pipeline {
     /// The limiter's hold-capacitor voltage (spec 005 R-03): 0.0 when discharged.
     pub(crate) fn limiter_state(&self) -> f64 {
-        self.limiter.state()
+        self.one_pass.rec.limiter.state()
     }
 
     /// A pipeline with the FR-009 narrowing `enabled` or not (spec 006 research R-02).
     pub(crate) fn with_device_narrowing(settings: Settings, enabled: bool) -> Result<Self, Error> {
         let mut p = Self::new(settings)?;
-        p.chain.narrow = enabled;
+        p.one_pass.narrow = enabled;
         Ok(p)
     }
 }
 
-/// 001 R-10: round(D_down + D_up + (τ_rec + τ_play) · host / DEVICE_RATE_HZ). A bypassed stage
-/// contributes 0, and with the tap after the record stage τ_play is not included. The limiter
-/// adds nothing; at the "after AGC" tap nothing after it runs, so the latency is 0 (spec 005
-/// FR-001).
-fn latency_samples(plan: &RatePlan, settings: &Settings, chain: &DeviceChain) -> u32 {
+/// 001 R-10: round(D_down + D_up + (τ_rec + τ_play) · host / DEVICE_RATE_HZ), rounded once. A
+/// bypassed stage contributes 0, and with the tap after the record stage τ_play is not
+/// included. The limiter adds nothing; at the "after AGC" tap nothing after it runs, so the
+/// latency is 0 (spec 005 FR-001). Spec 006 FR-016 reports the two paths' latencies rounded
+/// separately; this single rounding is kept for the one-pass figure.
+fn latency_samples(plan: &RatePlan, settings: &Settings, one_pass: &OnePass) -> u32 {
     if settings.tap == Tap::AfterAgc {
         return 0;
     }
-    let stages = chain.group_delay_1k_samples();
+    let stages =
+        one_pass.rec.half.group_delay_1k_samples() + one_pass.play.half.group_delay_1k_samples();
     let total = 2.0 * f64::from(plan.delay_host_samples())
         + stages * f64::from(settings.host_rate_hz) / f64::from(DEVICE_RATE_HZ);
     (total + 0.5) as u32
@@ -848,6 +601,7 @@ mod validation_tests {
 mod limiter_tests {
     extern crate std;
     use super::*;
+    use crate::sanitize::{narrow_out, sanitize_in};
     use crate::stages::limiter::Limiter;
     use rr_dr60_detmath::{PI, TAU, exp, ln, sin};
     use std::vec::Vec;
@@ -1218,9 +972,12 @@ mod vas_event_tests {
             s.vas.hang_ms = 50.0; // H = 300 device samples at 6 kHz
             s.vas.onset_ms = 0.0;
             let mut p = Pipeline::new(s).unwrap();
-            let h = p.chain.vas.hang_samples() as usize;
+            let h = p.one_pass.rec.half.vas.hang_samples() as usize;
             // Device samples → host samples, rounded up (m/l host samples per device sample).
-            let (l, m) = (u128::from(p.events.l), u128::from(p.events.m));
+            let (l, m) = (
+                u128::from(p.one_pass.rec.counters.l),
+                u128::from(p.one_pass.rec.counters.m),
+            );
             let host = |n: usize| (n as u128 * m).div_ceil(l) as usize;
             let identity = l == m;
             let burst = if identity { 1 } else { host(6) }; // 1 device sample, or 1 ms
@@ -1306,6 +1063,9 @@ mod vas_event_tests {
 mod narrowing_tests {
     extern crate std;
     use super::*;
+    use crate::sanitize::{narrow_out, sanitize_in};
+    use crate::settings::VasMode;
+    use crate::stages::limiter::Limiter;
     use crate::stages::voiceband::PlaybackStage;
     use rr_dr60_detmath::{TAU, exp, ln, sin};
     use std::vec::Vec;
@@ -1461,18 +1221,30 @@ mod op_count_tests {
 
     impl Pipeline {
         fn ops(&self) -> u64 {
-            let conv = self.converters.as_ref().map_or(0, |(d, u)| d.ops + u.ops);
-            conv + self.limiter.ops
-                + self.limiter.transcendentals
-                + self.chain.vas.ops
-                + self.chain.record.ops()
-                + self.chain.playback.ops()
+            let rec = &self.one_pass.rec;
+            let play = &self.one_pass.play;
+            rec.down.as_ref().map_or(0, |d| d.ops)
+                + play.up.as_ref().map_or(0, |u| u.ops)
+                + rec.limiter.ops
+                + rec.limiter.transcendentals
+                + rec.half.vas.ops
+                + rec.half.record.ops()
+                + play.half.playback.ops()
         }
 
         fn taps(&self) -> (u64, u64) {
-            self.converters
-                .as_ref()
-                .map_or((0, 0), |(d, u)| (d.taps() as u64, u.taps() as u64))
+            (
+                self.one_pass
+                    .rec
+                    .down
+                    .as_ref()
+                    .map_or(0, |d| d.taps() as u64),
+                self.one_pass
+                    .play
+                    .up
+                    .as_ref()
+                    .map_or(0, |u| u.taps() as u64),
+            )
         }
     }
 

@@ -3,7 +3,7 @@
 //! Stage 3, the limiter, runs at the host rate before the rate conversion (spec 005 research
 //! R-01); the clamp, the VAS and the two voice-band stages run at the 6 kHz device rate.
 
-mod biquad;
+pub(crate) mod biquad;
 pub(crate) mod clamp;
 pub(crate) mod limiter;
 pub(crate) mod vas;
