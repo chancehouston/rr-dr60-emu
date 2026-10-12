@@ -297,3 +297,15 @@ fn record_then_play_partitions() {
         }
     }
 }
+
+#[test]
+fn manifest_canonical_text_is_identical_on_every_target() {
+    // Spec 007 SC-004 (research R-09): the manifest's canonical text equals the committed golden
+    // text on every CI target (the golden-matrix and ios jobs run this file).
+    let path = rr_dr60_harness::manifest_checks::golden_text_path();
+    let want = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    assert_eq!(
+        rr_dr60_harness::manifest_checks::render(rr_dr60::manifest()),
+        want
+    );
+}

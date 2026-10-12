@@ -1,0 +1,65 @@
+name: registers
+
+# Spec 007 FR-020 (research R-06): the stage manifest's cross-check must run whenever a
+# hardware register changes. ci.yml skips documentation-only changes workflow-wide (its
+# paths-ignore covers **.md and docs/**), so this second, short workflow runs on exactly the
+# files the manifest mirrors or renders: the three registers, the CHANGELOG (model versions),
+# the README (the generated table and code blocks), the manifest and its checks.
+# A code change runs both workflows (ci.yml's check job runs these tests too). This job is
+# not a required status check: a required check skipped by its paths filter would block
+# unrelated pull requests (research R-06).
+on:
+  pull_request:
+    paths:
+      - 'docs/hardware/**'
+      - 'CHANGELOG.md'
+      - 'README.md'
+      - 'crates/rr_dr60/src/manifest.rs'
+      - 'crates/rr_dr60_harness/src/manifest_checks.rs'
+      - 'crates/rr_dr60_harness/tests/us1_manifest.rs'
+      - 'crates/rr_dr60_harness/tests/us2_cross_check.rs'
+      - 'crates/rr_dr60_harness/examples/manifest.rs'
+      - 'crates/rr_dr60_harness/golden/manifest-v1.txt'
+      - 'crates/rr_dr60_ffi/tests/c/smoke.c'
+      - 'scripts/check-traceability.sh'
+      - '.github/workflows/registers.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/hardware/**'
+      - 'CHANGELOG.md'
+      - 'README.md'
+      - 'crates/rr_dr60/src/manifest.rs'
+      - 'crates/rr_dr60_harness/src/manifest_checks.rs'
+      - 'crates/rr_dr60_harness/tests/us1_manifest.rs'
+      - 'crates/rr_dr60_harness/tests/us2_cross_check.rs'
+      - 'crates/rr_dr60_harness/examples/manifest.rs'
+      - 'crates/rr_dr60_harness/golden/manifest-v1.txt'
+      - 'crates/rr_dr60_ffi/tests/c/smoke.c'
+      - 'scripts/check-traceability.sh'
+      - '.github/workflows/registers.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: registers-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  registers:
+    name: registers (manifest cross-check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Manifest versus the registers (spec 007 FR-013, FR-019)
+        run: cargo test -p rr_dr60_harness --test us1_manifest --test us2_cross_check
+      - name: Traceability audit (spec 007 FR-014)
+        run: scripts/check-traceability.sh
