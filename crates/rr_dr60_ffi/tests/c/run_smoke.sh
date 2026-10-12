@@ -11,3 +11,8 @@ native_libs="$(cargo rustc --color never -p rr_dr60_ffi --release --lib --crate-
 cc -std=c11 -Wall -Wextra -Werror -O2 -I crates/rr_dr60_ffi/include \
   crates/rr_dr60_ffi/tests/c/smoke.c target/release/librr_dr60_ffi.a $native_libs -lm -o target/smoke
 ./target/smoke
+# Spec 007 SC-001: the C program's manifest print equals the Rust example's, byte for byte.
+./target/smoke --manifest > target/smoke-manifest.txt
+cargo run -q -p rr_dr60_harness --example manifest > target/example-manifest.txt
+diff target/smoke-manifest.txt target/example-manifest.txt
+echo "smoke --manifest matches the Rust example"

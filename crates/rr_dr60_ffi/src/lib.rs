@@ -96,6 +96,8 @@ pub enum RrDr60Status {
     /// `rr_dr60_export` into a buffer shorter than the recording's byte form; nothing written,
     /// the needed length reported (spec 006 FR-014).
     BufferTooSmall = 19,
+    /// A stage manifest number that is 0 or above the stage count (spec 007 FR-017).
+    NoSuchStage = 20,
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -1791,6 +1793,332 @@ pub unsafe extern "C" fn rr_dr60__test_force_panic(pipeline: *mut RrDr60Pipeline
     }
 }
 
+// ---- Spec 007: the stage manifest (contracts/c-api.md) ----------------------------------------
+
+/// Whether and on what basis the engine models a stage (spec 007 FR-004); carried in
+/// `RrDr60StageEntry.status` as a `uint32_t`.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RrDr60StageStatus {
+    /// The engine passes the signal through or represents the stage as a label.
+    NotModeled = 0,
+    /// Modeled, at least one cited assumption open.
+    Assumed = 1,
+    /// Modeled, every cited assumption verified against a document (none today).
+    Sourced = 2,
+    /// Modeled, every cited assumption verified or measured, at least one measured against a
+    /// real unit (none today).
+    Checked = 3,
+}
+
+/// Which signal path a stage belongs to; carried in `RrDr60StageEntry.path` as a `uint32_t`.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RrDr60StagePath {
+    /// Microphone to memory.
+    Record = 0,
+    /// Memory to speaker or earphone.
+    Playback = 1,
+    /// Both paths.
+    Both = 2,
+}
+
+/// The project's confidence in a modeled stage; carried in `RrDr60StageEntry.confidence` as a
+/// `uint32_t`. `NOT_APPLICABLE` exactly for stages that are not modeled.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RrDr60Confidence {
+    /// Not modeled.
+    NotApplicable = 0,
+    /// Low.
+    Low = 1,
+    /// Medium.
+    Medium = 2,
+    /// High.
+    High = 3,
+}
+
+/// The stage manifest's header (spec 007 FR-003), filled by `rr_dr60_manifest_header`.
+///
+/// Every `const char *` is non-NULL, NUL-terminated UTF-8, points at static storage inside the
+/// library and stays valid and unchanged for the life of the process: keep it by reference,
+/// never free it. The struct grows only at the end.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct RrDr60ManifestHeader {
+    /// The library's version, e.g. `"0.7.0"`.
+    pub library_version: *const c_char,
+    /// The device's internal sample rate, 6000 Hz (A-026).
+    pub device_rate_hz: u32,
+    /// The number of stage entries, 15.
+    pub stage_count: u32,
+    /// Stages with status `RR_DR60_STAGE_STATUS_NOT_MODELED`.
+    pub count_not_modeled: u32,
+    /// Stages with status `RR_DR60_STAGE_STATUS_ASSUMED`.
+    pub count_assumed: u32,
+    /// Stages with status `RR_DR60_STAGE_STATUS_SOURCED`.
+    pub count_sourced: u32,
+    /// Stages with status `RR_DR60_STAGE_STATUS_CHECKED`; the four counts sum to `stage_count`.
+    pub count_checked: u32,
+    /// One neutral sentence on what the model rests on.
+    pub basis: *const c_char,
+    /// The hardware-evidence capture form.
+    pub evidence_link: *const c_char,
+    /// The assumption register page (append `#:~:text=A-028` to land on a row).
+    pub assumptions_link: *const c_char,
+    /// The source register page.
+    pub sources_link: *const c_char,
+}
+
+impl Default for RrDr60ManifestHeader {
+    fn default() -> Self {
+        Self {
+            library_version: std::ptr::null(),
+            device_rate_hz: 0,
+            stage_count: 0,
+            count_not_modeled: 0,
+            count_assumed: 0,
+            count_sourced: 0,
+            count_checked: 0,
+            basis: std::ptr::null(),
+            evidence_link: std::ptr::null(),
+            assumptions_link: std::ptr::null(),
+            sources_link: std::ptr::null(),
+        }
+    }
+}
+
+/// One stage of the manifest (spec 007 FR-002), filled by `rr_dr60_manifest_stage`.
+///
+/// Strings as in `RrDr60ManifestHeader`: static, NUL-terminated UTF-8, never NULL; an empty
+/// note is `""`. The IDs are reached by index through `rr_dr60_manifest_stage_source` and
+/// `rr_dr60_manifest_stage_assumption`. The struct grows only at the end.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct RrDr60StageEntry {
+    /// 1 to 15, the signal-chain table's row number.
+    pub number: u32,
+    /// The stable ASCII key (the key for localization).
+    pub identifier: *const c_char,
+    /// The display name.
+    pub name: *const c_char,
+    /// One sentence on what the stage does to sound on the device.
+    pub description: *const c_char,
+    /// `RrDr60StageStatus`.
+    pub status: u32,
+    /// `RrDr60StagePath`.
+    pub path: u32,
+    /// `RrDr60Confidence`.
+    pub confidence: u32,
+    /// How many source IDs `rr_dr60_manifest_stage_source` can return.
+    pub source_count: u32,
+    /// How many assumption IDs `rr_dr60_manifest_stage_assumption` can return.
+    pub assumption_count: u32,
+    /// What the engine leaves out at this stage (`""` when nothing or not modeled).
+    pub coverage: *const c_char,
+    /// The Rust API items that touch the stage (`""` when none).
+    pub controls: *const c_char,
+    /// The library version in which the stage's model last changed (`""` when not modeled).
+    pub model_version: *const c_char,
+}
+
+impl Default for RrDr60StageEntry {
+    fn default() -> Self {
+        Self {
+            number: 0,
+            identifier: std::ptr::null(),
+            name: std::ptr::null(),
+            description: std::ptr::null(),
+            status: 0,
+            path: 0,
+            confidence: 0,
+            source_count: 0,
+            assumption_count: 0,
+            coverage: std::ptr::null(),
+            controls: std::ptr::null(),
+            model_version: std::ptr::null(),
+        }
+    }
+}
+
+/// A pointer into one of the core's NUL-terminated static twins (valid for the process).
+fn manifest_cstr(bytes: &'static [u8]) -> *const c_char {
+    bytes.as_ptr().cast()
+}
+
+/// Runs a manifest read under the crate's panic-catching convention (contracts/c-api.md): the
+/// functions touch only static data, so the `Err` arm cannot be reached.
+fn manifest_guard<T>(f: impl FnOnce() -> T) -> Result<T, RrDr60Status> {
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(v) => Ok(v),
+        // coverage: unreachable, static data (Constitution III)
+        Err(_) => Err(panic_to_status(None)),
+    }
+}
+
+/// The index of a stage number, or `None` for 0 or above the stage count.
+fn manifest_stage_index(number: u32) -> Option<usize> {
+    let n = number as usize;
+    (1..=rr_dr60::manifest::STAGE_COUNT)
+        .contains(&n)
+        .then(|| n - 1)
+}
+
+fn manifest_entry_c(c: &'static rr_dr60::manifest::__c::StageEntryC) -> RrDr60StageEntry {
+    RrDr60StageEntry {
+        number: c.number,
+        identifier: manifest_cstr(c.identifier),
+        name: manifest_cstr(c.name),
+        description: manifest_cstr(c.description),
+        status: c.status,
+        path: c.path,
+        confidence: c.confidence,
+        source_count: c.sources.len() as u32,
+        assumption_count: c.assumptions.len() as u32,
+        coverage: manifest_cstr(c.coverage),
+        controls: manifest_cstr(c.controls),
+        model_version: manifest_cstr(c.model_version),
+    }
+}
+
+/// The number of stage entries in the manifest, 15 (spec 007 FR-017). Real-time safe.
+#[unsafe(no_mangle)]
+pub extern "C" fn rr_dr60_manifest_stage_count() -> u32 {
+    rr_dr60::manifest::STAGE_COUNT as u32
+}
+
+/// Copies the manifest's header into `*out` (spec 007 FR-003, FR-017). Real-time safe; needs no
+/// handle and may be called before any `rr_dr60_create`.
+///
+/// # Safety
+///
+/// `out` must be NULL (then `RR_DR60_STATUS_NULL_POINTER`, nothing written) or point to a
+/// writable `RrDr60ManifestHeader`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_manifest_header(out: *mut RrDr60ManifestHeader) -> RrDr60Status {
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    match manifest_guard(|| {
+        let h = &rr_dr60::manifest::__c::HEADER;
+        RrDr60ManifestHeader {
+            library_version: manifest_cstr(h.library_version),
+            device_rate_hz: h.device_rate_hz,
+            stage_count: h.stage_count,
+            count_not_modeled: h.count_not_modeled,
+            count_assumed: h.count_assumed,
+            count_sourced: h.count_sourced,
+            count_checked: h.count_checked,
+            basis: manifest_cstr(h.basis),
+            evidence_link: manifest_cstr(h.evidence_link),
+            assumptions_link: manifest_cstr(h.assumptions_link),
+            sources_link: manifest_cstr(h.sources_link),
+        }
+    }) {
+        Ok(v) => {
+            // SAFETY: out is non-null and writable (caller contract).
+            unsafe { put(out, v) };
+            RrDr60Status::Ok
+        }
+        Err(status) => status,
+    }
+}
+
+/// Copies stage `number` (1 to 15) into `*out` (spec 007 FR-002, FR-017). Real-time safe.
+/// Check order: NULL first, then the range; nothing is written on a refusal.
+///
+/// # Safety
+///
+/// `out` must be NULL (then `RR_DR60_STATUS_NULL_POINTER`) or point to a writable
+/// `RrDr60StageEntry`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_manifest_stage(
+    number: u32,
+    out: *mut RrDr60StageEntry,
+) -> RrDr60Status {
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let Some(idx) = manifest_stage_index(number) else {
+        return RrDr60Status::NoSuchStage;
+    };
+    match manifest_guard(|| manifest_entry_c(&rr_dr60::manifest::__c::STAGES[idx])) {
+        Ok(v) => {
+            // SAFETY: out is non-null and writable (caller contract).
+            unsafe { put(out, v) };
+            RrDr60Status::Ok
+        }
+        Err(status) => status,
+    }
+}
+
+/// Writes the `index`-th (0-based, ascending) source ID (`S-###`) of stage `number` into
+/// `*out_id` (spec 007 FR-005, FR-017). `RR_DR60_STATUS_NO_SUCH_STAGE` for a number outside
+/// 1 to 15, `RR_DR60_STATUS_INVALID_ARGUMENT` for `index >= source_count`; nothing written on
+/// a refusal. Real-time safe.
+///
+/// # Safety
+///
+/// `out_id` must be NULL (then `RR_DR60_STATUS_NULL_POINTER`) or point to a writable pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_manifest_stage_source(
+    number: u32,
+    index: u32,
+    out_id: *mut *const c_char,
+) -> RrDr60Status {
+    // SAFETY: forwarded caller contract.
+    unsafe { manifest_id(number, index, out_id, |c| c.sources) }
+}
+
+/// Writes the `index`-th (0-based, ascending) assumption ID (`A-###`) of stage `number` into
+/// `*out_id` (spec 007 FR-005, FR-017); refusals as `rr_dr60_manifest_stage_source`. Real-time
+/// safe.
+///
+/// # Safety
+///
+/// `out_id` must be NULL (then `RR_DR60_STATUS_NULL_POINTER`) or point to a writable pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_manifest_stage_assumption(
+    number: u32,
+    index: u32,
+    out_id: *mut *const c_char,
+) -> RrDr60Status {
+    // SAFETY: forwarded caller contract.
+    unsafe { manifest_id(number, index, out_id, |c| c.assumptions) }
+}
+
+/// The shared body of the two ID accessors: NULL, then the stage, then the index.
+///
+/// # Safety
+///
+/// `out_id` must be NULL or point to a writable pointer.
+unsafe fn manifest_id(
+    number: u32,
+    index: u32,
+    out_id: *mut *const c_char,
+    list: impl FnOnce(&'static rr_dr60::manifest::__c::StageEntryC) -> &'static [&'static [u8]],
+) -> RrDr60Status {
+    if out_id.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let Some(idx) = manifest_stage_index(number) else {
+        return RrDr60Status::NoSuchStage;
+    };
+    match manifest_guard(|| {
+        list(&rr_dr60::manifest::__c::STAGES[idx])
+            .get(index as usize)
+            .map(|id| manifest_cstr(id))
+    }) {
+        Ok(Some(ptr)) => {
+            // SAFETY: out_id is non-null and writable (caller contract).
+            unsafe { put(out_id, ptr) };
+            RrDr60Status::Ok
+        }
+        Ok(None) => RrDr60Status::InvalidArgument,
+        Err(status) => status,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2360,6 +2688,149 @@ mod tests {
                 RrDr60Status::NullPointer
             );
             rr_dr60_destroy(p);
+        }
+    }
+
+    // ---- Spec 007 User Story 3: the stage manifest through the C API (T024) ----
+
+    #[test]
+    fn manifest_struct_layouts() {
+        // contracts/c-api.md: five pointers and six u32 in the header; the entry's coverage
+        // pointer at 4w + 20 rounded up to a multiple of w.
+        use std::mem::offset_of;
+        let w = size_of::<usize>();
+        assert_eq!(size_of::<RrDr60ManifestHeader>(), 5 * w + 24);
+        assert_eq!(offset_of!(RrDr60ManifestHeader, library_version), 0);
+        assert_eq!(offset_of!(RrDr60ManifestHeader, device_rate_hz), w);
+        assert_eq!(offset_of!(RrDr60ManifestHeader, stage_count), w + 4);
+        assert_eq!(offset_of!(RrDr60ManifestHeader, count_not_modeled), w + 8);
+        assert_eq!(offset_of!(RrDr60ManifestHeader, count_assumed), w + 12);
+        assert_eq!(offset_of!(RrDr60ManifestHeader, count_sourced), w + 16);
+        assert_eq!(offset_of!(RrDr60ManifestHeader, count_checked), w + 20);
+        assert_eq!(offset_of!(RrDr60ManifestHeader, basis), w + 24);
+        assert_eq!(offset_of!(RrDr60ManifestHeader, evidence_link), 2 * w + 24);
+        assert_eq!(
+            offset_of!(RrDr60ManifestHeader, assumptions_link),
+            3 * w + 24
+        );
+        assert_eq!(offset_of!(RrDr60ManifestHeader, sources_link), 4 * w + 24);
+        let coverage = (4 * w + 20).next_multiple_of(w);
+        assert_eq!(size_of::<RrDr60StageEntry>(), coverage + 3 * w);
+        assert_eq!(offset_of!(RrDr60StageEntry, number), 0);
+        assert_eq!(offset_of!(RrDr60StageEntry, identifier), w);
+        assert_eq!(offset_of!(RrDr60StageEntry, name), 2 * w);
+        assert_eq!(offset_of!(RrDr60StageEntry, description), 3 * w);
+        assert_eq!(offset_of!(RrDr60StageEntry, status), 4 * w);
+        assert_eq!(offset_of!(RrDr60StageEntry, path), 4 * w + 4);
+        assert_eq!(offset_of!(RrDr60StageEntry, confidence), 4 * w + 8);
+        assert_eq!(offset_of!(RrDr60StageEntry, source_count), 4 * w + 12);
+        assert_eq!(offset_of!(RrDr60StageEntry, assumption_count), 4 * w + 16);
+        assert_eq!(offset_of!(RrDr60StageEntry, coverage), coverage);
+        assert_eq!(offset_of!(RrDr60StageEntry, controls), coverage + w);
+        assert_eq!(
+            offset_of!(RrDr60StageEntry, model_version),
+            coverage + 2 * w
+        );
+        if w == 8 {
+            assert_eq!(size_of::<RrDr60ManifestHeader>(), 64);
+            assert_eq!(size_of::<RrDr60StageEntry>(), 80);
+        }
+    }
+
+    #[test]
+    fn status_code_20_is_no_such_stage() {
+        assert_eq!(RrDr60Status::NoSuchStage as i32, 20);
+    }
+
+    #[test]
+    fn enum_values_match_core() {
+        // contracts/c-api.md: the three enums carry the core twin's u32 values.
+        assert_eq!(RrDr60StageStatus::NotModeled as u32, 0);
+        assert_eq!(RrDr60StageStatus::Assumed as u32, 1);
+        assert_eq!(RrDr60StageStatus::Sourced as u32, 2);
+        assert_eq!(RrDr60StageStatus::Checked as u32, 3);
+        assert_eq!(RrDr60StagePath::Record as u32, 0);
+        assert_eq!(RrDr60StagePath::Playback as u32, 1);
+        assert_eq!(RrDr60StagePath::Both as u32, 2);
+        assert_eq!(RrDr60Confidence::NotApplicable as u32, 0);
+        assert_eq!(RrDr60Confidence::Low as u32, 1);
+        assert_eq!(RrDr60Confidence::Medium as u32, 2);
+        assert_eq!(RrDr60Confidence::High as u32, 3);
+        for (e, c) in rr_dr60::manifest()
+            .stages()
+            .iter()
+            .zip(rr_dr60::manifest::__c::STAGES.iter())
+        {
+            assert_eq!(e.status as u32, c.status);
+            assert_eq!(e.path as u32, c.path);
+            assert_eq!(e.confidence as u32, c.confidence);
+        }
+    }
+
+    #[test]
+    fn no_such_stage_and_null() {
+        // contracts/c-api.md: NULL first, then the range, then the index; nothing written on a
+        // refusal.
+        assert_eq!(rr_dr60_manifest_stage_count(), 15);
+        let sentinel = RrDr60StageEntry {
+            number: 0xFFFF_FFFF,
+            ..RrDr60StageEntry::default()
+        };
+        let mut e = sentinel;
+        // SAFETY: valid out pointer.
+        unsafe {
+            assert_eq!(rr_dr60_manifest_stage(0, &mut e), RrDr60Status::NoSuchStage);
+            assert_eq!(
+                rr_dr60_manifest_stage(16, &mut e),
+                RrDr60Status::NoSuchStage
+            );
+            assert_eq!(e.number, 0xFFFF_FFFF);
+            assert_eq!(
+                rr_dr60_manifest_stage(3, std::ptr::null_mut()),
+                RrDr60Status::NullPointer
+            );
+            assert_eq!(
+                rr_dr60_manifest_header(std::ptr::null_mut()),
+                RrDr60Status::NullPointer
+            );
+            assert_eq!(rr_dr60_manifest_stage(3, &mut e), RrDr60Status::Ok);
+            assert_eq!(e.number, 3);
+            let mut id: *const c_char = std::ptr::null();
+            assert_eq!(
+                rr_dr60_manifest_stage_source(3, e.source_count, &mut id),
+                RrDr60Status::InvalidArgument
+            );
+            assert!(id.is_null());
+            assert_eq!(
+                rr_dr60_manifest_stage_assumption(3, e.assumption_count, &mut id),
+                RrDr60Status::InvalidArgument
+            );
+            assert_eq!(
+                rr_dr60_manifest_stage_source(0, 0, &mut id),
+                RrDr60Status::NoSuchStage
+            );
+            assert_eq!(
+                rr_dr60_manifest_stage_source(3, 0, std::ptr::null_mut()),
+                RrDr60Status::NullPointer
+            );
+            assert_eq!(
+                rr_dr60_manifest_stage_source(3, 0, &mut id),
+                RrDr60Status::Ok
+            );
+            assert_eq!(std::ffi::CStr::from_ptr(id).to_str().unwrap(), "S-001");
+            let mut h = RrDr60ManifestHeader::default();
+            assert_eq!(rr_dr60_manifest_header(&mut h), RrDr60Status::Ok);
+            assert_eq!(h.stage_count, 15);
+            assert_eq!(
+                h.count_not_modeled + h.count_assumed + h.count_sourced + h.count_checked,
+                15
+            );
+            assert_eq!(
+                std::ffi::CStr::from_ptr(h.library_version)
+                    .to_str()
+                    .unwrap(),
+                rr_dr60::VERSION
+            );
         }
     }
 }

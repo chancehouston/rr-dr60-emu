@@ -7,8 +7,10 @@ use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 use rr_dr60::{Pipeline, Route, VasEvent};
 use rr_dr60_ffi::{
-    RrDr60BlockInfo, RrDr60Pipeline, RrDr60Status, RrDr60VasEvent, rr_dr60_create, rr_dr60_destroy,
-    rr_dr60_process, rr_dr60_process_with_events, rr_dr60_reset,
+    RrDr60BlockInfo, RrDr60ManifestHeader, RrDr60Pipeline, RrDr60StageEntry, RrDr60Status,
+    RrDr60VasEvent, rr_dr60_create, rr_dr60_destroy, rr_dr60_manifest_header,
+    rr_dr60_manifest_stage, rr_dr60_manifest_stage_assumption, rr_dr60_manifest_stage_count,
+    rr_dr60_manifest_stage_source, rr_dr60_process, rr_dr60_process_with_events, rr_dr60_reset,
 };
 use rr_dr60_harness::configs;
 use rr_dr60_harness::stimulus::{self, Pcg32};
@@ -158,6 +160,54 @@ fn processing_never_touches_the_heap() {
         // Spec 006 FR-017: the record and playback paths' calls and the reads.
         transport_cases(rate, vas_sizes);
     }
+
+    // Spec 007 FR-016, FR-017, SC-004: the manifest reads, Rust and C.
+    manifest_reads();
+}
+
+/// Spec 007 FR-016, FR-017: reading the whole manifest, every lookup and the five C functions
+/// over every stage and ID allocates nothing.
+fn manifest_reads() {
+    let before = counts();
+    let m = rr_dr60::manifest();
+    let mut touched = 0usize;
+    for n in 0..=16u32 {
+        if let Some(e) = m.stage(n) {
+            touched += e.sources.len() + e.assumptions.len() + e.name.len();
+        }
+    }
+    for e in m.stages() {
+        touched += e.description.len() + e.controls.len() + e.coverage.len();
+    }
+    let mut header = RrDr60ManifestHeader::default();
+    let mut entry = RrDr60StageEntry::default();
+    let mut id: *const std::ffi::c_char = std::ptr::null();
+    // SAFETY: valid out pointers.
+    unsafe {
+        assert!(rr_dr60_manifest_header(&mut header) == RrDr60Status::Ok);
+        for n in 0..=rr_dr60_manifest_stage_count() + 1 {
+            let status = rr_dr60_manifest_stage(n, &mut entry);
+            if status != RrDr60Status::Ok {
+                continue;
+            }
+            for i in 0..entry.source_count {
+                assert!(rr_dr60_manifest_stage_source(n, i, &mut id) == RrDr60Status::Ok);
+            }
+            for i in 0..entry.assumption_count {
+                assert!(rr_dr60_manifest_stage_assumption(n, i, &mut id) == RrDr60Status::Ok);
+            }
+            assert!(
+                rr_dr60_manifest_stage_source(n, entry.source_count, &mut id)
+                    == RrDr60Status::InvalidArgument
+            );
+        }
+    }
+    let after = counts();
+    assert!(touched > 0);
+    assert_eq!(
+        after, before,
+        "heap activity [allocs, deallocs, reallocs] while reading the manifest"
+    );
 }
 
 /// Spec 006 FR-017: no heap activity in `start_recording`, `record`, `stop_recording`,
