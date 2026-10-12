@@ -8,6 +8,8 @@
 
 **Restated by spec 004** (2026-10-11): the device-rate-dependent figures of this spec are restated in [spec 004](../004-device-rate-6khz/spec.md) FR-010 to FR-012 and in the CHANGELOG; the text below is otherwise unchanged.
 
+**Narrowed by spec 006** (2026-10-12): the device-rate stream is rounded to 32-bit precision after the VAS, before the playback stage ([spec 006](../006-record-playback-split/spec.md) FR-009), and this spec's golden file was re-blessed once for it (100 of 112 entries changed by at most one full-scale LSB (2⁻²³, about −138 dBFS); the CHANGELOG's 0.6.0 entry has the figures). The checks and tolerances below are unchanged.
+
 ## Clarifications
 
 ### Session 2026-10-08

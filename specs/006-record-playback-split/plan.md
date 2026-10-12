@@ -91,7 +91,7 @@ specs/006-record-playback-split/
 crates/rr_dr60/src/
 ├── lib.rs                      # crate docs (two paths, memory, state, route, stored form); re-exports
 ├── settings.rs                 # MemorySettings { capacity_s, max_recordings } (+ DEVICE); Settings::memory; Route
-├── error.rs                    # Error: 13 new variants (R-05); Setting::MemoryCapacityS, MemoryMaxRecordings
+├── error.rs                    # Error: 14 new variants (R-05); Setting::MemoryCapacityS, MemoryMaxRecordings
 ├── validate.rs                 # capacity_s 1 ..= 86_400, max_recordings 1 ..= 9_999
 ├── paths.rs                    # NEW: RecordHalf, PlaybackHalf, RecordPath, PlaybackPath, EventCounters (moved),
 │                               #      narrow_device(), latency helpers, N10 and drain length (R-01, R-02, R-06)
@@ -109,7 +109,7 @@ crates/rr_dr60_ffi/
 ├── src/lib.rs                  # RrDr60Settings + memory_capacity_s (76), memory_max_recordings (80); 88 bytes;
 │                               # RrDr60Status 6–19; RrDr60SettingField 14, 15; RrDr60Route, RrDr60EngineState,
 │                               # RrDr60RecordInfo, RrDr60StopOutcome, RrDr60PlayInfo, RrDr60MemoryStatus;
-│                               # 17 new functions (contracts/c-api.md); error mapping; layout tests
+│                               # 21 new functions (17 rows in contracts/c-api.md); error mapping; layout tests
 ├── include/rr_dr60.h           # regenerated
 └── tests/c/smoke.c             # record → stop → export → import into a second handle → play; memcmp with Rust
 

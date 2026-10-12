@@ -1146,6 +1146,33 @@ mod tests {
         p.reset();
     }
 
+    /// US2 scenario 4 at the device's own figure (FR-012; S-001: 99 items; final coach review):
+    /// 99 short recordings fill the slots with time to spare; the 100th start is refused.
+    #[test]
+    fn ninety_nine_recordings_fill_the_device_slots() {
+        let mut p = small(6000, 60, 99);
+        let x = tone(-20.0, 0.05, 6000.0);
+        for n in 1..=99u32 {
+            assert!(matches!(
+                record_all(&mut p, &x).result,
+                StopResult::Kept { number, .. } if number == n
+            ));
+        }
+        let st = p.memory_status();
+        assert_eq!((st.count, st.slots_remaining), (99, 0));
+        assert!(
+            st.remaining_samples > 300_000,
+            "time left: {}",
+            st.remaining_samples
+        );
+        assert_eq!(p.start_recording(), Err(Error::NoRecordingSlots));
+        p.erase(50).unwrap();
+        assert_eq!(p.memory_status().count, 98);
+        assert!(p.start_recording().is_ok());
+        assert_eq!(p.state().current, Some(99));
+        p.reset();
+    }
+
     /// 006 T027 (FR-013; S-001: the played item may be erased): erasing the recording being
     /// played, or all, stops playback first; erase is refused while recording.
     #[test]

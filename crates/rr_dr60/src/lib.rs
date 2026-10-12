@@ -23,7 +23,7 @@
 //!   A-021 – A-025) and is on by default; see [`VasSettings`]. And
 //! - **Stage 10**, the playback-side DAC and reconstruction filter.
 //!
-//! Since spec 006 the engine also works like the device: the **record path** (stages 3, 4
+//! Since spec 006 the engine also has the device's structure: the **record path** (stages 3, 4
 //! with the clamp, and 5) writes into a **memory** of 60 minutes and 99 recordings (S-001;
 //! [`MemorySettings`], counted in stored device time, A-038; the store is reserved when the
 //! pipeline is created, about 86 MB at the defaults, virtual until written), and the

@@ -27,7 +27,7 @@ cargo test -p rr_dr60 memory
 cargo test -p rr_dr60_harness --test us2_memory -- --nocapture
 ```
 
-Expected: at a 10 s capacity recording stops at exactly 60 000 stored samples with `stopped = MemoryFull` and the partial recording kept; drop-mode pauses cost nothing, mute-mode silence counts; the 3rd recording fills the slots and a 4th start is `NoRecordingSlots`; erase renumbers (the former 3 becomes 2) and returns the time; erase all empties; a start with nothing fed then stop is `DiscardedEmpty`; `footprint_bytes()` at the defaults is 86 401 600 (≤ 90 MB) and unchanged by any operation; a clone reports the same footprint.
+Expected: at a 10 s capacity recording stops at exactly 60 000 stored samples with `stopped = MemoryFull` and the partial recording kept; drop-mode pauses cost nothing, mute-mode silence counts; the 3rd recording fills the slots and a 4th start is `NoRecordingSlots`; erase 3 of 5 renumbers the former 4 and 5 to 3 and 4 and returns the time; erase all empties; a start with nothing fed then stop is `DiscardedEmpty`; `footprint_bytes()` at the defaults is 86 401 600 (≤ 90 MB) and unchanged by any operation; a clone reports the same footprint.
 
 ## 4. Story 3: export and import (FR-014)
 
