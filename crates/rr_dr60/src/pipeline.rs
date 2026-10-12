@@ -31,8 +31,8 @@ use crate::validate::validate;
 ///
 /// With the VAS on in drop mode (the default), pauses are removed, so **a block can produce
 /// fewer output samples than it consumed, or none**. Every processing call returns a
-/// [`BlockInfo`]; only `output[..produced]` is output. [`process_with_events`]
-/// (Self::process_with_events) also reports where the splices are.
+/// [`BlockInfo`]; only `output[..produced]` is output. [`process_with_events`](Self::process_with_events)
+/// also reports where the splices are.
 ///
 /// # Output level
 ///
@@ -93,6 +93,28 @@ use crate::validate::validate;
 /// let output = &buffer[..info.produced]; // the VAS may have removed a pause
 /// assert!(output.len() <= 512);
 /// assert!(p.latency_samples() > 0);
+///
+/// // Or the way the device works (spec 006): record into the memory, then play back.
+/// use rr_dr60::StopResult;
+/// let mut p = Pipeline::new(Settings::new(48_000))?;
+/// let input = vec![0.1f32; 4800];
+/// p.start_recording()?;
+/// let info = p.record(&input, &mut [])?; // any block length; events optional
+/// assert!(info.stopped.is_none()); // the memory did not fill
+/// let outcome = p.stop_recording(&mut [])?; // flushes the record latency
+/// let StopResult::Kept { number, length } = outcome.result else { unreachable!() };
+/// assert!(length >= 600); // device samples at 6 kHz
+/// p.start_playback(number)?;
+/// let mut out = vec![0.0f32; 512];
+/// let mut played = 0;
+/// loop {
+///     let info = p.play(&mut out)?;
+///     played += info.produced;
+///     if info.finished {
+///         break;
+///     }
+/// }
+/// assert_eq!(played as u32, p.drain_samples() + 8 * length as u32); // 48 kHz: 8 host samples per device sample
 /// # Ok::<(), rr_dr60::Error>(())
 /// ```
 #[derive(Clone, Debug)]

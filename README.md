@@ -48,26 +48,28 @@ What each modeled stage rests on today. "Documented" means the behavior is taken
 | Microphone and mic amp | no | documented topology (A-005, A-006, A-029) | Gain and noise are estimates from the circuit. |
 | µ-law quantization | no | documented (A-003) | |
 | CELP speech codec, 4 kbit/s | no | documented bitrate and type (A-004); the exact codec is unknown | The stage most responsible for the device's sound; the hardest to get right. |
-| Speaker amp, speaker, earphone path | no | documented topology (A-031, A-032); speaker acoustics assumed (A-010) | |
+| Flash memory (capacity and recordings) | capacity only ([spec 006](specs/006-record-playback-split/spec.md)) | documented figures (60 minutes, 99 recordings, S-001); the accounting assumed (A-038, A-039) | A memory the recordings go into and come out of, with the device's limits: recording stops at the limit, numbering and erase as the owner's manual describes. The stored form is the engine's own 32-bit samples until the codec is modeled, so it says nothing about the device's sound. |
+| Speaker amp, speaker, earphone path | no | documented topology (A-031, A-032); speaker acoustics assumed (A-010) | Spec 006 reserves the speaker/earphone **route** as a selectable label (the two routes are exclusive on the device, S-001); it does not change the sound yet. |
 
 Nothing in this table claims the emulator sounds like a real RR-DR60 yet. It claims that each stage is built to a stated, traceable description, and that the harness checks the build against that description.
 
 ## Using the library
 
-What exists today ([spec 001](specs/001-pipeline-skeleton/spec.md), [spec 003](specs/003-vas/spec.md), [spec 004](specs/004-device-rate-6khz/spec.md) and [spec 005](specs/005-limiter-agc/spec.md), which replaced [spec 002](specs/002-agc/spec.md)'s AGC model). **What changed from 0.4:** the [CHANGELOG](CHANGELOG.md)'s 0.5.0 entry lists every changed assumption, setting and default.
+What exists today ([spec 001](specs/001-pipeline-skeleton/spec.md), [spec 003](specs/003-vas/spec.md), [spec 004](specs/004-device-rate-6khz/spec.md), [spec 005](specs/005-limiter-agc/spec.md), which replaced [spec 002](specs/002-agc/spec.md)'s AGC model, and [spec 006](specs/006-record-playback-split/spec.md)). **What changed from 0.5:** the [CHANGELOG](CHANGELOG.md)'s 0.6.0 entry lists the new recording and playback calls, the one inaudible output change and the C structure change.
 
 - Mono audio at **6, 8, 16, 44.1, 48, 88.2 or 96 kHz** goes in, in blocks of any size, and audio comes out at the same rate. By default the output can be **shorter** than the input, because the VAS drops pauses; each call reports how many samples it produced.
 - Inside, the audio is converted to the device's internal **6 kHz** rate (verified from the service manual, [A-026](docs/hardware/assumptions.md); 6 kHz input passes through unconverted) and goes through two band-limiting stages that model the record and playback filters of the recorder's MSM7702 voice-band codec. They follow the codec family datasheet's transmit band-pass and receive low-pass templates scaled to the 6 kHz clock ([A-027](docs/hardware/assumptions.md), medium confidence): flat within about 0.2 dB from 225 to 2250 Hz, 0.31 dB (record) and 0.48 dB (playback) down at 2550 Hz against datasheet typicals of 0.4 and 0.56 dB, the record filter removing DC and the playback filter passing it, both minimum-phase ([A-016](docs/hardware/assumptions.md)). They are modeled on the datasheet scaled to the measured clock, not measured against a real unit; the roll-off between 2550 Hz and 3 kHz is a design choice no source constrains, and the device's own aliasing of 3–3.45 kHz input and its DAC imaging above the band are not modeled (the emulator removes both).
 - A record-path **limiter**, the device's automatic gain control (AGC), on by default, and the codec's **full-scale clamp**. See [AGC](#agc-signal-chain-stage-3) below.
 - A record-path **Voice Activated System** (VAS), on by default: recording pauses while the signal stays below a threshold, and the paused audio is removed. See [VAS](#vas-signal-chain-stage-5) below.
+- **Recording and playback like the device:** a record path into a memory of 60 minutes and 99 recordings, and a playback path out of it, with numbering, erase, export and import. See [Recording and playback](#recording-and-playback) below. The one-pass processing call stays for hosts that only want the sound.
 - Fixed, reported latency: 483 samples (about 10.1 ms) at 48 kHz in the default configuration, and 1 sample at 6 kHz. It is under 20 ms at every supported rate, and each configuration reports its own; the "after AGC" tap reports 0.
-- **Real-time safe:** `process`, `process_in_place`, `process_with_events` and `reset` never allocate, lock or do I/O. Processing runs at about 360× real time at 48 kHz on a laptop (58 ns per sample) with the limiter and the VAS on, and the same with the limiter alone or with neither: below its knee the limiter costs one exponential per sample and nothing more. `Pipeline::new` and `reconfigure` allocate, so call them outside the audio callback.
+- **Real-time safe:** `process`, `process_in_place`, `process_with_events` and `reset` never allocate, lock or do I/O, and neither do the recording and playback calls (`start_recording`, `record`, `stop_recording`, `start_playback`, `play`, `stop_playback`, `set_route`, the state and figure reads, `export_len`, the latency reads). `erase`, `erase_all` (a bounded move of stored samples), `export` and `import` (a checksum over the recording) are not. Processing runs at about 360× real time at 48 kHz on a laptop (58 ns per sample) with the limiter and the VAS on, and the same with the limiter alone or with neither: below its knee the limiter costs one exponential per sample and nothing more. `Pipeline::new` and `reconfigure` allocate, so call them outside the audio callback.
 - **Deterministic:** the same input and settings give bit-identical output for any block size, and on every supported platform. Three golden files (001, AGC and VAS) are checked on Linux, macOS and Windows (x86-64 and ARM64) and on iOS.
 - A C API with a generated header ([`rr_dr60.h`](crates/rr_dr60_ffi/include/rr_dr60.h)).
 
 - Each stage can be **bypassed**, the output can be **tapped after the AGC** (the limiter's own output at the host rate), **after the record stage** or **after the VAS** ("what the device recorded"), and the reported latency follows the configuration. `reconfigure` changes settings between streams.
 
-Not yet: every stage beyond the limiter, the clamp, the VAS and the codec filters.
+Not yet: every stage beyond the limiter, the clamp, the VAS, the codec filters and the memory's capacity; the speaker and earphone routes are labels.
 
 ### Rust
 
@@ -95,6 +97,36 @@ rr_dr60_destroy(p);
 ```
 
 Build the static library with `cargo build -p rr_dr60_ffi --release`. `crates/rr_dr60_ffi/tests/c/run_smoke.sh` shows a complete build and link. From Swift, import `rr_dr60.h` through a bridging header or module map.
+
+### Recording and playback
+
+Since [spec 006](specs/006-record-playback-split/spec.md) the engine also works the way the device does: a **record path** (the limiter, the record filter and clamp, the VAS) writes into a **memory**, and a **playback path** (the playback filter) plays a recording back. The one-pass call above is the two paths back to back.
+
+- **State.** The engine is idle, recording or playing, never two at once (the device mutes its speaker while recording). A call that needs another state is refused with a reason that names the activity; nothing changes on a refusal, and the one-pass call is refused while a recording or playback is in progress.
+- **The calls, in order.** `start_recording`, then `record` blocks of any size (each reports how many device samples it stored, its VAS events, and whether the memory filled), then `stop_recording`, which flushes the record path's latency so every fed sample is in the recording and reports the recording's number and length (or that it was empty and discarded, when no input was fed). `start_playback(number)`, then `play` into your buffer until it reports `finished`: the recording, then a short drain of settled silence (`drain_samples`). `stop_playback` ends it at once. `state`, `memory_status` and `recording_length` read at any time.
+- **The memory.** 60 minutes and 99 recordings, counted in stored device time (owner's manual, S-001; [A-038](docs/hardware/assumptions.md)); both are settings, and a capacity above the device's is a configuration the device does not have. Recording stops by itself at the exact sample at which the memory fills and keeps the partial recording ([A-039](docs/hardware/assumptions.md)); afterwards the engine is idle. A start is refused when no time or no slot remains. Paused time costs nothing in drop mode; in mute mode the silence is stored and counts. Recordings are numbered in the order made; `erase` returns a recording's time and renumbers the later ones, `erase_all` empties the memory. The store for the whole capacity is **reserved when the engine is created**, about 86 MB at the defaults, virtual until recordings are written (a commit charge on Windows), so starting a recording never allocates.
+- **Export and import.** `export_len` then `export` give a recording as an opaque byte sequence; `import` puts one back, into the same or another engine of this version at any host rate, with bit-identical playback. The host never parses the bytes. The form is versioned (version 1 is the record path's 32-bit device-rate output; it will become encoded frames when the codec is modeled, [A-004](docs/hardware/assumptions.md)) and carries a checksum, so a truncated, altered or foreign sequence is refused with a reason, as is one that does not fit the remaining memory.
+- **The route.** `set_route` selects the speaker or the earphone at any time, during playback too. It is a label in this version: both routes produce the same output until the amplifier, speaker and earphone stages are modeled.
+- **Same sound.** A recording played back equals what the one-pass call produces for the same input followed by the record latency of silence, bit for bit, at every supported rate; the harness proves it against the committed golden files. Each recording and each playback starts from the path's reset state ([A-037](docs/hardware/assumptions.md): whether a real unit carries the limiter's charge between items is an open question).
+
+```rust
+use rr_dr60::{Pipeline, Settings, StopResult};
+
+let mut p = Pipeline::new(Settings::new(48_000))?;      // reserves the 60-minute store (virtual)
+p.start_recording()?;
+let info = p.record(&block, &mut events)?;               // in the audio callback; any block length
+if info.stopped.is_some() { /* the memory filled: the recording is kept, the engine idle */ }
+let outcome = p.stop_recording(&mut events)?;           // flushes the record latency
+if let StopResult::Kept { number, length } = outcome.result {
+    p.start_playback(number)?;
+    while !p.play(&mut out)?.finished { /* out holds the next block */ }
+    let mut bytes = vec![0u8; p.export_len(number)?];   // outside the callback
+    p.export(number, &mut bytes)?;
+}
+# Ok::<(), rr_dr60::Error>(())
+```
+
+In C the same calls are `rr_dr60_start_recording`, `rr_dr60_record`, `rr_dr60_stop_recording`, `rr_dr60_start_playback`, `rr_dr60_play`, `rr_dr60_get_state`, `rr_dr60_memory_status`, `rr_dr60_erase`, `rr_dr60_export_len`, `rr_dr60_export`, `rr_dr60_import` and `rr_dr60_set_route`, each refusal a distinct status; `crates/rr_dr60_ffi/tests/c/smoke.c` runs the whole loop.
 
 ### AGC (signal-chain stage 3)
 
@@ -191,7 +223,7 @@ rr_dr60_process_with_events(p, in, out, frames, &info, events, capacity);
 
 ### Accuracy of this slice
 
-The limiter is **modeled on** the service manual's circuit with *estimated* transistor parameters, the clamp on the codec's documented full scale, the VAS on the owner's manual's description plus *assumed* values, and the two filter stages on the codec family datasheet's templates scaled to the device's measured 6 kHz clock (*assumed* scaling). A measurement harness ([001](specs/001-pipeline-skeleton/quickstart.md), [003](specs/003-vas/quickstart.md), [004](specs/004-device-rate-6khz/quickstart.md), [005](specs/005-limiter-agc/quickstart.md)) checks the filter stages' 413 properties (template loss, DC, group-delay distortion, anti-alias rejection, cascade, minimum phase, boundary flatness and rejection, latency), the limiter's 563 (bit-exact passthrough, the static curve and knee, dead time and arming, release, polarity, bandwidth, the clamp, latency, at seven rates; plus a 290-row settings matrix at 6 and 48 kHz, 1578 rows in the full matrix at seven rates), the three chain-level scenarios of the limiter and the VAS together, and the VAS's acceptance scenarios (output lengths, splice positions, threshold, hang and onset times, mute mode) against the specs' tolerances at every supported rate. That proves the emulator does what the spec says. It does **not** prove that the spec matches a real RR-DR60, because no real-unit recordings exist yet. See [Accuracy](#accuracy) above for how to help.
+The limiter is **modeled on** the service manual's circuit with *estimated* transistor parameters, the clamp on the codec's documented full scale, the VAS on the owner's manual's description plus *assumed* values, and the two filter stages on the codec family datasheet's templates scaled to the device's measured 6 kHz clock (*assumed* scaling). A measurement harness ([001](specs/001-pipeline-skeleton/quickstart.md), [003](specs/003-vas/quickstart.md), [004](specs/004-device-rate-6khz/quickstart.md), [005](specs/005-limiter-agc/quickstart.md)) checks the filter stages' 413 properties (template loss, DC, group-delay distortion, anti-alias rejection, cascade, minimum phase, boundary flatness and rejection, latency), the limiter's 563 (bit-exact passthrough, the static curve and knee, dead time and arming, release, polarity, bandwidth, the clamp, latency, at seven rates; plus a 290-row settings matrix at 6 and 48 kHz, 1578 rows in the full matrix at seven rates), the three chain-level scenarios of the limiter and the VAS together, the VAS's acceptance scenarios (output lengths, splice positions, threshold, hang and onset times, mute mode), and the record and playback paths' equivalence with the one-pass processing (196 golden entries bit-exact through record-then-play, the length and drain rules, the memory's limits at the exact sample, the export round trip at 7 × 7 rates and an 85-sequence corruption set) against the specs' tolerances at every supported rate. That proves the emulator does what the spec says. It does **not** prove that the spec matches a real RR-DR60, because no real-unit recordings exist yet. See [Accuracy](#accuracy) above for how to help.
 
 ## Planned features
 

@@ -20,6 +20,19 @@
 //! 3. The caller owns all buffers. The library never keeps a pointer after a call returns.
 //! 4. A handle must not be used by two threads at the same time.
 //! 5. `RrDr60Settings` only grows at the end. Callers set `struct_size`.
+//!
+//! # Real-time safety (spec 006 FR-017)
+//!
+//! Real-time safe: `rr_dr60_process`, `rr_dr60_process_with_events`, `rr_dr60_max_events`,
+//! `rr_dr60_reset`, `rr_dr60_latency_samples`, `rr_dr60_settings_validate`,
+//! `rr_dr60_start_recording`, `rr_dr60_record`, `rr_dr60_max_record_events`,
+//! `rr_dr60_stop_recording`, `rr_dr60_start_playback`, `rr_dr60_play`,
+//! `rr_dr60_stop_playback`, `rr_dr60_set_route`, `rr_dr60_get_route`, `rr_dr60_get_state`,
+//! `rr_dr60_memory_status`, `rr_dr60_recording_length`, `rr_dr60_export_len`, the three
+//! latency and drain reads and `rr_dr60_footprint_bytes`. Not real-time safe:
+//! `rr_dr60_create`, `rr_dr60_destroy`, `rr_dr60_reconfigure` (allocate), `rr_dr60_erase`,
+//! `rr_dr60_erase_all` (a bounded memmove), `rr_dr60_export`, `rr_dr60_import` (a CRC over
+//! the recording).
 
 use std::ffi::c_char;
 use std::panic::{AssertUnwindSafe, catch_unwind};
