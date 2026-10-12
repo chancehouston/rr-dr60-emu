@@ -70,6 +70,7 @@ Changed: `reconfigure` is refused while recording or playing and with `StoredExc
 
 - `Pipeline::__with_device_narrowing(settings, enabled: bool)`: the pre-0.6 un-narrowed one-pass, for `narrowing_delta` (R-02).
 - `__test_hooks::n10() -> usize` (121) and `__test_hooks::stage_settling(sos, rel) -> usize` for the pinning test.
+- `__test_hooks::memory_capacities(&Pipeline) -> (usize, usize)`: the actual `Vec` capacities of the store and the span table, for the SC-007 footprint check (plan review P6; T028).
 - Existing hooks unchanged.
 
 ## Version

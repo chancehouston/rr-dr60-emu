@@ -7,7 +7,8 @@
 //! and never import; the memory stays at its default capacity.
 
 use rr_dr60::{
-    Error, Pipeline, Route, Settings, State, StopOutcome, StopResult, VasEvent, VasMode,
+    __test_hooks, Error, Pipeline, Route, Settings, State, StopOutcome, StopReason, StopResult,
+    VasEvent, VasMode,
 };
 
 use crate::checks::{MeasurementResult, Tolerance};
@@ -897,5 +898,735 @@ pub fn state_table(rate: u32) -> Vec<MeasurementResult> {
             && p.memory_status().count == 1
             && p.route() == Route::Earphone,
     );
+    rows
+}
+
+// ---- User Story 2: the memory's limits, numbering and erase (006 T028) ----
+
+/// The trace for the limit rows: the device's figures and the two memory assumptions.
+const LIMITS: &[&str] = &["S-001", "A-038", "A-039"];
+/// The small capacity the US2 scenarios record to the limit with (006 FR-010; research R-11:
+/// never the default 60 minutes in a debug test).
+const SMALL_CAPACITY_S: u32 = 10; // engineering target (006 US2 scenarios 2–6)
+const SMALL_MAX: u32 = 3; // engineering target (006 US2 scenario 4)
+/// Input longer than the small capacity (US2 scenario 2: 25 s against 10 s).
+const OVER_S: f64 = if cfg!(coverage) { 12.0 } else { 25.0 }; // engineering target (006 US2)
+const LIMIT_TONE_DBFS: f64 = -20.0; // engineering target (006 US2 scenario 2)
+/// Capacity above the device's: 600 minutes and 999 recordings (US2 scenario 8).
+const EXPANDED_CAPACITY_S: u32 = 36_000; // engineering target (006 US2 scenario 8)
+const EXPANDED_MAX: u32 = 999; // engineering target (006 US2 scenario 8)
+const DEVICE_RATE: f64 = 6000.0; // A-026
+
+/// What a block-wise recording of a stimulus did.
+struct Recorded {
+    /// Device samples stored, all blocks and the flush included.
+    stored: u64,
+    /// The reason when the recording stopped by itself.
+    stopped: Option<StopReason>,
+    /// Host samples fed before the stop (whole blocks; the stopping block counted).
+    consumed: usize,
+    /// The stop outcome when the host stopped the recording (None after a self-stop).
+    outcome: Option<StopOutcome>,
+}
+
+/// Starts a recording, feeds `x` in [`RECORD_BLOCK`] blocks until it ends or the recording
+/// stops by itself, and stops it when still recording.
+fn record_blocks(p: &mut Pipeline, x: &[f32]) -> Recorded {
+    p.start_recording().expect("idle, room and a slot");
+    let mut r = Recorded {
+        stored: 0,
+        stopped: None,
+        consumed: 0,
+        outcome: None,
+    };
+    for block in x.chunks(RECORD_BLOCK) {
+        let info = p.record(block, &mut []).expect("recording");
+        r.stored += info.stored as u64;
+        r.consumed += block.len();
+        if let Some(reason) = info.stopped {
+            r.stopped = Some(reason);
+            return r;
+        }
+    }
+    let outcome = p.stop_recording(&mut []).expect("recording");
+    r.stored += outcome.flush.stored as u64;
+    r.stopped = outcome.flush.stopped;
+    r.outcome = Some(outcome);
+    r
+}
+
+#[allow(clippy::too_many_arguments)]
+fn limit_row(
+    requirement: &'static str,
+    property: &'static str,
+    rate: u32,
+    config: &'static str,
+    stimulus: impl Into<String>,
+    measured: f64,
+    unit: &'static str,
+    tolerance: Tolerance,
+) -> MeasurementResult {
+    row(
+        requirement,
+        property,
+        LIMITS,
+        rate,
+        config,
+        stimulus,
+        measured,
+        unit,
+        tolerance,
+    )
+}
+
+/// US2 scenarios 2 and 6 (FR-012, SC-003): `over_s` seconds of a −20 dBFS 1 kHz tone with the
+/// VAS off into a `capacity_s` memory: the recording stops by itself at exactly
+/// `capacity_s × 6000` stored samples with the reason "memory full", the partial recording is
+/// kept with that length, 0 samples remain, a start is refused with "memory full", and after an
+/// erase a start proceeds.
+pub fn capacity_time_at(
+    rate: u32,
+    capacity_s: u32,
+    max: u32,
+    over_s: f64,
+) -> Vec<MeasurementResult> {
+    let fs = f64::from(rate);
+    let capacity = u64::from(capacity_s) * DEVICE_RATE as u64;
+    let s = configs::memory_capacity(configs::settings("default_agc", rate), capacity_s, max);
+    let mut p = Pipeline::new(s).expect("rate");
+    let x = stimulus::tone(
+        1000.0,
+        stimulus::amplitude(LIMIT_TONE_DBFS),
+        fs,
+        (over_s * fs) as usize,
+    );
+    let r = record_blocks(&mut p, &x);
+    let label = format!("{over_s} s tone into {capacity_s} s");
+    let st = p.memory_status();
+    let mut rows = vec![
+        limit_row(
+            "006/FR-012",
+            "stored samples at the self-stop minus the capacity",
+            rate,
+            "default_agc",
+            label.clone(),
+            r.stored as f64 - capacity as f64,
+            "samples",
+            Tolerance::Exact(0.0), // FR-012: the exact sample
+        ),
+        limit_row(
+            "006/FR-012",
+            "stop reason is memory full",
+            rate,
+            "default_agc",
+            label.clone(),
+            pass(r.stopped == Some(StopReason::MemoryFull) && r.outcome.is_none()),
+            "",
+            Tolerance::Exact(1.0), // FR-012
+        ),
+        limit_row(
+            "006/FR-012",
+            "input consumed before the self-stop",
+            rate,
+            "default_agc",
+            label.clone(),
+            r.consumed as f64 / fs,
+            "s",
+            // The stop lies inside the block that holds input second `capacity_s` plus the
+            // record latency (FR-016).
+            Tolerance::Range(
+                f64::from(capacity_s),
+                f64::from(capacity_s)
+                    + (RECORD_BLOCK as f64 + f64::from(p.record_latency_samples())) / fs,
+            ),
+        ),
+        limit_row(
+            "006/FR-012",
+            "idle after the self-stop, recording kept as number 1",
+            rate,
+            "default_agc",
+            label.clone(),
+            pass(p.state().state == State::Idle && st.count == 1),
+            "",
+            Tolerance::Exact(1.0), // FR-012
+        ),
+        limit_row(
+            "006/FR-012",
+            "kept length minus the capacity",
+            rate,
+            "default_agc",
+            label.clone(),
+            p.recording_length(1)
+                .map_or(f64::NAN, |l| l as f64 - capacity as f64),
+            "samples",
+            Tolerance::Exact(0.0), // FR-012
+        ),
+        limit_row(
+            "006/FR-011",
+            "remaining samples after the self-stop",
+            rate,
+            "default_agc",
+            label.clone(),
+            st.remaining_samples as f64,
+            "samples",
+            Tolerance::Exact(0.0), // FR-011
+        ),
+        limit_row(
+            "006/FR-012",
+            "start refused with memory full",
+            rate,
+            "default_agc",
+            label.clone(),
+            pass(p.start_recording() == Err(Error::MemoryFull) && p.state().state == State::Idle),
+            "",
+            Tolerance::Exact(1.0), // FR-012, US2 scenario 6
+        ),
+    ];
+    p.erase(1).expect("idle, exists");
+    let proceeds = p.start_recording().is_ok() && p.state().current == Some(1);
+    p.reset();
+    rows.push(limit_row(
+        "006/FR-013",
+        "after an erase the start proceeds",
+        rate,
+        "default_agc",
+        label,
+        pass(proceeds && p.memory_status().remaining_samples == capacity),
+        "",
+        Tolerance::Exact(1.0), // FR-013, US2 scenario 6
+    ));
+    rows
+}
+
+/// [`capacity_time_at`] with the small capacity and [`OVER_S`] of input.
+pub fn capacity_time(rate: u32) -> Vec<MeasurementResult> {
+    capacity_time_at(rate, SMALL_CAPACITY_S, SMALL_MAX, OVER_S)
+}
+
+/// A tone of `tone_s` seconds followed by silence to `total_s` seconds, at `fs`.
+fn tone_then_silence(tone_s: f64, total_s: f64, fs: f64) -> Vec<f32> {
+    let mut x = stimulus::tone(
+        1000.0,
+        stimulus::amplitude(LIMIT_TONE_DBFS),
+        fs,
+        (tone_s * fs) as usize,
+    );
+    x.resize((total_s * fs) as usize, 0.0);
+    x
+}
+
+/// US2 scenario 3 (FR-011, FR-012; A-023, A-025): into a 10 s memory, 25 s of input of which
+/// the VAS pauses most. Drop mode: a 5 s tone then silence stores the tone and the hang only
+/// and never stops; a 12 s tone then silence stops at exactly the capacity during the tone.
+/// Mute mode: a 5 s tone then silence stops at exactly the capacity, 10 s into the input (the
+/// muted silence is stored and counts).
+pub fn capacity_vas(rate: u32) -> Vec<MeasurementResult> {
+    let fs = f64::from(rate);
+    let capacity = u64::from(SMALL_CAPACITY_S) * DEVICE_RATE as u64;
+    let engine = |mode: VasMode| {
+        let mut s = configs::settings("default_vas", rate);
+        s.vas.mode = mode;
+        Pipeline::new(configs::memory_capacity(s, SMALL_CAPACITY_S, SMALL_MAX)).expect("rate")
+    };
+    let mut rows = Vec::new();
+    // (a) Drop mode, 5 s tone: paused time costs nothing.
+    let mut p = engine(VasMode::Drop);
+    let hang_device = f64::from(p.settings().vas.hang_ms) / 1000.0 * DEVICE_RATE; // A-023
+    let onset_s = f64::from(p.settings().vas.onset_ms) / 1000.0; // A-024
+    let r = record_blocks(&mut p, &tone_then_silence(5.0, OVER_S, fs));
+    let label_a = format!("drop: 5 s tone then silence to {OVER_S} s");
+    rows.push(limit_row(
+        "006/FR-011",
+        "drop mode: no self-stop, recording kept",
+        rate,
+        "default_vas",
+        label_a.clone(),
+        pass(
+            r.stopped.is_none()
+                && matches!(
+                    r.outcome,
+                    Some(StopOutcome {
+                        result: StopResult::Kept { number: 1, .. },
+                        ..
+                    })
+                )
+                && p.state().state == State::Idle,
+        ),
+        "",
+        Tolerance::Exact(1.0), // FR-012, US2 scenario 3
+    ));
+    rows.push(limit_row(
+        "006/FR-011",
+        "drop mode: stored minus the tone (paused time costs nothing)",
+        rate,
+        "default_vas",
+        label_a.clone(),
+        r.stored as f64 - 5.0 * DEVICE_RATE,
+        "samples",
+        // The hang after the tone (A-023) plus the onset slack (A-024) and one device sample.
+        Tolerance::Range(0.0, hang_device + onset_s * DEVICE_RATE + 1.0),
+    ));
+    rows.push(limit_row(
+        "006/FR-011",
+        "drop mode: remaining samples",
+        rate,
+        "default_vas",
+        label_a,
+        p.memory_status().remaining_samples as f64,
+        "samples",
+        // The capacity less the tone, less at most the hang (A-023), the onset slack (A-024)
+        // and one device sample (FR-011).
+        Tolerance::Range(
+            capacity as f64 - 5.0 * DEVICE_RATE - (hang_device + onset_s * DEVICE_RATE + 1.0),
+            capacity as f64 - 5.0 * DEVICE_RATE,
+        ),
+    ));
+    // (b) Drop mode, 12 s tone: stops during the tone at exactly the capacity.
+    let mut p = engine(VasMode::Drop);
+    let r = record_blocks(&mut p, &tone_then_silence(12.0, OVER_S, fs));
+    let label_b = format!("drop: 12 s tone then silence to {OVER_S} s");
+    rows.push(limit_row(
+        "006/FR-012",
+        "drop mode: stored at the self-stop minus the capacity",
+        rate,
+        "default_vas",
+        label_b.clone(),
+        r.stored as f64 - capacity as f64,
+        "samples",
+        Tolerance::Exact(0.0), // FR-012
+    ));
+    rows.push(limit_row(
+        "006/FR-012",
+        "drop mode: stopped with memory full inside the tone",
+        rate,
+        "default_vas",
+        label_b,
+        pass(
+            r.stopped == Some(StopReason::MemoryFull)
+                && r.consumed as f64 / fs <= 12.0 + RECORD_BLOCK as f64 / fs,
+        ),
+        "",
+        Tolerance::Exact(1.0), // FR-012
+    ));
+    // (c) Mute mode, 5 s tone: the muted silence is stored and the memory fills at 10 s.
+    let mut p = engine(VasMode::Mute);
+    let r = record_blocks(&mut p, &tone_then_silence(5.0, OVER_S, fs));
+    let label_c = format!("mute: 5 s tone then silence to {OVER_S} s");
+    rows.push(limit_row(
+        "006/FR-012",
+        "mute mode: stored at the self-stop minus the capacity",
+        rate,
+        "default_vas",
+        label_c.clone(),
+        r.stored as f64 - capacity as f64,
+        "samples",
+        Tolerance::Exact(0.0), // FR-012
+    ));
+    rows.push(limit_row(
+        "006/FR-011",
+        "mute mode: input consumed before the self-stop",
+        rate,
+        "default_vas",
+        label_c,
+        if r.stopped == Some(StopReason::MemoryFull) {
+            r.consumed as f64 / fs
+        } else {
+            f64::NAN
+        },
+        "s",
+        // Inside the block holding input second 10 plus the record latency (FR-016).
+        Tolerance::Range(
+            f64::from(SMALL_CAPACITY_S),
+            f64::from(SMALL_CAPACITY_S)
+                + (RECORD_BLOCK as f64 + f64::from(p.record_latency_samples())) / fs,
+        ),
+    ));
+    rows
+}
+
+/// US2 scenario 4 (FR-012; S-001): with 3 slots, the 4th start is refused with "no recording
+/// slots left" while time remains; the figures are exact.
+pub fn capacity_count(rate: u32) -> Vec<MeasurementResult> {
+    let fs = f64::from(rate);
+    let s = configs::memory_capacity(
+        configs::settings("default_agc", rate),
+        SMALL_CAPACITY_S,
+        SMALL_MAX,
+    );
+    let mut p = Pipeline::new(s).expect("rate");
+    let x = stimulus::tone(
+        1000.0,
+        stimulus::amplitude(LIMIT_TONE_DBFS),
+        fs,
+        fs as usize,
+    );
+    let mut numbers = Vec::new();
+    for _ in 0..SMALL_MAX {
+        numbers.push(record_one(&mut p, &x));
+    }
+    let st = p.memory_status();
+    let label = format!("{SMALL_MAX} × 1 s tone into {SMALL_MAX} slots");
+    let refused = p.start_recording();
+    vec![
+        limit_row(
+            "006/FR-013",
+            "recordings numbered 1 to the count in order",
+            rate,
+            "default_agc",
+            label.clone(),
+            pass(numbers == (1..=SMALL_MAX).collect::<Vec<_>>() && st.count == SMALL_MAX),
+            "",
+            Tolerance::Exact(1.0), // FR-013
+        ),
+        limit_row(
+            "006/FR-011",
+            "slots remaining",
+            rate,
+            "default_agc",
+            label.clone(),
+            f64::from(st.slots_remaining),
+            "",
+            Tolerance::Exact(0.0), // FR-011, US2 scenario 4
+        ),
+        limit_row(
+            "006/FR-012",
+            "4th start refused with no recording slots while time remains",
+            rate,
+            "default_agc",
+            label,
+            pass(
+                refused == Err(Error::NoRecordingSlots)
+                    && st.remaining_samples > 0
+                    && p.state().state == State::Idle,
+            ),
+            "",
+            Tolerance::Exact(1.0), // FR-012, US2 scenario 4
+        ),
+    ]
+}
+
+/// US2 scenario 5 (FR-013; S-001): five recordings; erase 3 → four, the former 4 and 5 play
+/// bit-identically as 3 and 4, 1 and 2 unchanged, the erased time returns to remaining; erase
+/// all → the figures of scenario 1 at this capacity.
+pub fn erase_renumber(rate: u32) -> Vec<MeasurementResult> {
+    let fs = f64::from(rate);
+    let s = configs::memory_capacity(configs::settings("default_agc", rate), SMALL_CAPACITY_S, 5);
+    let mut p = Pipeline::new(s).expect("rate");
+    let capacity = u64::from(SMALL_CAPACITY_S) * DEVICE_RATE as u64;
+    let mut before = Vec::new();
+    for n in 1..=5u32 {
+        let x = stimulus::tone(
+            1000.0,
+            stimulus::amplitude(LIMIT_TONE_DBFS - f64::from(n)),
+            fs,
+            (0.5 * fs) as usize,
+        );
+        assert_eq!(record_one(&mut p, &x), n);
+        before.push(play_to_end(&mut p, n, PLAY_BLOCK));
+    }
+    let st0 = p.memory_status();
+    let erased_len = p.recording_length(3).expect("exists");
+    p.erase(3).expect("idle, exists");
+    let st1 = p.memory_status();
+    let label = "five 0.5 s tones, erase 3, then all";
+    let mut rows = vec![
+        limit_row(
+            "006/FR-013",
+            "count after erasing 3 of 5",
+            rate,
+            "default_agc",
+            label,
+            f64::from(st1.count),
+            "",
+            Tolerance::Exact(4.0), // FR-013
+        ),
+        limit_row(
+            "006/FR-013",
+            "remaining grows by the erased length",
+            rate,
+            "default_agc",
+            label,
+            (st1.remaining_samples - st0.remaining_samples) as f64 - erased_len as f64,
+            "samples",
+            Tolerance::Exact(0.0), // FR-013
+        ),
+    ];
+    for (new, old) in [(1u32, 0usize), (2, 1), (3, 3), (4, 4)] {
+        let same = same_bits(&play_to_end(&mut p, new, PLAY_BLOCK), &before[old]);
+        rows.push(limit_row(
+            "006/FR-013",
+            "renumbered recording plays bit-identically",
+            rate,
+            "default_agc",
+            format!("{label}: new {new} = former {}", old + 1),
+            pass(same),
+            "",
+            Tolerance::Exact(1.0), // FR-013
+        ));
+    }
+    rows.push(limit_row(
+        "006/FR-013",
+        "the former 5 is gone",
+        rate,
+        "default_agc",
+        label,
+        pass(p.recording_length(5) == Err(Error::NoSuchRecording { number: 5 })),
+        "",
+        Tolerance::Exact(1.0), // FR-013
+    ));
+    p.erase_all().expect("idle");
+    let st = p.memory_status();
+    rows.push(limit_row(
+        "006/FR-011",
+        "after erase all: count, used, remaining = capacity, slots = max",
+        rate,
+        "default_agc",
+        label,
+        pass(
+            st.count == 0
+                && st.used_samples == 0
+                && st.remaining_samples == capacity
+                && st.slots_remaining == 5,
+        ),
+        "",
+        Tolerance::Exact(1.0), // FR-011, US2 scenarios 1 and 5
+    ));
+    rows
+}
+
+/// US2 scenario 7 (FR-012; A-025, A-039): a start and stop with no input is discarded; a half
+/// second of silence is not empty (the VAS starts unpaused and its hang outlasts it, and the
+/// flush stores zeros).
+pub fn empty_discarded(rate: u32) -> Vec<MeasurementResult> {
+    let fs = f64::from(rate);
+    let s = configs::memory_capacity(
+        configs::settings("default_vas", rate),
+        SMALL_CAPACITY_S,
+        SMALL_MAX,
+    );
+    let mut p = Pipeline::new(s).expect("rate");
+    p.start_recording().expect("idle");
+    let out = p.stop_recording(&mut []).expect("recording");
+    let st = p.memory_status();
+    let mut rows = vec![limit_row(
+        "006/FR-012",
+        "stop without input: discarded, no flush, count unchanged",
+        rate,
+        "default_vas",
+        "start, stop",
+        pass(
+            out.result == StopResult::DiscardedEmpty
+                && out.flush.stored == 0
+                && st.count == 0
+                && st.used_samples == 0,
+        ),
+        "",
+        Tolerance::Exact(1.0), // FR-012, A-039
+    )];
+    let silence = vec![0.0f32; (0.5 * fs) as usize];
+    let n = record_one(&mut p, &silence);
+    let flush_device = (f64::from(p.record_latency_samples()) * DEVICE_RATE / fs).ceil();
+    rows.push(limit_row(
+        "006/FR-012",
+        "0.5 s of silence: kept, length minus 3000 within the flush",
+        rate,
+        "default_vas",
+        "start, 0.5 s silence, stop",
+        p.recording_length(n)
+            .map_or(f64::NAN, |l| l as f64 - 0.5 * DEVICE_RATE),
+        "samples",
+        Tolerance::Range(0.0, flush_device + 1.0), // A-025: within the hang, the flush stored
+    ));
+    rows
+}
+
+/// US2 scenario 8 (FR-010): an engine of 600 minutes and 999 recordings is created, reports
+/// those figures, reserves the matching store, and records (a short recording here; the
+/// recording past 60 minutes is [`expanded_capacity_past_device`], release only).
+pub fn expanded_capacity(rate: u32) -> Vec<MeasurementResult> {
+    let fs = f64::from(rate);
+    let s = configs::memory_capacity(
+        configs::settings("default_agc", rate),
+        EXPANDED_CAPACITY_S,
+        EXPANDED_MAX,
+    );
+    let mut p = Pipeline::new(s).expect("600 min reserved");
+    let st = p.memory_status();
+    let (store, spans) = __test_hooks::memory_capacities(&p);
+    let label = format!("{EXPANDED_CAPACITY_S} s / {EXPANDED_MAX} recordings");
+    let x = stimulus::tone(
+        1000.0,
+        stimulus::amplitude(LIMIT_TONE_DBFS),
+        fs,
+        fs as usize,
+    );
+    let n = record_one(&mut p, &x);
+    vec![
+        limit_row(
+            "006/FR-010",
+            "expanded capacity in device samples",
+            rate,
+            "default_agc",
+            label.clone(),
+            st.capacity_samples as f64 - f64::from(EXPANDED_CAPACITY_S) * DEVICE_RATE,
+            "samples",
+            Tolerance::Exact(0.0), // FR-010
+        ),
+        limit_row(
+            "006/FR-010",
+            "expanded slots",
+            rate,
+            "default_agc",
+            label.clone(),
+            f64::from(st.max_recordings) - f64::from(EXPANDED_MAX),
+            "",
+            Tolerance::Exact(0.0), // FR-010
+        ),
+        limit_row(
+            "006/FR-017",
+            "store reserved for the expanded capacity",
+            rate,
+            "default_agc",
+            label.clone(),
+            pass(
+                store as u64 == st.capacity_samples && spans as u64 == u64::from(EXPANDED_MAX) + 1,
+            ),
+            "",
+            Tolerance::Exact(1.0), // FR-017
+        ),
+        limit_row(
+            "006/FR-010",
+            "a recording into the expanded memory is kept as number 1",
+            rate,
+            "default_agc",
+            label,
+            pass(n == 1 && p.recording_length(1).is_ok_and(|l| l >= DEVICE_RATE as u64)),
+            "",
+            Tolerance::Exact(1.0), // FR-010
+        ),
+    ]
+}
+
+/// US2 scenario 8 (FR-010), release only: 3601 s of tone at 6 kHz into the 600-minute engine
+/// records past the device's 60 minutes without a stop.
+pub fn expanded_capacity_past_device() -> Vec<MeasurementResult> {
+    let rate = 6000;
+    let s = configs::memory_capacity(
+        configs::settings("default_agc", rate),
+        EXPANDED_CAPACITY_S,
+        EXPANDED_MAX,
+    );
+    let mut p = Pipeline::new(s).expect("600 min reserved");
+    let over = 3601.0; // one second past the device's 60 minutes (S-001)
+    let x = stimulus::tone(
+        1000.0,
+        stimulus::amplitude(LIMIT_TONE_DBFS),
+        DEVICE_RATE,
+        (over * DEVICE_RATE) as usize,
+    );
+    let r = record_blocks(&mut p, &x);
+    vec![
+        limit_row(
+            "006/FR-010",
+            "past 60 minutes: no self-stop, kept",
+            rate,
+            "default_agc",
+            "3601 s tone at 6 kHz",
+            pass(
+                r.stopped.is_none()
+                    && matches!(
+                        r.outcome,
+                        Some(StopOutcome {
+                            result: StopResult::Kept { number: 1, .. },
+                            ..
+                        })
+                    ),
+            ),
+            "",
+            Tolerance::Exact(1.0), // FR-010, US2 scenario 8
+        ),
+        limit_row(
+            "006/FR-010",
+            "past 60 minutes: stored minus the input length",
+            rate,
+            "default_agc",
+            "3601 s tone at 6 kHz",
+            r.stored as f64 - over * DEVICE_RATE,
+            "samples",
+            Tolerance::Range(0.0, f64::from(p.record_latency_samples())), // the flush (FR-005)
+        ),
+    ]
+}
+
+/// SC-007 (FR-017): the default engine reserves at most 90 MB, equal to the two `Vec`
+/// capacities in bytes, and the reservation does not change through a recording to the limit
+/// (at the small capacity), an erase, an erase all and a clone.
+pub fn footprint() -> Vec<MeasurementResult> {
+    let rate = 48_000;
+    let fs = f64::from(rate);
+    let p = Pipeline::new(Settings::new(rate)).expect("default");
+    let (store, spans) = __test_hooks::memory_capacities(&p);
+    let mut rows = vec![
+        limit_row(
+            "006/SC-007",
+            "default footprint",
+            rate,
+            "default_vas",
+            "default capacity",
+            p.footprint_bytes() as f64 / 1e6,
+            "MB",
+            Tolerance::Range(80.0, 90.0), // SC-007: the 90 MB budget
+        ),
+        limit_row(
+            "006/SC-007",
+            "footprint equals the reserved capacities in bytes",
+            rate,
+            "default_vas",
+            "default capacity",
+            pass(p.footprint_bytes() == store * 4 + spans * 16),
+            "",
+            Tolerance::Exact(1.0), // SC-007
+        ),
+    ];
+    let s = configs::memory_capacity(
+        configs::settings("default_agc", rate),
+        SMALL_CAPACITY_S,
+        SMALL_MAX,
+    );
+    let mut p = Pipeline::new(s).expect("rate");
+    let before = (p.footprint_bytes(), __test_hooks::memory_capacities(&p));
+    let x = stimulus::tone(
+        1000.0,
+        stimulus::amplitude(LIMIT_TONE_DBFS),
+        fs,
+        (OVER_S * fs) as usize,
+    );
+    let r = record_blocks(&mut p, &x);
+    assert_eq!(r.stopped, Some(StopReason::MemoryFull));
+    let same = |p: &Pipeline, what: &'static str, rows: &mut Vec<MeasurementResult>| {
+        rows.push(limit_row(
+            "006/SC-007",
+            what,
+            rate,
+            "default_agc",
+            "10 s capacity",
+            pass((p.footprint_bytes(), __test_hooks::memory_capacities(p)) == before),
+            "",
+            Tolerance::Exact(1.0), // SC-007, FR-017
+        ));
+    };
+    same(
+        &p,
+        "footprint unchanged after recording to the limit",
+        &mut rows,
+    );
+    p.erase(1).expect("idle, exists");
+    same(&p, "footprint unchanged after an erase", &mut rows);
+    let _ = record_one(&mut p, &x[..fs as usize]);
+    let _ = record_one(&mut p, &x[..fs as usize]);
+    p.erase_all().expect("idle");
+    same(&p, "footprint unchanged after erase all", &mut rows);
+    let c = p.clone();
+    same(&c, "a clone reserves the same footprint", &mut rows);
     rows
 }

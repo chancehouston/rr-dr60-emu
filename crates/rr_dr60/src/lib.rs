@@ -107,6 +107,13 @@ pub mod __test_hooks {
         pipeline.limiter_state()
     }
 
+    /// The actual `Vec` capacities of the recording store and the span table, so the SC-007
+    /// footprint check reads the reservation and not the engine's arithmetic (spec 006 plan
+    /// review P6; contracts/rust-api.md › Test hooks).
+    pub fn memory_capacities(pipeline: &crate::Pipeline) -> (usize, usize) {
+        pipeline.memory_capacities()
+    }
+
     /// Stage 10's settling length in device samples, the constant the playback drain uses
     /// (spec 006 FR-008; research R-06; contracts/rust-api.md › Test hooks).
     pub fn n10() -> usize {

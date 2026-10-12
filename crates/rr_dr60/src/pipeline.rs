@@ -491,6 +491,12 @@ impl Pipeline {
         self.one_pass.rec.limiter.state()
     }
 
+    /// The actual `Vec` capacities of the store and the span table (spec 006 SC-007; plan
+    /// review P6).
+    pub(crate) fn memory_capacities(&self) -> (usize, usize) {
+        self.memory.capacities()
+    }
+
     /// A pipeline with the FR-009 narrowing `enabled` or not (spec 006 research R-02).
     pub(crate) fn with_device_narrowing(settings: Settings, enabled: bool) -> Result<Self, Error> {
         let mut p = Self::new(settings)?;

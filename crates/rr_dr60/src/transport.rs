@@ -310,6 +310,59 @@ impl Pipeline {
         Ok(())
     }
 
+    /// Erases recording `number` (spec 006 FR-013; S-001): its time returns to "remaining" and
+    /// the later recordings move down by one. Allowed while idle or playing: erasing the
+    /// recording being played stops the playback first (S-001 allows erasing the item being
+    /// played); erasing a lower number leaves the playback undisturbed and renumbers the played
+    /// item; erasing a higher number changes nothing about it. **Not real-time safe**: the
+    /// stored samples after the erased recording move down (a memmove bounded by the store's
+    /// size; no allocation).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::RecordingInProgress`] while recording; [`Error::NoSuchRecording`] for 0 or a
+    /// number above the count. Nothing changes on an error.
+    pub fn erase(&mut self, number: u32) -> Result<(), Error> {
+        if self.transport.state == State::Recording {
+            return Err(Error::RecordingInProgress);
+        }
+        if self.memory.span(number).is_none() {
+            return Err(Error::NoSuchRecording { number });
+        }
+        if self.transport.state == State::Playing {
+            let cursor = &mut self.transport.cursor;
+            if cursor.number == number {
+                self.transport.state = State::Idle;
+            } else if number < cursor.number {
+                cursor.number -= 1;
+            }
+        }
+        let erased = self.memory.erase(number).expect("checked above");
+        if self.transport.state == State::Playing && number < self.transport.cursor.number + 1 {
+            // The played recording's samples moved down with the store (its number already did).
+            self.transport.cursor.span.start -= erased.len;
+        }
+        Ok(())
+    }
+
+    /// Erases every recording (spec 006 FR-013; S-001 "erase all"): the memory reads as new
+    /// with its capacity kept. Allowed while idle or playing (the playback stops first).
+    /// Not real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::RecordingInProgress`] while recording; nothing changes.
+    pub fn erase_all(&mut self) -> Result<(), Error> {
+        if self.transport.state == State::Recording {
+            return Err(Error::RecordingInProgress);
+        }
+        if self.transport.state == State::Playing {
+            self.transport.state = State::Idle;
+        }
+        self.memory.erase_all();
+        Ok(())
+    }
+
     /// Selects the output route (spec 006 FR-015): speaker or earphone, at any time, during
     /// playback too; it takes effect at the next `play` block and survives `reset` and
     /// `reconfigure`. The two routes produce identical output in this version. Real-time safe.
@@ -944,5 +997,221 @@ mod tests {
             (5880 - delay - 2..=5881).contains(&after),
             "kept after the splice: {after}"
         );
+    }
+
+    /// 006 T027 (FR-012; A-039): with a 1 s capacity at 6 kHz, the block that crosses the limit
+    /// reports `stored` = the remainder and `stopped = MemoryFull`, the engine is idle and the
+    /// recording is kept with length 6 000.
+    #[test]
+    fn recording_stops_at_the_exact_capacity_sample_inside_a_block() {
+        let mut s = Settings::new(6000);
+        s.vas.enabled = false;
+        s.agc.enabled = false;
+        let mut p = small_with(s, 1, 2);
+        p.start_recording().unwrap();
+        let x = tone(-20.0, 0.7, 6000.0);
+        let first = p.record(&x, &mut []).unwrap();
+        assert_eq!((first.stored, first.stopped), (4200, None));
+        assert_eq!(p.memory_status().remaining_samples, 1800);
+        let second = p.record(&x, &mut []).unwrap();
+        assert_eq!(second.stored, 1800, "the remainder, not the block");
+        assert_eq!(second.stopped, Some(StopReason::MemoryFull));
+        assert_eq!(p.state().state, State::Idle);
+        assert_eq!(p.state().current, None);
+        assert_eq!(p.recording_length(1), Ok(6000));
+        let st = p.memory_status();
+        assert_eq!(
+            (st.used_samples, st.remaining_samples, st.count),
+            (6000, 0, 1)
+        );
+        assert_eq!(p.record(&x, &mut []), Err(Error::NotRecording));
+        assert_eq!(p.stop_recording(&mut []), Err(Error::NotRecording));
+    }
+
+    /// 006 T027 (FR-005, FR-012): the stop flush itself can fill the memory: the flush report
+    /// carries `stopped`, the recording is kept at exactly the capacity, the engine is idle.
+    #[test]
+    fn flush_cut_by_capacity() {
+        let mut s = Settings::new(48_000);
+        s.vas.enabled = false;
+        s.agc.enabled = false;
+        let mut p = small_with(s, 1, 2);
+        p.start_recording().unwrap();
+        // Feed one host sample at a time until 10 device samples of room remain.
+        let x = tone(-20.0, 2.0, 48_000.0);
+        let mut fed = 0;
+        while p.memory_status().remaining_samples > 10 {
+            let info = p.record(&x[fed..fed + 1], &mut []).unwrap();
+            assert_eq!(info.stopped, None);
+            fed += 1;
+        }
+        assert_eq!(p.memory_status().remaining_samples, 10);
+        let flush_device = p.record_latency_samples() / 8; // 48 kHz → 6 kHz
+        assert!(
+            flush_device > 10,
+            "the flush ({flush_device}) must be the longer"
+        );
+        let out = p.stop_recording(&mut []).unwrap();
+        assert_eq!(out.flush.stored, 10);
+        assert_eq!(out.flush.stopped, Some(StopReason::MemoryFull));
+        assert_eq!(
+            out.result,
+            StopResult::Kept {
+                number: 1,
+                length: 6000
+            }
+        );
+        assert_eq!(p.state().state, State::Idle);
+        assert_eq!(p.memory_status().remaining_samples, 0);
+        assert_eq!(p.start_recording(), Err(Error::MemoryFull));
+    }
+
+    /// 006 T027 (FR-012; S-001): the count limit refuses only a start, with time left.
+    #[test]
+    fn count_limit_only_prevents_start() {
+        let mut p = small(6000, 10, 2);
+        let x = tone(-20.0, 0.5, 6000.0);
+        for n in 1..=2 {
+            assert!(matches!(
+                record_all(&mut p, &x).result,
+                StopResult::Kept { number, .. } if number == n
+            ));
+        }
+        let st = p.memory_status();
+        assert_eq!((st.count, st.slots_remaining), (2, 0));
+        assert!(st.remaining_samples > 0);
+        assert_eq!(p.start_recording(), Err(Error::NoRecordingSlots));
+        assert_eq!(p.state().state, State::Idle);
+        // Erase one and the start proceeds (US2 scenario 6 for the count).
+        p.erase(1).unwrap();
+        p.start_recording().unwrap();
+        assert_eq!(p.state().current, Some(2));
+        p.reset();
+    }
+
+    /// 006 T027 (FR-013; S-001: the played item may be erased): erasing the recording being
+    /// played, or all, stops playback first; erase is refused while recording.
+    #[test]
+    fn erase_during_playback_of_the_played_item_stops_it() {
+        let mut p = small(6000, 10, 3);
+        let x = tone(-20.0, 0.2, 6000.0);
+        for _ in 0..3 {
+            let _ = record_all(&mut p, &x);
+        }
+        p.start_playback(2).unwrap();
+        let mut buf = [0.0f32; 100];
+        let _ = p.play(&mut buf).unwrap();
+        p.erase(2).unwrap();
+        assert_eq!(p.state().state, State::Idle);
+        assert_eq!(p.state().current, None);
+        assert_eq!(p.memory_status().count, 2);
+        assert_eq!(p.play(&mut buf), Err(Error::NotPlaying));
+        // Erase all while playing.
+        p.start_playback(1).unwrap();
+        let _ = p.play(&mut buf).unwrap();
+        p.erase_all().unwrap();
+        assert_eq!(p.state().state, State::Idle);
+        let st = p.memory_status();
+        assert_eq!(
+            (st.count, st.used_samples, st.remaining_samples),
+            (0, 0, 60_000)
+        );
+        // Refused while recording; a bad number.
+        assert_eq!(p.erase(1), Err(Error::NoSuchRecording { number: 1 }));
+        p.start_recording().unwrap();
+        assert_eq!(p.erase(1), Err(Error::RecordingInProgress));
+        assert_eq!(p.erase_all(), Err(Error::RecordingInProgress));
+        assert_eq!(p.state().state, State::Recording);
+        p.reset();
+    }
+
+    /// 006 T027 (FR-013): erasing a lower number while playing leaves the playback undisturbed
+    /// (its output bit-identical to an uninterrupted playback) and renumbers the played item;
+    /// erasing a higher number changes nothing about it.
+    #[test]
+    fn erase_of_a_lower_number_renumbers_the_played_item() {
+        let mut p = small(6000, 10, 4);
+        for n in 1..=4 {
+            let x = tone(-20.0 - f64::from(n), 0.3, 6000.0);
+            let _ = record_all(&mut p, &x);
+        }
+        let mut reference = p.clone();
+        let (want, _) = play_all(&mut reference, 3, 100);
+        // Play 3, erase 1 after one block, then 4 (above), then play on.
+        p.start_playback(3).unwrap();
+        let mut out = Vec::new();
+        let mut buf = [0.0f32; 100];
+        let info = p.play(&mut buf).unwrap();
+        out.extend_from_slice(&buf[..info.produced]);
+        p.erase(1).unwrap();
+        assert_eq!(p.state().state, State::Playing);
+        assert_eq!(p.state().current, Some(2));
+        let info = p.play(&mut buf).unwrap();
+        out.extend_from_slice(&buf[..info.produced]);
+        p.erase(3).unwrap(); // the former 4, above the played item
+        assert_eq!(p.state().current, Some(2));
+        assert_eq!(p.memory_status().count, 2);
+        loop {
+            let info = p.play(&mut buf).unwrap();
+            out.extend_from_slice(&buf[..info.produced]);
+            if info.finished {
+                break;
+            }
+        }
+        out.truncate(out.len() - p.drain_samples() as usize);
+        assert_eq!(out.len(), want.len());
+        assert!(
+            out.iter()
+                .zip(&want)
+                .all(|(a, b)| a.to_bits() == b.to_bits()),
+            "playback disturbed by the erase"
+        );
+        assert_eq!(p.state().state, State::Idle);
+        // The renumbered item plays the same again.
+        let (again, _) = play_all(&mut p, 2, 100);
+        assert_eq!(again, want);
+    }
+
+    /// 006 T027 (FR-019): reconfigure keeps the recordings (playback bit-identical before and
+    /// after), copies into a larger memory (the capacities reflect the new size) and is refused
+    /// with `StoredExceedsCapacity` when they would not fit.
+    #[test]
+    fn reconfigure_keeps_recordings_and_refuses_when_they_do_not_fit() {
+        let mut p = small(6000, 2, 3);
+        let x = tone(-20.0, 1.0, 6000.0);
+        let _ = record_all(&mut p, &x);
+        let _ = record_all(&mut p, &tone(-30.0, 0.5, 6000.0));
+        let (want, _) = play_all(&mut p, 2, 100);
+        assert_eq!(p.memory_capacities(), (12_000, 4));
+        // Same capacity: kept.
+        let mut s = *p.settings();
+        s.vas.hang_ms = 500.0;
+        p.reconfigure(s).unwrap();
+        assert_eq!(p.memory_capacities(), (12_000, 4));
+        assert_eq!(p.memory_status().count, 2);
+        assert_eq!(play_all(&mut p, 2, 100).0, want);
+        // Larger: re-reserved and copied.
+        s.memory.capacity_s = 5;
+        s.memory.max_recordings = 10;
+        p.reconfigure(s).unwrap();
+        assert_eq!(p.memory_capacities(), (30_000, 11));
+        let st = p.memory_status();
+        assert_eq!(
+            (st.count, st.capacity_samples, st.slots_remaining),
+            (2, 30_000, 8)
+        );
+        assert_eq!(play_all(&mut p, 2, 100).0, want);
+        // Too small for the stored time, then for the count.
+        s.memory.capacity_s = 1;
+        assert_eq!(p.reconfigure(s), Err(Error::StoredExceedsCapacity));
+        s.memory.capacity_s = 5;
+        s.memory.max_recordings = 1;
+        assert_eq!(p.reconfigure(s), Err(Error::StoredExceedsCapacity));
+        assert_eq!(
+            p.memory_capacities(),
+            (30_000, 11),
+            "a refusal changes nothing"
+        );
+        assert_eq!(play_all(&mut p, 2, 100).0, want);
     }
 }

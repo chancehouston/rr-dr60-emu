@@ -81,7 +81,7 @@ jobs:
         run: cargo test -p rr_dr60_harness --release --test timing -- --ignored --nocapture
       - name: AGC and VAS full settings matrices and slow edge cases (release; spec 002 SC-002, R-07; spec 003 SC-002, R-12)
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test -p rr_dr60_harness --release --test agc_matrix --test agc_edge_cases --test vas_matrix --test vas_edge_cases -- --ignored
+        run: cargo test -p rr_dr60_harness --release --test agc_matrix --test agc_edge_cases --test vas_matrix --test vas_edge_cases --test us2_memory -- --ignored
       - name: Install pinned cbindgen
         if: matrix.os == 'ubuntu-latest'
         uses: taiki-e/install-action@v2
