@@ -6,7 +6,7 @@ When exact hardware specifications are unknown, we make **reasonable, documented
 - Every assumption has a stable ID (`A-###`). Never reuse or renumber an ID. Mark superseded ones instead.
 - Code, tests, and specs cite the ID wherever the assumed value is used (e.g. `// A-001`).
 - **Confidence:** **High** (strongly implied by primary sources), **Medium** (typical for this class of device or era, consistent with sources), **Low** (an educated guess, a placeholder until evidence arrives).
-- **Status:** `assumed` → `verified` (with evidence) or `revised` (link the new value) or `superseded`.
+- **Status:** `assumed` → `verified` (with documentary evidence, `S-###` only; never write `verified` for a measurement) or `measured` (confirmed by a measurement of a real unit; cite the capture) or `revised` (link the new value) or `superseded`; `adopted` marks an assumption the emulator took on in a spec. The stage manifest's cross-check ([spec 007](../../specs/007-stage-manifest/spec.md) FR-004, FR-006) classifies a Status cell by its first word and reads the first High/Medium/Low in the Confidence cell as the headline confidence.
 - Changing an assumed value changes emulator output. Note it in [CHANGELOG.md](../../CHANGELOG.md).
 
 | ID | Stage | Assumption | Rationale / sources | Confidence | How to verify | Status |
