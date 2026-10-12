@@ -64,6 +64,11 @@ The stored form of a recording is today the record path's device-rate output. Wh
 - The exported form is version 1 of a 32-byte header plus little-endian 32-bit samples plus a CRC-32 (contracts/recording-form.md); "within the record path's output range" is defined as finite and non-subnormal, since with every stage bypassed the record path passes any normal input (FR-014).
 - Capacity settings live in `Settings` (ranges 1 ..= 86 400 s and 1 ..= 9 999 recordings, engineering targets); a capacity the host cannot reserve is an error at construction, not an abort (FR-017).
 
+### Session 2026-10-11 (coach and hardware-emulation reviews of the plan)
+
+- Coach (verdict fix first, eight findings, all applied): US1's equivalence and length checks run in one engine without import; `reset` is allowed in any state and discards a recording in progress without flush; the task order is stated once (narrowing in the existing chain with its measurement and the single re-bless, then the refactor into halves proven by the unchanged guards, then the split); the tap being ignored by the paths and the test-only un-narrowed hook are recorded as complexity; FR-015's route identity and FR-004's two-item reset gain named checks.
+- Hardware review (verdict sound with fixes, P1–P10, all applied; every figure in the plan's tables reproduced independently, the drain's worst case measured at −107 dBFS against the −80 dBFS target): the `bypass_all` golden entries change at the six converting rates (the decimator precedes the narrowing), so only the 6 kHz `bypass_all` and the `agc_only` entries are expected unchanged and the measurement asserts exactly that set; the narrowing delta is bounded by the L1 norms (worst case 2.05, bound 4 full-scale LSBs of 2⁻²³ × max(1, peak)); the import validator checks the length before reading the count and never computes 36 + 4·K; golden event comparison converts lengths with running sums; an open mute region is closed by a synthesized event at stop; after a memory-full stop the engine is already idle; `AllocationFailed` is tested through an internal overflow; the latency onset is the response peak; the record path owns the event counters.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Record, stop, play (Priority: P1)

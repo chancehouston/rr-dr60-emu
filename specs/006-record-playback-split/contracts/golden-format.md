@@ -10,7 +10,7 @@ Format unchanged (`rr_dr60-golden`, version 1). File names unchanged. `library_v
 
 ## Procedure (one commit, before any split code)
 
-1. `cargo test -p rr_dr60_harness --test narrowing_delta -- --nocapture` prints, per file, the share of entries and samples that change and the maximum |Δ| in output LSBs (bound: 2).
+1. `cargo test -p rr_dr60_harness --test narrowing_delta -- --nocapture` prints, per file, the share of entries and samples that change and the maximum |Δ| in full-scale LSBs (2⁻²³ × max(1, peak); bound 4, derived from the L1 norms, research R-02), and asserts that exactly the 6 kHz `bypass_all` entries and the `agc_only` entries are unchanged.
 2. `RR_DR60_BLESS=1 cargo test -p rr_dr60_harness --test golden`; `RR_DR60_BLESS=agc … --test golden_agc`; `RR_DR60_BLESS=vas … --test golden_vas`.
 3. Update `GOLDEN_V1_SHA256`, `GOLDEN_AGC_V1_SHA256` and the VAS guard; full suite green.
 4. CHANGELOG 0.6.0 `### Changed` records the figures from step 1.

@@ -9,7 +9,7 @@ cargo test -p rr_dr60_harness --test narrowing_delta -- --nocapture
 cargo test -p rr_dr60_harness --test golden --test golden_agc --test golden_vas
 ```
 
-Expected: the delta report (share of changed samples per file, maximum |Δ| ≤ 2 output LSBs; `bypass_all` and `agc_only` entries unchanged); after the re-bless commit the three golden tests pass with `library_version` 0.6.0 and the entry counts 112 / 42 / 63. The CHANGELOG's 0.6.0 entry quotes the report's figures.
+Expected: the delta report (share of changed samples per file, maximum |Δ| ≤ 4 full-scale LSBs, expected about 2; exactly the 6 kHz `bypass_all` and the `agc_only` entries unchanged); after the re-bless commit the three golden tests pass with `library_version` 0.6.0 and the entry counts 112 / 42 / 63. The CHANGELOG's 0.6.0 entry quotes the report's figures.
 
 ## 2. Story 1: record, stop, play (FR-001 – FR-009)
 
@@ -68,4 +68,4 @@ cargo test --all-features
 cargo llvm-cov --all-features --workspace --fail-under-lines 80
 ```
 
-Then read the CHANGELOG's 0.6.0 entry and the README's "Recording and playback" section: a reader learns how to record, stop, play, read the state and the memory's figures, erase, export and import, which calls are real-time safe, the 86 MB reservation, that the stored form is the engine's 32-bit samples until the codec, and that the route is a label until stages 11–13.
+Then read the CHANGELOG's 0.6.0 entry and the README's "Recording and playback" section: a reader learns how to record, stop, play, read the state and the memory's figures, erase, export and import, which calls are real-time safe, the 86 MB reservation (virtual: pages are touched as recordings grow; commit charge on Windows), that the stored form is the engine's 32-bit samples until the codec, and that the route is a label until stages 11–13.
