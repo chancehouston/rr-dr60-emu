@@ -200,6 +200,31 @@ impl Memory {
         Some(span)
     }
 
+    /// Adds a recording of `k` validated samples (spec 006 FR-014): refused when they exceed the
+    /// remaining time or no slot is left; otherwise appended within the reserved capacity (no
+    /// allocation) as a new closed recording, whose number is returned. The samples come from
+    /// `samples` in order, so the decode writes straight into the store. Allowed while playing:
+    /// it only appends, so earlier recordings do not move.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::DoesNotFit`] (time or slots); the memory is unchanged.
+    pub(crate) fn import_samples(
+        &mut self,
+        k: usize,
+        samples: impl Iterator<Item = f32>,
+    ) -> Result<u32, Error> {
+        debug_assert!(!self.in_progress);
+        if k > self.capacity_samples - self.store.len() || self.spans.len() >= self.max_recordings {
+            return Err(Error::DoesNotFit);
+        }
+        let start = self.store.len();
+        self.store.extend(samples.take(k));
+        debug_assert_eq!(self.store.len(), start + k);
+        self.spans.push(Span { start, len: k });
+        Ok(self.spans.len() as u32)
+    }
+
     /// Erases every recording (spec 006 FR-013; S-001 "erase all"); the capacity is kept.
     /// Must not be called with a recording in progress.
     pub(crate) fn erase_all(&mut self) {

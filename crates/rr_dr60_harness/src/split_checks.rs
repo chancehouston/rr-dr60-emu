@@ -1630,3 +1630,360 @@ pub fn footprint() -> Vec<MeasurementResult> {
     same(&c, "a clone reserves the same footprint", &mut rows);
     rows
 }
+
+// ---- User Story 3: export and import (006 T034) ----
+
+/// The trace for the form rows.
+const FORM: &[&str] = &["A-026", "A-004", "engineering target"];
+/// The stimulus of the round trip and the corruption set: 2 s of the speech-like pattern over
+/// the floor, so the VAS drops and splices (the stored stream is not the input).
+const FORM_STIMULUS_S: f64 = 2.0; // engineering target (006 R-08)
+/// Truncation boundary of the corruption set (research R-08).
+const TRUNCATION_STEP: usize = 4096; // engineering target (006 R-08)
+/// Single-byte flips in the corruption set (research R-08).
+const FLIP_POSITIONS: usize = 64; // engineering target (006 R-08)
+
+/// Records the form stimulus into a fresh engine at `rate` and returns the engine and the
+/// recording's exported bytes.
+fn recorded_form(rate: u32) -> (Pipeline, Vec<u8>) {
+    let fs = f64::from(rate);
+    let mut p = Pipeline::new(configs::memory_capacity(
+        configs::settings("default_vas", rate),
+        SMALL_CAPACITY_S,
+        SMALL_MAX,
+    ))
+    .expect("rate");
+    let (speech, _) =
+        chain_checks::speech_like_pattern(rate, chain_checks::BURST_DBFS, FLOOR_DBFS, 0x0D62);
+    let x = &speech[..((FORM_STIMULUS_S * fs) as usize).min(speech.len())];
+    let n = record_one(&mut p, x);
+    let bytes = export_bytes(&p, n);
+    (p, bytes)
+}
+
+/// `export_len` sized, `export` filled; the two agree.
+pub fn export_bytes(p: &Pipeline, number: u32) -> Vec<u8> {
+    let len = p.export_len(number).expect("exists");
+    let mut bytes = vec![0u8; len];
+    let written = p.export(number, &mut bytes).expect("sized from export_len");
+    assert_eq!(written, len);
+    bytes
+}
+
+/// A fresh engine at `rate` with the small capacity and the VAS default.
+fn fresh(rate: u32) -> Pipeline {
+    Pipeline::new(configs::memory_capacity(
+        configs::settings("default_vas", rate),
+        SMALL_CAPACITY_S,
+        SMALL_MAX,
+    ))
+    .expect("rate")
+}
+
+/// US3 scenarios 1 and 2, US1 scenario 5 (FR-014, SC-004): the recording made at
+/// `record_rate` exports to the same bytes twice; imported into a fresh engine at each of the
+/// seven rates it has the same length, and its playback is bit-identical to the original
+/// engine's playback reconfigured to that rate. `mutate` transforms the bytes between export
+/// and import (identity for the check; the mutants of `mutants` for the teeth).
+pub fn round_trip_with(record_rate: u32, mutate: fn(&[u8]) -> Vec<u8>) -> Vec<MeasurementResult> {
+    let (mut original, bytes) = recorded_form(record_rate);
+    let again = export_bytes(&original, 1);
+    let length = original.recording_length(1).expect("exists");
+    let label = format!("recorded at {record_rate} Hz, {length} stored");
+    let mut rows = vec![row(
+        "006/FR-014",
+        "export is identical every time",
+        FORM,
+        record_rate,
+        "default_vas",
+        label.clone(),
+        pass(again == bytes),
+        "",
+        Tolerance::Exact(1.0), // FR-014, US3 scenario 1
+    )];
+    let bytes = mutate(&bytes);
+    for play_rate in configs::all_rates() {
+        let mut imported = fresh(play_rate);
+        let number = imported.import(&bytes);
+        rows.push(row(
+            "006/FR-014",
+            "import accepted into a fresh engine as number 1",
+            FORM,
+            play_rate,
+            "default_vas",
+            label.clone(),
+            pass(number == Ok(1)),
+            "",
+            Tolerance::Exact(1.0), // FR-014, US3 scenario 2
+        ));
+        if number.is_err() {
+            continue;
+        }
+        original
+            .reconfigure(configs::memory_capacity(
+                configs::settings("default_vas", play_rate),
+                SMALL_CAPACITY_S,
+                SMALL_MAX,
+            ))
+            .expect("keeps the memory");
+        rows.push(row(
+            "006/FR-014",
+            "imported length minus the original's (unchanged by the rate)",
+            FORM,
+            play_rate,
+            "default_vas",
+            label.clone(),
+            imported.recording_length(1).expect("imported") as f64
+                - original.recording_length(1).expect("exists") as f64,
+            "samples",
+            Tolerance::Exact(0.0), // FR-014, US1 scenario 5
+        ));
+        let want = play_to_end(&mut original, 1, PLAY_BLOCK);
+        let got = play_to_end(&mut imported, 1, PLAY_BLOCK);
+        rows.push(row(
+            "006/FR-014",
+            "imported playback bit-identical to the original's",
+            FORM,
+            play_rate,
+            "default_vas",
+            label.clone(),
+            pass(same_bits(&got, &want)),
+            "",
+            Tolerance::Exact(1.0), // FR-014, SC-004
+        ));
+        rows.push(row(
+            "006/FR-014",
+            "re-export of the import equals the bytes",
+            FORM,
+            play_rate,
+            "default_vas",
+            label.clone(),
+            pass(export_bytes(&imported, 1) == bytes),
+            "",
+            Tolerance::Exact(1.0), // FR-014, US1 scenario 5
+        ));
+    }
+    rows
+}
+
+/// [`round_trip_with`] with the bytes untouched.
+pub fn round_trip(rate: u32) -> Vec<MeasurementResult> {
+    round_trip_with(rate, |b| b.to_vec())
+}
+
+/// Harness-side transforms of exported bytes (SC-002, SC-004 teeth; research R-08): each,
+/// applied between export and import, must make [`round_trip_with`] fail.
+pub mod mutants {
+    /// Flips one bit of the trailing CRC.
+    pub fn flip_crc_bit(bytes: &[u8]) -> Vec<u8> {
+        let mut b = bytes.to_vec();
+        let n = b.len();
+        b[n - 2] ^= 0x10;
+        b
+    }
+
+    /// Drops the first stored sample and re-forms the sequence (K − 1, a valid CRC), so the
+    /// import succeeds with a shorter, shifted recording.
+    pub fn drop_first_sample(bytes: &[u8]) -> Vec<u8> {
+        let k = u64::from_le_bytes(bytes[24..32].try_into().expect("header"));
+        let mut b = bytes[..32].to_vec();
+        b[24..32].copy_from_slice(&(k - 1).to_le_bytes());
+        b.extend_from_slice(&bytes[36..bytes.len() - 4]);
+        let crc = super::crc32(&b);
+        b.extend_from_slice(&crc.to_le_bytes());
+        b
+    }
+}
+
+/// CRC-32 (IEEE 802.3, reflected 0xEDB88320) as the contract states it; a second, independent
+/// implementation of the core's for the corruption set's re-formed mutants.
+pub fn crc32(bytes: &[u8]) -> u32 {
+    let mut c = 0xFFFF_FFFFu32;
+    for &b in bytes {
+        c ^= u32::from(b);
+        for _ in 0..8 {
+            c = if c & 1 != 0 {
+                (c >> 1) ^ 0xEDB8_8320
+            } else {
+                c >> 1
+            };
+        }
+    }
+    !c
+}
+
+/// `bytes` with the CRC recomputed.
+fn reformed(mut bytes: Vec<u8>) -> Vec<u8> {
+    let n = bytes.len();
+    let c = crc32(&bytes[..n - 4]);
+    bytes[n - 4..].copy_from_slice(&c.to_le_bytes());
+    bytes
+}
+
+/// US3 scenarios 3 and 4 (FR-014, SC-004): every sequence of the corruption set is refused
+/// with the stated reason and leaves the memory's figures unchanged; afterwards the untouched
+/// bytes still import.
+pub fn corruption_set(rate: u32) -> Vec<MeasurementResult> {
+    let (_, good) = recorded_form(rate);
+    let n = good.len();
+    let mut cases: Vec<(String, Vec<u8>, Error)> = Vec::new();
+    // Truncation at every 4 096-byte boundary and at the last byte.
+    let mut at = TRUNCATION_STEP;
+    while at < n {
+        let want = if at < 8 {
+            Error::UnknownForm
+        } else {
+            Error::Damaged
+        };
+        cases.push((
+            format!("truncated to {at} bytes"),
+            good[..at].to_vec(),
+            want,
+        ));
+        at += TRUNCATION_STEP;
+    }
+    cases.push((
+        "truncated by the last byte".into(),
+        good[..n - 1].to_vec(),
+        Error::Damaged,
+    ));
+    // A single-byte flip at 64 positions spread over header, payload and CRC.
+    for i in 0..FLIP_POSITIONS {
+        let pos = i * (n - 1) / (FLIP_POSITIONS - 1);
+        let mut b = good.clone();
+        b[pos] ^= 0x40;
+        let want = match pos {
+            0..8 => Error::UnknownForm,
+            8..10 => Error::UnsupportedFormVersion {
+                version: u16::from_le_bytes([b[8], b[9]]),
+            },
+            10..12 => Error::UnsupportedFormVersion { version: 1 },
+            _ => Error::Damaged,
+        };
+        cases.push((format!("byte {pos} flipped"), b, want));
+    }
+    // Foreign bytes behind a valid magic (seeded, so the expected reason is fixed).
+    let mut rng = stimulus::Pcg32::new(0x0D63, 7);
+    let mut foreign = good[..8].to_vec();
+    foreign.extend((0..1000).map(|_| rng.below(256) as u8));
+    let version = u16::from_le_bytes([foreign[8], foreign[9]]);
+    let flags = u16::from_le_bytes([foreign[10], foreign[11]]);
+    let want = if version != 1 || flags != 0 {
+        Error::UnsupportedFormVersion { version }
+    } else {
+        Error::Damaged
+    };
+    cases.push(("foreign bytes with a valid magic".into(), foreign, want));
+    let mut v2 = good.clone();
+    v2[8] = 2;
+    cases.push((
+        "version 2".into(),
+        v2,
+        Error::UnsupportedFormVersion { version: 2 },
+    ));
+    let mut flags = good.clone();
+    flags[10] = 1;
+    cases.push((
+        "flags 1".into(),
+        flags,
+        Error::UnsupportedFormVersion { version: 1 },
+    ));
+    cases.push((
+        "the 20-byte header".into(),
+        good[..20].to_vec(),
+        Error::Damaged,
+    ));
+    let mut huge = good.clone();
+    huge[24..32].copy_from_slice(&(1u64 << 62).to_le_bytes());
+    cases.push(("K = 2^62".into(), reformed(huge), Error::Damaged));
+    let mut nan = good.clone();
+    nan[32..36].copy_from_slice(&f32::NAN.to_le_bytes());
+    cases.push((
+        "NaN sample, valid CRC".into(),
+        reformed(nan),
+        Error::Damaged,
+    ));
+    let mut sub = good.clone();
+    sub[32..36].copy_from_slice(&1.0e-40f32.to_le_bytes());
+    cases.push((
+        "subnormal sample, valid CRC".into(),
+        reformed(sub),
+        Error::Damaged,
+    ));
+    let mut zero = good[..32].to_vec();
+    zero[24..32].copy_from_slice(&0u64.to_le_bytes());
+    zero.extend_from_slice(&[0; 4]);
+    cases.push(("K = 0".into(), reformed(zero), Error::Damaged));
+    cases.push(("empty sequence".into(), Vec::new(), Error::UnknownForm));
+
+    let mut rows = Vec::new();
+    let mut p = fresh(rate);
+    let before = p.memory_status();
+    for (name, bytes, want) in &cases {
+        let got = p.import(bytes);
+        let unchanged = p.memory_status() == before && p.state().state == State::Idle;
+        rows.push(row(
+            "006/FR-014",
+            "corrupt sequence refused with the stated reason, memory unchanged",
+            FORM,
+            rate,
+            "default_vas",
+            format!("{name} -> {want:?}"),
+            pass(got.as_ref() == Err(want) && unchanged),
+            "",
+            Tolerance::Exact(1.0), // FR-014, SC-004
+        ));
+    }
+    // Oversized for the remaining time (1 s memory, a 2 s recording) and for the slots.
+    let mut tiny = Pipeline::new(configs::memory_capacity(
+        configs::settings("default_vas", rate),
+        1,
+        SMALL_MAX,
+    ))
+    .expect("rate");
+    let before = tiny.memory_status();
+    let time = tiny.import(&good);
+    rows.push(row(
+        "006/FR-014",
+        "oversized for the remaining time: does not fit, memory unchanged",
+        FORM,
+        rate,
+        "default_vas",
+        format!("{n} bytes into 1 s"),
+        pass(time == Err(Error::DoesNotFit) && tiny.memory_status() == before),
+        "",
+        Tolerance::Exact(1.0), // FR-014, US3 scenario 4
+    ));
+    let mut one_slot = Pipeline::new(configs::memory_capacity(
+        configs::settings("default_vas", rate),
+        SMALL_CAPACITY_S,
+        1,
+    ))
+    .expect("rate");
+    assert_eq!(one_slot.import(&good), Ok(1));
+    let before = one_slot.memory_status();
+    let slot = one_slot.import(&good);
+    rows.push(row(
+        "006/FR-014",
+        "no slot left: does not fit, memory unchanged",
+        FORM,
+        rate,
+        "default_vas",
+        "second import into one slot",
+        pass(slot == Err(Error::DoesNotFit) && one_slot.memory_status() == before),
+        "",
+        Tolerance::Exact(1.0), // FR-014, US3 scenario 4
+    ));
+    rows.push(row(
+        "006/FR-014",
+        "the untouched bytes still import after the refusals",
+        FORM,
+        rate,
+        "default_vas",
+        format!("{} refusals", cases.len()),
+        pass(p.import(&good) == Ok(1)),
+        "",
+        Tolerance::Exact(1.0), // FR-014
+    ));
+    rows
+}

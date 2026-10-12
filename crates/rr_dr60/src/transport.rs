@@ -9,6 +9,7 @@
 //! FR-007).
 
 use crate::error::Error;
+use crate::form;
 use crate::memory::{MemoryStatus, Span};
 use crate::pipeline::{Pipeline, VasEvent};
 use crate::settings::Route;
@@ -361,6 +362,62 @@ impl Pipeline {
         }
         self.memory.erase_all();
         Ok(())
+    }
+
+    /// The exported length of recording `number`, in bytes, so the host can size its buffer
+    /// (spec 006 FR-014): 36 + 4 × the stored samples in this form version. Real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NoSuchRecording`].
+    pub fn export_len(&self, number: u32) -> Result<usize, Error> {
+        self.memory
+            .span(number)
+            .map(|s| form::export_len(s.len))
+            .ok_or(Error::NoSuchRecording { number })
+    }
+
+    /// Writes recording `number` as an opaque byte sequence into `out` and returns the bytes
+    /// written, always [`export_len`](Self::export_len) (spec 006 FR-014). The host stores or
+    /// sends the bytes unchanged and never parses them; the same recording exports to the same
+    /// bytes every time. The form (contracts/recording-form.md, version 1) is the record path's
+    /// device-rate output in this version; it will become encoded frames when the codec is
+    /// modeled (A-004), the version field telling them apart. Allowed in any state. Allocates
+    /// nothing, but computes a CRC over the recording: not real-time safe (FR-017).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NoSuchRecording`]; [`Error::BufferTooSmall`] with the needed length, `out`
+    /// untouched.
+    pub fn export(&self, number: u32, out: &mut [u8]) -> Result<usize, Error> {
+        let span = self
+            .memory
+            .span(number)
+            .ok_or(Error::NoSuchRecording { number })?;
+        form::export(self.memory.samples(span), out)
+    }
+
+    /// Adds a recording from the bytes of an export, in this or another engine instance of
+    /// the same version, at any host rate (spec 006 FR-014); returns its number. The
+    /// recording has the length and the playback output of the original. Allowed while idle or
+    /// playing (it only appends); refused while recording. Allocates nothing (the store is
+    /// reserved), but validates the whole sequence: not real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::RecordingInProgress`]; then, in order, [`Error::UnknownForm`],
+    /// [`Error::UnsupportedFormVersion`] (a later form version, or non-zero flags),
+    /// [`Error::Damaged`] (truncated, altered, another device rate, no samples, or a sample
+    /// that is not finite or lies outside the record path's output range) and
+    /// [`Error::DoesNotFit`] (the remaining time or slots). The memory is unchanged on every
+    /// error.
+    pub fn import(&mut self, bytes: &[u8]) -> Result<u32, Error> {
+        if self.transport.state == State::Recording {
+            return Err(Error::RecordingInProgress);
+        }
+        let samples = form::validate(bytes)?;
+        self.memory
+            .import_samples(samples.len() / 4, form::decode(samples))
     }
 
     /// Selects the output route (spec 006 FR-015): speaker or earphone, at any time, during
@@ -1213,5 +1270,106 @@ mod tests {
             "a refusal changes nothing"
         );
         assert_eq!(play_all(&mut p, 2, 100).0, want);
+    }
+
+    /// 006 T033 (FR-014; US3 scenario 4): an import longer than the remaining time, or with no
+    /// slot left, is `DoesNotFit`; the memory is unchanged either way.
+    #[test]
+    fn import_counts_against_capacity() {
+        // Time: a 2 s recording into a 2 s memory, then a 1 s one does not fit.
+        let mut src = small(6000, 10, 3);
+        let _ = record_all(&mut src, &tone(-20.0, 2.0, 6000.0));
+        let _ = record_all(&mut src, &tone(-20.0, 1.0, 6000.0));
+        let mut two = std::vec![0u8; src.export_len(1).unwrap()];
+        assert_eq!(src.export(1, &mut two).unwrap(), two.len());
+        let mut one = std::vec![0u8; src.export_len(2).unwrap()];
+        assert_eq!(src.export(2, &mut one).unwrap(), one.len());
+        // 2 s + the one-sample flush = 12 001 stored; a 3 s memory keeps 5 999 after it.
+        let mut p = small(48_000, 3, 3);
+        assert_eq!(p.import(&two), Ok(1));
+        let before = p.memory_status();
+        assert_eq!(before.remaining_samples, 18_000 - 12_001);
+        assert_eq!(p.import(&one), Err(Error::DoesNotFit));
+        assert_eq!(p.memory_status(), before);
+        assert_eq!(p.recording_length(1), Ok(12_001));
+        // Slots: a 1-slot memory with one recording refuses a second import with time left.
+        let mut p = small(48_000, 10, 1);
+        assert_eq!(p.import(&one), Ok(1));
+        let before = p.memory_status();
+        assert!(before.remaining_samples > 12_001);
+        assert_eq!(p.import(&one), Err(Error::DoesNotFit));
+        assert_eq!(p.memory_status(), before);
+        assert_eq!(p.state().state, State::Idle);
+    }
+
+    /// 006 T033 (FR-013, FR-014): an import while playing appends after the played recording
+    /// and leaves the playback bit-identical to an uninterrupted one.
+    #[test]
+    fn import_while_playing_appends_and_does_not_disturb_playback() {
+        let mut p = small(6000, 10, 4);
+        let _ = record_all(&mut p, &tone(-20.0, 0.3, 6000.0));
+        let _ = record_all(&mut p, &tone(-30.0, 0.2, 6000.0));
+        let mut bytes = std::vec![0u8; p.export_len(2).unwrap()];
+        p.export(2, &mut bytes).unwrap();
+        let mut reference = p.clone();
+        let (want, _) = play_all(&mut reference, 1, 100);
+        p.start_playback(1).unwrap();
+        let mut out = Vec::new();
+        let mut buf = [0.0f32; 100];
+        let info = p.play(&mut buf).unwrap();
+        out.extend_from_slice(&buf[..info.produced]);
+        assert_eq!(p.import(&bytes), Ok(3));
+        assert_eq!(p.state().state, State::Playing);
+        assert_eq!(p.state().current, Some(1));
+        assert_eq!(p.memory_status().count, 3);
+        loop {
+            let info = p.play(&mut buf).unwrap();
+            out.extend_from_slice(&buf[..info.produced]);
+            if info.finished {
+                break;
+            }
+        }
+        out.truncate(out.len() - p.drain_samples() as usize);
+        assert_eq!(out, want);
+        // The imported copy plays like the original.
+        assert_eq!(play_all(&mut p, 3, 100), play_all(&mut p, 2, 100));
+    }
+
+    /// 006 T033 (FR-013, Edge Cases): import is refused while recording; nothing changes.
+    #[test]
+    fn import_while_recording_refused() {
+        let mut p = small(6000, 10, 3);
+        let _ = record_all(&mut p, &tone(-20.0, 0.2, 6000.0));
+        let mut bytes = std::vec![0u8; p.export_len(1).unwrap()];
+        p.export(1, &mut bytes).unwrap();
+        p.start_recording().unwrap();
+        let before = p.memory_status();
+        assert_eq!(p.import(&bytes), Err(Error::RecordingInProgress));
+        assert_eq!(p.memory_status(), before);
+        assert_eq!(p.state().state, State::Recording);
+        // Export is allowed while recording (it reads a closed recording).
+        let mut again = std::vec![0u8; p.export_len(1).unwrap()];
+        assert_eq!(p.export(1, &mut again), Ok(bytes.len()));
+        assert_eq!(again, bytes);
+        p.reset();
+    }
+
+    /// 006 T033 (FR-014): export of 0, of a number above the count, and into a short buffer.
+    #[test]
+    fn export_of_a_bad_number() {
+        let mut p = small(6000, 10, 3);
+        assert_eq!(p.export_len(1), Err(Error::NoSuchRecording { number: 1 }));
+        let _ = record_all(&mut p, &tone(-20.0, 0.2, 6000.0));
+        assert_eq!(p.export_len(0), Err(Error::NoSuchRecording { number: 0 }));
+        assert_eq!(p.export_len(2), Err(Error::NoSuchRecording { number: 2 }));
+        let needed = p.export_len(1).unwrap();
+        assert_eq!(needed, 36 + 4 * 1201);
+        let mut buf = std::vec![0xEEu8; 10];
+        assert_eq!(
+            p.export(2, &mut buf),
+            Err(Error::NoSuchRecording { number: 2 })
+        );
+        assert_eq!(p.export(1, &mut buf), Err(Error::BufferTooSmall { needed }));
+        assert!(buf.iter().all(|&b| b == 0xEE));
     }
 }
