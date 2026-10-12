@@ -193,6 +193,9 @@ impl Manifest {
 /// The stage manifest (spec 007). Constant; reading it allocates nothing and does no I/O.
 #[must_use]
 pub fn manifest() -> &'static Manifest {
+    // Referencing the named constant makes every rustc back to the MSRV count the compile-time
+    // checks as used (1.85's dead-code lint ignores uses from anonymous `const _` items).
+    let () = FORM_RULES_HOLD;
     &MANIFEST
 }
 
@@ -676,8 +679,13 @@ const fn check_header(h: &Header) {
     );
 }
 
-const _: () = check_entries(&STAGES);
-const _: () = check_header(&HEADER);
+/// The form rules of 007 FR-002 and FR-003, evaluated at compile time: a string over a limit or
+/// a broken invariant fails the build with the rule's message.
+const FORM_RULES_HOLD: () = {
+    check_entries(&STAGES);
+    check_header(&HEADER);
+};
+const _: () = FORM_RULES_HOLD;
 
 #[cfg(test)]
 mod tests {

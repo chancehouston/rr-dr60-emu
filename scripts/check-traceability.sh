@@ -42,6 +42,7 @@ check_file crates/rr_dr60_harness/src/split_checks.rs 'Tolerance::(Range|AtLeast
 
 # Spec 007 FR-014: every S-/A-ID the stage manifest cites must be a row of its register.
 # (The harness test `us2_cross_check` checks the rest: supersession, completeness, statuses.)
+# The scan stops at the module's `#[cfg(test)]` line: the tests use made-up IDs on purpose.
 manifest=crates/rr_dr60/src/manifest.rs
 while IFS= read -r id; do
   case "$id" in
@@ -52,7 +53,7 @@ while IFS= read -r id; do
     echo "$manifest: manifest cites unknown ID: $id (no row in $register)"
     status=1
   fi
-done < <(grep -oE '[AS]-[0-9]{3}' "$manifest" | sort -u)
+done < <(sed '/^#\[cfg(test)\]/,$d' "$manifest" | grep -oE '[AS]-[0-9]{3}' | sort -u)
 
 if [[ $status -eq 0 ]]; then
   echo "check-traceability: OK"
