@@ -45,7 +45,7 @@ use rr_dr60::{
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 6;
+pub const RR_DR60_VERSION_MINOR: u32 = 7;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 

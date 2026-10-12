@@ -34,10 +34,10 @@ description: "Task list for 007 Stage Manifest"
 
 **Purpose**: Version 0.7.0 and the 0.6 baseline the PR and SC-005 need.
 
-- [ ] T001 Bump the workspace version to 0.7.0: `version = "0.7.0"` in `[workspace.package]` and the three internal dependency entries of `Cargo.toml`; `RR_DR60_VERSION_MINOR = 7` in `crates/rr_dr60_ffi/src/lib.rs`; regenerate `crates/rr_dr60_ffi/include/rr_dr60.h` (`cbindgen --config crates/rr_dr60_ffi/cbindgen.toml --crate rr_dr60_ffi --output crates/rr_dr60_ffi/include/rr_dr60.h`). Golden comparison ignores `library_version`, so every test still passes. Commit `chore: bump to 0.7.0`.
-- [ ] T002 [P] Record the 0.6 baseline in a scratch note for T039 and T046 (plan › Performance Goals; SC-005): the three SHA guards (`GOLDEN_V1_SHA256` in `crates/rr_dr60_harness/tests/golden.rs`, `GOLDEN_AGC_V1_SHA256` in `golden_agc.rs`, the VAS guard in `golden_vas.rs`); the `ns/sample` rows of `cargo test -p rr_dr60_harness --release --test timing -- --ignored --nocapture` (expected 59.6 / 58.1 / 58.1); coverage 98.58 %; `cargo test --all-features` wall time.
+- [x] T001 Bump the workspace version to 0.7.0: `version = "0.7.0"` in `[workspace.package]` and the three internal dependency entries of `Cargo.toml`; `RR_DR60_VERSION_MINOR = 7` in `crates/rr_dr60_ffi/src/lib.rs`; regenerate `crates/rr_dr60_ffi/include/rr_dr60.h` (`cbindgen --config crates/rr_dr60_ffi/cbindgen.toml --crate rr_dr60_ffi --output crates/rr_dr60_ffi/include/rr_dr60.h`). Golden comparison ignores `library_version`, so every test still passes. Commit `chore: bump to 0.7.0`.
+- [x] T002 [P] Record the 0.6 baseline in a scratch note for T039 and T046 (plan › Performance Goals; SC-005): the three SHA guards (`GOLDEN_V1_SHA256` in `crates/rr_dr60_harness/tests/golden.rs`, `GOLDEN_AGC_V1_SHA256` in `golden_agc.rs`, the VAS guard in `golden_vas.rs`); the `ns/sample` rows of `cargo test -p rr_dr60_harness --release --test timing -- --ignored --nocapture` (expected 59.6 / 58.1 / 58.1); coverage 98.58 %; `cargo test --all-features` wall time.
 
-**Checkpoint**: the workspace builds at 0.7.0 and every test passes; the baseline is recorded.
+**Checkpoint**: the workspace builds at 0.7.0 and every test passes; the baseline is recorded. *(Reached 2026-10-12: fmt, clippy and `cargo test --all-features` green at 0.7.0; SHA guards 7730…948b / c8ba…ea78 / 009c…a17e; release timing one-pass 62.6, record + play 64.0 ns/sample, ratio 1.022; the three 0.5 configurations 61.1 / 61.5 / 61.4 ns/sample at 4096 blocks; coverage baseline 98.58 %.)*
 
 ---
 
