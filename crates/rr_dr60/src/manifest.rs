@@ -816,4 +816,171 @@ mod tests {
         assert_eq!(m.stage(1).unwrap().identifier, "mic_capsule");
         assert_eq!(m.stage(15).unwrap().identifier, "power");
     }
+
+    // ---- The compile-time rules, run at runtime so the profiler sees them (007 SC-008) ----
+
+    /// Over 160 characters: over every limit but the links'.
+    const LONG: &str = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.";
+    /// 210 characters: over the link limit.
+    const LONG_LINK: &str = "https://example.invalid/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+
+    #[test]
+    fn const_helpers_at_runtime() {
+        assert_eq!(chars("abc"), 3);
+        assert_eq!(chars("µΩ"), 2);
+        assert!(bytes_eq(b"ab", b"ab"));
+        assert!(!bytes_eq(b"ab", b"ac"));
+        assert!(!bytes_eq(b"a", b"ab"));
+        assert!(bytes_lt(b"A-001", b"A-002"));
+        assert!(!bytes_lt(b"A-002", b"A-001"));
+        assert!(bytes_lt(b"a", b"ab"));
+        assert!(!bytes_lt(b"ab", b"ab"));
+        assert!(is_identifier("mic_capsule"));
+        assert!(!is_identifier(""));
+        assert!(!is_identifier("Mic"));
+        assert!(!is_identifier("a-b"));
+        assert!(!is_identifier("abcdefghijklmnopqrstuvwxy"));
+        assert!(is_id("A-028", b'A'));
+        assert!(!is_id("A-28", b'A'));
+        assert!(!is_id("S-028", b'A'));
+        assert!(!is_id("A_028", b'A'));
+        assert!(!is_id("A-02x", b'A'));
+        assert!(ids_ok(&["A-001", "A-002"], b'A'));
+        assert!(!ids_ok(&["A-002", "A-001"], b'A'));
+        assert!(!ids_ok(&["A-001", "A-001"], b'A'));
+        assert!(!ids_ok(&["A-001", "S-002"], b'A'));
+        assert!(ends_with_dot("x."));
+        assert!(!ends_with_dot("x"));
+        assert!(!ends_with_dot(""));
+        check_entries(&STAGES);
+        check_header(&HEADER);
+        assert!(LONG.chars().count() > 160);
+        assert!(LONG_LINK.chars().count() > 200);
+        let mut s = STAGES;
+        s[0].status = StageStatus::Sourced;
+        s[1].status = StageStatus::Checked;
+        let c = count_statuses(&s);
+        assert_eq!(
+            (c.not_modeled, c.assumed, c.sourced, c.checked),
+            (8, 5, 1, 1)
+        );
+    }
+
+    macro_rules! entries_panic {
+        ($name:ident, $msg:literal, |$s:ident| $body:expr) => {
+            #[test]
+            #[should_panic(expected = $msg)]
+            fn $name() {
+                let mut $s = STAGES;
+                $body;
+                check_entries(&$s);
+            }
+        };
+    }
+    entries_panic!(
+        rule_number_order,
+        "stage numbers must be 1..=15 in order",
+        |s| s[0].number = 2
+    );
+    entries_panic!(
+        rule_identifier_charset,
+        "identifier: lowercase ASCII",
+        |s| s[0].identifier = "Mic"
+    );
+    entries_panic!(rule_name_length, "name: at most 48 characters", |s| s[0]
+        .name =
+        LONG);
+    entries_panic!(
+        rule_description_length,
+        "description: at most 160 characters",
+        |s| s[0].description = LONG
+    );
+    entries_panic!(rule_description_dot, "one sentence ending in '.'", |s| s
+        [0]
+    .description =
+        "No dot");
+    entries_panic!(
+        rule_coverage_length,
+        "coverage: at most 120 characters",
+        |s| s[2].coverage = LONG
+    );
+    entries_panic!(
+        rule_controls_length,
+        "controls: at most 120 characters",
+        |s| s[2].controls = LONG
+    );
+    entries_panic!(rule_sources_order, "sources: S-### ascending", |s| s[0]
+        .sources =
+        &["S-002", "S-001"]);
+    entries_panic!(rule_assumptions_form, "assumptions: A-### ascending", |s| {
+        s[0].assumptions = &["A-1"]
+    });
+    entries_panic!(
+        rule_not_modeled_confidence,
+        "not modeled has confidence NotApplicable",
+        |s| s[0].confidence = Confidence::Low
+    );
+    entries_panic!(
+        rule_not_modeled_version,
+        "not modeled has no model version",
+        |s| s[0].model_version = "0.1.0"
+    );
+    entries_panic!(
+        rule_not_modeled_coverage,
+        "not modeled has no coverage note",
+        |s| s[0].coverage = "x"
+    );
+    entries_panic!(
+        rule_modeled_confidence,
+        "a modeled stage has a confidence level",
+        |s| s[2].confidence = Confidence::NotApplicable
+    );
+    entries_panic!(
+        rule_modeled_version,
+        "a modeled stage has a model version",
+        |s| s[2].model_version = ""
+    );
+    entries_panic!(
+        rule_modeled_controls,
+        "a modeled stage has a controls note",
+        |s| s[2].controls = ""
+    );
+    entries_panic!(rule_identifier_unique, "identifiers must be unique", |s| {
+        s[1].identifier = "mic_capsule"
+    });
+
+    macro_rules! header_panic {
+        ($name:ident, $msg:literal, |$h:ident| $body:expr) => {
+            #[test]
+            #[should_panic(expected = $msg)]
+            fn $name() {
+                let mut $h = HEADER;
+                $body;
+                check_header(&$h);
+            }
+        };
+    }
+    header_panic!(rule_basis_length, "basis: at most 160 characters", |h| h
+        .basis =
+        LONG);
+    header_panic!(
+        rule_evidence_link_length,
+        "link: at most 200 characters",
+        |h| h.evidence_link = LONG_LINK
+    );
+    header_panic!(
+        rule_assumptions_link_length,
+        "link: at most 200 characters",
+        |h| h.assumptions_link = LONG_LINK
+    );
+    header_panic!(
+        rule_sources_link_length,
+        "link: at most 200 characters",
+        |h| h.sources_link = LONG_LINK
+    );
+    header_panic!(rule_stage_count, "stage count", |h| h.stage_count = 14);
+    header_panic!(rule_counts_sum, "counts sum to the stage count", |h| h
+        .counts
+        .assumed +=
+        1);
 }

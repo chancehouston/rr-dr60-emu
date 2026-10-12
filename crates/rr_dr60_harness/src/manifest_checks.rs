@@ -1004,3 +1004,238 @@ pub fn c_region<'a>(text: &'a str, name: &str) -> Option<&'a str> {
     let e = text[s..].find(&end)? + s;
     Some(text[s..e].trim_start_matches('\n'))
 }
+
+#[cfg(test)]
+mod tests {
+    //! The branches the story tests do not reach: parser shape failures, every rule's
+    //! negative path, the renderers' rarer arms and the region helpers (007 SC-008).
+
+    use super::*;
+    use rr_dr60::manifest;
+
+    const LONG: &str = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.";
+    const LONG_LINK: &str = "https://example.invalid/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+
+    fn rules(f: &[Finding]) -> Vec<Rule> {
+        f.iter().map(|x| x.rule).collect()
+    }
+
+    fn has(f: &[Finding], rule: Rule, stage: Option<u8>) -> bool {
+        f.iter().any(|x| x.rule == rule && x.stage == stage)
+    }
+
+    #[test]
+    fn finding_display() {
+        let a = finding(Rule::Parse, None, None, "no rows");
+        assert_eq!(a.to_string(), "Parse - -: no rows");
+        let b = finding(
+            Rule::UnknownId,
+            Some(3),
+            Some("A-999"),
+            "no such assumption",
+        );
+        assert_eq!(b.to_string(), "UnknownId stage 3 A-999: no such assumption");
+    }
+
+    #[test]
+    fn ranks() {
+        assert_eq!(rank(Headline::Unknown), 1);
+        assert_eq!(rank(Headline::Low), 1);
+        assert_eq!(rank(Headline::Medium), 2);
+        assert_eq!(rank(Headline::High), 3);
+        assert_eq!(confidence_rank(Confidence::NotApplicable), 1);
+        assert_eq!(confidence_rank(Confidence::High), 3);
+    }
+
+    #[test]
+    fn parsers_report_shape_failures() {
+        let (rows, f) = parse_assumptions("| A-001 | x | y |\n");
+        assert!(rows.is_empty());
+        assert_eq!(rules(&f), vec![Rule::Parse, Rule::Parse]);
+        assert_eq!(f[0].id.as_deref(), Some("A-001"));
+        let (_, f) = parse_sources("| S-001 | x |\n");
+        assert_eq!(rules(&f), vec![Rule::Parse, Rule::Parse]);
+        let (_, f) = parse_signal_chain("| 1 | x |\n");
+        assert_eq!(rules(&f), vec![Rule::Parse, Rule::Parse]);
+        let (_, f) = parse_assumptions("nothing here");
+        assert_eq!(rules(&f), vec![Rule::Parse]);
+    }
+
+    #[test]
+    fn semver_edges() {
+        assert_eq!(semver_le("1.2.3.4", "1.2.3"), None);
+        assert_eq!(semver_le("1.2", "1.2.3"), None);
+        assert_eq!(semver_le("a.b.c", "1.2.3"), None);
+        assert_eq!(semver_le("1.2.3", "1.2.3"), Some(true));
+    }
+
+    #[test]
+    fn wording_negatives() {
+        let base = *manifest();
+        type Mutation = Box<dyn Fn(&mut Manifest)>;
+        let cases: Vec<(&str, Mutation)> = vec![
+            (
+                "identifier",
+                Box::new(|m| m.stages[0].identifier = "Bad-Id"),
+            ),
+            (
+                "duplicate identifier",
+                Box::new(|m| m.stages[1].identifier = "mic_capsule"),
+            ),
+            ("name", Box::new(|m| m.stages[0].name = LONG)),
+            ("no dot", Box::new(|m| m.stages[0].description = "No dot")),
+            (
+                "two sentences",
+                Box::new(|m| m.stages[0].description = "One. Two."),
+            ),
+            ("coverage", Box::new(|m| m.stages[2].coverage = LONG)),
+            ("controls", Box::new(|m| m.stages[2].controls = LONG)),
+            (
+                "sources",
+                Box::new(|m| m.stages[0].sources = &["S-002", "S-001"]),
+            ),
+            (
+                "assumptions",
+                Box::new(|m| m.stages[0].assumptions = &["A-1"]),
+            ),
+            ("basis", Box::new(|m| m.header.basis = LONG)),
+            (
+                "link scheme",
+                Box::new(|m| m.header.evidence_link = "http://example.invalid/"),
+            ),
+            (
+                "link length",
+                Box::new(|m| m.header.sources_link = LONG_LINK),
+            ),
+        ];
+        for (label, mutate) in cases {
+            let mut m = base;
+            mutate(&mut m);
+            let f = wording_findings(&m);
+            assert!(f.iter().any(|x| x.rule == Rule::Form), "{label}: {f:?}");
+        }
+        let mut m = base;
+        m.header.basis = "This was verified on a unit.";
+        assert!(has(&wording_findings(&m), Rule::Denylist, None));
+        let mut m = base;
+        m.stages[4].name = "VAS event gate";
+        assert!(has(&wording_findings(&m), Rule::Denylist, Some(5)));
+    }
+
+    #[test]
+    fn cross_check_negatives() {
+        let r = committed_registers();
+        let base = *manifest();
+
+        let mut m = base;
+        m.header.counts.assumed += 1;
+        assert!(has(&cross_check(&m, &r), Rule::Counts, None));
+
+        for (label, version) in [
+            ("empty", ""),
+            ("malformed", "x"),
+            ("above", "9.9.9"),
+            ("absent", "0.0.9"),
+        ] {
+            let mut m = base;
+            m.stages[2].model_version = version;
+            assert!(
+                has(&cross_check(&m, &r), Rule::ModelVersion, Some(3)),
+                "{label}"
+            );
+        }
+
+        let mut m = base;
+        m.stages[0].coverage = "x";
+        assert!(has(&cross_check(&m, &r), Rule::StatusDerivation, Some(1)));
+        let mut m = base;
+        m.stages[2].controls = "";
+        assert!(has(&cross_check(&m, &r), Rule::StatusDerivation, Some(3)));
+        let mut m = base;
+        m.stages[2].status = StageStatus::Sourced;
+        assert!(has(&cross_check(&m, &r), Rule::StatusDerivation, Some(3)));
+
+        // An adopted or revised assumption cited only by a stage that is not modeled.
+        let mut m = base;
+        m.stages[2].status = StageStatus::NotModeled;
+        let f = cross_check(&m, &r);
+        assert!(
+            f.iter()
+                .any(|x| x.rule == Rule::Uncited && x.id.as_deref() == Some("A-028")),
+            "{f:?}"
+        );
+
+        // An assumption row removed: UnknownId for the citing stage.
+        let assumptions: Vec<&str> = r
+            .assumptions
+            .lines()
+            .filter(|l| !l.starts_with("| A-005 |"))
+            .collect();
+        let assumptions = assumptions.join("\n");
+        let f = cross_check(
+            &base,
+            &Registers {
+                assumptions: &assumptions,
+                ..r
+            },
+        );
+        assert!(f.iter().any(|x| x.rule == Rule::UnknownId
+            && x.stage == Some(1)
+            && x.id.as_deref() == Some("A-005")));
+
+        // A row numbered out of order.
+        let chain = r
+            .signal_chain
+            .replacen("| 2 | Mic amp |", "| 3 | Mic amp |", 1);
+        assert_ne!(chain, r.signal_chain);
+        assert!(has(
+            &cross_check(
+                &base,
+                &Registers {
+                    signal_chain: &chain,
+                    ..r
+                }
+            ),
+            Rule::TableShape,
+            Some(2)
+        ));
+    }
+
+    #[test]
+    fn readme_table_words_for_every_status() {
+        let mut m = *manifest();
+        m.stages[2].status = StageStatus::Sourced;
+        m.stages[3].status = StageStatus::Checked;
+        let table = render_readme_table(&m);
+        assert!(table.contains("| sourced |"));
+        assert!(table.contains("| checked against a real unit |"));
+        assert!(table.contains("| — |"));
+        assert_eq!(table.lines().count(), 17);
+    }
+
+    #[test]
+    fn region_helpers() {
+        let text = "a\n<!-- x:start -->\nold\n<!-- x:end -->\nb\n";
+        assert_eq!(readme_region(text, "x"), Some("old\n"));
+        assert_eq!(readme_region(text, "y"), None);
+        let new = replace_readme_region(text, "x", "new\n\n").unwrap();
+        assert_eq!(new, "a\n<!-- x:start -->\nnew\n<!-- x:end -->\nb\n");
+        assert_eq!(replace_readme_region(text, "y", "new"), None);
+        let c = "int a;\n/* r:start */\nvoid f(void) {}\n/* r:end */\n";
+        assert_eq!(c_region(c, "r"), Some("void f(void) {}\n"));
+        assert_eq!(c_region(c, "q"), None);
+        assert_eq!(c_region("no markers", "r"), None);
+    }
+
+    #[test]
+    fn denylist_phrases_and_words() {
+        assert_eq!(
+            denylist_hit("we are listening for it").as_deref(),
+            Some("listening for")
+        );
+        assert_eq!(denylist_hit("a quiet room"), None);
+        assert_eq!(status_word(StageStatus::Checked), "checked");
+        assert_eq!(path_word(StagePath::Both), "both");
+        assert_eq!(confidence_word(Confidence::High), "high");
+    }
+}

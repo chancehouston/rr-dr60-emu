@@ -2020,6 +2020,7 @@ pub unsafe extern "C" fn rr_dr60_manifest_header(out: *mut RrDr60ManifestHeader)
             unsafe { put(out, v) };
             RrDr60Status::Ok
         }
+        // coverage: unreachable, static data (Constitution III)
         Err(status) => status,
     }
 }
@@ -2048,6 +2049,7 @@ pub unsafe extern "C" fn rr_dr60_manifest_stage(
             unsafe { put(out, v) };
             RrDr60Status::Ok
         }
+        // coverage: unreachable, static data (Constitution III)
         Err(status) => status,
     }
 }
@@ -2115,6 +2117,7 @@ unsafe fn manifest_id(
             RrDr60Status::Ok
         }
         Ok(None) => RrDr60Status::InvalidArgument,
+        // coverage: unreachable, static data (Constitution III)
         Err(status) => status,
     }
 }
