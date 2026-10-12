@@ -38,6 +38,7 @@ done < <(find crates/rr_dr60/src -name '*.rs' ! -name 'voiceband_coeffs.rs' | so
 # Literal tolerances in the harness checks.
 check_file crates/rr_dr60_harness/src/checks.rs 'Tolerance::(Range|AtLeast|AtMost|Exact)[(][-0-9]'
 check_file crates/rr_dr60_harness/src/agc_checks.rs 'Tolerance::(Range|AtLeast|AtMost|Exact)[(][-0-9]' # spec 002
+check_file crates/rr_dr60_harness/src/split_checks.rs 'Tolerance::(Range|AtLeast|AtMost|Exact)[(][-0-9]' # spec 006
 
 if [[ $status -eq 0 ]]; then
   echo "check-traceability: OK"

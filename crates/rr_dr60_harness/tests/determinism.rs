@@ -2,7 +2,7 @@
 //! (001 FR-009, FR-014, SC-003; 001 tasks.md T052), at all seven host rates including the
 //! 6 kHz identity rate (spec 004 FR-016; 004 tasks.md T028).
 
-use rr_dr60::{Pipeline, VasEvent};
+use rr_dr60::{Pipeline, StopResult, VasEvent};
 use rr_dr60_harness::stimulus::Pcg32;
 use rr_dr60_harness::{configs, golden};
 
@@ -205,6 +205,94 @@ fn vas_partitions() {
                         "{rate} Hz {config} {stim}, partition {i}"
                     );
                 }
+            }
+        }
+    }
+}
+
+/// Record-then-play in one block each: the playback (drain included), the recorder's events
+/// (device positions) and the stored length.
+fn record_play_one_block(s: rr_dr60::Settings, x: &[f32]) -> (Vec<f32>, Vec<VasEvent>, u64) {
+    let mut p = Pipeline::new(configs::memory_capacity(s, 60, 3)).unwrap();
+    let mut ev = vec![VasEvent::default(); p.max_record_events(x.len()) + 8];
+    p.start_recording().unwrap();
+    let info = p.record(x, &mut ev).unwrap();
+    let mut events = ev[..info.events].to_vec();
+    let out = p.stop_recording(&mut ev).unwrap();
+    events.extend_from_slice(&ev[..out.flush.events]);
+    let n = match out.result {
+        StopResult::Kept { number, .. } => number,
+        other => panic!("{other:?}"),
+    };
+    let length = p.recording_length(n).unwrap();
+    let play = rr_dr60_harness::split_checks::play_to_end(&mut p, n, 1 << 20);
+    (play, events, length)
+}
+
+/// Record-then-play in random blocks of 0..=8192 samples on both paths (always including 0
+/// and 1), concatenating the playback and the events.
+fn record_play_partitioned(
+    s: rr_dr60::Settings,
+    x: &[f32],
+    rng: &mut Pcg32,
+) -> (Vec<f32>, Vec<VasEvent>, u64) {
+    let mut p = Pipeline::new(configs::memory_capacity(s, 60, 3)).unwrap();
+    let mut ev = vec![VasEvent::default(); p.max_record_events(8192) + 8];
+    let mut events = Vec::new();
+    p.start_recording().unwrap();
+    let mut pos = 0;
+    let mut first = true;
+    while pos < x.len() {
+        let n = if first { 0 } else { rng.below(8193) as usize }.min(x.len() - pos);
+        let n = if pos == 0 && !first { 1 } else { n };
+        first = false;
+        let info = p.record(&x[pos..pos + n], &mut ev).unwrap();
+        events.extend_from_slice(&ev[..info.events]);
+        pos += n;
+    }
+    let out = p.stop_recording(&mut ev).unwrap();
+    events.extend_from_slice(&ev[..out.flush.events]);
+    let n = match out.result {
+        StopResult::Kept { number, .. } => number,
+        other => panic!("{other:?}"),
+    };
+    let length = p.recording_length(n).unwrap();
+    p.start_playback(n).unwrap();
+    let mut play = Vec::new();
+    let mut first = true;
+    loop {
+        let n = if first { 0 } else { rng.below(8193) as usize };
+        first = false;
+        let mut buf = vec![0.0f32; n];
+        let info = p.play(&mut buf).unwrap();
+        play.extend_from_slice(&buf[..info.produced]);
+        if info.finished {
+            break;
+        }
+    }
+    (play, events, length)
+}
+
+/// Spec 006 FR-018: for every block partition on both paths the playback, the events and the
+/// stored length are bit-identical. 100 seeded partitions of each VAS golden stimulus with
+/// `default_vas` at 48 kHz; 10 at the other rates (coverage: 10 and 2; 003 T050).
+#[test]
+fn record_then_play_partitions() {
+    let mut rng = Pcg32::new(0x0D60, 6);
+    let (many, few) = if cfg!(coverage) { (10, 2) } else { (100, 10) };
+    for rate in configs::all_rates() {
+        let partitions = if rate == 48_000 { many } else { few };
+        let s = configs::settings("default_vas", rate);
+        for stim in golden::VAS_STIMULI {
+            let x = golden::stimulus(stim, rate);
+            let want = record_play_one_block(s, &x);
+            assert!(!want.1.is_empty(), "{rate} Hz {stim}: no events");
+            for i in 0..partitions {
+                assert_eq!(
+                    record_play_partitioned(s, &x, &mut rng),
+                    want,
+                    "{rate} Hz {stim}, partition {i}"
+                );
             }
         }
     }

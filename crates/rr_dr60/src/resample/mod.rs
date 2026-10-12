@@ -19,9 +19,8 @@ pub(crate) const TRANSITION_HZ: f64 = 450.0;
 /// Kaiser design stopband: 70 dB, a 10 dB margin over FR-003's 60 dB (engineering target).
 pub(crate) const STOPBAND_DB: f64 = 70.0;
 
-/// Builds the decimator and interpolator for `plan`, or `None` for the identity plan.
-/// Allocates; called only at construction and reconfiguration (FR-015).
-pub(crate) fn converters(plan: &RatePlan) -> Option<(PolyphaseDown, PolyphaseUp)> {
+/// The shared prototype low-pass for a converting `plan`, with its `(l, m)`.
+fn prototype(plan: &RatePlan) -> Option<(alloc::vec::Vec<f64>, u32, u32)> {
     let RatePlan::Convert {
         l,
         m,
@@ -37,12 +36,30 @@ pub(crate) fn converters(plan: &RatePlan) -> Option<(PolyphaseDown, PolyphaseUp)
         CUTOFF_HZ / prototype_rate,
         design::kaiser_beta(STOPBAND_DB),
     );
-    let (down_branches, down_taps) = design::polyphase_split(&h, l as usize);
-    let (up_branches, up_taps) = design::polyphase_split(&h, m as usize);
-    Some((
-        PolyphaseDown::new(down_branches, down_taps, l, m),
-        PolyphaseUp::new(up_branches, up_taps, l, m),
-    ))
+    Some((h, l, m))
+}
+
+/// Builds the decimator for `plan`, or `None` for the identity plan. Allocates; called only at
+/// construction and reconfiguration (FR-015).
+pub(crate) fn decimator(plan: &RatePlan) -> Option<PolyphaseDown> {
+    let (h, l, m) = prototype(plan)?;
+    let (branches, taps) = design::polyphase_split(&h, l as usize);
+    Some(PolyphaseDown::new(branches, taps, l, m))
+}
+
+/// Builds the interpolator for `plan`, or `None` for the identity plan. Allocates; called only
+/// at construction and reconfiguration (FR-015).
+pub(crate) fn interpolator(plan: &RatePlan) -> Option<PolyphaseUp> {
+    let (h, l, m) = prototype(plan)?;
+    let (branches, taps) = design::polyphase_split(&h, m as usize);
+    Some(PolyphaseUp::new(branches, taps, l, m))
+}
+
+/// Builds the decimator and interpolator for `plan`, or `None` for the identity plan.
+/// Allocates; test and design-time use (the paths build each converter on its own).
+#[cfg(test)]
+pub(crate) fn converters(plan: &RatePlan) -> Option<(PolyphaseDown, PolyphaseUp)> {
+    Some((decimator(plan)?, interpolator(plan)?))
 }
 
 #[cfg(test)]
@@ -219,6 +236,32 @@ mod tests {
         assert_eq!(plan, RatePlan::Identity);
         assert_eq!(plan.delay_host_samples(), 0);
         assert!(converters(&plan).is_none());
+    }
+
+    /// 006 T005 (spec 006 FR-009; research R-02, plan review P2): the largest interpolator
+    /// branch L1 norm at 48 kHz, pinned. Each branch sums to exactly 1 (`polyphase_split`), so
+    /// a norm above 1 measures how much a branch's negative sinc lobes can amplify a
+    /// device-sample rounding error; the `narrowing_delta` bound (4 full-scale LSBs) is derived
+    /// from this norm and ‖h₁₀‖₁ (see `stages::voiceband` tests). 48 kHz has the largest norm
+    /// of the six converting rates, so it sets the bound.
+    #[test]
+    fn interpolator_branch_l1_norm_is_pinned() {
+        let want = crate::paths::figures::MAX_INTERPOLATOR_BRANCH_L1; // 2.33 (006 R-02)
+        let (_, up) = converters(&RatePlan::for_host(48_000).unwrap()).unwrap();
+        let l1 = up.max_branch_l1_norm();
+        assert!(
+            (l1 - want).abs() <= 0.01,
+            "48 kHz: max ‖b‖₁ = {l1:.4}, pinned {want}"
+        );
+        for rate in [8000, 16_000, 44_100, 88_200, 96_000] {
+            let (_, up) = converters(&RatePlan::for_host(rate).unwrap()).unwrap();
+            let other = up.max_branch_l1_norm();
+            assert!(
+                other <= l1 + 0.01,
+                "{rate} Hz: max ‖b‖₁ = {other:.4} > 48 kHz's {l1:.4}"
+            );
+            assert!(other >= 1.0, "{rate} Hz: {other}");
+        }
     }
 
     #[test]

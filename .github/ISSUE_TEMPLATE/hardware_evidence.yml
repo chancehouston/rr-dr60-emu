@@ -25,6 +25,11 @@ body:
         - **Tone bursts stepped down 2 dB at each MIC SENS level until recording pauses, and a constant tone at each level:** the VAS threshold per level, and whether the level also changes the recorded level (A-022, A-033).
         - **Any loud speech:** the clipped side of a loud onset shows which polarity the limiter senses (A-036).
         - **A slowly rising tone or voice:** which comes first as the level rises, a level ceiling or flat-topping (A-028: the emulator holds the level about 1 dB below full scale with no flat-topping; a real unit may clip at full scale instead).
+        - **A +9 dBFS-class loud tone for 5 s, stop, then a quiet tone recorded 0.5 s, 2 s and 10 s later:** whether the limiter's charge carries over between items (the emulator starts every recording from a reset state; any upward ramp over 1 dB in the second item's first 2 s would show carried charge, A-037); once with the unit left on between the items and once powered off between them.
+        - **3 s of silence recorded as one item, then its displayed length:** whether the device stores the first hang second of silence as the emulator does (A-025, A-039).
+        - **The first 0.5 s of several items, started from silence:** a rail power-up thump or a firmware blanking delay at the start of a recording (A-037).
+        - **The total minutes with one long item versus 99 short ones, with and without VAS pauses:** whether per-item overhead makes the capacity depend on the item count, and whether paused time costs recording time (the emulator counts stored time only and keeps the two limits independent, A-038).
+        - **Recording past the 60-minute limit:** whether the last item exists, its length and what the display shows (the emulator stops at the limit and keeps the partial item, A-039).
         - **Quiet room, 60 s, at each MIC SENS level:** noise floor, and whether the VAS pauses.
         - **Pink noise at a low level:** how the speech codec renders non-speech sound.
         - **Normal speech.**

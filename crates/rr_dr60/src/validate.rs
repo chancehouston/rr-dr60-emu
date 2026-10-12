@@ -1,14 +1,15 @@
 //! Settings validation (spec 002 FR-011 as restated by spec 005 FR-010, spec 003 FR-012;
 //! data-model.md › Settings).
 
-use crate::error::{Error, Setting};
+use crate::error::{Error, MEMORY_CAPACITY_S_RANGE, MEMORY_MAX_RECORDINGS_RANGE, Setting};
 use crate::rate::RatePlan;
 use crate::settings::Settings;
 
 /// Checks `settings`: the host rate first (FR-002), then every AGC field (knee, attack,
-/// release), then every VAS field, each in struct order. Ranges are inclusive
-/// ([`Setting::range`]); NaN and ±Inf fail. Fields are checked even when their stage is
-/// bypassed, so a bad value is always reported. The two `bool` settings need no validation.
+/// release), then every VAS field, then the memory figures (spec 006 FR-010), each in struct
+/// order. Ranges are inclusive ([`Setting::range`]); NaN and ±Inf fail. Fields are checked
+/// even when their stage is bypassed, so a bad value is always reported. The `bool` settings
+/// need no validation.
 pub(crate) fn validate(settings: &Settings) -> Result<(), Error> {
     RatePlan::for_host(settings.host_rate_hz)?;
     let a = &settings.agc;
@@ -25,6 +26,24 @@ pub(crate) fn validate(settings: &Settings) -> Result<(), Error> {
         let (lo, hi) = setting.range();
         // NaN fails both comparisons, so it is rejected; ±Inf is outside every range.
         if !(value >= lo && value <= hi) {
+            return Err(Error::InvalidSetting { setting });
+        }
+    }
+    // Spec 006 FR-010: integer ranges, checked as integers (a 0 is "capacity too small").
+    let m = &settings.memory;
+    for (setting, value, (lo, hi)) in [
+        (
+            Setting::MemoryCapacityS,
+            m.capacity_s,
+            MEMORY_CAPACITY_S_RANGE,
+        ),
+        (
+            Setting::MemoryMaxRecordings,
+            m.max_recordings,
+            MEMORY_MAX_RECORDINGS_RANGE,
+        ),
+    ] {
+        if !(lo..=hi).contains(&value) {
             return Err(Error::InvalidSetting { setting });
         }
     }
@@ -286,6 +305,72 @@ mod tests {
             v.hang_ms = 50.0;
         });
         assert_eq!(validate(&s), Ok(()));
+    }
+
+    /// 006 T011 (spec 006 FR-010; data-model › Settings): `capacity_s` 1 ..= 86 400 and
+    /// `max_recordings` 1 ..= 9 999 (engineering targets, 006 FR-010); 0 and the value past the
+    /// top are the spec's "capacity too small" refusal, `InvalidSetting` naming the field.
+    #[test]
+    fn memory_ranges_are_inclusive_and_named() {
+        let with_memory = |cap: u32, max: u32| {
+            let mut s = Settings::new(48_000);
+            s.memory.capacity_s = cap;
+            s.memory.max_recordings = max;
+            s
+        };
+        for ok in [1, 86_400] {
+            assert_eq!(validate(&with_memory(ok, 99)), Ok(()), "capacity {ok}");
+        }
+        for bad in [0, 86_401, u32::MAX] {
+            assert_eq!(
+                validate(&with_memory(bad, 99)),
+                Err(Error::InvalidSetting {
+                    setting: Setting::MemoryCapacityS
+                }),
+                "capacity {bad}"
+            );
+        }
+        for ok in [1, 9_999] {
+            assert_eq!(validate(&with_memory(3600, ok)), Ok(()), "max {ok}");
+        }
+        for bad in [0, 10_000, u32::MAX] {
+            assert_eq!(
+                validate(&with_memory(3600, bad)),
+                Err(Error::InvalidSetting {
+                    setting: Setting::MemoryMaxRecordings
+                }),
+                "max {bad}"
+            );
+        }
+        // Order: host rate → AGC → VAS → memory; capacity before the count.
+        let mut s = with_memory(0, 0);
+        assert_eq!(
+            validate(&s),
+            Err(Error::InvalidSetting {
+                setting: Setting::MemoryCapacityS
+            })
+        );
+        s.memory.capacity_s = 1;
+        assert_eq!(
+            validate(&s),
+            Err(Error::InvalidSetting {
+                setting: Setting::MemoryMaxRecordings
+            })
+        );
+        s.vas.onset_ms = -1.0;
+        assert_eq!(
+            validate(&s),
+            Err(Error::InvalidSetting {
+                setting: Setting::VasOnsetMs
+            })
+        );
+        // The names and ranges in `Display`.
+        let text = Setting::MemoryCapacityS.to_string();
+        assert!(text.contains("memory.capacity_s"), "{text}");
+        assert!(text.contains('1') && text.contains("86400"), "{text}");
+        let text = Setting::MemoryMaxRecordings.to_string();
+        assert!(text.contains("memory.max_recordings"), "{text}");
+        assert!(text.contains('1') && text.contains("9999"), "{text}");
     }
 
     #[test]

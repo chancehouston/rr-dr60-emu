@@ -13,22 +13,39 @@
 //! 1. Errors are values. No function aborts or unwinds into C. A caught panic returns
 //!    [`RrDr60Status::InternalError`] and poisons the handle until `rr_dr60_reset` succeeds.
 //! 2. A failed call changes nothing: out-parameters are left untouched and pipeline state is
-//!    unchanged, apart from poisoning. The one exception is `out_info` in `rr_dr60_process` and
-//!    `rr_dr60_process_with_events`, which is always written when not NULL (spec 003
-//!    contracts/c-api.md › Rule 2 amendment).
+//!    unchanged, apart from poisoning. The one exception is the info struct of
+//!    `rr_dr60_process`, `rr_dr60_process_with_events`, `rr_dr60_record`,
+//!    `rr_dr60_stop_recording` and `rr_dr60_play`, which is always written when not NULL
+//!    (spec 003 contracts/c-api.md › Rule 2 amendment; extended by spec 006).
 //! 3. The caller owns all buffers. The library never keeps a pointer after a call returns.
 //! 4. A handle must not be used by two threads at the same time.
 //! 5. `RrDr60Settings` only grows at the end. Callers set `struct_size`.
+//!
+//! # Real-time safety (spec 006 FR-017)
+//!
+//! Real-time safe: `rr_dr60_process`, `rr_dr60_process_with_events`, `rr_dr60_max_events`,
+//! `rr_dr60_reset`, `rr_dr60_latency_samples`, `rr_dr60_settings_validate`,
+//! `rr_dr60_start_recording`, `rr_dr60_record`, `rr_dr60_max_record_events`,
+//! `rr_dr60_stop_recording`, `rr_dr60_start_playback`, `rr_dr60_play`,
+//! `rr_dr60_stop_playback`, `rr_dr60_set_route`, `rr_dr60_get_route`, `rr_dr60_get_state`,
+//! `rr_dr60_memory_status`, `rr_dr60_recording_length`, `rr_dr60_export_len`, the three
+//! latency and drain reads and `rr_dr60_footprint_bytes`. Not real-time safe:
+//! `rr_dr60_create`, `rr_dr60_destroy`, `rr_dr60_reconfigure` (allocate), `rr_dr60_erase`,
+//! `rr_dr60_erase_all` (a bounded memmove), `rr_dr60_export`, `rr_dr60_import` (a CRC over
+//! the recording).
 
 use std::ffi::c_char;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use rr_dr60::{BlockInfo, Error, Pipeline, Setting, Settings, Tap, VasEvent, VasMode};
+use rr_dr60::{
+    BlockInfo, Error, Pipeline, PlayInfo, RecordInfo, Route, Setting, Settings, State, StopOutcome,
+    StopReason, StopResult, Tap, VasEvent, VasMode,
+};
 
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 5;
+pub const RR_DR60_VERSION_MINOR: u32 = 6;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -46,9 +63,39 @@ pub enum RrDr60Status {
     InvalidArgument = 3,
     /// An internal error (a caught panic). The handle is poisoned until `rr_dr60_reset`.
     InternalError = 4,
-    /// An AGC or VAS setting is out of range or not finite (spec 002 FR-011, spec 003 FR-012).
+    /// An AGC, VAS or memory setting is out of range or not finite (spec 002 FR-011, spec 003
+    /// FR-012, spec 006 FR-010: a memory capacity of 0 is "capacity too small").
     /// `rr_dr60_settings_validate` names it.
     InvalidSetting = 5,
+    /// A recording is in progress (spec 006 FR-003, FR-013, FR-019).
+    RecordingInProgress = 6,
+    /// A playback is in progress (spec 006 FR-003, FR-019).
+    PlaybackInProgress = 7,
+    /// `rr_dr60_record` or `rr_dr60_stop_recording` while not recording (spec 006).
+    NotRecording = 8,
+    /// `rr_dr60_play` or `rr_dr60_stop_playback` while not playing (spec 006).
+    NotPlaying = 9,
+    /// No recorded time remains, so a recording cannot start (spec 006 FR-012; S-001 "FULL").
+    MemoryFull = 10,
+    /// The recording count is at its capacity (spec 006 FR-012; S-001: 99 items).
+    NoRecordingSlots = 11,
+    /// No recording has this number (spec 006 FR-013).
+    NoSuchRecording = 12,
+    /// An import exceeds the remaining time or slots; the memory is unchanged (spec 006 FR-014).
+    DoesNotFit = 13,
+    /// The bytes are not an exported recording of this engine (spec 006 FR-014).
+    UnknownForm = 14,
+    /// The bytes carry a form version this engine does not read (spec 006 FR-014).
+    UnsupportedFormVersion = 15,
+    /// The bytes are truncated, altered or inconsistent (spec 006 FR-014).
+    Damaged = 16,
+    /// `rr_dr60_reconfigure` with a capacity below what is stored; unchanged (spec 006 FR-019).
+    StoredExceedsCapacity = 17,
+    /// The recording store could not be reserved (spec 006 FR-017).
+    AllocationFailed = 18,
+    /// `rr_dr60_export` into a buffer shorter than the recording's byte form; nothing written,
+    /// the needed length reported (spec 006 FR-014).
+    BufferTooSmall = 19,
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -83,6 +130,10 @@ pub enum RrDr60SettingField {
     VasHangMs = 12,
     /// `vas_onset_ms` is outside 0 to 200, or not finite (spec 003).
     VasOnsetMs = 13,
+    /// `memory_capacity_s` is outside 1 to 86 400 (spec 006 FR-010; 0 is "capacity too small").
+    MemoryCapacityS = 14,
+    /// `memory_max_recordings` is outside 1 to 9 999 (spec 006 FR-010).
+    MemoryMaxRecordings = 15,
 }
 
 /// Output tap point, passed as `uint32_t` in [`RrDr60Settings::tap`].
@@ -137,18 +188,128 @@ pub struct RrDr60VasEvent {
     pub input_length: u64,
 }
 
+/// The output route (spec 006 FR-015), passed as `uint32_t`: a label in this version, the two
+/// routes produce identical output until stages 11–13 are modeled.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RrDr60Route {
+    /// The built-in speaker (the default).
+    Speaker = 0,
+    /// The earphone jack (S-001; its path bypasses the power amplifier, A-032).
+    Earphone = 1,
+}
+
+/// The engine's state (spec 006 FR-003), in `RrDr60EngineState.state`.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RrDr60State {
+    /// Neither recording nor playing.
+    Idle = 0,
+    /// A recording is in progress; the speaker is muted (S-002).
+    Recording = 1,
+    /// A playback is in progress toward the selected route.
+    Playing = 2,
+}
+
+/// Why a recording stopped by itself (spec 006 FR-012), in `RrDr60RecordInfo.stop_reason`.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RrDr60StopReason {
+    /// It did not stop by itself.
+    None = 0,
+    /// The stored total reached the time capacity (S-001 "FULL"; the partial recording is
+    /// kept, A-039).
+    MemoryFull = 1,
+}
+
+/// The engine's readable state, from `rr_dr60_get_state` (spec 006 FR-003, FR-015).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RrDr60EngineState {
+    /// An `RrDr60State` value.
+    pub state: u32,
+    /// An `RrDr60Route` value: the selected output route.
+    pub route: u32,
+    /// The number of the recording in progress (the count plus one) or being played; 0 when
+    /// idle.
+    pub current_recording: u32,
+    /// The speaker is muted: while recording (S-002). A label in this version.
+    pub speaker_muted: bool,
+}
+
+/// The report of one `rr_dr60_record` call, and of the stop flush (spec 006 FR-006, FR-012).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RrDr60RecordInfo {
+    /// Device samples appended to the recording by this call.
+    pub stored: usize,
+    /// VAS events this call generated; `rr_dr60_max_record_events` sizes the event buffer.
+    pub events: usize,
+    /// The VAS is paused at the end of the call.
+    pub paused: bool,
+    /// The recording stopped by itself during this call: the engine is idle and the recording
+    /// is kept (a following `rr_dr60_stop_recording` is `NOT_RECORDING`).
+    pub stopped: bool,
+    /// An `RrDr60StopReason` value; `NONE` unless `stopped`.
+    pub stop_reason: u32,
+}
+
+/// The result of `rr_dr60_stop_recording` (spec 006 FR-005, FR-012).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RrDr60StopOutcome {
+    /// The stop flush's report (all zeros when the flush was skipped).
+    pub flush: RrDr60RecordInfo,
+    /// The recording is in the memory; false when no input was fed and it was discarded as
+    /// empty (A-039).
+    pub kept: bool,
+    /// Its number (1 to the count) when kept, else 0.
+    pub number: u32,
+    /// Its length in device samples (÷ 6000 for seconds, A-026) when kept, else 0.
+    pub length_samples: u64,
+}
+
+/// The report of one `rr_dr60_play` call (spec 006 FR-006, FR-008).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RrDr60PlayInfo {
+    /// Host samples written to `output[0 .. produced)`.
+    pub produced: usize,
+    /// The recording and its drain ended in this call; the engine is idle.
+    pub finished: bool,
+}
+
+/// The memory's figures, from `rr_dr60_memory_status` (spec 006 FR-011), in device samples:
+/// divide by 6000 for seconds (A-026); C has no seconds helpers.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RrDr60MemoryStatus {
+    /// The configured capacity (`memory_capacity_s` × 6000).
+    pub capacity_samples: u64,
+    /// Device samples stored, the recording in progress included.
+    pub used_samples: u64,
+    /// `capacity_samples − used_samples`.
+    pub remaining_samples: u64,
+    /// The configured recording count.
+    pub max_recordings: u32,
+    /// Recordings in the memory (the one in progress not counted).
+    pub count: u32,
+    /// `max_recordings − count`.
+    pub slots_remaining: u32,
+}
+
 /// Pipeline settings. Start from `rr_dr60_settings_default` and change fields as needed.
 ///
 /// Levels use the AES17 convention (a full-scale sine is 0 dBFS; full scale is the codec's,
 /// A-030). AGC ranges are inclusive; out-of-range or non-finite values are rejected even when
-/// the AGC is off. Layout (0.5, 80 bytes): the 0.4 offsets are kept; `agc_target_dbfs` became
-/// `agc_knee_dbfs` at offset 28, the two slots at 32 and 36 are reserved, and
-/// `adc_clamp_enabled` is appended at offset 72 (spec 005 contracts/c-api.md).
+/// the AGC is off. Layout (0.6, 88 bytes): the 0.5 offsets are kept (`agc_knee_dbfs` at 28,
+/// the two reserved slots at 32 and 36, `adc_clamp_enabled` at 72) and the two memory fields
+/// are appended at 76 and 80 (spec 006 contracts/c-api.md).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RrDr60Settings {
-    /// Must be `sizeof(RrDr60Settings)`: 80 since 0.5 (72 in 0.3 and 0.4, rejected as
-    /// `STRUCT_SIZE`). Lets the struct grow in later versions.
+    /// Must be `sizeof(RrDr60Settings)`: 88 since 0.6 (80 in 0.5, 72 in 0.3 and 0.4, rejected
+    /// as `STRUCT_SIZE`). Lets the struct grow in later versions.
     pub struct_size: u32,
     /// Host sample rate in Hz: 6000, 8000, 16000, 44100, 48000, 88200 or 96000 (spec 004
     /// FR-002; 6000 is the device rate, A-026, and needs no rate conversion).
@@ -198,11 +359,18 @@ pub struct RrDr60Settings {
     /// The ADC's full-scale clamp after stage 4: output beyond ±1.0 is saturated (true,
     /// default; A-030) or passed unchanged. Appended in 0.5 at offset 72 (spec 005 FR-008).
     pub adc_clamp_enabled: bool,
+    /// The memory's capacity in seconds of recorded device time. Default 3600 (S-001: 60
+    /// minutes). Range 1 to 86 400; above 3600 is not the device's. Appended in 0.6 at offset
+    /// 76 (spec 006 FR-010).
+    pub memory_capacity_s: u32,
+    /// The most recordings the memory holds. Default 99 (S-001). Range 1 to 9 999. Appended in
+    /// 0.6 at offset 80 (spec 006 FR-010).
+    pub memory_max_recordings: u32,
 }
 
-// spec 005 contracts/c-api.md: the 0.5 layout is 80 bytes; the 0.3/0.4 offsets are kept and
-// `adc_clamp_enabled` sits at 72 (the unit tests assert every offset).
-const _: () = assert!(size_of::<RrDr60Settings>() == 80);
+// spec 006 contracts/c-api.md: the 0.6 layout is 88 bytes; the 0.5 offsets are kept and the two
+// memory fields sit at 76 and 80 (the unit tests assert every offset).
+const _: () = assert!(size_of::<RrDr60Settings>() == 88);
 // spec 003 contracts/c-api.md: the C event type and the core's `repr(C)` `VasEvent` share one
 // layout, so `rr_dr60_process_with_events` can pass the caller's buffer straight through.
 const _: () = assert!(
@@ -278,10 +446,33 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
                 Setting::VasThresholdDbfs => RrDr60SettingField::VasThresholdDbfs,
                 Setting::VasHangMs => RrDr60SettingField::VasHangMs,
                 Setting::VasOnsetMs => RrDr60SettingField::VasOnsetMs,
+                Setting::MemoryCapacityS => RrDr60SettingField::MemoryCapacityS,
+                Setting::MemoryMaxRecordings => RrDr60SettingField::MemoryMaxRecordings,
                 _ => RrDr60SettingField::None,
             };
             (RrDr60Status::InvalidSetting, field)
         }
+        // Spec 006 contracts/c-api.md: statuses 6–19, one per refusal reason.
+        Error::RecordingInProgress => (RrDr60Status::RecordingInProgress, RrDr60SettingField::None),
+        Error::PlaybackInProgress => (RrDr60Status::PlaybackInProgress, RrDr60SettingField::None),
+        Error::NotRecording => (RrDr60Status::NotRecording, RrDr60SettingField::None),
+        Error::NotPlaying => (RrDr60Status::NotPlaying, RrDr60SettingField::None),
+        Error::MemoryFull => (RrDr60Status::MemoryFull, RrDr60SettingField::None),
+        Error::NoRecordingSlots => (RrDr60Status::NoRecordingSlots, RrDr60SettingField::None),
+        Error::NoSuchRecording { .. } => (RrDr60Status::NoSuchRecording, RrDr60SettingField::None),
+        Error::DoesNotFit => (RrDr60Status::DoesNotFit, RrDr60SettingField::None),
+        Error::UnknownForm => (RrDr60Status::UnknownForm, RrDr60SettingField::None),
+        Error::UnsupportedFormVersion { .. } => (
+            RrDr60Status::UnsupportedFormVersion,
+            RrDr60SettingField::None,
+        ),
+        Error::Damaged => (RrDr60Status::Damaged, RrDr60SettingField::None),
+        Error::StoredExceedsCapacity => (
+            RrDr60Status::StoredExceedsCapacity,
+            RrDr60SettingField::None,
+        ),
+        Error::AllocationFailed => (RrDr60Status::AllocationFailed, RrDr60SettingField::None),
+        Error::BufferTooSmall { .. } => (RrDr60Status::BufferTooSmall, RrDr60SettingField::None),
         _ => (RrDr60Status::InvalidArgument, RrDr60SettingField::None),
     }
 }
@@ -338,16 +529,20 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Sett
     out.vas.threshold_dbfs = s.vas_threshold_dbfs;
     out.vas.hang_ms = s.vas_hang_ms;
     out.vas.onset_ms = s.vas_onset_ms;
+    out.memory.capacity_s = s.memory_capacity_s;
+    out.memory.max_recordings = s.memory_max_recordings;
     Ok(out)
 }
 
 /// Default settings for `host_rate_hz` (not validated): the limiter and the VAS on with the
 /// modeled device values, both band-limit stages and the ADC clamp on, tap after playback,
-/// seed 0, the reserved slots 0. Never fails.
+/// seed 0, the reserved slots 0, the memory at the device's 60 minutes and 99 recordings.
+/// Never fails.
 #[unsafe(no_mangle)]
 pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings {
     let agc = rr_dr60::AgcSettings::DEVICE; // A-020, A-028, A-034, A-035
     let vas = rr_dr60::VasSettings::DEVICE; // S-001, A-008, A-021 – A-024 (A-022 revised)
+    let memory = rr_dr60::MemorySettings::DEVICE; // S-001: 60 min, 99 items (006 FR-010)
     let defaults = Settings::new(host_rate_hz);
     RrDr60Settings {
         struct_size: SETTINGS_SIZE,
@@ -369,6 +564,8 @@ pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings 
         vas_hang_ms: vas.hang_ms,
         vas_onset_ms: vas.onset_ms,
         adc_clamp_enabled: defaults.adc_clamp_enabled, // A-030
+        memory_capacity_s: memory.capacity_s,
+        memory_max_recordings: memory.max_recordings,
     }
 }
 
@@ -582,6 +779,13 @@ unsafe fn process_block(
     if frames == 0 {
         return early(RrDr60Status::Ok);
     }
+    // The one-pass is refused while a recording or playback is in progress (spec 006 FR-009):
+    // the Rust in-place calls produce nothing, so the C status must carry the reason.
+    match p.inner.state().state {
+        State::Recording => return early(RrDr60Status::RecordingInProgress),
+        State::Playing => return early(RrDr60Status::PlaybackInProgress),
+        _ => {}
+    }
     if input.is_null() || output.is_null() || (events.is_null() && events_capacity > 0) {
         return early(RrDr60Status::NullPointer);
     }
@@ -622,7 +826,8 @@ unsafe fn process_block(
                     std::slice::from_raw_parts_mut(output, frames),
                 )
             };
-            // Lengths are equal by construction, so this cannot fail.
+            // Lengths are equal by construction and the transport is idle (checked above),
+            // so this cannot fail.
             p.inner.process_with_events(x, y, slots).unwrap_or_default()
         }
     }));
@@ -665,7 +870,9 @@ pub unsafe extern "C" fn rr_dr60_latency_samples(
     RrDr60Status::Ok
 }
 
-/// Returns the pipeline to its freshly created state and clears a poisoned handle.
+/// Returns the pipeline to idle with its path state cleared and clears a poisoned handle
+/// (spec 006 FR-019): a recording in progress is discarded without flush, a playback stops
+/// without drain, the memory's contents and the route are kept. Allowed in any state.
 /// Real-time safe.
 ///
 /// # Safety
@@ -688,9 +895,13 @@ pub unsafe extern "C" fn rr_dr60_reset(pipeline: *mut RrDr60Pipeline) -> RrDr60S
     }
 }
 
-/// Applies new settings and resets all state, as if the pipeline were created anew. On
-/// success a poisoned handle becomes usable again. On error the pipeline is unchanged. Not
-/// real-time safe (allocates).
+/// Applies new settings and resets the path state; the memory's contents and the route are
+/// kept (spec 006 FR-019). On success a poisoned handle becomes usable again. On error the
+/// pipeline is unchanged. Not real-time safe (allocates).
+///
+/// Statuses: `RECORDING_IN_PROGRESS`, `PLAYBACK_IN_PROGRESS` (allowed only when idle);
+/// `STORED_EXCEEDS_CAPACITY` when the stored recordings would not fit the new capacity;
+/// `ALLOCATION_FAILED`; the settings statuses of `rr_dr60_create`.
 ///
 /// # Safety
 ///
@@ -760,6 +971,802 @@ pub unsafe extern "C" fn rr_dr60_settings_validate(
     status
 }
 
+// ---- Spec 006: the record and playback paths, the memory, the route, export and import
+// (contracts/c-api.md). Every call: NULL handle → NULL_POINTER; poisoned → INTERNAL_ERROR; a
+// caught panic poisons the handle; a non-OK status leaves the required out-parameters
+// untouched, except the info structs, which are always written when not NULL.
+
+/// Writes `value` to `out` unless it is NULL.
+///
+/// # Safety
+///
+/// `out` must be NULL or writable.
+unsafe fn put<T>(out: *mut T, value: T) {
+    if !out.is_null() {
+        // SAFETY: non-null and writable (caller contract).
+        unsafe { *out = value };
+    }
+}
+
+/// The live handle, or the status for a NULL or poisoned one.
+///
+/// # Safety
+///
+/// `pipeline` must be NULL or a live handle, with no other reference during the call.
+unsafe fn live<'a>(pipeline: *mut RrDr60Pipeline) -> Result<&'a mut RrDr60Pipeline, RrDr60Status> {
+    if pipeline.is_null() {
+        return Err(RrDr60Status::NullPointer);
+    }
+    // SAFETY: non-null live handle (caller contract).
+    let p = unsafe { &mut *pipeline };
+    if p.poisoned {
+        return Err(RrDr60Status::InternalError);
+    }
+    Ok(p)
+}
+
+/// The caller's event buffer as the core's slice.
+///
+/// # Safety
+///
+/// When `events_capacity > 0`, `events` must be non-null and writable for that many values.
+unsafe fn event_slots<'a>(
+    events: *mut RrDr60VasEvent,
+    events_capacity: usize,
+) -> &'a mut [VasEvent] {
+    if events_capacity == 0 {
+        &mut []
+    } else {
+        // SAFETY: the two types share one layout (the const assert below `RrDr60Settings`);
+        // the storage is writable for `events_capacity` values (caller contract).
+        unsafe { std::slice::from_raw_parts_mut(events.cast::<VasEvent>(), events_capacity) }
+    }
+}
+
+/// Runs `f` on the pipeline with panics caught: a panic poisons the handle (rule 1).
+fn guarded<T>(
+    p: &mut RrDr60Pipeline,
+    f: impl FnOnce(&mut Pipeline) -> Result<T, Error>,
+) -> Result<T, RrDr60Status> {
+    match catch_unwind(AssertUnwindSafe(|| f(&mut p.inner))) {
+        Ok(r) => r.map_err(status_from_error),
+        Err(_) => Err(panic_to_status(Some(p))),
+    }
+}
+
+/// Test-only: whether the next call was asked to panic (`rr_dr60__test_force_panic`).
+fn take_forced_panic(p: &mut RrDr60Pipeline) -> bool {
+    #[cfg(feature = "ffi-test-panic")]
+    {
+        let forced = p.force_panic;
+        p.force_panic = false;
+        forced
+    }
+    #[cfg(not(feature = "ffi-test-panic"))]
+    {
+        let _ = p;
+        false
+    }
+}
+
+fn c_record_info(i: RecordInfo) -> RrDr60RecordInfo {
+    RrDr60RecordInfo {
+        stored: i.stored,
+        events: i.events,
+        paused: i.paused,
+        stopped: i.stopped.is_some(),
+        stop_reason: match i.stopped {
+            Some(StopReason::MemoryFull) => RrDr60StopReason::MemoryFull as u32,
+            _ => RrDr60StopReason::None as u32,
+        },
+    }
+}
+
+fn c_outcome(o: StopOutcome) -> RrDr60StopOutcome {
+    let (kept, number, length_samples) = match o.result {
+        StopResult::Kept { number, length } => (true, number, length),
+        _ => (false, 0, 0),
+    };
+    RrDr60StopOutcome {
+        flush: c_record_info(o.flush),
+        kept,
+        number,
+        length_samples,
+    }
+}
+
+fn c_play_info(i: PlayInfo) -> RrDr60PlayInfo {
+    RrDr60PlayInfo {
+        produced: i.produced,
+        finished: i.finished,
+    }
+}
+
+fn route_to_c(route: Route) -> u32 {
+    match route {
+        Route::Speaker => RrDr60Route::Speaker as u32,
+        Route::Earphone => RrDr60Route::Earphone as u32,
+        _ => RrDr60Route::Speaker as u32,
+    }
+}
+
+fn route_from_c(value: u32) -> Option<Route> {
+    match value {
+        0 => Some(Route::Speaker),
+        1 => Some(Route::Earphone),
+        _ => None,
+    }
+}
+
+/// Starts a recording (spec 006 FR-003, FR-004, FR-012): the record path starts from its reset
+/// state and the recording in progress is number `count + 1`. Real-time safe.
+///
+/// Statuses: `RECORDING_IN_PROGRESS`, `PLAYBACK_IN_PROGRESS`, `MEMORY_FULL`,
+/// `NO_RECORDING_SLOTS`.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_start_recording(pipeline: *mut RrDr60Pipeline) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    match guarded(p, |inner| inner.start_recording()) {
+        Ok(()) => RrDr60Status::Ok,
+        Err(status) => status,
+    }
+}
+
+/// Feeds `frames` host samples to the record path and appends what it produces to the
+/// recording in progress; writes the block's VAS events (positions in the recording's device
+/// samples from its start) to `events`, the first `events_capacity` of them (spec 006 FR-001,
+/// FR-006). The recording stops by itself at the exact sample at which the memory fills
+/// (`out_info->stopped`, FR-012). `out_info` is always written when not NULL (zeros on an
+/// error). `events` may be NULL only when `events_capacity` is 0; `input` may be NULL only when
+/// `frames` is 0. Real-time safe.
+///
+/// Statuses: `NOT_RECORDING`.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. When `frames > 0`, `input` must be readable for `frames`
+/// floats. `out_info` must be NULL or writable. When `events_capacity > 0`, `events` must be
+/// writable for that many values.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_record(
+    pipeline: *mut RrDr60Pipeline,
+    input: *const f32,
+    frames: usize,
+    out_info: *mut RrDr60RecordInfo,
+    events: *mut RrDr60VasEvent,
+    events_capacity: usize,
+) -> RrDr60Status {
+    let early = |status| {
+        // SAFETY: out_info is NULL or writable (caller contract).
+        unsafe { put(out_info, RrDr60RecordInfo::default()) };
+        status
+    };
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return early(status),
+    };
+    if (input.is_null() && frames > 0) || (events.is_null() && events_capacity > 0) {
+        return early(RrDr60Status::NullPointer);
+    }
+    let forced = take_forced_panic(p);
+    let result = guarded(p, |inner| {
+        if forced {
+            panic!("rr_dr60__test_force_panic");
+        }
+        // SAFETY: input is readable for `frames` floats, or `frames` is 0 (caller contract).
+        let x: &[f32] = if frames == 0 {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(input, frames) }
+        };
+        // SAFETY: the caller's event storage (caller contract).
+        let slots = unsafe { event_slots(events, events_capacity) };
+        inner.record(x, slots)
+    });
+    match result {
+        Ok(info) => {
+            // SAFETY: out_info is NULL or writable (caller contract).
+            unsafe { put(out_info, c_record_info(info)) };
+            RrDr60Status::Ok
+        }
+        Err(status) => early(status),
+    }
+}
+
+/// Writes to `*out_capacity` an `events_capacity` that is always enough for a `rr_dr60_record`
+/// block of `frames` host samples with the current settings. Real-time safe.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_capacity` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_max_record_events(
+    pipeline: *mut RrDr60Pipeline,
+    frames: usize,
+    out_capacity: *mut usize,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out_capacity.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: out_capacity is non-null and writable (caller contract).
+    unsafe { *out_capacity = p.inner.max_record_events(frames) };
+    RrDr60Status::Ok
+}
+
+/// Stops the recording (spec 006 FR-005): flushes the record path's own latency of silence
+/// through it (its events go to `events`), and keeps the recording (`kept`, its number and
+/// length) or, when nothing was fed since the start, discards it as empty (A-039).
+/// `out_outcome` is always written when not NULL (zeros on an error). Real-time safe.
+///
+/// Statuses: `NOT_RECORDING` (including after a memory-full stop).
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_outcome` must be NULL or writable. When
+/// `events_capacity > 0`, `events` must be writable for that many values.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_stop_recording(
+    pipeline: *mut RrDr60Pipeline,
+    out_outcome: *mut RrDr60StopOutcome,
+    events: *mut RrDr60VasEvent,
+    events_capacity: usize,
+) -> RrDr60Status {
+    let early = |status| {
+        // SAFETY: out_outcome is NULL or writable (caller contract).
+        unsafe { put(out_outcome, RrDr60StopOutcome::default()) };
+        status
+    };
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return early(status),
+    };
+    if events.is_null() && events_capacity > 0 {
+        return early(RrDr60Status::NullPointer);
+    }
+    let result = guarded(p, |inner| {
+        // SAFETY: the caller's event storage (caller contract).
+        let slots = unsafe { event_slots(events, events_capacity) };
+        inner.stop_recording(slots)
+    });
+    match result {
+        Ok(outcome) => {
+            // SAFETY: out_outcome is NULL or writable (caller contract).
+            unsafe { put(out_outcome, c_outcome(outcome)) };
+            RrDr60Status::Ok
+        }
+        Err(status) => early(status),
+    }
+}
+
+/// Starts playback of recording `number` (1 to the count) through the playback path, from its
+/// reset state (spec 006 FR-002, FR-004). Real-time safe.
+///
+/// Statuses: `RECORDING_IN_PROGRESS`, `PLAYBACK_IN_PROGRESS`, `NO_SUCH_RECORDING`.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_start_playback(
+    pipeline: *mut RrDr60Pipeline,
+    number: u32,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    match guarded(p, |inner| inner.start_playback(number)) {
+        Ok(()) => RrDr60Status::Ok,
+        Err(status) => status,
+    }
+}
+
+/// Produces the next block of host samples of the recording being played into
+/// `output[0 .. produced)` (spec 006 FR-002, FR-008): the recording, then its drain, then
+/// `finished` and idle. `out_info` is always written when not NULL (zeros on an error).
+/// `frames == 0` is OK (`output` may then be NULL). Real-time safe.
+///
+/// Statuses: `NOT_PLAYING`.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. When `frames > 0`, `output` must be writable for `frames`
+/// floats. `out_info` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_play(
+    pipeline: *mut RrDr60Pipeline,
+    output: *mut f32,
+    frames: usize,
+    out_info: *mut RrDr60PlayInfo,
+) -> RrDr60Status {
+    let early = |status| {
+        // SAFETY: out_info is NULL or writable (caller contract).
+        unsafe { put(out_info, RrDr60PlayInfo::default()) };
+        status
+    };
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return early(status),
+    };
+    if output.is_null() && frames > 0 {
+        return early(RrDr60Status::NullPointer);
+    }
+    let forced = take_forced_panic(p);
+    let result = guarded(p, |inner| {
+        if forced {
+            panic!("rr_dr60__test_force_panic");
+        }
+        // SAFETY: output is writable for `frames` floats, or `frames` is 0 (caller contract);
+        // it is the only reference to that memory during the call.
+        let y: &mut [f32] = if frames == 0 {
+            &mut []
+        } else {
+            unsafe { std::slice::from_raw_parts_mut(output, frames) }
+        };
+        inner.play(y)
+    });
+    match result {
+        Ok(info) => {
+            // SAFETY: out_info is NULL or writable (caller contract).
+            unsafe { put(out_info, c_play_info(info)) };
+            RrDr60Status::Ok
+        }
+        Err(status) => early(status),
+    }
+}
+
+/// Stops the playback at once, without the drain (spec 006 FR-008). Real-time safe.
+///
+/// Statuses: `NOT_PLAYING`.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_stop_playback(pipeline: *mut RrDr60Pipeline) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    match guarded(p, |inner| inner.stop_playback()) {
+        Ok(()) => RrDr60Status::Ok,
+        Err(status) => status,
+    }
+}
+
+/// Selects the output route, an `RrDr60Route` value (spec 006 FR-015): at any time, during
+/// playback too; it survives `rr_dr60_reset` and `rr_dr60_reconfigure`. Real-time safe.
+///
+/// Statuses: `INVALID_ARGUMENT` for a value that is not a route (the route is unchanged).
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_set_route(
+    pipeline: *mut RrDr60Pipeline,
+    route: u32,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    let Some(route) = route_from_c(route) else {
+        return RrDr60Status::InvalidArgument;
+    };
+    p.inner.set_route(route);
+    RrDr60Status::Ok
+}
+
+/// Writes the selected route, an `RrDr60Route` value, to `*out_route`. Real-time safe.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_route` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_get_route(
+    pipeline: *mut RrDr60Pipeline,
+    out_route: *mut u32,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out_route.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: out_route is non-null and writable (caller contract).
+    unsafe { *out_route = route_to_c(p.inner.route()) };
+    RrDr60Status::Ok
+}
+
+/// Writes the engine's state (idle, recording or playing), the route, the current recording's
+/// number and whether the speaker is muted to `*out_state` (spec 006 FR-003). Real-time safe.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_state` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_get_state(
+    pipeline: *mut RrDr60Pipeline,
+    out_state: *mut RrDr60EngineState,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out_state.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let st = p.inner.state();
+    let state = RrDr60EngineState {
+        state: match st.state {
+            State::Idle => RrDr60State::Idle as u32,
+            State::Recording => RrDr60State::Recording as u32,
+            State::Playing => RrDr60State::Playing as u32,
+            _ => RrDr60State::Idle as u32,
+        },
+        route: route_to_c(st.route),
+        current_recording: st.current.unwrap_or(0),
+        speaker_muted: st.speaker_muted,
+    };
+    // SAFETY: out_state is non-null and writable (caller contract).
+    unsafe { *out_state = state };
+    RrDr60Status::Ok
+}
+
+/// Writes the memory's figures to `*out_status`, in device samples (÷ 6000 for seconds,
+/// A-026; spec 006 FR-011). Real-time safe.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_status` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_memory_status(
+    pipeline: *mut RrDr60Pipeline,
+    out_status: *mut RrDr60MemoryStatus,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out_status.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let m = p.inner.memory_status();
+    let status = RrDr60MemoryStatus {
+        capacity_samples: m.capacity_samples,
+        used_samples: m.used_samples,
+        remaining_samples: m.remaining_samples,
+        max_recordings: m.max_recordings,
+        count: m.count,
+        slots_remaining: m.slots_remaining,
+    };
+    // SAFETY: out_status is non-null and writable (caller contract).
+    unsafe { *out_status = status };
+    RrDr60Status::Ok
+}
+
+/// Writes the length of recording `number` in device samples (÷ 6000 for seconds, A-026) to
+/// `*out_samples`. Real-time safe.
+///
+/// Statuses: `NO_SUCH_RECORDING`.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_samples` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_recording_length(
+    pipeline: *mut RrDr60Pipeline,
+    number: u32,
+    out_samples: *mut u64,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out_samples.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    match p.inner.recording_length(number) {
+        Ok(len) => {
+            // SAFETY: out_samples is non-null and writable (caller contract).
+            unsafe { *out_samples = len };
+            RrDr60Status::Ok
+        }
+        Err(e) => status_from_error(e),
+    }
+}
+
+/// Erases recording `number` (spec 006 FR-013; S-001): its time returns to "remaining" and
+/// the later recordings move down by one. Erasing the recording being played, or erasing all,
+/// stops the playback first; erasing a lower number renumbers the played item. **Not real-time
+/// safe** (a memmove bounded by the store's size; no allocation).
+///
+/// Statuses: `RECORDING_IN_PROGRESS`, `NO_SUCH_RECORDING`.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_erase(pipeline: *mut RrDr60Pipeline, number: u32) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    match guarded(p, |inner| inner.erase(number)) {
+        Ok(()) => RrDr60Status::Ok,
+        Err(status) => status,
+    }
+}
+
+/// Erases every recording (spec 006 FR-013; S-001 "erase all"); a playback stops first; the
+/// capacity is kept. Not real-time safe.
+///
+/// Statuses: `RECORDING_IN_PROGRESS`.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_erase_all(pipeline: *mut RrDr60Pipeline) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    match guarded(p, |inner| inner.erase_all()) {
+        Ok(()) => RrDr60Status::Ok,
+        Err(status) => status,
+    }
+}
+
+/// Writes the exported length of recording `number`, in bytes, to `*out_len`, so the caller
+/// can size the buffer for `rr_dr60_export` (spec 006 FR-014). Real-time safe.
+///
+/// Statuses: `NO_SUCH_RECORDING`.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_len` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_export_len(
+    pipeline: *mut RrDr60Pipeline,
+    number: u32,
+    out_len: *mut usize,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out_len.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    match p.inner.export_len(number) {
+        Ok(len) => {
+            // SAFETY: out_len is non-null and writable (caller contract).
+            unsafe { *out_len = len };
+            RrDr60Status::Ok
+        }
+        Err(e) => status_from_error(e),
+    }
+}
+
+/// Writes recording `number` as an opaque byte sequence into `out_bytes` (`capacity` bytes)
+/// and the bytes written to `*out_written` (spec 006 FR-014). The host stores or sends the
+/// bytes unchanged and never parses them; the same recording exports to the same bytes every
+/// time. The form is the engine's (version 1: the record path's device-rate output; it will
+/// become encoded frames when the codec is modeled, A-004, told apart by the version field).
+/// Allowed in any state. Not real-time safe (a CRC over the recording; no allocation).
+///
+/// Statuses: `NO_SUCH_RECORDING`; `BUFFER_TOO_SMALL` leaves `out_bytes` untouched and writes
+/// the needed length to `*out_written` when not NULL; `NULL_POINTER` for a NULL `out_bytes`
+/// (size queries go through `rr_dr60_export_len`).
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_bytes` must be writable for `capacity` bytes.
+/// `out_written` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_export(
+    pipeline: *mut RrDr60Pipeline,
+    number: u32,
+    out_bytes: *mut u8,
+    capacity: usize,
+    out_written: *mut usize,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out_bytes.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let result = guarded(p, |inner| {
+        // SAFETY: out_bytes is non-null and writable for `capacity` bytes (caller contract).
+        let out = unsafe { std::slice::from_raw_parts_mut(out_bytes, capacity) };
+        inner.export(number, out)
+    });
+    match result {
+        Ok(written) => {
+            // SAFETY: out_written is NULL or writable (caller contract).
+            unsafe { put(out_written, written) };
+            RrDr60Status::Ok
+        }
+        Err(RrDr60Status::BufferTooSmall) => {
+            if let Ok(needed) = p.inner.export_len(number) {
+                // SAFETY: out_written is NULL or writable (caller contract).
+                unsafe { put(out_written, needed) };
+            }
+            RrDr60Status::BufferTooSmall
+        }
+        Err(status) => status,
+    }
+}
+
+/// Adds a recording from the `len` bytes of an export (this or another engine of the same
+/// version, any host rate) and writes its number to `*out_number` when not NULL (spec 006
+/// FR-014). Allowed while idle or playing; refused while recording. Not real-time safe
+/// (validates the whole sequence; no allocation).
+///
+/// Statuses: `RECORDING_IN_PROGRESS`, `UNKNOWN_FORM`, `UNSUPPORTED_FORM_VERSION`, `DAMAGED`,
+/// `DOES_NOT_FIT` (the remaining time or slots); the memory is unchanged on every error.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `bytes` must be readable for `len` bytes. `out_number`
+/// must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_import(
+    pipeline: *mut RrDr60Pipeline,
+    bytes: *const u8,
+    len: usize,
+    out_number: *mut u32,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if bytes.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let result = guarded(p, |inner| {
+        // SAFETY: bytes is non-null and readable for `len` bytes (caller contract).
+        let b = unsafe { std::slice::from_raw_parts(bytes, len) };
+        inner.import(b)
+    });
+    match result {
+        Ok(number) => {
+            // SAFETY: out_number is NULL or writable (caller contract).
+            unsafe { put(out_number, number) };
+            RrDr60Status::Ok
+        }
+        Err(status) => status,
+    }
+}
+
+/// Reads a `u32` figure of the pipeline into `*out`.
+///
+/// # Safety
+///
+/// As the three latency functions.
+unsafe fn read_u32(
+    pipeline: *mut RrDr60Pipeline,
+    out: *mut u32,
+    f: impl FnOnce(&Pipeline) -> u32,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: out is non-null and writable (caller contract).
+    unsafe { *out = f(&p.inner) };
+    RrDr60Status::Ok
+}
+
+/// Writes the record path's latency in host samples (input samples until the corresponding
+/// device sample is stored; the stop flush is this long) to `*out_samples` (spec 006 FR-016).
+/// Real-time safe.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_samples` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_record_latency_samples(
+    pipeline: *mut RrDr60Pipeline,
+    out_samples: *mut u32,
+) -> RrDr60Status {
+    // SAFETY: the caller contract of this function is that of `read_u32`.
+    unsafe { read_u32(pipeline, out_samples, Pipeline::record_latency_samples) }
+}
+
+/// Writes the playback path's latency in host samples (output samples from the start of
+/// playback until the first stored sample is represented) to `*out_samples` (spec 006 FR-016).
+/// The two path latencies sum to `rr_dr60_latency_samples` within one sample. Real-time safe.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_samples` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_playback_latency_samples(
+    pipeline: *mut RrDr60Pipeline,
+    out_samples: *mut u32,
+) -> RrDr60Status {
+    // SAFETY: the caller contract of this function is that of `read_u32`.
+    unsafe { read_u32(pipeline, out_samples, Pipeline::playback_latency_samples) }
+}
+
+/// Writes the host samples `rr_dr60_play` produces after the recording's own (the playback
+/// path's settling drain) to `*out_samples` (spec 006 FR-008). Real-time safe.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_samples` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_drain_samples(
+    pipeline: *mut RrDr60Pipeline,
+    out_samples: *mut u32,
+) -> RrDr60Status {
+    // SAFETY: the caller contract of this function is that of `read_u32`.
+    unsafe { read_u32(pipeline, out_samples, Pipeline::drain_samples) }
+}
+
+/// Writes the bytes reserved for the recording store and its span table to `*out_bytes`
+/// (spec 006 FR-017, SC-007): about 86 MB at the default capacity, virtual until recordings
+/// are written. Real-time safe.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_bytes` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_footprint_bytes(
+    pipeline: *mut RrDr60Pipeline,
+    out_bytes: *mut usize,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out_bytes.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: out_bytes is non-null and writable (caller contract).
+    unsafe { *out_bytes = p.inner.footprint_bytes() };
+    RrDr60Status::Ok
+}
+
 /// The library version as a static NUL-terminated string, e.g. `"0.1.0"`. Never NULL; do not
 /// free.
 #[unsafe(no_mangle)]
@@ -767,7 +1774,8 @@ pub extern "C" fn rr_dr60_version_string() -> *const c_char {
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast()
 }
 
-/// Test-only: makes the next `rr_dr60_process` call on `pipeline` panic, to exercise panic
+/// Test-only: makes the next `rr_dr60_process`, `rr_dr60_record` or `rr_dr60_play` call on
+/// `pipeline` panic, to exercise panic
 /// catching and poisoning (FR-024; tasks.md T054). Only built with the `ffi-test-panic` feature.
 ///
 /// # Safety
@@ -846,12 +1854,13 @@ mod tests {
         );
     }
 
-    /// 005 T008 (spec 005 FR-015; contracts/c-api.md): the 0.5 layout is 80 bytes with every
-    /// 0.4 offset kept and `adc_clamp_enabled` appended at 72.
+    /// 005 T008 (spec 005 FR-015), restated by 006 T017 (spec 006 FR-020; contracts/c-api.md):
+    /// the 0.6 layout is 88 bytes with every 0.5 offset kept and the two memory fields appended
+    /// at 76 and 80.
     #[test]
-    fn settings_layout_is_80_bytes_with_the_contract_offsets() {
+    fn settings_layout_is_88_bytes_with_the_contract_offsets() {
         use std::mem::offset_of;
-        assert_eq!(size_of::<RrDr60Settings>(), 80);
+        assert_eq!(size_of::<RrDr60Settings>(), 88);
         assert_eq!(offset_of!(RrDr60Settings, struct_size), 0);
         assert_eq!(offset_of!(RrDr60Settings, host_rate_hz), 4);
         assert_eq!(offset_of!(RrDr60Settings, record_stage_enabled), 8);
@@ -871,13 +1880,18 @@ mod tests {
         assert_eq!(offset_of!(RrDr60Settings, vas_hang_ms), 64);
         assert_eq!(offset_of!(RrDr60Settings, vas_onset_ms), 68);
         assert_eq!(offset_of!(RrDr60Settings, adc_clamp_enabled), 72);
+        assert_eq!(offset_of!(RrDr60Settings, memory_capacity_s), 76);
+        assert_eq!(offset_of!(RrDr60Settings, memory_max_recordings), 80);
     }
 
-    /// 005 T008 (FR-010, FR-015): the 0.5 defaults, the reserved slots at 0, the clamp on.
+    /// 005 T008 (FR-010, FR-015), restated by 006 T017: the 0.5 defaults, the reserved slots at
+    /// 0, the clamp on, and the memory at the device's figures (S-001).
     #[test]
-    fn settings_default_has_the_0_5_values() {
+    fn settings_default_has_the_0_6_values() {
         let s = rr_dr60_settings_default(48_000);
-        assert_eq!(s.struct_size, 80);
+        assert_eq!(s.struct_size, 88);
+        assert_eq!(s.memory_capacity_s, 3600); // S-001: 60 minutes
+        assert_eq!(s.memory_max_recordings, 99); // S-001: 99 items
         assert!(s.agc_enabled); // A-020
         assert_eq!(s.agc_knee_dbfs, -1.0); // A-028
         assert_eq!(s.reserved_agc_1, 0.0);
@@ -899,13 +1913,37 @@ mod tests {
     }
 
     /// 005 T008 (contracts/c-api.md › RrDr60SettingField): 4 is the knee (was the target), 5
-    /// and 6 are retired and never returned, 7 and 8 keep their numbers.
+    /// and 6 are retired and never returned, 7 and 8 keep their numbers; 006 T017: 14 and 15
+    /// name the memory fields, and a 0 capacity is `INVALID_SETTING` naming field 14.
     #[test]
     fn setting_field_numbers_are_stable() {
         assert_eq!(RrDr60SettingField::AgcKneeDbfs as u32, 4);
         assert_eq!(RrDr60SettingField::AgcAttackMs as u32, 7);
         assert_eq!(RrDr60SettingField::AgcReleaseMs as u32, 8);
         assert_eq!(RrDr60SettingField::VasMode as u32, 9);
+        assert_eq!(RrDr60SettingField::MemoryCapacityS as u32, 14);
+        assert_eq!(RrDr60SettingField::MemoryMaxRecordings as u32, 15);
+        let mut m = rr_dr60_settings_default(48_000);
+        m.memory_capacity_s = 0;
+        assert_eq!(
+            validate_c(&m),
+            Err((
+                RrDr60Status::InvalidSetting,
+                RrDr60SettingField::MemoryCapacityS
+            ))
+        );
+        m.memory_capacity_s = 10;
+        m.memory_max_recordings = 10_000;
+        assert_eq!(
+            validate_c(&m),
+            Err((
+                RrDr60Status::InvalidSetting,
+                RrDr60SettingField::MemoryMaxRecordings
+            ))
+        );
+        m.memory_max_recordings = 3;
+        assert_eq!(to_settings(&m).unwrap().memory.capacity_s, 10);
+        assert_eq!(to_settings(&m).unwrap().memory.max_recordings, 3);
         let all = [
             RrDr60SettingField::None,
             RrDr60SettingField::HostRate,
@@ -950,11 +1988,19 @@ mod tests {
         );
     }
 
-    /// 005 T008 (contracts/c-api.md): a 0.4 caller's 72-byte struct is rejected after reading
-    /// only `struct_size`, as `STRUCT_SIZE`.
+    /// 005 T008 (contracts/c-api.md), restated by 006 T017: a 0.5 caller's 80-byte struct (and
+    /// a 0.4 caller's 72) is rejected after reading only `struct_size`, as `STRUCT_SIZE`.
     #[test]
-    fn a_0_4_struct_size_is_rejected() {
+    fn a_0_5_struct_size_is_rejected() {
         let mut s = rr_dr60_settings_default(48_000);
+        s.struct_size = 80;
+        assert_eq!(
+            to_settings(&s),
+            Err((
+                RrDr60Status::InvalidArgument,
+                RrDr60SettingField::StructSize
+            ))
+        );
         s.struct_size = 72;
         assert_eq!(
             to_settings(&s),
@@ -972,5 +2018,348 @@ mod tests {
                 RrDr60SettingField::StructSize
             ))
         );
+    }
+
+    /// Spec 006 FR-009 / FR-020 (coach review of US1, finding 1): `rr_dr60_process` reports
+    /// `RECORDING_IN_PROGRESS` / `PLAYBACK_IN_PROGRESS` instead of silently producing nothing,
+    /// writes the idle info and leaves the output untouched.
+    #[test]
+    fn process_is_refused_while_a_transport_is_active() {
+        let mut s = rr_dr60_settings_default(48_000);
+        s.memory_capacity_s = 1;
+        let mut handle: *mut RrDr60Pipeline = std::ptr::null_mut();
+        // SAFETY: both pointers are valid for the call.
+        assert_eq!(unsafe { rr_dr60_create(&s, &mut handle) }, RrDr60Status::Ok);
+        let x = [0.25f32; 48];
+        let mut y = [7.0f32; 48];
+        let mut info = RrDr60BlockInfo {
+            produced: 99,
+            ..RrDr60BlockInfo::default()
+        };
+        // SAFETY: the handle is live (created above).
+        unsafe {
+            (*handle).inner.start_recording().unwrap();
+            let fed = (*handle).inner.record(&x, &mut []).unwrap();
+            assert!(fed.stopped.is_none());
+        }
+        // SAFETY: the buffers are valid for 48 floats and do not overlap.
+        let status = unsafe { rr_dr60_process(handle, x.as_ptr(), y.as_mut_ptr(), 48, &mut info) };
+        assert_eq!(status, RrDr60Status::RecordingInProgress);
+        assert_eq!(info.produced, 0);
+        assert!(y.iter().all(|&v| v == 7.0));
+        // SAFETY: the handle is live.
+        unsafe {
+            let stop = (*handle).inner.stop_recording(&mut []).unwrap();
+            assert!(matches!(
+                stop.result,
+                rr_dr60::StopResult::Kept { number: 1, .. }
+            ));
+            (*handle).inner.start_playback(1).unwrap();
+        }
+        // SAFETY: as above; in place this time.
+        let status = unsafe { rr_dr60_process(handle, y.as_ptr(), y.as_mut_ptr(), 48, &mut info) };
+        assert_eq!(status, RrDr60Status::PlaybackInProgress);
+        assert!(y.iter().all(|&v| v == 7.0));
+        // SAFETY: the handle is live and not used afterwards.
+        unsafe { rr_dr60_destroy(handle) };
+    }
+
+    /// 006 T040 (contracts/c-api.md): statuses 6–19 by value and name, the three new enums'
+    /// values, and every new `Error` variant's status.
+    #[test]
+    fn transport_statuses_enums_and_error_mapping() {
+        let statuses = [
+            (6, RrDr60Status::RecordingInProgress, "RecordingInProgress"),
+            (7, RrDr60Status::PlaybackInProgress, "PlaybackInProgress"),
+            (8, RrDr60Status::NotRecording, "NotRecording"),
+            (9, RrDr60Status::NotPlaying, "NotPlaying"),
+            (10, RrDr60Status::MemoryFull, "MemoryFull"),
+            (11, RrDr60Status::NoRecordingSlots, "NoRecordingSlots"),
+            (12, RrDr60Status::NoSuchRecording, "NoSuchRecording"),
+            (13, RrDr60Status::DoesNotFit, "DoesNotFit"),
+            (14, RrDr60Status::UnknownForm, "UnknownForm"),
+            (
+                15,
+                RrDr60Status::UnsupportedFormVersion,
+                "UnsupportedFormVersion",
+            ),
+            (16, RrDr60Status::Damaged, "Damaged"),
+            (
+                17,
+                RrDr60Status::StoredExceedsCapacity,
+                "StoredExceedsCapacity",
+            ),
+            (18, RrDr60Status::AllocationFailed, "AllocationFailed"),
+            (19, RrDr60Status::BufferTooSmall, "BufferTooSmall"),
+        ];
+        for (value, status, name) in statuses {
+            assert_eq!(status as i32, value, "{name}");
+            assert_eq!(format!("{status:?}"), name);
+        }
+        assert_eq!(RrDr60Route::Speaker as u32, 0);
+        assert_eq!(RrDr60Route::Earphone as u32, 1);
+        assert_eq!(RrDr60State::Idle as u32, 0);
+        assert_eq!(RrDr60State::Recording as u32, 1);
+        assert_eq!(RrDr60State::Playing as u32, 2);
+        assert_eq!(RrDr60StopReason::None as u32, 0);
+        assert_eq!(RrDr60StopReason::MemoryFull as u32, 1);
+        let errors = [
+            (
+                Error::RecordingInProgress,
+                RrDr60Status::RecordingInProgress,
+            ),
+            (Error::PlaybackInProgress, RrDr60Status::PlaybackInProgress),
+            (Error::NotRecording, RrDr60Status::NotRecording),
+            (Error::NotPlaying, RrDr60Status::NotPlaying),
+            (Error::MemoryFull, RrDr60Status::MemoryFull),
+            (Error::NoRecordingSlots, RrDr60Status::NoRecordingSlots),
+            (
+                Error::NoSuchRecording { number: 3 },
+                RrDr60Status::NoSuchRecording,
+            ),
+            (Error::DoesNotFit, RrDr60Status::DoesNotFit),
+            (Error::UnknownForm, RrDr60Status::UnknownForm),
+            (
+                Error::UnsupportedFormVersion { version: 2 },
+                RrDr60Status::UnsupportedFormVersion,
+            ),
+            (Error::Damaged, RrDr60Status::Damaged),
+            (
+                Error::StoredExceedsCapacity,
+                RrDr60Status::StoredExceedsCapacity,
+            ),
+            (Error::AllocationFailed, RrDr60Status::AllocationFailed),
+            (
+                Error::BufferTooSmall { needed: 40 },
+                RrDr60Status::BufferTooSmall,
+            ),
+        ];
+        for (e, status) in errors {
+            assert_eq!(
+                error_to_status_and_field(e),
+                (status, RrDr60SettingField::None)
+            );
+        }
+    }
+
+    /// 006 T040: the five new structs are `repr(C)` with fixed-width fields at the contract's
+    /// order; their sizes follow from the C layout rules.
+    #[test]
+    fn transport_struct_layouts() {
+        use std::mem::offset_of;
+        assert_eq!(offset_of!(RrDr60EngineState, state), 0);
+        assert_eq!(offset_of!(RrDr60EngineState, route), 4);
+        assert_eq!(offset_of!(RrDr60EngineState, current_recording), 8);
+        assert_eq!(offset_of!(RrDr60EngineState, speaker_muted), 12);
+        assert_eq!(size_of::<RrDr60EngineState>(), 16);
+        let w = size_of::<usize>();
+        assert_eq!(offset_of!(RrDr60RecordInfo, stored), 0);
+        assert_eq!(offset_of!(RrDr60RecordInfo, events), w);
+        assert_eq!(offset_of!(RrDr60RecordInfo, paused), 2 * w);
+        assert_eq!(offset_of!(RrDr60RecordInfo, stopped), 2 * w + 1);
+        assert_eq!(offset_of!(RrDr60RecordInfo, stop_reason), 2 * w + 4);
+        assert_eq!(size_of::<RrDr60RecordInfo>(), 2 * w + 8);
+        assert_eq!(offset_of!(RrDr60StopOutcome, flush), 0);
+        assert_eq!(offset_of!(RrDr60StopOutcome, kept), 2 * w + 8);
+        assert_eq!(offset_of!(RrDr60StopOutcome, number), 2 * w + 12);
+        assert_eq!(offset_of!(RrDr60StopOutcome, length_samples), 2 * w + 16);
+        assert_eq!(size_of::<RrDr60StopOutcome>(), 2 * w + 24);
+        assert_eq!(offset_of!(RrDr60PlayInfo, produced), 0);
+        assert_eq!(offset_of!(RrDr60PlayInfo, finished), w);
+        assert_eq!(size_of::<RrDr60PlayInfo>(), 2 * w);
+        assert_eq!(offset_of!(RrDr60MemoryStatus, capacity_samples), 0);
+        assert_eq!(offset_of!(RrDr60MemoryStatus, used_samples), 8);
+        assert_eq!(offset_of!(RrDr60MemoryStatus, remaining_samples), 16);
+        assert_eq!(offset_of!(RrDr60MemoryStatus, max_recordings), 24);
+        assert_eq!(offset_of!(RrDr60MemoryStatus, count), 28);
+        assert_eq!(offset_of!(RrDr60MemoryStatus, slots_remaining), 32);
+        assert_eq!(size_of::<RrDr60MemoryStatus>(), 40);
+    }
+
+    /// A 48 kHz handle with a 10 s memory, the VAS off.
+    fn small_handle() -> *mut RrDr60Pipeline {
+        let mut s = rr_dr60_settings_default(48_000);
+        s.memory_capacity_s = 10;
+        s.memory_max_recordings = 3;
+        s.vas_enabled = false;
+        let mut handle: *mut RrDr60Pipeline = std::ptr::null_mut();
+        // SAFETY: both pointers are valid for the call.
+        assert_eq!(unsafe { rr_dr60_create(&s, &mut handle) }, RrDr60Status::Ok);
+        handle
+    }
+
+    /// 006 T040: an invalid route value is `INVALID_ARGUMENT` and the route is unchanged.
+    #[test]
+    fn invalid_route_value_is_rejected() {
+        let p = small_handle();
+        let mut route = 9u32;
+        // SAFETY: live handle; valid out pointer.
+        unsafe {
+            assert_eq!(rr_dr60_set_route(p, 1), RrDr60Status::Ok);
+            assert_eq!(rr_dr60_set_route(p, 7), RrDr60Status::InvalidArgument);
+            assert_eq!(rr_dr60_get_route(p, &mut route), RrDr60Status::Ok);
+            assert_eq!(route, RrDr60Route::Earphone as u32);
+            assert_eq!(
+                rr_dr60_get_route(p, std::ptr::null_mut()),
+                RrDr60Status::NullPointer
+            );
+            rr_dr60_destroy(p);
+        }
+    }
+
+    /// 006 T040 (rule 2's amendment): `rr_dr60_record`, `rr_dr60_stop_recording` and
+    /// `rr_dr60_play` write their info struct on every early return: a NULL handle, a
+    /// poisoned handle and `frames == 0`.
+    #[test]
+    fn info_structs_are_written_on_early_returns() {
+        let x = [0.25f32; 48];
+        let mut y = [7.0f32; 48];
+        let garbage = RrDr60RecordInfo {
+            stored: 9,
+            events: 9,
+            paused: true,
+            stopped: true,
+            stop_reason: 9,
+        };
+        let mut rec = garbage;
+        let mut play = RrDr60PlayInfo {
+            produced: 9,
+            finished: true,
+        };
+        let mut outcome = RrDr60StopOutcome {
+            flush: garbage,
+            kept: true,
+            number: 9,
+            length_samples: 9,
+        };
+        // SAFETY: a NULL handle is allowed; the buffers are valid.
+        unsafe {
+            assert_eq!(
+                rr_dr60_record(
+                    std::ptr::null_mut(),
+                    x.as_ptr(),
+                    48,
+                    &mut rec,
+                    std::ptr::null_mut(),
+                    0
+                ),
+                RrDr60Status::NullPointer
+            );
+            assert_eq!(rec, RrDr60RecordInfo::default());
+            assert_eq!(
+                rr_dr60_play(std::ptr::null_mut(), y.as_mut_ptr(), 48, &mut play),
+                RrDr60Status::NullPointer
+            );
+            assert_eq!(play, RrDr60PlayInfo::default());
+            assert_eq!(
+                rr_dr60_stop_recording(std::ptr::null_mut(), &mut outcome, std::ptr::null_mut(), 0),
+                RrDr60Status::NullPointer
+            );
+            assert_eq!(outcome, RrDr60StopOutcome::default());
+        }
+        let p = small_handle();
+        // SAFETY: live handle; valid buffers.
+        unsafe {
+            // frames == 0 while idle: still NOT_RECORDING / NOT_PLAYING, info written.
+            rec = garbage;
+            assert_eq!(
+                rr_dr60_record(p, std::ptr::null(), 0, &mut rec, std::ptr::null_mut(), 0),
+                RrDr60Status::NotRecording
+            );
+            assert_eq!(rec, RrDr60RecordInfo::default());
+            assert_eq!(rr_dr60_start_recording(p), RrDr60Status::Ok);
+            rec = garbage;
+            assert_eq!(
+                rr_dr60_record(p, std::ptr::null(), 0, &mut rec, std::ptr::null_mut(), 0),
+                RrDr60Status::Ok
+            );
+            assert_eq!(rec, RrDr60RecordInfo::default());
+            // Poisoned: INTERNAL_ERROR, info written, nothing else changes.
+            (*p).poisoned = true;
+            rec = garbage;
+            assert_eq!(
+                rr_dr60_record(p, x.as_ptr(), 48, &mut rec, std::ptr::null_mut(), 0),
+                RrDr60Status::InternalError
+            );
+            assert_eq!(rec, RrDr60RecordInfo::default());
+            outcome.kept = true;
+            assert_eq!(
+                rr_dr60_stop_recording(p, &mut outcome, std::ptr::null_mut(), 0),
+                RrDr60Status::InternalError
+            );
+            assert_eq!(outcome, RrDr60StopOutcome::default());
+            play.produced = 9;
+            assert_eq!(
+                rr_dr60_play(p, y.as_mut_ptr(), 48, &mut play),
+                RrDr60Status::InternalError
+            );
+            assert_eq!(play, RrDr60PlayInfo::default());
+            assert!(y.iter().all(|&v| v == 7.0));
+            (*p).poisoned = false;
+            assert_eq!(rr_dr60_reset(p), RrDr60Status::Ok);
+            rr_dr60_destroy(p);
+        }
+    }
+
+    /// 006 T040 (coach review of US2–US3): `rr_dr60_export` with a NULL buffer is
+    /// `NULL_POINTER` (size queries go through `rr_dr60_export_len`); an import while playing
+    /// is accepted and appended.
+    #[test]
+    fn export_null_buffer_and_import_while_playing() {
+        let p = small_handle();
+        let x = [0.25f32; 4800];
+        let mut rec = RrDr60RecordInfo::default();
+        let mut outcome = RrDr60StopOutcome::default();
+        let mut written = 99usize;
+        let mut len = 0usize;
+        let mut number = 0u32;
+        let mut play = RrDr60PlayInfo::default();
+        let mut y = [0.0f32; 512];
+        // SAFETY: live handle; valid buffers.
+        unsafe {
+            assert_eq!(rr_dr60_start_recording(p), RrDr60Status::Ok);
+            assert_eq!(
+                rr_dr60_record(p, x.as_ptr(), x.len(), &mut rec, std::ptr::null_mut(), 0),
+                RrDr60Status::Ok
+            );
+            assert_eq!(
+                rr_dr60_stop_recording(p, &mut outcome, std::ptr::null_mut(), 0),
+                RrDr60Status::Ok
+            );
+            assert!(outcome.kept && outcome.number == 1);
+            assert_eq!(rr_dr60_export_len(p, 1, &mut len), RrDr60Status::Ok);
+            assert_eq!(len, 36 + 4 * outcome.length_samples as usize);
+            assert_eq!(
+                rr_dr60_export(p, 1, std::ptr::null_mut(), 0, &mut written),
+                RrDr60Status::NullPointer
+            );
+            assert_eq!(written, 99, "untouched on NULL_POINTER");
+            let mut bytes = vec![0u8; len];
+            assert_eq!(
+                rr_dr60_export(p, 1, bytes.as_mut_ptr(), bytes.len(), &mut written),
+                RrDr60Status::Ok
+            );
+            assert_eq!(written, len);
+            assert_eq!(rr_dr60_start_playback(p, 1), RrDr60Status::Ok);
+            assert_eq!(
+                rr_dr60_play(p, y.as_mut_ptr(), y.len(), &mut play),
+                RrDr60Status::Ok
+            );
+            assert_eq!(
+                rr_dr60_import(p, bytes.as_ptr(), bytes.len(), &mut number),
+                RrDr60Status::Ok
+            );
+            assert_eq!(number, 2);
+            let mut st = RrDr60EngineState::default();
+            assert_eq!(rr_dr60_get_state(p, &mut st), RrDr60Status::Ok);
+            assert_eq!(st.state, RrDr60State::Playing as u32);
+            assert_eq!(st.current_recording, 1);
+            assert_eq!(rr_dr60_stop_playback(p), RrDr60Status::Ok);
+            assert_eq!(
+                rr_dr60_import(p, std::ptr::null(), 0, &mut number),
+                RrDr60Status::NullPointer
+            );
+            rr_dr60_destroy(p);
+        }
     }
 }

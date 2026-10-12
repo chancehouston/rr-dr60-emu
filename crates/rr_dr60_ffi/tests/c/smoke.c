@@ -16,6 +16,9 @@
 #define N (FS / 2)
 #define FS6 6000 /* the device rate (A-026): the rate conversion boundary is the identity */
 #define N6 (FS6 / 10)
+/* FNV-1a 64 of the Rust path's playback of the 006 smoke stimulus (49692 samples), pinned by
+ * the harness's `ffi_parity::smoke_reference_hash_is_pinned` (US4 scenario 1). */
+#define RR_DR60_SMOKE_REFERENCE_HASH 0x81b812b9699dc614ULL
 
 static int failures = 0;
 
@@ -41,7 +44,9 @@ int main(void) {
 
   RrDr60Settings s = rr_dr60_settings_default(FS);
   CHECK(s.struct_size == sizeof(RrDr60Settings), "struct_size %u", s.struct_size);
-  CHECK(s.struct_size == 80, "struct_size %u (must be 80 since 0.5, spec 005 contracts/c-api.md)", s.struct_size);
+  CHECK(s.struct_size == 88, "struct_size %u (must be 88 since 0.6, spec 006 contracts/c-api.md)", s.struct_size);
+  CHECK(s.memory_capacity_s == 3600, "default memory capacity %u s (S-001: 60 minutes)", s.memory_capacity_s);
+  CHECK(s.memory_max_recordings == 99, "default recording count %u (S-001: 99 items)", s.memory_max_recordings);
   CHECK(s.tap == RR_DR60_TAP_AFTER_PLAYBACK, "default tap");
   CHECK(s.agc_enabled, "limiter on by default (spec 005, A-020)");
   CHECK(s.agc_knee_dbfs == -1.0f, "default knee %g dBFS (A-028)", (double)s.agc_knee_dbfs);
@@ -261,6 +266,174 @@ int main(void) {
   CHECK(rr_dr60_version_string() != NULL && strlen(rr_dr60_version_string()) > 0, "version");
   rr_dr60_destroy(p);
   rr_dr60_destroy(NULL);
+
+  /* Spec 006 US4 (contracts/c-api.md › Smoke test additions; T042): the record, stop, export,
+   * import, play loop at 48 kHz with the default settings (the VAS on), the state at each step,
+   * the memory figures, the refusals, a memory-full stop, erase all. The stimulus is a 1 kHz
+   * square wave at -18 dBFS (+/-0.125, 24 samples up, 24 down): exactly representable in binary32, so the
+   * Rust harness feeds the same bits and `ffi_parity` pins the FNV-1a 64 hash of the Rust
+   * playback that both C playbacks must reproduce (US4 scenario 1). */
+  {
+    RrDr60Settings old = rr_dr60_settings_default(FS);
+    old.struct_size = 80; /* the 0.5 layout */
+    RrDr60SettingField f = RR_DR60_SETTING_FIELD_NONE;
+    CHECK(rr_dr60_settings_validate(&old, &f) == RR_DR60_STATUS_INVALID_ARGUMENT &&
+              f == RR_DR60_SETTING_FIELD_STRUCT_SIZE,
+          "validate(struct_size = 80) names STRUCT_SIZE (006)");
+    RrDr60Settings zero = rr_dr60_settings_default(FS);
+    zero.memory_capacity_s = 0;
+    CHECK(rr_dr60_settings_validate(&zero, &f) == RR_DR60_STATUS_INVALID_SETTING &&
+              f == RR_DR60_SETTING_FIELD_MEMORY_CAPACITY_S,
+          "validate(memory_capacity_s = 0) names field 14 (006 FR-010)");
+    CHECK(RR_DR60_SETTING_FIELD_MEMORY_CAPACITY_S == 14 && RR_DR60_SETTING_FIELD_MEMORY_MAX_RECORDINGS == 15,
+          "memory field numbers");
+
+    static float sq[FS];
+    for (size_t i = 0; i < FS; i++) sq[i] = (i % 48) < 24 ? 0.125f : -0.125f;
+    RrDr60Settings d = rr_dr60_settings_default(FS);
+    RrDr60Pipeline *a = NULL;
+    CHECK(rr_dr60_create(&d, &a) == RR_DR60_STATUS_OK && a != NULL, "create (006 loop)");
+    RrDr60EngineState st;
+    memset(&st, 0xEE, sizeof st);
+    CHECK(rr_dr60_get_state(a, &st) == RR_DR60_STATUS_OK && st.state == RR_DR60_STATE_IDLE &&
+              st.route == RR_DR60_ROUTE_SPEAKER && st.current_recording == 0 && !st.speaker_muted,
+          "idle state");
+    RrDr60MemoryStatus ms;
+    CHECK(rr_dr60_memory_status(a, &ms) == RR_DR60_STATUS_OK && ms.count == 0 && ms.used_samples == 0 &&
+              ms.remaining_samples == 21600000ULL && ms.max_recordings == 99 && ms.slots_remaining == 99,
+          "default memory figures (S-001: 60 min, 99 items; device samples, A-026)");
+    CHECK(rr_dr60_start_recording(a) == RR_DR60_STATUS_OK, "start_recording");
+    CHECK(rr_dr60_get_state(a, &st) == RR_DR60_STATUS_OK && st.state == RR_DR60_STATE_RECORDING &&
+              st.current_recording == 1 && st.speaker_muted,
+          "recording state: current 1, speaker muted (S-002)");
+    CHECK(rr_dr60_start_playback(a, 1) == RR_DR60_STATUS_RECORDING_IN_PROGRESS, "start_playback while recording");
+    size_t cap = 0;
+    CHECK(rr_dr60_max_record_events(a, 480, &cap) == RR_DR60_STATUS_OK, "max_record_events");
+    RrDr60VasEvent *ev = (RrDr60VasEvent *)malloc((cap + 1) * sizeof *ev);
+    CHECK(ev != NULL, "malloc");
+    size_t stored = 0, nevents = 0;
+    for (size_t at = 0; at < FS; at += 480) {
+      RrDr60RecordInfo ri;
+      CHECK(rr_dr60_record(a, sq + at, 480, &ri, ev, cap) == RR_DR60_STATUS_OK, "record block %zu", at / 480);
+      CHECK(!ri.stopped, "stopped inside the loop");
+      stored += ri.stored;
+      nevents += ri.events;
+    }
+    RrDr60StopOutcome so;
+    memset(&so, 0xEE, sizeof so);
+    CHECK(rr_dr60_stop_recording(a, &so, ev, cap) == RR_DR60_STATUS_OK, "stop_recording");
+    stored += so.flush.stored;
+    CHECK(so.kept && so.number == 1 && so.length_samples == stored && stored >= 6000,
+          "kept number %u, length %llu, stored %zu", so.number, (unsigned long long)so.length_samples, stored);
+    CHECK(nevents == 0, "a continuous tone has no VAS events (%zu)", nevents);
+    free(ev);
+    CHECK(rr_dr60_get_state(a, &st) == RR_DR60_STATUS_OK && st.state == RR_DR60_STATE_IDLE && !st.speaker_muted,
+          "idle after stop");
+    CHECK(rr_dr60_memory_status(a, &ms) == RR_DR60_STATUS_OK && ms.count == 1 && ms.used_samples == stored,
+          "memory count 1, used %llu", (unsigned long long)ms.used_samples);
+    uint64_t len_samples = 0;
+    CHECK(rr_dr60_recording_length(a, 1, &len_samples) == RR_DR60_STATUS_OK && len_samples == stored, "recording_length");
+    size_t len = 0, written = 0;
+    CHECK(rr_dr60_export_len(a, 1, &len) == RR_DR60_STATUS_OK && len == 36 + 4 * stored, "export_len %zu", len);
+    uint8_t small[10];
+    memset(small, 0xAA, sizeof small);
+    CHECK(rr_dr60_export(a, 1, small, sizeof small, &written) == RR_DR60_STATUS_BUFFER_TOO_SMALL && written == len,
+          "export into 10 bytes: BUFFER_TOO_SMALL, needed %zu", written);
+    int untouched = 1;
+    for (size_t i = 0; i < sizeof small; i++) untouched &= small[i] == 0xAA;
+    CHECK(untouched, "BUFFER_TOO_SMALL must leave the buffer untouched");
+    uint8_t *bytes = (uint8_t *)malloc(len);
+    CHECK(bytes != NULL, "malloc");
+    CHECK(rr_dr60_export(a, 1, bytes, len, &written) == RR_DR60_STATUS_OK && written == len, "export");
+    CHECK(memcmp(bytes, "RRDR60RC", 8) == 0, "magic");
+
+    RrDr60Pipeline *b = NULL;
+    CHECK(rr_dr60_create(&d, &b) == RR_DR60_STATUS_OK && b != NULL, "create second handle");
+    uint32_t number = 0;
+    CHECK(rr_dr60_import(b, bytes, len, &number) == RR_DR60_STATUS_OK && number == 1, "import -> number %u", number);
+    bytes[40] ^= 0x01;
+    CHECK(rr_dr60_import(b, bytes, len, &number) == RR_DR60_STATUS_DAMAGED, "import of a flipped byte");
+    CHECK(rr_dr60_import(b, bytes, 4, &number) == RR_DR60_STATUS_UNKNOWN_FORM, "import of 4 bytes");
+    free(bytes);
+
+    /* Play both to `finished` and hash the outputs (FNV-1a 64 over the little-endian floats). */
+    static float pa[8 * FS], pb[8 * FS];
+    size_t na = 0, nb = 0;
+    RrDr60Pipeline *handles[2] = {a, b};
+    float *outs[2] = {pa, pb};
+    size_t *counts[2] = {&na, &nb};
+    for (int h = 0; h < 2; h++) {
+      CHECK(rr_dr60_start_playback(handles[h], 1) == RR_DR60_STATUS_OK, "start_playback %d", h);
+      CHECK(rr_dr60_get_state(handles[h], &st) == RR_DR60_STATUS_OK && st.state == RR_DR60_STATE_PLAYING &&
+                st.current_recording == 1 && !st.speaker_muted,
+            "playing state %d", h);
+      for (;;) {
+        RrDr60PlayInfo pi;
+        CHECK(*counts[h] + 480 <= 8 * (size_t)FS, "playback longer than expected");
+        CHECK(rr_dr60_play(handles[h], outs[h] + *counts[h], 480, &pi) == RR_DR60_STATUS_OK, "play %d", h);
+        *counts[h] += pi.produced;
+        if (pi.finished) break;
+      }
+      CHECK(rr_dr60_get_state(handles[h], &st) == RR_DR60_STATUS_OK && st.state == RR_DR60_STATE_IDLE,
+            "idle after finished %d", h);
+    }
+    CHECK(na == nb && memcmp(pa, pb, na * sizeof(float)) == 0, "imported playback differs (%zu vs %zu samples)", na, nb);
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; i < na; i++) {
+      uint8_t le[4];
+      memcpy(le, &pa[i], 4); /* little-endian on every supported platform */
+      for (int k = 0; k < 4; k++) {
+        hash ^= le[k];
+        hash *= 0x00000100000001b3ULL;
+      }
+    }
+    CHECK(hash == RR_DR60_SMOKE_REFERENCE_HASH,
+          "playback hash %016llx differs from the Rust path's %016llx (US4 scenario 1)",
+          (unsigned long long)hash, (unsigned long long)RR_DR60_SMOKE_REFERENCE_HASH);
+    uint32_t route = 9;
+    CHECK(rr_dr60_set_route(a, RR_DR60_ROUTE_EARPHONE) == RR_DR60_STATUS_OK &&
+              rr_dr60_get_route(a, &route) == RR_DR60_STATUS_OK && route == RR_DR60_ROUTE_EARPHONE,
+          "route round trip");
+    CHECK(rr_dr60_set_route(a, 7) == RR_DR60_STATUS_INVALID_ARGUMENT, "invalid route");
+    uint32_t rl = 0, pl = 0, dr = 0;
+    CHECK(rr_dr60_record_latency_samples(a, &rl) == RR_DR60_STATUS_OK &&
+              rr_dr60_playback_latency_samples(a, &pl) == RR_DR60_STATUS_OK &&
+              rr_dr60_drain_samples(a, &dr) == RR_DR60_STATUS_OK && rl + pl >= latency - 1 && rl + pl <= latency + 1,
+          "latencies %u + %u vs one-pass %u, drain %u (006 FR-016)", rl, pl, latency, dr);
+    CHECK(rr_dr60_erase_all(a) == RR_DR60_STATUS_OK && rr_dr60_memory_status(a, &ms) == RR_DR60_STATUS_OK &&
+              ms.count == 0 && ms.used_samples == 0,
+          "erase_all -> count 0");
+    CHECK(rr_dr60_erase(b, 1) == RR_DR60_STATUS_OK && rr_dr60_erase(b, 1) == RR_DR60_STATUS_NO_SUCH_RECORDING,
+          "erase, then no such recording");
+
+    /* A 1 s-capacity handle: the recording stops by itself with MEMORY_FULL; then NOT_RECORDING. */
+    RrDr60Settings one = rr_dr60_settings_default(FS);
+    one.memory_capacity_s = 1;
+    one.vas_enabled = false;
+    RrDr60Pipeline *c = NULL;
+    CHECK(rr_dr60_create(&one, &c) == RR_DR60_STATUS_OK && c != NULL, "create 1 s handle");
+    CHECK(rr_dr60_start_recording(c) == RR_DR60_STATUS_OK, "start 1 s");
+    size_t total = 0;
+    int full = 0;
+    for (int round = 0; round < 3 && !full; round++) {
+      for (size_t at = 0; at < FS && !full; at += 4800) {
+        RrDr60RecordInfo ri;
+        CHECK(rr_dr60_record(c, sq + at, 4800, &ri, NULL, 0) == RR_DR60_STATUS_OK, "record into 1 s");
+        total += ri.stored;
+        if (ri.stopped) {
+          CHECK(ri.stop_reason == RR_DR60_STOP_REASON_MEMORY_FULL, "stop reason %u", ri.stop_reason);
+          full = 1;
+        }
+      }
+    }
+    CHECK(full && total == 6000, "memory-full stop at %zu samples (must be 6000)", total);
+    CHECK(rr_dr60_stop_recording(c, &so, NULL, 0) == RR_DR60_STATUS_NOT_RECORDING, "stop after a memory-full stop");
+    CHECK(rr_dr60_start_recording(c) == RR_DR60_STATUS_MEMORY_FULL, "start when full");
+    CHECK(rr_dr60_record(c, sq, 480, NULL, NULL, 0) == RR_DR60_STATUS_NOT_RECORDING, "record while idle");
+    rr_dr60_destroy(a);
+    rr_dr60_destroy(b);
+    rr_dr60_destroy(c);
+  }
 
   if (failures) {
     fprintf(stderr, "smoke: %d failure(s)\n", failures);

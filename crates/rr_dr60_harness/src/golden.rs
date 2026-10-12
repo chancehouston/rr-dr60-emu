@@ -20,6 +20,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use rr_dr60::Settings;
+
 use crate::checks::Make;
 use crate::{configs, stimulus};
 
@@ -43,6 +45,87 @@ pub const VAS_STIMULI: [&str; 3] = ["vas_burst_gap", "vas_noise_gaps", "vas_shor
 
 /// Spec 003 VAS golden configurations, in sorted order.
 pub const VAS_CONFIGS: [&str; 3] = ["default_vas", "vas_mute", "vas_only"];
+
+/// One golden entry record-then-play must reproduce (spec 006 SC-002; contracts/golden-format.md
+/// › The SC-002 reproduction rule), with the settings the split paths use for it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Applicable {
+    /// The golden file's name.
+    pub file: &'static str,
+    /// The stimulus name.
+    pub stimulus: &'static str,
+    /// The configuration name.
+    pub config: &'static str,
+    /// The host rate in Hz.
+    pub host_rate_hz: u32,
+    /// The settings for the split paths: the entry's, with the playback stage bypassed for
+    /// the after-VAS-tap entries (the paths ignore the tap, 006 FR-001, FR-002).
+    pub settings: Settings,
+    /// The committed entry.
+    pub entry: GoldenEntry,
+}
+
+/// The entries record-then-play reproduces (spec 006 SC-002; research R-09): the 154 at the
+/// default tap as they are (all 112 of `golden-v1.json`, the 21 `default_agc`, the 21
+/// `default_vas`), the 42 `vas_only` / `vas_mute` entries with `playback_stage_enabled =
+/// false`; the 21 `agc_only` entries at the host-rate "after AGC" tap are excluded. 196 of
+/// 217; the count is asserted so the check cannot skip entries silently.
+///
+/// # Panics
+///
+/// If a committed entry names an unknown stimulus or configuration, or the count is not 196.
+pub fn applicable_entries() -> Vec<Applicable> {
+    fn name_of(names: &[&'static str], s: &str) -> &'static str {
+        names
+            .iter()
+            .copied()
+            .find(|n| *n == s)
+            .unwrap_or_else(|| panic!("unknown golden name {s:?}"))
+    }
+    let files: [(&'static str, GoldenFile, &[&'static str], &[&'static str]); 3] = [
+        ("golden-v1.json", committed(), &STIMULI, &CONFIGS),
+        (
+            "golden-agc-v1.json",
+            committed_agc(),
+            &AGC_STIMULI,
+            &AGC_CONFIGS,
+        ),
+        (
+            "golden-vas-v1.json",
+            committed_vas(),
+            &VAS_STIMULI,
+            &VAS_CONFIGS,
+        ),
+    ];
+    let mut out = Vec::new();
+    for (file, golden, stimuli, cfgs) in files {
+        for entry in golden.entries {
+            let config = name_of(cfgs, &entry.config);
+            if config == "agc_only" {
+                continue; // the host-rate tap never reaches the device chain
+            }
+            let stimulus = name_of(stimuli, &entry.stimulus);
+            let mut settings = configs::settings(config, entry.host_rate_hz);
+            if matches!(config, "vas_only" | "vas_mute") {
+                settings.playback_stage_enabled = false; // the paths ignore the tap (006 FR-002)
+            }
+            out.push(Applicable {
+                file,
+                stimulus,
+                config,
+                host_rate_hz: entry.host_rate_hz,
+                settings,
+                entry,
+            });
+        }
+    }
+    assert_eq!(
+        out.len(),
+        196,
+        "SC-002: 196 of 217 golden entries are applicable"
+    );
+    out
+}
 
 /// The golden file (format `rr_dr60-golden`, version 1).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -23,6 +23,20 @@
 //!   A-021 – A-025) and is on by default; see [`VasSettings`]. And
 //! - **Stage 10**, the playback-side DAC and reconstruction filter.
 //!
+//! Since spec 006 the engine also has the device's structure: the **record path** (stages 3, 4
+//! with the clamp, and 5) writes into a **memory** of 60 minutes and 99 recordings (S-001;
+//! [`MemorySettings`], counted in stored device time, A-038; the store is reserved when the
+//! pipeline is created, about 86 MB at the defaults, virtual until written), and the
+//! **playback path** (stage 10) plays a recording back toward a speaker or earphone
+//! [`Route`] (a label in this version). The engine is idle, recording or playing, never two at
+//! once ([`State`], [`EngineState`]); each recording and each playback starts from the path's
+//! reset state (A-037); recording stops by itself at the exact sample at which the memory
+//! fills and keeps the partial recording (A-039). Record-then-play is bit-identical to the
+//! one-pass processing, which stays for hosts that only want the sound and is refused while a
+//! path is active. A recording leaves and enters the memory as an opaque, versioned byte
+//! sequence ([`Pipeline::export`], [`Pipeline::import`]): version 1 is the record path's
+//! 32-bit device-rate output, to become encoded frames when the codec is modeled (A-004).
+//!
 //! Stages 4 and 10 are modeled on the OKI MSM7702 voice-band codec at the device's internal
 //! rate of 6 kHz (A-026, verified from the service manual, S-002). They follow the codec
 //! family's datasheet templates scaled to that clock (A-027, medium confidence): the record
@@ -52,7 +66,11 @@
 //!   output on every supported platform and for any block size (FR-014),
 //!   including the VAS events.
 //! - **Real-time safe processing.** No allocation, locks or I/O per block
-//!   (FR-015). The crate is `no_std` and `forbid(unsafe_code)`, so clock
+//!   (FR-015), in the one-pass calls and in the record and playback calls, the
+//!   start and stop calls, the route and the reads (spec 006 FR-017). `erase`
+//!   and `erase_all` move stored samples (bounded by the store's size) and
+//!   `export` and `import` run a checksum over a recording, so they are not.
+//!   The crate is `no_std` and `forbid(unsafe_code)`, so clock
 //!   access, OS randomness, locks and I/O are unavailable to it by
 //!   construction (FR-016).
 #![no_std]
@@ -61,6 +79,9 @@
 extern crate alloc;
 
 mod error;
+mod form;
+mod memory;
+mod paths;
 mod pipeline;
 mod rate;
 mod resample;
@@ -69,12 +90,18 @@ mod settings;
 mod stages;
 #[cfg(test)]
 mod test_util;
+mod transport;
 mod validate;
 
 pub use error::{Error, Setting};
+pub use memory::MemoryStatus;
 pub use pipeline::{BlockInfo, Pipeline, VasEvent};
 pub use settings::{
-    AgcSettings, DEVICE_RATE_HZ, SUPPORTED_HOST_RATES, Settings, Tap, VasMode, VasSettings,
+    AgcSettings, DEVICE_RATE_HZ, MemorySettings, Route, SUPPORTED_HOST_RATES, Settings, Tap,
+    VasMode, VasSettings,
+};
+pub use transport::{
+    EngineState, PlayInfo, RecordInfo, State, StopOutcome, StopReason, StopResult,
 };
 
 /// Test-only hooks for the measurement harness. Not part of the public API; enabled only by
@@ -97,6 +124,25 @@ pub mod __test_hooks {
     /// contracts/rust-api.md › Test hooks).
     pub fn limiter_state(pipeline: &crate::Pipeline) -> f64 {
         pipeline.limiter_state()
+    }
+
+    /// The actual `Vec` capacities of the recording store and the span table, so the SC-007
+    /// footprint check reads the reservation and not the engine's arithmetic (spec 006 plan
+    /// review P6; contracts/rust-api.md › Test hooks).
+    pub fn memory_capacities(pipeline: &crate::Pipeline) -> (usize, usize) {
+        pipeline.memory_capacities()
+    }
+
+    /// Stage 10's settling length in device samples, the constant the playback drain uses
+    /// (spec 006 FR-008; research R-06; contracts/rust-api.md › Test hooks).
+    pub fn n10() -> usize {
+        crate::paths::N10
+    }
+
+    /// The settling length of a biquad cascade: the first index after which |h| stays below
+    /// `rel` × its own peak (spec 006 research R-06). Allocates; test use only.
+    pub fn stage_settling(sos: &[[f64; 5]], rel: f64) -> usize {
+        crate::paths::settling_len(sos, rel)
     }
 }
 

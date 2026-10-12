@@ -97,6 +97,16 @@ impl PolyphaseUp {
         self.taps
     }
 
+    /// The largest L1 norm over the polyphase branches (test-only; spec 006 research R-02: the
+    /// narrowing-delta bound is derived from it).
+    #[cfg(test)]
+    pub(crate) fn max_branch_l1_norm(&self) -> f64 {
+        self.branches
+            .chunks(self.taps)
+            .map(|b| b.iter().map(|c| c.abs()).sum::<f64>())
+            .fold(0.0, f64::max)
+    }
+
     /// Returns to the freshly created state. No allocation.
     pub(crate) fn reset(&mut self) {
         self.ring.fill(0.0);

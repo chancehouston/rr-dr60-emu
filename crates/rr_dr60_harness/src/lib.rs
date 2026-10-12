@@ -12,5 +12,7 @@ pub mod checks;
 pub mod configs;
 pub mod golden;
 pub mod report;
+pub mod smoke_reference;
+pub mod split_checks;
 pub mod stimulus;
 pub mod vas_checks;

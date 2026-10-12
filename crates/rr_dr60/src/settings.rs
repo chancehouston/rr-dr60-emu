@@ -231,6 +231,59 @@ impl Default for VasSettings {
     }
 }
 
+/// The modeled memory's capacity (spec 006 FR-010; data-model.md › Settings): recorded device
+/// time and number of recordings, both counted the way the device reports them (A-038) and
+/// both configurable at construction. The store for the full capacity is reserved when the
+/// pipeline is created or reconfigured (FR-017), so starting a recording never allocates.
+///
+/// The defaults are the device's figures: 60 minutes and 99 items (S-001). Figures above them
+/// are allowed and are **not the device's** (an expanded-memory configuration). A value of 0
+/// is the spec's "capacity too small" refusal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct MemorySettings {
+    /// Capacity in seconds of recorded device time. Default 3600 (S-001: 60 minutes). Range 1 to
+    /// 86 400 (24 hours; engineering target, 006 FR-010).
+    pub capacity_s: u32,
+    /// The most recordings the memory holds. Default 99 (S-001). Range 1 to 9 999 (engineering
+    /// target, 006 FR-010).
+    pub max_recordings: u32,
+}
+
+impl MemorySettings {
+    /// The device's figures (S-001: 60 minutes, 99 items).
+    pub const DEVICE: Self = Self {
+        capacity_s: 3600,   // S-001: 60 minutes
+        max_recordings: 99, // S-001: 99 items
+    };
+}
+
+impl Default for MemorySettings {
+    /// [`MemorySettings::DEVICE`].
+    fn default() -> Self {
+        Self::DEVICE
+    }
+}
+
+/// The playback output route (spec 006 FR-015): the speaker, or the 2.5 mm earphone jack. The
+/// routes are exclusive, as on the device (S-001: no sound from the speaker while an earphone
+/// is connected). It is **not** a setting: the host selects it at any time, during playback
+/// too, with `Pipeline::set_route`, and it survives `reset` and `reconfigure`.
+///
+/// In this version the two routes produce identical output. Signal-chain stages 11–13 (the
+/// volume control and power amplifier, the speaker, the earphone follower; A-031, A-010,
+/// A-032) are not yet modeled; the route exists so that those features do not change the
+/// interface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum Route {
+    /// The built-in speaker (the default: nothing plugged in).
+    #[default]
+    Speaker,
+    /// The earphone jack (S-001; its path bypasses the power amplifier, A-032).
+    Earphone,
+}
+
 /// Pipeline configuration (data-model.md › Settings).
 ///
 /// Settings are fixed for the life of a configuration. To change them, call
@@ -262,11 +315,14 @@ pub struct Settings {
     pub agc: AgcSettings,
     /// Signal-chain stage 5 (VAS) settings. Default [`VasSettings::DEVICE`] (spec 003).
     pub vas: VasSettings,
+    /// The modeled memory's capacity. Default [`MemorySettings::DEVICE`] (spec 006).
+    pub memory: MemorySettings,
 }
 
 impl Settings {
     /// Default settings for the given host rate: the limiter and the VAS on with the device
-    /// values, both band-limit stages and the ADC clamp on, tap after playback, seed 0.
+    /// values, both band-limit stages and the ADC clamp on, tap after playback, seed 0, the
+    /// memory at the device's 60 minutes and 99 recordings.
     ///
     /// The rate is not validated here. [`Pipeline::new`](crate::Pipeline::new) validates it.
     pub const fn new(host_rate_hz: u32) -> Self {
@@ -276,16 +332,17 @@ impl Settings {
             playback_stage_enabled: true, // A-002
             adc_clamp_enabled: true,      // A-030
             tap: Tap::AfterPlayback,
-            seed: 0,                  // FR-009
-            agc: AgcSettings::DEVICE, // A-020, A-028, A-034, A-035
-            vas: VasSettings::DEVICE, // S-001, A-008, A-021 – A-024
+            seed: 0,                        // FR-009
+            agc: AgcSettings::DEVICE,       // A-020, A-028, A-034, A-035
+            vas: VasSettings::DEVICE,       // S-001, A-008, A-021 – A-024
+            memory: MemorySettings::DEVICE, // S-001: 60 min, 99 items (006 FR-010)
         }
     }
 
     /// Checks these settings without creating a pipeline: the host rate first (FR-002), then
     /// every AGC field (spec 002 FR-011; knee, attack, release since spec 005), then every VAS
-    /// field (spec 003 FR-012). [`Pipeline::new`](crate::Pipeline::new) runs the same check.
-    /// Never allocates.
+    /// field (spec 003 FR-012), then the memory figures (spec 006 FR-010).
+    /// [`Pipeline::new`](crate::Pipeline::new) runs the same check. Never allocates.
     ///
     /// # Errors
     ///
@@ -394,6 +451,20 @@ mod tests {
     fn tap_after_vas_exists_and_default_is_unchanged() {
         assert_ne!(Tap::AfterVas, Tap::AfterPlayback);
         assert_eq!(Tap::default(), Tap::AfterPlayback);
+    }
+
+    /// 006 T011 (spec 006 FR-010; contracts/rust-api.md): the memory's device figures, 60 min
+    /// and 99 items (S-001), are the defaults; the route defaults to the speaker.
+    #[test]
+    fn memory_defaults_cite_s001_and_route_defaults_to_speaker() {
+        let d = MemorySettings::DEVICE;
+        assert_eq!(d.capacity_s, 3600); // S-001: 60 minutes
+        assert_eq!(d.max_recordings, 99); // S-001: 99 items
+        assert_eq!(MemorySettings::default(), MemorySettings::DEVICE);
+        assert_eq!(Settings::new(48_000).memory, MemorySettings::DEVICE);
+        assert_eq!(Settings::new(6000).memory, MemorySettings::DEVICE);
+        assert_eq!(Route::default(), Route::Speaker); // S-001: the earphone is plugged in
+        assert_ne!(Route::Speaker, Route::Earphone);
     }
 
     #[test]
