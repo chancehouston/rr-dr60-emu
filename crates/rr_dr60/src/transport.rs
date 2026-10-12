@@ -363,9 +363,11 @@ impl Pipeline {
     }
 
     /// The playback path's latency in host samples: output samples from the start of playback
-    /// until the first stored sample is represented, measured as the peak of a one-sample
-    /// recording's playback (spec 006 FR-016). The two latencies sum to
-    /// [`latency_samples`](Self::latency_samples) within one sample. Real-time safe.
+    /// until the first stored sample is represented, `round(D + τ_play · host / 6000)`, and
+    /// measured as the path's 1 kHz group delay (spec 006 FR-016); the onset peak of a
+    /// one-sample recording lies 0.2–0.3 device samples later and is reported for information
+    /// only. The two latencies sum to [`latency_samples`](Self::latency_samples) within one
+    /// sample. Real-time safe.
     pub fn playback_latency_samples(&self) -> u32 {
         self.player.latency_host_samples()
     }

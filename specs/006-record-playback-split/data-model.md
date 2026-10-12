@@ -14,13 +14,13 @@ host input → [limiter] → host→device conversion → [stage 4] → [clamp] 
 
 | Type | Fields | Notes |
 |---|---|---|
-| `RecordHalf` | `record: RecordStage`, `run_record`, `clamp: ClampStage`, `vas: VasStage`, `run_vas`, `mute` | `process(f64) -> RecordOut`; `Keep(f32)`, `Resume(f32)`, `Drop`; the `f32` is `narrow_device(d)` (R-02) |
+| `RecordHalf` | `record: RecordStage`, `run_record`, `clamp: ClampStage`, `vas: VasStage`, `run_vas`, `mute` | `process(f64) -> RecordOut`; `Keep(f64)`, `Resume(f64)`, `Mute`, `Drop` (the 64-bit post-VAS sample; `Mute` is the stored +0.0 of a muted sample, its own variant so the counters can open the region); `RecordPath::push` narrows the kept sample with `narrow_device` (R-02; spec Clarifications T014) |
 | `PlaybackHalf` | `playback: PlaybackStage`, `run_playback` | `process(f32) -> f64` |
 | `RecordPath` | `limiter`, `run_limiter`, `down: Option<PolyphaseDown>`, `half: RecordHalf`, `counters: EventCounters` (owned here only) | `push(f32) -> Option<f32>` (the kept narrowed sample after the counters recorded the outcome), `take_event() -> Option<VasEvent>`; the recorder's counters use `l = m = 1` (device positions); the one-pass's `RecordPath` uses the rate plan (host positions, spec 003) |
-| `PlaybackPath` | `half: PlaybackHalf`, `up: Option<PolyphaseUp>`, `pending: Option<f32>` (identity rate) | `push_device(f32)`, `try_next_host() -> Option<f32>` |
+| `PlaybackPath` | `half: PlaybackHalf`, `up: Option<PolyphaseUp>`, `pending: Option<f64>` (identity rate; the half's output) | `push_device(f32)`, `try_next_host() -> Option<f32>` |
 | `OnePass` | `rec: RecordPath`, `play: PlaybackPath`, `tap_after_agc` | the existing stream; its halves honour the tap; no counters of its own |
 
-`narrow_device(d: f64) -> f32 = narrow_out(d)` (round to nearest, subnormals → 0.0, saturate at ±`f32::MAX`). Applied for every tap but `AfterAgc`.
+`narrow_device(d: f64) -> f32 = narrow_out(d)` (round to nearest, subnormals → 0.0, saturate at ±`f32::MAX`), in `paths.rs`, applied by `RecordPath::push` for every tap but `AfterAgc`; the test-only un-narrowed route is `push_wide` / `push_device_wide`, selected by a flag on `OnePass` under `cfg(any(test, feature = "__test-hooks"))`.
 
 ## Memory (research R-03)
 
@@ -50,7 +50,7 @@ Operations: `open()` (push an empty span; refuses when `remaining == 0` → `Mem
 | `StopResult` | `Kept { number: u32, length: u64 }`, `DiscardedEmpty` |
 | `PlayInfo` | `produced: usize` (host samples written), `finished: bool` (the drain ended in this call; the state is idle) |
 | `MemoryStatus` | `capacity_samples: u64`, `used_samples: u64`, `remaining_samples: u64`, `max_recordings: u32`, `count: u32`, `slots_remaining: u32` |
-| Player cursor | `span index`, `offset` within the span, `drained: usize` (host samples emitted since the span ended), `fed_zero: bool` |
+| Player cursor | `span: Span` (a copy of the played span), `offset` (stored samples pulled so far), `produced: u64` (host samples produced so far), `total: u64` (⌈K·m/l⌉ + the drain, R-06), `number: u32` |
 | Recorder flags | `fed_any: bool` (any host sample pushed since start, an empty block does not count; decides the flush and the empty case); an open mute-mode region is closed by a synthesized event at stop |
 
 ### Transitions
@@ -58,7 +58,7 @@ Operations: `open()` (push an empty span; refuses when `remaining == 0` → `Mem
 | From | Call | To | Refusals (in check order) |
 |---|---|---|---|
 | Idle | `start_recording` | Recording | `MemoryFull`, `NoRecordingSlots` |
-| Recording | `start_recording` / `start_playback` / one-pass / `erase*` / `import` / `reconfigure` | Recording | `RecordingInProgress` |
+| Recording | `start_recording` / `start_playback` / one-pass (the in-place forms produce nothing, T024) / `erase*` / `import` / `reconfigure` | Recording | `RecordingInProgress` |
 | Playing | `start_recording` / `start_playback` / one-pass / `reconfigure` | Playing | `PlaybackInProgress` |
 | Recording | `record(input, events)` | Recording, or Idle when the memory fills (`stopped = MemoryFull`; the span is closed, `Kept`; a following `stop_recording` is `NotRecording`) | — |
 | Recording | `stop_recording` | Idle | — (flush unless `!fed_any`; `Kept` or `DiscardedEmpty`) |

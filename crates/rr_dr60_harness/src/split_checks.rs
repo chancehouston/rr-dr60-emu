@@ -273,7 +273,7 @@ pub fn golden_equivalence(rate: u32) -> Vec<MeasurementResult> {
             label.clone(),
             pass(same),
             "",
-            Tolerance::Exact(1.0),
+            Tolerance::Exact(1.0), // FR-007
         ));
         if let Some(vas) = &a.entry.vas {
             let mute = a.settings.vas.mode == VasMode::Mute;
@@ -290,7 +290,7 @@ pub fn golden_equivalence(rate: u32) -> Vec<MeasurementResult> {
                 label,
                 pass(got == vas.events && run.last_paused == vas.paused_at_end),
                 "",
-                Tolerance::Exact(1.0),
+                Tolerance::Exact(1.0), // FR-006
             ));
         }
     }
@@ -305,6 +305,8 @@ pub fn live_stimuli(rate: u32) -> Vec<(String, Vec<f32>)> {
         .iter()
         .map(|s| ((*s).to_string(), golden::stimulus(s, rate)))
         .collect();
+    // Fixed PRNG seeds (research R-08; spec 001 FR-014 determinism): distinct from the golden
+    // and chain seeds so the live set is its own stimulus, identical on every run.
     let (speech, _) =
         chain_checks::speech_like_pattern(rate, chain_checks::BURST_DBFS, FLOOR_DBFS, 0x0D60);
     set.push(("speech_floor".into(), speech));
@@ -351,7 +353,7 @@ pub fn live_equivalence(rate: u32) -> Vec<MeasurementResult> {
                     label.clone(),
                     run.pre_drain.len() as f64 - playback_len(k, rate) as f64,
                     "samples",
-                    Tolerance::Exact(0.0),
+                    Tolerance::Exact(0.0), // FR-007
                 ));
                 let prefix_ok = want.len() >= run.pre_drain.len()
                     && same_bits(&want[..run.pre_drain.len()], &run.pre_drain);
@@ -364,7 +366,7 @@ pub fn live_equivalence(rate: u32) -> Vec<MeasurementResult> {
                     label.clone(),
                     pass(prefix_ok),
                     "",
-                    Tolerance::Exact(1.0),
+                    Tolerance::Exact(1.0), // FR-007
                 ));
                 match &first {
                     None => first = Some(run.pre_drain.clone()),
@@ -377,7 +379,7 @@ pub fn live_equivalence(rate: u32) -> Vec<MeasurementResult> {
                         label,
                         pass(same_bits(f, &run.pre_drain)),
                         "",
-                        Tolerance::Exact(1.0),
+                        Tolerance::Exact(1.0), // FR-018
                     )),
                 }
             }
@@ -411,7 +413,7 @@ pub fn length_rule(rate: u32) -> Vec<MeasurementResult> {
                 format!("K = {k}"),
                 out.len() as f64 - (playback_len(u64::from(k), rate) + drain) as f64,
                 "samples",
-                Tolerance::Exact(0.0),
+                Tolerance::Exact(0.0), // FR-007
             )
         })
         .collect()
@@ -438,7 +440,7 @@ pub fn route_identity(rate: u32) -> Vec<MeasurementResult> {
             "sweep_log",
             pass(same_bits(&speaker, &earphone)),
             "",
-            Tolerance::Exact(1.0),
+            Tolerance::Exact(1.0), // FR-015
         ),
         row(
             "006/FR-015",
@@ -449,7 +451,7 @@ pub fn route_identity(rate: u32) -> Vec<MeasurementResult> {
             "sweep_log",
             pass(reported && p.route() == Route::Earphone),
             "",
-            Tolerance::Exact(1.0),
+            Tolerance::Exact(1.0), // FR-015
         ),
     ]
 }
@@ -479,7 +481,7 @@ pub fn two_items(rate: u32) -> Vec<MeasurementResult> {
         "+9 dBFS 1 s, then -20 dBFS 1 s",
         pass(same),
         "",
-        Tolerance::Exact(1.0),
+        Tolerance::Exact(1.0), // FR-004
     )]
 }
 
@@ -498,8 +500,10 @@ pub fn cross_rate_tone(record_rate: u32, play_rate: u32) -> Vec<MeasurementResul
     };
     let mut p = Pipeline::new(configs::settings("default_agc", record_rate)).expect("rate");
     let n = record_one(&mut p, &tone(record_rate));
+    let length_before = p.recording_length(n).expect("recorded");
     p.reconfigure(configs::settings("default_agc", play_rate))
         .expect("reconfigure keeps the memory");
+    let length_after = p.recording_length(n).expect("kept across reconfigure");
     let out = play_to_end(&mut p, n, PLAY_BLOCK);
     let pre = &out[..out.len() - p.drain_samples() as usize];
     let fs = f64::from(play_rate);
@@ -514,6 +518,17 @@ pub fn cross_rate_tone(record_rate: u32, play_rate: u32) -> Vec<MeasurementResul
     vec![
         row(
             "006/FR-007",
+            "recording length after reconfigure minus before (device samples)",
+            RULES,
+            play_rate,
+            "default_agc",
+            label.clone(),
+            length_after as f64 - length_before as f64,
+            "samples",
+            Tolerance::Exact(0.0), // FR-007, US1 scenario 5: the stored length is independent of the rate
+        ),
+        row(
+            "006/FR-007",
             "cross-rate level minus one-pass level",
             RULES,
             play_rate,
@@ -521,7 +536,7 @@ pub fn cross_rate_tone(record_rate: u32, play_rate: u32) -> Vec<MeasurementResul
             label.clone(),
             analysis::db(amp_a / amp_b),
             "dB",
-            Tolerance::Range(-0.1, 0.1),
+            Tolerance::Range(-0.1, 0.1), // FR-007
         ),
         row(
             "006/FR-007",
@@ -532,7 +547,7 @@ pub fn cross_rate_tone(record_rate: u32, play_rate: u32) -> Vec<MeasurementResul
             label,
             f_a - f_b,
             "Hz",
-            Tolerance::Range(-0.1, 0.1),
+            Tolerance::Range(-0.1, 0.1), // FR-007
         ),
     ]
 }
@@ -588,7 +603,7 @@ pub fn drain_level(rate: u32) -> Vec<MeasurementResult> {
             "1 kHz 0 dBFS cut on a peak",
             out.len() as f64 - expected_total as f64,
             "samples",
-            Tolerance::Exact(0.0),
+            Tolerance::Exact(0.0), // FR-008
         ),
         row(
             "006/FR-008",
@@ -599,7 +614,7 @@ pub fn drain_level(rate: u32) -> Vec<MeasurementResult> {
             "1 kHz 0 dBFS cut on a peak",
             pass(finished_once == 1 && p.state().state == State::Idle),
             "",
-            Tolerance::Exact(1.0),
+            Tolerance::Exact(1.0), // FR-008
         ),
         row(
             "006/FR-008",
@@ -610,7 +625,7 @@ pub fn drain_level(rate: u32) -> Vec<MeasurementResult> {
             "1 kHz 0 dBFS cut on a peak",
             level,
             "dBFS",
-            Tolerance::AtMost(-80.0),
+            Tolerance::AtMost(-80.0), // FR-008
         ),
     ]
 }
@@ -637,7 +652,7 @@ pub fn latency_sum(rate: u32) -> Vec<MeasurementResult> {
         "reported figures",
         sum - f64::from(p.latency_samples()),
         "samples",
-        Tolerance::Range(-1.0, 1.0),
+        Tolerance::Range(-1.0, 1.0), // FR-016
     ));
     // Recordings 1 and 2: 1 s tones at 999 and 1001 Hz, stored exactly (6 kHz, bypass_all,
     // no flush); recording 3: one sample, for the onset peak.
@@ -664,6 +679,8 @@ pub fn latency_sum(rate: u32) -> Vec<MeasurementResult> {
             let out = play_to_end(&mut p, n, PLAY_BLOCK);
             let pre = &out[..out.len() - p.drain_samples() as usize];
             let reference = stimulus::tone(f, 0.25, fs, pre.len());
+            // Skip the first fifth of the tone (its onset transient, ≫ the path's settling)
+            // and fit the phase over the rest (engineering target; spec 004 FR-004's method).
             analysis::gain_and_phase(&reference, pre, f, fs, pre.len() / 5)
         };
         // The group delay from the phase slope between 999 and 1001 Hz (004 FR-004's method).
@@ -678,7 +695,7 @@ pub fn latency_sum(rate: u32) -> Vec<MeasurementResult> {
             "stored tones 999/1001 Hz",
             reported - measured,
             "samples",
-            Tolerance::Range(-1.0, 1.0),
+            Tolerance::Range(-1.0, 1.0), // FR-016
         ));
         let out = play_to_end(&mut p, 3, PLAY_BLOCK);
         let (argmax, _) =
@@ -719,7 +736,7 @@ pub fn state_table(rate: u32) -> Vec<MeasurementResult> {
             "state table",
             pass(ok),
             "",
-            Tolerance::Exact(1.0),
+            Tolerance::Exact(1.0), // FR-003
         ));
     };
     // Idle.

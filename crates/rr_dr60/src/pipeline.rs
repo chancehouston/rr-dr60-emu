@@ -226,26 +226,28 @@ impl Pipeline {
     /// be reserved (spec 006 FR-017).
     pub fn new(settings: Settings) -> Result<Self, Error> {
         validate(&settings)?;
+        let plan = RatePlan::for_host(settings.host_rate_hz)?;
         let memory = Memory::new(&settings.memory)?;
-        Self::with_memory(settings, memory, Route::default())
+        Ok(Self::with_memory(settings, &plan, memory, Route::default()))
     }
 
-    /// Builds every path around an existing memory (`new` and `reconfigure`).
-    fn with_memory(settings: Settings, memory: Memory, route: Route) -> Result<Self, Error> {
-        let plan = RatePlan::for_host(settings.host_rate_hz)?;
-        let one_pass = OnePass::new(&settings, &plan);
-        let latency = latency_samples(&plan, &settings, &one_pass);
-        Ok(Self {
+    /// Builds every path around an existing memory (`new` and `reconfigure`). Infallible once
+    /// the settings are validated and the plan exists, so `reconfigure` can move the memory in
+    /// without a window in which the pipeline has none.
+    fn with_memory(settings: Settings, plan: &RatePlan, memory: Memory, route: Route) -> Self {
+        let one_pass = OnePass::new(&settings, plan);
+        let latency = latency_samples(plan, &settings, &one_pass);
+        Self {
             settings,
             one_pass,
             latency,
-            recorder: RecordPath::new(&settings, &plan, false, true),
-            player: PlaybackPath::new(&settings, &plan, false),
+            recorder: RecordPath::new(&settings, plan, false, true),
+            player: PlaybackPath::new(&settings, plan, false),
             memory,
             transport: Transport::default(),
             route,
-            plan_l_m: paths::l_m(&plan),
-        })
+            plan_l_m: paths::l_m(plan),
+        }
     }
 
     /// Processes one block. `input` and `output` must have the same length, which may be
@@ -422,12 +424,15 @@ impl Pipeline {
         if !self.memory.fits(&settings.memory) {
             return Err(Error::StoredExceedsCapacity);
         }
+        let plan = RatePlan::for_host(settings.host_rate_hz)?;
         let memory = if self.memory.same_capacity(&settings.memory) {
-            self.memory.clone()
+            // Kept by move (research R-03): no second reservation and no copy. Nothing below
+            // can fail, so the pipeline is never left without its store.
+            core::mem::replace(&mut self.memory, Memory::with_capacity_samples(0, 0)?)
         } else {
             self.memory.copied_to(&settings.memory)?
         };
-        *self = Self::with_memory(settings, memory, self.route)?;
+        *self = Self::with_memory(settings, &plan, memory, self.route);
         Ok(())
     }
 

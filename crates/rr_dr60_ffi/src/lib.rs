@@ -23,7 +23,7 @@
 use std::ffi::c_char;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use rr_dr60::{BlockInfo, Error, Pipeline, Setting, Settings, Tap, VasEvent, VasMode};
+use rr_dr60::{BlockInfo, Error, Pipeline, Setting, Settings, State, Tap, VasEvent, VasMode};
 
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
@@ -652,6 +652,13 @@ unsafe fn process_block(
     if frames == 0 {
         return early(RrDr60Status::Ok);
     }
+    // The one-pass is refused while a recording or playback is in progress (spec 006 FR-009):
+    // the Rust in-place calls produce nothing, so the C status must carry the reason.
+    match p.inner.state().state {
+        State::Recording => return early(RrDr60Status::RecordingInProgress),
+        State::Playing => return early(RrDr60Status::PlaybackInProgress),
+        _ => {}
+    }
     if input.is_null() || output.is_null() || (events.is_null() && events_capacity > 0) {
         return early(RrDr60Status::NullPointer);
     }
@@ -692,7 +699,8 @@ unsafe fn process_block(
                     std::slice::from_raw_parts_mut(output, frames),
                 )
             };
-            // Lengths are equal by construction, so this cannot fail.
+            // Lengths are equal by construction and the transport is idle (checked above),
+            // so this cannot fail.
             p.inner.process_with_events(x, y, slots).unwrap_or_default()
         }
     }));
@@ -1080,5 +1088,49 @@ mod tests {
                 RrDr60SettingField::StructSize
             ))
         );
+    }
+
+    /// Spec 006 FR-009 / FR-020 (coach review of US1, finding 1): `rr_dr60_process` reports
+    /// `RECORDING_IN_PROGRESS` / `PLAYBACK_IN_PROGRESS` instead of silently producing nothing,
+    /// writes the idle info and leaves the output untouched.
+    #[test]
+    fn process_is_refused_while_a_transport_is_active() {
+        let mut s = rr_dr60_settings_default(48_000);
+        s.memory_capacity_s = 1;
+        let mut handle: *mut RrDr60Pipeline = std::ptr::null_mut();
+        // SAFETY: both pointers are valid for the call.
+        assert_eq!(unsafe { rr_dr60_create(&s, &mut handle) }, RrDr60Status::Ok);
+        let x = [0.25f32; 48];
+        let mut y = [7.0f32; 48];
+        let mut info = RrDr60BlockInfo {
+            produced: 99,
+            ..RrDr60BlockInfo::default()
+        };
+        // SAFETY: the handle is live (created above).
+        unsafe {
+            (*handle).inner.start_recording().unwrap();
+            let fed = (*handle).inner.record(&x, &mut []).unwrap();
+            assert!(fed.stopped.is_none());
+        }
+        // SAFETY: the buffers are valid for 48 floats and do not overlap.
+        let status = unsafe { rr_dr60_process(handle, x.as_ptr(), y.as_mut_ptr(), 48, &mut info) };
+        assert_eq!(status, RrDr60Status::RecordingInProgress);
+        assert_eq!(info.produced, 0);
+        assert!(y.iter().all(|&v| v == 7.0));
+        // SAFETY: the handle is live.
+        unsafe {
+            let stop = (*handle).inner.stop_recording(&mut []).unwrap();
+            assert!(matches!(
+                stop.result,
+                rr_dr60::StopResult::Kept { number: 1, .. }
+            ));
+            (*handle).inner.start_playback(1).unwrap();
+        }
+        // SAFETY: as above; in place this time.
+        let status = unsafe { rr_dr60_process(handle, y.as_ptr(), y.as_mut_ptr(), 48, &mut info) };
+        assert_eq!(status, RrDr60Status::PlaybackInProgress);
+        assert!(y.iter().all(|&v| v == 7.0));
+        // SAFETY: the handle is live and not used afterwards.
+        unsafe { rr_dr60_destroy(handle) };
     }
 }

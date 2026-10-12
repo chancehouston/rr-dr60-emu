@@ -147,14 +147,16 @@ impl Memory {
     }
 
     /// Closes the recording in progress: kept as recording `count` with its length, or, when
-    /// nothing was fed, discarded (spec 006 FR-012; A-039: an empty item is not created).
+    /// nothing was fed or nothing was stored, discarded (spec 006 FR-012; A-039: an empty item
+    /// is not created). Today a fed recording always stores at least the flush, so the second
+    /// condition is insurance for FR-012's wording.
     pub(crate) fn close(&mut self, fed_any: bool) -> StopResult {
         debug_assert!(self.in_progress);
         self.in_progress = false;
         let start = self.spans.last().map_or(0, |s| s.start);
         let len = self.store.len() - start;
-        if !fed_any {
-            debug_assert_eq!(len, 0, "nothing fed, nothing stored");
+        if !fed_any || len == 0 {
+            debug_assert!(len == 0 || fed_any, "nothing fed, nothing stored");
             self.store.truncate(start);
             self.spans.pop();
             return StopResult::DiscardedEmpty;
@@ -365,6 +367,18 @@ mod tests {
             ),
             (30, 70, 2, 1)
         );
+    }
+
+    /// FR-012 (coach review of US1, finding 3): a close with input fed but nothing stored is
+    /// discarded too; today unreachable through the transport (the flush always stores), so
+    /// the memory guards it directly.
+    #[test]
+    fn close_with_input_but_nothing_stored_discards() {
+        let mut m = small();
+        m.open().unwrap();
+        assert_eq!(m.close(true), StopResult::DiscardedEmpty);
+        assert_eq!(m.count(), 0);
+        assert_eq!(m.used(), 0);
     }
 
     /// FR-012, A-039: a close with nothing fed discards the recording and pops its span.
