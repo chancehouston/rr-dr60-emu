@@ -146,7 +146,7 @@ Decisions for feature 006. They build on [spec 001's research](../001-pipeline-s
 
 ## R-12 Engineering-target constants (FR-021)
 
-Labelled `// engineering target (006 FR-xxx)` in code: the capacity ranges (1 ..= 86 400 s, 1 ..= 9 999 recordings); the −100 dB settling criterion behind N₁₀ and the −80 dBFS / 1 ms drain check; the ±0.1 dB / ±0.1 Hz cross-rate tolerances and the −20 dBFS, 5 s stimulus; the 25 % timing bound; the 90 MB budget; the narrowing delta bound (2 output LSBs); the harness block sizes (4 801, 997); the 10 s / 3-recording test capacity; the corruption set's positions; the magic string and header layout (a format choice, cited to this spec). Device-derived constants cite S-001 (3 600 s, 99), S-002 (16 Mbit), A-026 (6 000 Hz), A-038, A-039.
+Labelled `// engineering target (006 FR-xxx)` in code: the capacity ranges (1 ..= 86 400 s, 1 ..= 9 999 recordings); the −100 dB settling criterion behind N₁₀ and the −80 dBFS / 1 ms drain check; the ±0.1 dB / ±0.1 Hz cross-rate tolerances and the −20 dBFS, 5 s stimulus; the 25 % timing bound; the 90 MB budget; the narrowing delta bound (4 full-scale LSBs, worst case 2.05 from the L1 norms); the harness block sizes (4 801, 997); the 10 s / 3-recording test capacity; the corruption set's positions; the magic string and header layout (a format choice, cited to this spec). Device-derived constants cite S-001 (3 600 s, 99), S-002 (16 Mbit), A-026 (6 000 Hz), A-038, A-039.
 
 ## R-13 Risks
 
