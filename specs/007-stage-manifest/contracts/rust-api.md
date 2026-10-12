@@ -42,7 +42,7 @@ pub struct StageEntry {
     pub sources: &'static [&'static str],
     pub assumptions: &'static [&'static str],
     pub coverage: &'static str,          // "" when nothing is left out or the stage is not modeled
-    pub controls: &'static str,          // "" when the engine offers no control or read-out
+    pub controls: &'static str,          // verbatim Rust paths; "" iff no control or read-out (non-empty for every modeled stage)
     pub model_version: &'static str,     // "" iff status == NotModeled
 }
 
@@ -63,7 +63,7 @@ Hidden, for the FFI crate only: `#[doc(hidden)] pub mod __c { pub static HEADER:
 
 ## Rustdoc
 
-Every public item documents its spec rule; the module docs carry the claims-policy sentence and the four status definitions, and the crate docs gain one paragraph and the README's read loop as a doctest:
+Every public item documents its spec rule; the module docs carry the claims-policy sentence, the four status definitions, the text-fragment note for the register links and the scope of the guard (manifest ↔ registers by test; code ↔ registers by the bypass-control unit test, the traceability script and review); the crate docs gain one paragraph and a short doctest:
 
 ```rust
 let m = rr_dr60::manifest();
@@ -72,3 +72,9 @@ for s in m.stages() {
     println!("{} {}: {:?} ({:?}) {}", s.number, s.name, s.status, s.confidence, s.description);
 }
 ```
+
+The README's Rust block is not this doctest but `crates/rr_dr60_harness/examples/manifest.rs` verbatim (research R-05), a self-contained program over every field.
+
+## Core unit tests (research R-01)
+
+Fifteen entries numbered 1..=15; `stage(0)` and `stage(16)` are `None`; `counts` equal a runtime tally and sum to 15; the `__c` twin of every string equals the string plus `\0`; `header.library_version == VERSION`; and the **bypass-control anchor**: for every entry with `status != NotModeled`, a `match` on `number` reads that stage's control on `Settings::new(6000)` (3 `agc.enabled`, 4 `record_stage_enabled`, 5 `vas.enabled`, 8 `memory.capacity_s`, 10 `playback_stage_enabled`, otherwise `panic!("modeled stage {n} has no bypass control")`).

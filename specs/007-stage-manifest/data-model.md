@@ -17,8 +17,8 @@ Manifest
 | | `stage_count` | `u32` | 15 |
 | | `counts` | `StatusCounts` | computed from the entries at compile time; sums to 15 (FR-003, FR-013 (f)) |
 | | `basis` | `&'static str` | FR-012's sentence; ≤ 160 characters |
-| | `evidence_link` | `&'static str` | the "Hardware evidence" issue chooser; ≤ 200 |
-| | `assumptions_link` | `&'static str` | `docs/hardware/assumptions.md` on the default branch; ≤ 200; an ID appended as `#a-028` is a row anchor (clarify 2026-10-12) |
+| | `evidence_link` | `&'static str` | the hardware-evidence capture form (`issues/new?template=hardware_evidence.yml`); ≤ 200 |
+| | `assumptions_link` | `&'static str` | `docs/hardware/assumptions.md` on the default branch; ≤ 200; the page has no row anchors, a host appends a text fragment `#:~:text=A-028` (plan reviews 2026-10-12) |
 | | `sources_link` | `&'static str` | `docs/hardware/sources.md` likewise |
 | `StatusCounts` | `not_modeled`, `assumed`, `sourced`, `checked` | `u32` | one per `StageStatus` |
 | `StageEntry` | `number` | `u8` | 1–15, stable (FR-002) |
@@ -31,7 +31,7 @@ Manifest
 | | `sources` | `&'static [&'static str]` | `S-###` strings, ascending, each a register row, none general-only required (FR-005) |
 | | `assumptions` | `&'static [&'static str]` | `A-###` strings, ascending, each a current register row (FR-005) |
 | | `coverage` | `&'static str` | what the engine leaves out at this stage; ≤ 120; empty when nothing or when not modeled; FR-010 applies |
-| | `controls` | `&'static str` | Rust API names verbatim, "splices" for VAS events; ≤ 120; empty when none (FR-007) |
+| | `controls` | `&'static str` | verbatim Rust paths (`agc.knee_dbfs`, `Tap::AfterVas`, `memory_status`), "splices" for VAS events; ≤ 120; empty iff no control or read-out, so non-empty for every modeled stage (FR-007, FR-013 (g)) |
 | | `model_version` | `&'static str` | `X.Y.Z` ≤ the library version, appearing in the CHANGELOG; empty iff `NotModeled` (FR-008) |
 
 Enums (`#[non_exhaustive]`, `Copy`, `Debug`, `PartialEq`, `Eq`, `Hash`):
@@ -50,14 +50,14 @@ The hidden C twin table (`manifest::__c`) carries the same values with every str
 |---|---|---|---|---|---|---|---|---|
 | 1 | `mic_capsule` | Record | NotModeled | NotApplicable | S-002 | A-005 | | |
 | 2 | `mic_amp` | Record | NotModeled | NotApplicable | S-002 | A-006, A-029 | | |
-| 3 | `limiter` | Record | Assumed | Low | S-001, S-002 | A-007, A-019, A-020, A-028, A-034, A-035, A-036 | 0.5.0 | |
+| 3 | `limiter` | Record | Assumed | Low | S-001, S-002 | A-007, A-019, A-020, A-028, A-030, A-034, A-035, A-036, A-037 | 0.5.0 | |
 | 4 | `codec_input` | Record | Assumed | Medium | S-002, S-003, S-005, S-007 | A-003, A-015, A-016, A-026, A-027, A-030 | 0.5.0 | µ-law quantization, idle noise and the device's own aliasing above 3 kHz |
-| 5 | `vas` | Record | Assumed | Low | S-001, S-002 | A-008, A-021, A-022, A-023, A-024, A-025, A-033 | 0.5.0 | a digital gain from the sensitivity setting, if the device applies one |
+| 5 | `vas` | Record | Assumed | Low | S-001, S-002 | A-008, A-021, A-022, A-023, A-024, A-025, A-033, A-037 | 0.5.0 | a digital gain from the sensitivity setting, if the device applies one |
 | 6 | `noise_reduction` | Record | NotModeled | NotApplicable | S-004 | A-009 | | |
 | 7 | `encoder` | Record | NotModeled | NotApplicable | S-002, S-004 | A-004 | | |
-| 8 | `memory` | Both | Assumed | Low | S-001, S-002 | A-037, A-038, A-039 | 0.6.0 | the stored form is the engine's own samples, not encoded frames |
+| 8 | `memory` | Both | Assumed | Low | S-001, S-002 | A-037, A-038, A-039 | 0.6.0 | the stored form is the engine's own samples, not encoded frames; no item locking (F.LOCK) |
 | 9 | `decoder` | Playback | NotModeled | NotApplicable | S-002 | A-004 | | |
-| 10 | `codec_output` | Playback | Assumed | Medium | S-003, S-005, S-007 | A-015, A-016, A-026, A-027 | 0.4.0 | DAC imaging residue above 3 kHz |
+| 10 | `codec_output` | Playback | Assumed | Medium | S-002, S-003, S-005, S-007 | A-015, A-016, A-026, A-027, A-030 | 0.4.0 | µ-law expansion, receive idle noise and DAC imaging residue above 3 kHz |
 | 11 | `volume_amp` | Playback | NotModeled | NotApplicable | S-001, S-002, S-006 | A-031 | | |
 | 12 | `speaker` | Playback | NotModeled | NotApplicable | S-002 | A-010 | | |
 | 13 | `earphone` | Playback | NotModeled | NotApplicable | S-001, S-002 | A-012, A-032 | | |
@@ -72,8 +72,8 @@ Names, descriptions and controls notes: the spec's Key Entities table and its "C
 |---|---|---|---|
 | assumptions.md | first cell `A-\d{3}` | ID, Stage, Assumption, Rationale / sources, Confidence, How to verify, Status | existence (a); class from Status (b, g); adopted/revised flag (c); headline confidence (e) |
 | sources.md | first cell `S-\d{3}` | ID, Source, Type, Reliability, Key facts | existence (a); `Type == General` exemption (c) |
-| signal-chain.md | first cell an integer | #, Stage, Identifier, Known, Assumed, Character it contributes | row count and identifiers (d); modeled marker `**Modeled by` (g, i) |
-| CHANGELOG.md | whole text | | model version appears as a token (g) |
+| signal-chain.md | first cell an integer | #, Stage, Identifier, Known, Assumed, Character it contributes | row count and identifiers (d); modeled marker `**Modeled by` in the Known or Assumed cell (g) |
+| CHANGELOG.md | whole text | | model version appears as a token, `(^|[^0-9.])X\.Y\.Z([^0-9.]|$)` (g) |
 
 Assumption Status classes: `Superseded` (cell starts with "superseded"), `DocumentVerified` (starts with "verified", no `A-\d{3}` in the cell), `Measured` (starts with "measured"), `Open` (anything else); flag `adopted_or_revised` (starts with "adopted" or "revised"). Derived stage status for a modeled row: `Checked` if every cited assumption is DocumentVerified or Measured and at least one is Measured; `Sourced` if every cited assumption is DocumentVerified or Measured and none Measured; else `Assumed`.
 
@@ -90,7 +90,7 @@ device_rate_hz: 6000
 stage_count: 15
 counts: not_modeled=10 assumed=5 sourced=0 checked=0
 basis: Modeled on the RR-DR60 service manual and the codec family datasheets; no stage has been checked against a real unit.
-evidence_link: https://github.com/chancehouston/rr-dr60-emu/issues/new/choose
+evidence_link: https://github.com/chancehouston/rr-dr60-emu/issues/new?template=hardware_evidence.yml
 assumptions_link: https://github.com/chancehouston/rr-dr60-emu/blob/main/docs/hardware/assumptions.md
 sources_link: https://github.com/chancehouston/rr-dr60-emu/blob/main/docs/hardware/sources.md
 
