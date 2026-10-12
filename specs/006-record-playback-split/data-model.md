@@ -70,7 +70,7 @@ Operations: `open()` (push an empty span; refuses when `remaining == 0` → `Mem
 | any | `record` when not Recording | unchanged | `NotRecording` |
 | any | `play` / `stop_playback` when not Playing | unchanged | `NotPlaying` |
 | any | `set_route`, `route`, `state`, `memory_status`, `recording_length`, `export_len`, `export`, latencies, `drain_samples`, `footprint_bytes` | unchanged | `NoSuchRecording` for a bad number; `BufferTooSmall { needed }` for `export` |
-| any idle | `reset` | Idle | — (paths reset; memory and route kept) |
+| any | `reset` | Idle | — (a recording in progress is discarded without flush: span popped, store truncated to the previous recordings; a playback stops without drain; paths reset; memory contents and route kept) |
 
 ## Settings (contracts/rust-api.md, contracts/c-api.md)
 

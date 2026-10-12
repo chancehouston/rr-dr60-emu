@@ -54,7 +54,7 @@ All `Clone, Copy, Debug, PartialEq, Eq`; the infos `Default` and `#[must_use]`.
 | `record_latency_samples(&self) -> u32`, `playback_latency_samples(&self) -> u32`, `drain_samples(&self) -> u32` | yes | — (host samples) |
 | `footprint_bytes(&self) -> usize` | yes | — |
 
-Changed: `reconfigure` is refused while recording or playing and with `StoredExceedsCapacity` when the stored recordings would not fit; otherwise it keeps the memory's contents and the route. `reset` resets the paths and the transport to idle, keeps the memory and the route. `new` returns `AllocationFailed` when the store cannot be reserved. The one-pass calls return `RecordingInProgress` / `PlaybackInProgress` while a path is active and are otherwise unchanged (except FR-009's narrowing).
+Changed: `reconfigure` is refused while recording or playing and with `StoredExceedsCapacity` when the stored recordings would not fit; otherwise it keeps the memory's contents and the route. `reset` is allowed in any state: a recording in progress is discarded without flush (its span popped, the store truncated to the previous recordings), a playback stops without drain, the paths reset, the memory's contents and the route are kept. `new` returns `AllocationFailed` when the store cannot be reserved. The one-pass calls return `RecordingInProgress` / `PlaybackInProgress` while a path is active and are otherwise unchanged (except FR-009's narrowing).
 
 ## Behaviour contract
 

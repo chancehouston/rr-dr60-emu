@@ -76,7 +76,7 @@ typedef struct { uint64_t capacity_samples; uint64_t used_samples; uint64_t rema
 
 Real-time safe (header comment updated): `rr_dr60_start_recording`, `_record`, `_max_record_events`, `_stop_recording`, `_start_playback`, `_play`, `_stop_playback`, `_set_route`, `_get_route`, `_get_state`, `_memory_status`, `_recording_length`, `_export_len`, the three latency calls, `_footprint_bytes`, plus the 0.5 list. Not real-time safe: `rr_dr60_erase`, `_erase_all` (bounded memmove), `_export`, `_import` (CRC over the recording), plus `_create`, `_destroy`, `_reconfigure`.
 
-`rr_dr60_reconfigure` returns `RECORDING_IN_PROGRESS`, `PLAYBACK_IN_PROGRESS` or `STORED_EXCEEDS_CAPACITY` as the Rust API does and otherwise keeps the memory. `rr_dr60_reset` keeps the memory and the route. `rr_dr60_process*` return the in-progress statuses while a path is active. `rr_dr60_version_string` = "0.6.0".
+`rr_dr60_reconfigure` returns `RECORDING_IN_PROGRESS`, `PLAYBACK_IN_PROGRESS` or `STORED_EXCEEDS_CAPACITY` as the Rust API does and otherwise keeps the memory. `rr_dr60_reset` is allowed in any state (it also clears a poisoned handle, rule 1): a recording in progress is discarded without flush, a playback stops without drain, the memory's contents and the route are kept. The spec's "capacity too small" is `INVALID_SETTING` with field 14 or 15, not a new status. `rr_dr60_process*` return the in-progress statuses while a path is active. `rr_dr60_version_string` = "0.6.0".
 
 ## Smoke test additions (`tests/c/smoke.c`)
 

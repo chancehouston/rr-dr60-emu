@@ -4,7 +4,7 @@ Format unchanged (`rr_dr60-golden`, version 1). File names unchanged. `library_v
 
 | File | Entries | Change in this feature |
 |---|---|---|
-| `golden-v1.json` | 112 | re-blessed **once**, in the narrowing commit (FR-009; research R-02): the device-rate stream after the VAS is rounded to `f32` in the one-pass processing, so entries may differ by up to 2 output LSBs; the `bypass_all` entries are expected unchanged |
+| `golden-v1.json` | 112 | re-blessed **once**, in the narrowing commit (FR-009; research R-02): the device-rate stream after the VAS is rounded to `f32` in the one-pass processing, so entries may differ by up to 2 output LSBs; the `bypass_all` entries at 6 kHz are expected unchanged (no arithmetic before the narrowing), those at the converting rates may change like any other |
 | `golden-agc-v1.json` | 42 | re-blessed once, same commit; the 21 `agc_only` entries (host-rate tap, no device chain) are expected unchanged |
 | `golden-vas-v1.json` | 63 | re-blessed once, same commit |
 

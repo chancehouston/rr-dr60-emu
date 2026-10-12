@@ -15,10 +15,10 @@ Expected: the delta report (share of changed samples per file, maximum |Δ| ≤ 
 
 ```sh
 cargo test -p rr_dr60 paths transport
-cargo test -p rr_dr60_harness --test us1_record_play --test split_matrix -- --nocapture
+cargo test -p rr_dr60_harness --test us1_record_play -- --nocapture
 ```
 
-Expected: `golden_equivalence` reproduces 196 of 217 entries at the seven rates (the count printed); `live_equivalence` bit-identical prefixes with playback lengths exactly ⌈K·m/l⌉; the state table (idle → recording → idle → playing → idle, `speaker_muted` only while recording, the in-progress refusals); the 48 → 44.1 kHz tone within ±0.1 dB / ±0.1 Hz (expected < 0.02 dB); partitions 4 801 / 997 and 1 / 1 identical; the drain's last 1 ms below −80 dBFS and `drain_samples()` = 121 / 242 / 483 / 1 328 / 1 444 / 2 653 / 2 888; the latency sums 1 / 81 / 162 / 444 / 483 / 887 / 966.
+Expected (US1 alone, in one engine, no import): `golden_equivalence` reproduces 196 of 217 entries at the seven rates (the count printed); `live_equivalence` bit-identical prefixes with playback lengths exactly ⌈K·m/l⌉; `route_identity` and the two-item reset case; the state table (idle → recording → idle → playing → idle, `speaker_muted` only while recording, the in-progress refusals); the 48 → 44.1 kHz tone within ±0.1 dB / ±0.1 Hz (expected < 0.02 dB); partitions 4 801 / 997 and 1 / 1 identical; the drain's last 1 ms below −80 dBFS and `drain_samples()` = 121 / 242 / 483 / 1 328 / 1 444 / 2 653 / 2 888; the latency sums 1 / 81 / 162 / 444 / 483 / 887 / 966.
 
 ## 3. Story 2: the memory (FR-010 – FR-013)
 
@@ -51,7 +51,7 @@ Expected: `RrDr60Settings` is 88 bytes with `memory_capacity_s` at 76 and `memor
 ## 6. Edge cases, determinism, timing (FR-017, FR-018, SC-006)
 
 ```sh
-cargo test -p rr_dr60_harness --test split_edge_cases --test determinism --test mutation
+cargo test -p rr_dr60_harness --test split_edge_cases --test split_matrix --test determinism --test mutation -- --nocapture
 cargo test -p rr_dr60_harness --release --test timing --test split_matrix -- --ignored --nocapture
 ```
 
