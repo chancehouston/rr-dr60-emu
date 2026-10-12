@@ -41,7 +41,9 @@ int main(void) {
 
   RrDr60Settings s = rr_dr60_settings_default(FS);
   CHECK(s.struct_size == sizeof(RrDr60Settings), "struct_size %u", s.struct_size);
-  CHECK(s.struct_size == 80, "struct_size %u (must be 80 since 0.5, spec 005 contracts/c-api.md)", s.struct_size);
+  CHECK(s.struct_size == 88, "struct_size %u (must be 88 since 0.6, spec 006 contracts/c-api.md)", s.struct_size);
+  CHECK(s.memory_capacity_s == 3600, "default memory capacity %u s (S-001: 60 minutes)", s.memory_capacity_s);
+  CHECK(s.memory_max_recordings == 99, "default recording count %u (S-001: 99 items)", s.memory_max_recordings);
   CHECK(s.tap == RR_DR60_TAP_AFTER_PLAYBACK, "default tap");
   CHECK(s.agc_enabled, "limiter on by default (spec 005, A-020)");
   CHECK(s.agc_knee_dbfs == -1.0f, "default knee %g dBFS (A-028)", (double)s.agc_knee_dbfs);

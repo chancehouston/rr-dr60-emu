@@ -112,6 +112,15 @@ pub fn settings(name: &str, host_rate_hz: u32) -> Settings {
     s
 }
 
+/// `settings` with the memory's capacity set to `secs` seconds and `max` recordings (spec 006
+/// FR-010): the small capacities the US2 scenarios record to the limit with (research R-11:
+/// never the default 60 minutes in a debug test).
+pub fn memory_capacity(mut settings: Settings, secs: u32, max: u32) -> Settings {
+    settings.memory.capacity_s = secs;
+    settings.memory.max_recordings = max;
+    settings
+}
+
 /// The C API settings equivalent to `s`, field for field (the two reserved AGC slots are
 /// written as 0). Taps are mapped exhaustively, so a new tap is never silently tested as
 /// another (spec 002 research.md R-10).
@@ -150,6 +159,8 @@ pub fn c_settings(s: &Settings) -> RrDr60Settings {
         vas_hang_ms: s.vas.hang_ms,
         vas_onset_ms: s.vas.onset_ms,
         adc_clamp_enabled: s.adc_clamp_enabled,
+        memory_capacity_s: s.memory.capacity_s,
+        memory_max_recordings: s.memory.max_recordings,
         ..rr_dr60_settings_default(s.host_rate_hz)
     }
 }
@@ -258,7 +269,17 @@ mod tests {
             assert_eq!(c.adc_clamp_enabled, s.adc_clamp_enabled, "{name}");
             assert_eq!(c.agc_knee_dbfs, s.agc.knee_dbfs, "{name}");
             assert_eq!((c.reserved_agc_1, c.reserved_agc_2), (0.0, 0.0), "{name}");
+            assert_eq!(c.memory_capacity_s, s.memory.capacity_s, "{name}");
+            assert_eq!(c.memory_max_recordings, s.memory.max_recordings, "{name}");
         }
+        // Spec 006 FR-010: the small-capacity helper.
+        let small = memory_capacity(settings("default", 48_000), 10, 3);
+        assert_eq!(
+            (small.memory.capacity_s, small.memory.max_recordings),
+            (10, 3)
+        );
+        assert_eq!(c_settings(&small).memory_capacity_s, 10);
+        assert_eq!(c_settings(&small).memory_max_recordings, 3);
         assert_eq!(
             c_settings(&settings("agc_only", 6000)).tap,
             RrDr60Tap::AfterAgc as u32

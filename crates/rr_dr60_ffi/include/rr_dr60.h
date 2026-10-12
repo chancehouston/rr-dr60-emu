@@ -54,9 +54,39 @@ enum RrDr60Status
   RR_DR60_STATUS_INVALID_ARGUMENT = 3,
   // An internal error (a caught panic). The handle is poisoned until `rr_dr60_reset`.
   RR_DR60_STATUS_INTERNAL_ERROR = 4,
-  // An AGC or VAS setting is out of range or not finite (spec 002 FR-011, spec 003 FR-012).
+  // An AGC, VAS or memory setting is out of range or not finite (spec 002 FR-011, spec 003
+  // FR-012, spec 006 FR-010: a memory capacity of 0 is "capacity too small").
   // `rr_dr60_settings_validate` names it.
   RR_DR60_STATUS_INVALID_SETTING = 5,
+  // A recording is in progress (spec 006 FR-003, FR-013, FR-019).
+  RR_DR60_STATUS_RECORDING_IN_PROGRESS = 6,
+  // A playback is in progress (spec 006 FR-003, FR-019).
+  RR_DR60_STATUS_PLAYBACK_IN_PROGRESS = 7,
+  // `rr_dr60_record` or `rr_dr60_stop_recording` while not recording (spec 006).
+  RR_DR60_STATUS_NOT_RECORDING = 8,
+  // `rr_dr60_play` or `rr_dr60_stop_playback` while not playing (spec 006).
+  RR_DR60_STATUS_NOT_PLAYING = 9,
+  // No recorded time remains, so a recording cannot start (spec 006 FR-012; S-001 "FULL").
+  RR_DR60_STATUS_MEMORY_FULL = 10,
+  // The recording count is at its capacity (spec 006 FR-012; S-001: 99 items).
+  RR_DR60_STATUS_NO_RECORDING_SLOTS = 11,
+  // No recording has this number (spec 006 FR-013).
+  RR_DR60_STATUS_NO_SUCH_RECORDING = 12,
+  // An import exceeds the remaining time or slots; the memory is unchanged (spec 006 FR-014).
+  RR_DR60_STATUS_DOES_NOT_FIT = 13,
+  // The bytes are not an exported recording of this engine (spec 006 FR-014).
+  RR_DR60_STATUS_UNKNOWN_FORM = 14,
+  // The bytes carry a form version this engine does not read (spec 006 FR-014).
+  RR_DR60_STATUS_UNSUPPORTED_FORM_VERSION = 15,
+  // The bytes are truncated, altered or inconsistent (spec 006 FR-014).
+  RR_DR60_STATUS_DAMAGED = 16,
+  // `rr_dr60_reconfigure` with a capacity below what is stored; unchanged (spec 006 FR-019).
+  RR_DR60_STATUS_STORED_EXCEEDS_CAPACITY = 17,
+  // The recording store could not be reserved (spec 006 FR-017).
+  RR_DR60_STATUS_ALLOCATION_FAILED = 18,
+  // `rr_dr60_export` into a buffer shorter than the recording's byte form; nothing written,
+  // the needed length reported (spec 006 FR-014).
+  RR_DR60_STATUS_BUFFER_TOO_SMALL = 19,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -98,6 +128,10 @@ enum RrDr60SettingField
   RR_DR60_SETTING_FIELD_VAS_HANG_MS = 12,
   // `vas_onset_ms` is outside 0 to 200, or not finite (spec 003).
   RR_DR60_SETTING_FIELD_VAS_ONSET_MS = 13,
+  // `memory_capacity_s` is outside 1 to 86 400 (spec 006 FR-010; 0 is "capacity too small").
+  RR_DR60_SETTING_FIELD_MEMORY_CAPACITY_S = 14,
+  // `memory_max_recordings` is outside 1 to 9 999 (spec 006 FR-010).
+  RR_DR60_SETTING_FIELD_MEMORY_MAX_RECORDINGS = 15,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -158,12 +192,12 @@ typedef struct RrDr60Pipeline RrDr60Pipeline;
 //
 // Levels use the AES17 convention (a full-scale sine is 0 dBFS; full scale is the codec's,
 // A-030). AGC ranges are inclusive; out-of-range or non-finite values are rejected even when
-// the AGC is off. Layout (0.5, 80 bytes): the 0.4 offsets are kept; `agc_target_dbfs` became
-// `agc_knee_dbfs` at offset 28, the two slots at 32 and 36 are reserved, and
-// `adc_clamp_enabled` is appended at offset 72 (spec 005 contracts/c-api.md).
+// the AGC is off. Layout (0.6, 88 bytes): the 0.5 offsets are kept (`agc_knee_dbfs` at 28,
+// the two reserved slots at 32 and 36, `adc_clamp_enabled` at 72) and the two memory fields
+// are appended at 76 and 80 (spec 006 contracts/c-api.md).
 typedef struct RrDr60Settings {
-  // Must be `sizeof(RrDr60Settings)`: 80 since 0.5 (72 in 0.3 and 0.4, rejected as
-  // `STRUCT_SIZE`). Lets the struct grow in later versions.
+  // Must be `sizeof(RrDr60Settings)`: 88 since 0.6 (80 in 0.5, 72 in 0.3 and 0.4, rejected
+  // as `STRUCT_SIZE`). Lets the struct grow in later versions.
   uint32_t struct_size;
   // Host sample rate in Hz: 6000, 8000, 16000, 44100, 48000, 88200 or 96000 (spec 004
   // FR-002; 6000 is the device rate, A-026, and needs no rate conversion).
@@ -213,6 +247,13 @@ typedef struct RrDr60Settings {
   // The ADC's full-scale clamp after stage 4: output beyond ±1.0 is saturated (true,
   // default; A-030) or passed unchanged. Appended in 0.5 at offset 72 (spec 005 FR-008).
   bool adc_clamp_enabled;
+  // The memory's capacity in seconds of recorded device time. Default 3600 (S-001: 60
+  // minutes). Range 1 to 86 400; above 3600 is not the device's. Appended in 0.6 at offset
+  // 76 (spec 006 FR-010).
+  uint32_t memory_capacity_s;
+  // The most recordings the memory holds. Default 99 (S-001). Range 1 to 9 999. Appended in
+  // 0.6 at offset 80 (spec 006 FR-010).
+  uint32_t memory_max_recordings;
 } RrDr60Settings;
 
 // The result of one `rr_dr60_process` call (spec 003 FR-004, FR-005).
@@ -243,7 +284,8 @@ extern "C" {
 
 // Default settings for `host_rate_hz` (not validated): the limiter and the VAS on with the
 // modeled device values, both band-limit stages and the ADC clamp on, tap after playback,
-// seed 0, the reserved slots 0. Never fails.
+// seed 0, the reserved slots 0, the memory at the device's 60 minutes and 99 recordings.
+// Never fails.
 struct RrDr60Settings rr_dr60_settings_default(uint32_t host_rate_hz);
 
 // Creates a pipeline. On success, writes the new handle to `*out_pipeline`. Not real-time

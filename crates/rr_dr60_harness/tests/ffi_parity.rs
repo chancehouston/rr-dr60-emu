@@ -179,21 +179,27 @@ fn validate(s: &RrDr60Settings) -> (RrDr60Status, RrDr60SettingField) {
     (status, field)
 }
 
-/// Spec 005 contracts/c-api.md: the 0.5 layout is 80 bytes with the 0.4 offsets kept; the
+/// Spec 005 contracts/c-api.md (restated by spec 006: 88 bytes, the two memory fields at 76 and
+/// 80): the 0.5 layout kept the 0.4 offsets; the
 /// defaults are the limiter's (A-028, A-034, A-035), the clamp on (A-030) and the VAS
 /// threshold −40 dBFS (A-022 revised); the two reserved slots are ignored by validation and by
 /// processing; a 72-byte (0.4-layout) struct is rejected as `STRUCT_SIZE`.
 #[test]
 fn c_api_005_layout_defaults_and_reserved_fields() {
-    assert_eq!(size_of::<RrDr60Settings>(), 80);
+    assert_eq!(size_of::<RrDr60Settings>(), 88); // spec 006 contracts/c-api.md
     assert_eq!(std::mem::offset_of!(RrDr60Settings, agc_knee_dbfs), 28);
     assert_eq!(std::mem::offset_of!(RrDr60Settings, reserved_agc_1), 32);
     assert_eq!(std::mem::offset_of!(RrDr60Settings, reserved_agc_2), 36);
     assert_eq!(std::mem::offset_of!(RrDr60Settings, agc_attack_ms), 40);
     assert_eq!(std::mem::offset_of!(RrDr60Settings, agc_release_ms), 44);
     assert_eq!(std::mem::offset_of!(RrDr60Settings, adc_clamp_enabled), 72);
+    assert_eq!(std::mem::offset_of!(RrDr60Settings, memory_capacity_s), 76); // 006
+    assert_eq!(
+        std::mem::offset_of!(RrDr60Settings, memory_max_recordings),
+        80
+    ); // 006
     let d = rr_dr60_settings_default(48_000);
-    assert_eq!(d.struct_size, 80);
+    assert_eq!(d.struct_size, 88); // spec 006
     assert_eq!(d.agc_knee_dbfs, -1.0); // A-028
     assert_eq!(d.agc_attack_ms, 3.0); // A-034
     assert_eq!(d.agc_release_ms, 1370.0); // A-035

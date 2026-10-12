@@ -21,13 +21,70 @@ pub enum Error {
         output: usize,
     },
     /// A setting is outside its valid range, or is NaN or ±Inf (spec 002 FR-011, spec 003
-    /// FR-012). Returned by
-    /// `Pipeline::new` and `Pipeline::reconfigure`; a failed reconfigure changes nothing.
+    /// FR-012, spec 006 FR-010: a memory capacity of 0 is the "capacity too small" refusal).
+    /// Returned by `Pipeline::new` and `Pipeline::reconfigure`; a failed reconfigure changes
+    /// nothing.
     InvalidSetting {
         /// The offending setting.
         setting: Setting,
     },
+    /// A recording is in progress, so the call is refused (spec 006 FR-003, FR-013, FR-019):
+    /// starting a recording or a playback, the one-pass processing, erase, import, reconfigure.
+    RecordingInProgress,
+    /// A playback is in progress, so the call is refused (spec 006 FR-003, FR-019): starting a
+    /// recording or a playback, the one-pass processing, reconfigure.
+    PlaybackInProgress,
+    /// `record` or `stop_recording` while no recording is in progress (spec 006 Edge Cases;
+    /// also after a recording stopped by itself at the memory's limit).
+    NotRecording,
+    /// `play` or `stop_playback` while no playback is in progress (spec 006 Edge Cases).
+    NotPlaying,
+    /// No recorded time remains, so a recording cannot start (spec 006 FR-012; S-001: "FULL").
+    MemoryFull,
+    /// The recording count is at its capacity, so a recording cannot start (spec 006 FR-012;
+    /// S-001: 99 items).
+    NoRecordingSlots,
+    /// No recording has this number: 0, or above the count (spec 006 FR-013, Edge Cases).
+    NoSuchRecording {
+        /// The requested number.
+        number: u32,
+    },
+    /// An import exceeds the remaining time or the remaining recording slots; the memory is
+    /// unchanged (spec 006 FR-014).
+    DoesNotFit,
+    /// The bytes are not an exported recording of this engine (no magic, or too short to carry
+    /// one; spec 006 FR-014).
+    UnknownForm,
+    /// The bytes carry a form version (or flags) this engine does not read (spec 006 FR-014;
+    /// US3 scenario 5).
+    UnsupportedFormVersion {
+        /// The form version found.
+        version: u16,
+    },
+    /// The bytes are an exported recording but are truncated, altered or inconsistent (length,
+    /// count, device rate, CRC-32, or a sample that is not finite or is subnormal; spec 006
+    /// FR-014).
+    Damaged,
+    /// `reconfigure` with a capacity smaller than what the memory holds (time or count); the
+    /// engine is unchanged (spec 006 FR-019).
+    StoredExceedsCapacity,
+    /// The recording store for the configured capacity could not be reserved (spec 006 FR-017;
+    /// an error, not an abort).
+    AllocationFailed,
+    /// `export` into a buffer shorter than the recording's byte form; nothing was written
+    /// (spec 006 FR-014).
+    BufferTooSmall {
+        /// The length the buffer needs (`export_len`).
+        needed: usize,
+    },
 }
+
+/// Inclusive range of `memory.capacity_s`, in seconds: one second to 24 hours (engineering
+/// target, spec 006 FR-010; the device's 3600 s, S-001, sits inside it).
+pub(crate) const MEMORY_CAPACITY_S_RANGE: (u32, u32) = (1, 86_400); // engineering target (006 FR-010)
+/// Inclusive range of `memory.max_recordings` (engineering target, spec 006 FR-010; the
+/// device's 99, S-001, sits inside it).
+pub(crate) const MEMORY_MAX_RECORDINGS_RANGE: (u32, u32) = (1, 9_999); // engineering target (006 FR-010)
 
 /// Names a setting in [`Error::InvalidSetting`]. `Display` gives the field name and its valid
 /// range.
@@ -48,6 +105,10 @@ pub enum Setting {
     VasHangMs,
     /// `vas.onset_ms`, valid 0 to 200 ms (spec 003).
     VasOnsetMs,
+    /// `memory.capacity_s`, valid 1 to 86 400 s (spec 006).
+    MemoryCapacityS,
+    /// `memory.max_recordings`, valid 1 to 9 999 (spec 006).
+    MemoryMaxRecordings,
 }
 
 impl Setting {
@@ -66,6 +127,14 @@ impl Setting {
             Setting::VasThresholdDbfs => (-60.0, 0.0), // engineering target (003 FR-012)
             Setting::VasHangMs => (50.0, 10_000.0), // engineering target (003 FR-012)
             Setting::VasOnsetMs => (0.0, 200.0),  // engineering target (003 FR-012)
+            Setting::MemoryCapacityS => (
+                MEMORY_CAPACITY_S_RANGE.0 as f32,
+                MEMORY_CAPACITY_S_RANGE.1 as f32,
+            ), // engineering target (006 FR-010)
+            Setting::MemoryMaxRecordings => (
+                MEMORY_MAX_RECORDINGS_RANGE.0 as f32,
+                MEMORY_MAX_RECORDINGS_RANGE.1 as f32,
+            ), // engineering target (006 FR-010)
         }
     }
 
@@ -78,6 +147,8 @@ impl Setting {
             Setting::VasThresholdDbfs => ("vas.threshold_dbfs", "dBFS"),
             Setting::VasHangMs => ("vas.hang_ms", "ms"),
             Setting::VasOnsetMs => ("vas.onset_ms", "ms"),
+            Setting::MemoryCapacityS => ("memory.capacity_s", "s"),
+            Setting::MemoryMaxRecordings => ("memory.max_recordings", ""),
         }
     }
 }
@@ -117,6 +188,32 @@ impl fmt::Display for Error {
             Error::InvalidSetting { setting } => {
                 write!(f, "invalid setting: {setting} must be finite and in range")
             }
+            Error::RecordingInProgress => f.write_str("recording in progress"),
+            Error::PlaybackInProgress => f.write_str("playback in progress"),
+            Error::NotRecording => f.write_str("not recording"),
+            Error::NotPlaying => f.write_str("not playing"),
+            Error::MemoryFull => f.write_str("memory full: no recorded time remains"),
+            Error::NoRecordingSlots => f.write_str("no recording slots left"),
+            Error::NoSuchRecording { number } => write!(f, "no such recording: {number}"),
+            Error::DoesNotFit => {
+                f.write_str("does not fit: the recording exceeds the remaining time or slots")
+            }
+            Error::UnknownForm => f.write_str("unknown form: not an exported recording"),
+            Error::UnsupportedFormVersion { version } => {
+                write!(f, "unsupported form version {version}")
+            }
+            Error::Damaged => {
+                f.write_str("damaged: the exported recording is truncated, altered or inconsistent")
+            }
+            Error::StoredExceedsCapacity => {
+                f.write_str("stored recordings exceed the new capacity")
+            }
+            Error::AllocationFailed => {
+                f.write_str("the recording store for the configured capacity could not be reserved")
+            }
+            Error::BufferTooSmall { needed } => {
+                write!(f, "buffer too small: the export needs {needed} bytes")
+            }
         }
     }
 }
@@ -146,6 +243,66 @@ mod tests {
         }
         .to_string();
         assert!(text.contains("64") && text.contains("32"), "{text}");
+    }
+
+    /// 006 T012 (spec 006 research R-05; data-model › Errors): every transport, memory and form
+    /// refusal has a `Display` that names the reason in the spec's words and includes its field.
+    #[test]
+    fn transport_errors_display_the_reason_and_their_field() {
+        let cases: [(Error, &[&str]); 14] = [
+            (Error::RecordingInProgress, &["recording in progress"]),
+            (Error::PlaybackInProgress, &["playback in progress"]),
+            (Error::NotRecording, &["not recording"]),
+            (Error::NotPlaying, &["not playing"]),
+            (Error::MemoryFull, &["memory full"]),
+            (Error::NoRecordingSlots, &["no recording slots left"]),
+            (
+                Error::NoSuchRecording { number: 7 },
+                &["no such recording", "7"],
+            ),
+            (Error::DoesNotFit, &["does not fit"]),
+            (Error::UnknownForm, &["unknown form"]),
+            (
+                Error::UnsupportedFormVersion { version: 2 },
+                &["unsupported form version", "2"],
+            ),
+            (Error::Damaged, &["damaged"]),
+            (
+                Error::StoredExceedsCapacity,
+                &["stored recordings exceed the new capacity"],
+            ),
+            (Error::AllocationFailed, &["could not be reserved"]),
+            (
+                Error::BufferTooSmall { needed: 1234 },
+                &["buffer too small", "1234"],
+            ),
+        ];
+        let mut texts = std::vec::Vec::new();
+        for (error, words) in cases {
+            let text = error.to_string();
+            for w in words {
+                assert!(text.contains(w), "{error:?}: {text:?} lacks {w:?}");
+            }
+            assert!(!texts.contains(&text), "duplicate message {text:?}");
+            texts.push(text);
+        }
+        // The two memory settings display their names and ranges (006 FR-010).
+        let text = Error::InvalidSetting {
+            setting: Setting::MemoryCapacityS,
+        }
+        .to_string();
+        assert!(
+            text.contains("memory.capacity_s") && text.contains("86400"),
+            "{text}"
+        );
+        let text = Error::InvalidSetting {
+            setting: Setting::MemoryMaxRecordings,
+        }
+        .to_string();
+        assert!(
+            text.contains("memory.max_recordings") && text.contains("9999"),
+            "{text}"
+        );
     }
 
     #[test]

@@ -75,7 +75,8 @@ mod validate;
 pub use error::{Error, Setting};
 pub use pipeline::{BlockInfo, Pipeline, VasEvent};
 pub use settings::{
-    AgcSettings, DEVICE_RATE_HZ, SUPPORTED_HOST_RATES, Settings, Tap, VasMode, VasSettings,
+    AgcSettings, DEVICE_RATE_HZ, MemorySettings, Route, SUPPORTED_HOST_RATES, Settings, Tap,
+    VasMode, VasSettings,
 };
 
 /// Test-only hooks for the measurement harness. Not part of the public API; enabled only by
@@ -98,6 +99,18 @@ pub mod __test_hooks {
     /// contracts/rust-api.md › Test hooks).
     pub fn limiter_state(pipeline: &crate::Pipeline) -> f64 {
         pipeline.limiter_state()
+    }
+
+    /// Stage 10's settling length in device samples, the constant the playback drain uses
+    /// (spec 006 FR-008; research R-06; contracts/rust-api.md › Test hooks).
+    pub fn n10() -> usize {
+        crate::paths::N10
+    }
+
+    /// The settling length of a biquad cascade: the first index after which |h| stays below
+    /// `rel` × its own peak (spec 006 research R-06). Allocates; test use only.
+    pub fn stage_settling(sos: &[[f64; 5]], rel: f64) -> usize {
+        crate::paths::settling_len(sos, rel)
     }
 }
 

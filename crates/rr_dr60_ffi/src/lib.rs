@@ -46,9 +46,39 @@ pub enum RrDr60Status {
     InvalidArgument = 3,
     /// An internal error (a caught panic). The handle is poisoned until `rr_dr60_reset`.
     InternalError = 4,
-    /// An AGC or VAS setting is out of range or not finite (spec 002 FR-011, spec 003 FR-012).
+    /// An AGC, VAS or memory setting is out of range or not finite (spec 002 FR-011, spec 003
+    /// FR-012, spec 006 FR-010: a memory capacity of 0 is "capacity too small").
     /// `rr_dr60_settings_validate` names it.
     InvalidSetting = 5,
+    /// A recording is in progress (spec 006 FR-003, FR-013, FR-019).
+    RecordingInProgress = 6,
+    /// A playback is in progress (spec 006 FR-003, FR-019).
+    PlaybackInProgress = 7,
+    /// `rr_dr60_record` or `rr_dr60_stop_recording` while not recording (spec 006).
+    NotRecording = 8,
+    /// `rr_dr60_play` or `rr_dr60_stop_playback` while not playing (spec 006).
+    NotPlaying = 9,
+    /// No recorded time remains, so a recording cannot start (spec 006 FR-012; S-001 "FULL").
+    MemoryFull = 10,
+    /// The recording count is at its capacity (spec 006 FR-012; S-001: 99 items).
+    NoRecordingSlots = 11,
+    /// No recording has this number (spec 006 FR-013).
+    NoSuchRecording = 12,
+    /// An import exceeds the remaining time or slots; the memory is unchanged (spec 006 FR-014).
+    DoesNotFit = 13,
+    /// The bytes are not an exported recording of this engine (spec 006 FR-014).
+    UnknownForm = 14,
+    /// The bytes carry a form version this engine does not read (spec 006 FR-014).
+    UnsupportedFormVersion = 15,
+    /// The bytes are truncated, altered or inconsistent (spec 006 FR-014).
+    Damaged = 16,
+    /// `rr_dr60_reconfigure` with a capacity below what is stored; unchanged (spec 006 FR-019).
+    StoredExceedsCapacity = 17,
+    /// The recording store could not be reserved (spec 006 FR-017).
+    AllocationFailed = 18,
+    /// `rr_dr60_export` into a buffer shorter than the recording's byte form; nothing written,
+    /// the needed length reported (spec 006 FR-014).
+    BufferTooSmall = 19,
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -83,6 +113,10 @@ pub enum RrDr60SettingField {
     VasHangMs = 12,
     /// `vas_onset_ms` is outside 0 to 200, or not finite (spec 003).
     VasOnsetMs = 13,
+    /// `memory_capacity_s` is outside 1 to 86 400 (spec 006 FR-010; 0 is "capacity too small").
+    MemoryCapacityS = 14,
+    /// `memory_max_recordings` is outside 1 to 9 999 (spec 006 FR-010).
+    MemoryMaxRecordings = 15,
 }
 
 /// Output tap point, passed as `uint32_t` in [`RrDr60Settings::tap`].
@@ -141,14 +175,14 @@ pub struct RrDr60VasEvent {
 ///
 /// Levels use the AES17 convention (a full-scale sine is 0 dBFS; full scale is the codec's,
 /// A-030). AGC ranges are inclusive; out-of-range or non-finite values are rejected even when
-/// the AGC is off. Layout (0.5, 80 bytes): the 0.4 offsets are kept; `agc_target_dbfs` became
-/// `agc_knee_dbfs` at offset 28, the two slots at 32 and 36 are reserved, and
-/// `adc_clamp_enabled` is appended at offset 72 (spec 005 contracts/c-api.md).
+/// the AGC is off. Layout (0.6, 88 bytes): the 0.5 offsets are kept (`agc_knee_dbfs` at 28,
+/// the two reserved slots at 32 and 36, `adc_clamp_enabled` at 72) and the two memory fields
+/// are appended at 76 and 80 (spec 006 contracts/c-api.md).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RrDr60Settings {
-    /// Must be `sizeof(RrDr60Settings)`: 80 since 0.5 (72 in 0.3 and 0.4, rejected as
-    /// `STRUCT_SIZE`). Lets the struct grow in later versions.
+    /// Must be `sizeof(RrDr60Settings)`: 88 since 0.6 (80 in 0.5, 72 in 0.3 and 0.4, rejected
+    /// as `STRUCT_SIZE`). Lets the struct grow in later versions.
     pub struct_size: u32,
     /// Host sample rate in Hz: 6000, 8000, 16000, 44100, 48000, 88200 or 96000 (spec 004
     /// FR-002; 6000 is the device rate, A-026, and needs no rate conversion).
@@ -198,11 +232,18 @@ pub struct RrDr60Settings {
     /// The ADC's full-scale clamp after stage 4: output beyond ±1.0 is saturated (true,
     /// default; A-030) or passed unchanged. Appended in 0.5 at offset 72 (spec 005 FR-008).
     pub adc_clamp_enabled: bool,
+    /// The memory's capacity in seconds of recorded device time. Default 3600 (S-001: 60
+    /// minutes). Range 1 to 86 400; above 3600 is not the device's. Appended in 0.6 at offset
+    /// 76 (spec 006 FR-010).
+    pub memory_capacity_s: u32,
+    /// The most recordings the memory holds. Default 99 (S-001). Range 1 to 9 999. Appended in
+    /// 0.6 at offset 80 (spec 006 FR-010).
+    pub memory_max_recordings: u32,
 }
 
-// spec 005 contracts/c-api.md: the 0.5 layout is 80 bytes; the 0.3/0.4 offsets are kept and
-// `adc_clamp_enabled` sits at 72 (the unit tests assert every offset).
-const _: () = assert!(size_of::<RrDr60Settings>() == 80);
+// spec 006 contracts/c-api.md: the 0.6 layout is 88 bytes; the 0.5 offsets are kept and the two
+// memory fields sit at 76 and 80 (the unit tests assert every offset).
+const _: () = assert!(size_of::<RrDr60Settings>() == 88);
 // spec 003 contracts/c-api.md: the C event type and the core's `repr(C)` `VasEvent` share one
 // layout, so `rr_dr60_process_with_events` can pass the caller's buffer straight through.
 const _: () = assert!(
@@ -278,10 +319,33 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
                 Setting::VasThresholdDbfs => RrDr60SettingField::VasThresholdDbfs,
                 Setting::VasHangMs => RrDr60SettingField::VasHangMs,
                 Setting::VasOnsetMs => RrDr60SettingField::VasOnsetMs,
+                Setting::MemoryCapacityS => RrDr60SettingField::MemoryCapacityS,
+                Setting::MemoryMaxRecordings => RrDr60SettingField::MemoryMaxRecordings,
                 _ => RrDr60SettingField::None,
             };
             (RrDr60Status::InvalidSetting, field)
         }
+        // Spec 006 contracts/c-api.md: statuses 6–19, one per refusal reason.
+        Error::RecordingInProgress => (RrDr60Status::RecordingInProgress, RrDr60SettingField::None),
+        Error::PlaybackInProgress => (RrDr60Status::PlaybackInProgress, RrDr60SettingField::None),
+        Error::NotRecording => (RrDr60Status::NotRecording, RrDr60SettingField::None),
+        Error::NotPlaying => (RrDr60Status::NotPlaying, RrDr60SettingField::None),
+        Error::MemoryFull => (RrDr60Status::MemoryFull, RrDr60SettingField::None),
+        Error::NoRecordingSlots => (RrDr60Status::NoRecordingSlots, RrDr60SettingField::None),
+        Error::NoSuchRecording { .. } => (RrDr60Status::NoSuchRecording, RrDr60SettingField::None),
+        Error::DoesNotFit => (RrDr60Status::DoesNotFit, RrDr60SettingField::None),
+        Error::UnknownForm => (RrDr60Status::UnknownForm, RrDr60SettingField::None),
+        Error::UnsupportedFormVersion { .. } => (
+            RrDr60Status::UnsupportedFormVersion,
+            RrDr60SettingField::None,
+        ),
+        Error::Damaged => (RrDr60Status::Damaged, RrDr60SettingField::None),
+        Error::StoredExceedsCapacity => (
+            RrDr60Status::StoredExceedsCapacity,
+            RrDr60SettingField::None,
+        ),
+        Error::AllocationFailed => (RrDr60Status::AllocationFailed, RrDr60SettingField::None),
+        Error::BufferTooSmall { .. } => (RrDr60Status::BufferTooSmall, RrDr60SettingField::None),
         _ => (RrDr60Status::InvalidArgument, RrDr60SettingField::None),
     }
 }
@@ -338,16 +402,20 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Sett
     out.vas.threshold_dbfs = s.vas_threshold_dbfs;
     out.vas.hang_ms = s.vas_hang_ms;
     out.vas.onset_ms = s.vas_onset_ms;
+    out.memory.capacity_s = s.memory_capacity_s;
+    out.memory.max_recordings = s.memory_max_recordings;
     Ok(out)
 }
 
 /// Default settings for `host_rate_hz` (not validated): the limiter and the VAS on with the
 /// modeled device values, both band-limit stages and the ADC clamp on, tap after playback,
-/// seed 0, the reserved slots 0. Never fails.
+/// seed 0, the reserved slots 0, the memory at the device's 60 minutes and 99 recordings.
+/// Never fails.
 #[unsafe(no_mangle)]
 pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings {
     let agc = rr_dr60::AgcSettings::DEVICE; // A-020, A-028, A-034, A-035
     let vas = rr_dr60::VasSettings::DEVICE; // S-001, A-008, A-021 – A-024 (A-022 revised)
+    let memory = rr_dr60::MemorySettings::DEVICE; // S-001: 60 min, 99 items (006 FR-010)
     let defaults = Settings::new(host_rate_hz);
     RrDr60Settings {
         struct_size: SETTINGS_SIZE,
@@ -369,6 +437,8 @@ pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings 
         vas_hang_ms: vas.hang_ms,
         vas_onset_ms: vas.onset_ms,
         adc_clamp_enabled: defaults.adc_clamp_enabled, // A-030
+        memory_capacity_s: memory.capacity_s,
+        memory_max_recordings: memory.max_recordings,
     }
 }
 
@@ -846,12 +916,13 @@ mod tests {
         );
     }
 
-    /// 005 T008 (spec 005 FR-015; contracts/c-api.md): the 0.5 layout is 80 bytes with every
-    /// 0.4 offset kept and `adc_clamp_enabled` appended at 72.
+    /// 005 T008 (spec 005 FR-015), restated by 006 T017 (spec 006 FR-020; contracts/c-api.md):
+    /// the 0.6 layout is 88 bytes with every 0.5 offset kept and the two memory fields appended
+    /// at 76 and 80.
     #[test]
-    fn settings_layout_is_80_bytes_with_the_contract_offsets() {
+    fn settings_layout_is_88_bytes_with_the_contract_offsets() {
         use std::mem::offset_of;
-        assert_eq!(size_of::<RrDr60Settings>(), 80);
+        assert_eq!(size_of::<RrDr60Settings>(), 88);
         assert_eq!(offset_of!(RrDr60Settings, struct_size), 0);
         assert_eq!(offset_of!(RrDr60Settings, host_rate_hz), 4);
         assert_eq!(offset_of!(RrDr60Settings, record_stage_enabled), 8);
@@ -871,13 +942,18 @@ mod tests {
         assert_eq!(offset_of!(RrDr60Settings, vas_hang_ms), 64);
         assert_eq!(offset_of!(RrDr60Settings, vas_onset_ms), 68);
         assert_eq!(offset_of!(RrDr60Settings, adc_clamp_enabled), 72);
+        assert_eq!(offset_of!(RrDr60Settings, memory_capacity_s), 76);
+        assert_eq!(offset_of!(RrDr60Settings, memory_max_recordings), 80);
     }
 
-    /// 005 T008 (FR-010, FR-015): the 0.5 defaults, the reserved slots at 0, the clamp on.
+    /// 005 T008 (FR-010, FR-015), restated by 006 T017: the 0.5 defaults, the reserved slots at
+    /// 0, the clamp on, and the memory at the device's figures (S-001).
     #[test]
-    fn settings_default_has_the_0_5_values() {
+    fn settings_default_has_the_0_6_values() {
         let s = rr_dr60_settings_default(48_000);
-        assert_eq!(s.struct_size, 80);
+        assert_eq!(s.struct_size, 88);
+        assert_eq!(s.memory_capacity_s, 3600); // S-001: 60 minutes
+        assert_eq!(s.memory_max_recordings, 99); // S-001: 99 items
         assert!(s.agc_enabled); // A-020
         assert_eq!(s.agc_knee_dbfs, -1.0); // A-028
         assert_eq!(s.reserved_agc_1, 0.0);
@@ -899,13 +975,37 @@ mod tests {
     }
 
     /// 005 T008 (contracts/c-api.md › RrDr60SettingField): 4 is the knee (was the target), 5
-    /// and 6 are retired and never returned, 7 and 8 keep their numbers.
+    /// and 6 are retired and never returned, 7 and 8 keep their numbers; 006 T017: 14 and 15
+    /// name the memory fields, and a 0 capacity is `INVALID_SETTING` naming field 14.
     #[test]
     fn setting_field_numbers_are_stable() {
         assert_eq!(RrDr60SettingField::AgcKneeDbfs as u32, 4);
         assert_eq!(RrDr60SettingField::AgcAttackMs as u32, 7);
         assert_eq!(RrDr60SettingField::AgcReleaseMs as u32, 8);
         assert_eq!(RrDr60SettingField::VasMode as u32, 9);
+        assert_eq!(RrDr60SettingField::MemoryCapacityS as u32, 14);
+        assert_eq!(RrDr60SettingField::MemoryMaxRecordings as u32, 15);
+        let mut m = rr_dr60_settings_default(48_000);
+        m.memory_capacity_s = 0;
+        assert_eq!(
+            validate_c(&m),
+            Err((
+                RrDr60Status::InvalidSetting,
+                RrDr60SettingField::MemoryCapacityS
+            ))
+        );
+        m.memory_capacity_s = 10;
+        m.memory_max_recordings = 10_000;
+        assert_eq!(
+            validate_c(&m),
+            Err((
+                RrDr60Status::InvalidSetting,
+                RrDr60SettingField::MemoryMaxRecordings
+            ))
+        );
+        m.memory_max_recordings = 3;
+        assert_eq!(to_settings(&m).unwrap().memory.capacity_s, 10);
+        assert_eq!(to_settings(&m).unwrap().memory.max_recordings, 3);
         let all = [
             RrDr60SettingField::None,
             RrDr60SettingField::HostRate,
@@ -950,11 +1050,19 @@ mod tests {
         );
     }
 
-    /// 005 T008 (contracts/c-api.md): a 0.4 caller's 72-byte struct is rejected after reading
-    /// only `struct_size`, as `STRUCT_SIZE`.
+    /// 005 T008 (contracts/c-api.md), restated by 006 T017: a 0.5 caller's 80-byte struct (and
+    /// a 0.4 caller's 72) is rejected after reading only `struct_size`, as `STRUCT_SIZE`.
     #[test]
-    fn a_0_4_struct_size_is_rejected() {
+    fn a_0_5_struct_size_is_rejected() {
         let mut s = rr_dr60_settings_default(48_000);
+        s.struct_size = 80;
+        assert_eq!(
+            to_settings(&s),
+            Err((
+                RrDr60Status::InvalidArgument,
+                RrDr60SettingField::StructSize
+            ))
+        );
         s.struct_size = 72;
         assert_eq!(
             to_settings(&s),
