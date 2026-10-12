@@ -208,6 +208,45 @@ pub fn level_dbfs_aes17<T: Copy + Into<f64>>(x: &[T]) -> f64 {
     10.0 * (2.0 * ms).log10()
 }
 
+/// Least-squares amplitude of a sinusoid at `freq_hz` in `x` (the normal equations of
+/// `a·cos + b·sin`), with no window.
+fn ls_amplitude<T: Copy + Into<f64>>(x: &[T], freq_hz: f64, fs: f64) -> f64 {
+    let w = TAU * freq_hz / fs;
+    let (mut scc, mut sss, mut scs, mut sxc, mut sxs) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for (n, &v) in x.iter().enumerate() {
+        let (s, c) = (w * n as f64).sin_cos();
+        let v: f64 = v.into();
+        scc += c * c;
+        sss += s * s;
+        scs += c * s;
+        sxc += v * c;
+        sxs += v * s;
+    }
+    let det = scc * sss - scs * scs;
+    let a = (sxc * sss - sxs * scs) / det;
+    let b = (sxs * scc - sxc * scs) / det;
+    (a * a + b * b).sqrt()
+}
+
+/// Least-squares sinusoid fit (spec 006 US1 scenario 5; hardware review B9): the amplitude
+/// and frequency of the sinusoid in `x` nearest `guess_hz`, found by maximizing the
+/// least-squares amplitude over a grid of ±5 Hz in 0.1 Hz steps and then ±0.1 Hz in 0.002 Hz
+/// steps (engineering target). Phase-independent, so no aligned start is needed.
+pub fn fit_sinusoid<T: Copy + Into<f64>>(x: &[T], fs: f64, guess_hz: f64) -> (f64, f64) {
+    let search = |center: f64, half: f64, step: f64| {
+        let n = (half / step).round() as i64;
+        (-n..=n)
+            .map(|k| {
+                let f = center + k as f64 * step;
+                (ls_amplitude(x, f, fs), f)
+            })
+            .fold((f64::MIN, center), |m, c| if c.0 > m.0 { c } else { m })
+    };
+    let (_, coarse) = search(guess_hz, 5.0, 0.1);
+    let (amp, fine) = search(coarse, 0.1, 0.002);
+    (amp, fine)
+}
+
 /// Amplitude ratio to decibels.
 pub fn db(ratio: f64) -> f64 {
     20.0 * ratio.log10()

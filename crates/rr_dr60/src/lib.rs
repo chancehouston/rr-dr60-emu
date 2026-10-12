@@ -61,6 +61,7 @@
 extern crate alloc;
 
 mod error;
+mod memory;
 mod paths;
 mod pipeline;
 mod rate;
@@ -70,13 +71,18 @@ mod settings;
 mod stages;
 #[cfg(test)]
 mod test_util;
+mod transport;
 mod validate;
 
 pub use error::{Error, Setting};
+pub use memory::MemoryStatus;
 pub use pipeline::{BlockInfo, Pipeline, VasEvent};
 pub use settings::{
     AgcSettings, DEVICE_RATE_HZ, MemorySettings, Route, SUPPORTED_HOST_RATES, Settings, Tap,
     VasMode, VasSettings,
+};
+pub use transport::{
+    EngineState, PlayInfo, RecordInfo, State, StopOutcome, StopReason, StopResult,
 };
 
 /// Test-only hooks for the measurement harness. Not part of the public API; enabled only by

@@ -3,9 +3,11 @@
 //! the one-pass is a record path feeding a playback path).
 
 use crate::error::Error;
-use crate::paths::{PlaybackPath, RecordPath};
+use crate::memory::Memory;
+use crate::paths::{self, PlaybackPath, RecordPath};
 use crate::rate::RatePlan;
-use crate::settings::{DEVICE_RATE_HZ, Settings, Tap};
+use crate::settings::{DEVICE_RATE_HZ, Route, Settings, Tap};
+use crate::transport::Transport;
 use crate::validate::validate;
 
 /// One emulator instance: host-rate mono audio in, host-rate mono audio out.
@@ -43,13 +45,36 @@ use crate::validate::validate;
 /// AGC" tap, the output carries the input's excess during the limiter's dead time. The output
 /// is always finite.
 ///
+/// # Record and playback paths
+///
+/// Since 0.6 the engine also has the device's structure (spec 006): a **record path**
+/// (stages 3–5) that appends device-rate samples to a recording in a modeled **memory**
+/// (60 minutes, 99 recordings by default, S-001; [`MemorySettings`](crate::MemorySettings)),
+/// and a **playback path** (stage 10) that plays a stored recording toward a
+/// [`Route`](crate::Route), speaker or earphone. The engine is **idle**, **recording** or
+/// **playing** ([`state`](Self::state)); the two never run at once (the device mutes its
+/// amplifier while recording, S-002). The loop: [`start_recording`](Self::start_recording),
+/// [`record`](Self::record) per block, [`stop_recording`](Self::stop_recording) (which
+/// flushes the record path's latency and reports the recording's number), then
+/// [`start_playback`](Self::start_playback), [`play`](Self::play) per block until
+/// `finished` (the playback drains to settled). Record-then-play is bit-identical to the
+/// one-pass processing of the same input (FR-007), and the one-pass calls stay available
+/// while the engine is idle. The stored form is the engine's device-rate 32-bit samples in
+/// this version (it will become encoded frames when the codec is modeled, A-004); the host
+/// never parses it, it exports and imports it as opaque bytes.
+///
 /// # Real-time use
 ///
 /// [`process`](Self::process), [`process_in_place`](Self::process_in_place),
-/// [`process_with_events`](Self::process_with_events), [`max_events`](Self::max_events) and
-/// [`reset`](Self::reset) never allocate, lock or do I/O (FR-015, FR-017). Output, and the
-/// VAS events, are bit-identical for any way of splitting the input into blocks (FR-014).
-/// [`new`](Self::new) allocates and is not real-time safe.
+/// [`process_with_events`](Self::process_with_events), [`max_events`](Self::max_events),
+/// [`reset`](Self::reset), and of the record and playback paths `start_recording`, `record`,
+/// `max_record_events`, `stop_recording`, `start_playback`, `play`, `stop_playback`,
+/// `set_route`, `route`, `state`, `memory_status`, `recording_length`, the latency and drain
+/// reads and `footprint_bytes` never allocate, lock or do I/O (FR-015, FR-017; spec 006
+/// FR-017). Output, and the VAS events, are bit-identical for any way of splitting the input
+/// into blocks (FR-014). [`new`](Self::new) and [`reconfigure`](Self::reconfigure) allocate
+/// (the recording store for the full configured capacity is reserved there, about 86 MB at
+/// the defaults, virtual until written) and are not real-time safe.
 ///
 /// # Threads
 ///
@@ -72,11 +97,23 @@ use crate::validate::validate;
 /// ```
 #[derive(Clone, Debug)]
 pub struct Pipeline {
-    settings: Settings,
+    pub(crate) settings: Settings,
     /// The one-pass stream: its own record and playback path instances (spec 006 research
     /// R-01; Complexity Tracking row 1).
-    one_pass: OnePass,
-    latency: u32,
+    pub(crate) one_pass: OnePass,
+    pub(crate) latency: u32,
+    /// The split engine's record path (spec 006 FR-001): ignores the tap, device-sample event
+    /// positions, reset at every `start_recording`.
+    pub(crate) recorder: RecordPath,
+    /// The split engine's playback path (spec 006 FR-002): ignores the tap, reset at every
+    /// `start_playback`.
+    pub(crate) player: PlaybackPath,
+    pub(crate) memory: Memory,
+    pub(crate) transport: Transport,
+    /// The output route (spec 006 FR-015): not a setting; kept through reset and reconfigure.
+    pub(crate) route: Route,
+    /// The rate plan's `(l, m)`: `m / l` host samples per device sample.
+    pub(crate) plan_l_m: (u64, u64),
 }
 
 // Contract (contracts/rust-api.md): `Pipeline` is Send + Sync. Fails to compile if a future
@@ -124,9 +161,9 @@ pub struct VasEvent {
 /// The one-pass stream: a record path feeding a playback path sample by sample (spec 006
 /// research R-01). Both honour the tap; the counters live in the record path.
 #[derive(Clone, Debug)]
-struct OnePass {
-    rec: RecordPath,
-    play: PlaybackPath,
+pub(crate) struct OnePass {
+    pub(crate) rec: RecordPath,
+    pub(crate) play: PlaybackPath,
     /// The output is the limiter's, at the host rate: nothing after it runs (spec 005 FR-001).
     tap_after_agc: bool,
     /// Test-only: `false` runs the pre-0.6 un-narrowed route, so `narrowing_delta` can measure
@@ -185,8 +222,16 @@ impl Pipeline {
     /// [`SUPPORTED_HOST_RATES`](crate::SUPPORTED_HOST_RATES), checked first.
     /// [`Error::InvalidSetting`] if an AGC, VAS or memory setting is out of range or not
     /// finite (spec 002 FR-011, spec 003 FR-012, spec 006 FR-010).
+    /// [`Error::AllocationFailed`] if the recording store for the configured capacity cannot
+    /// be reserved (spec 006 FR-017).
     pub fn new(settings: Settings) -> Result<Self, Error> {
         validate(&settings)?;
+        let memory = Memory::new(&settings.memory)?;
+        Self::with_memory(settings, memory, Route::default())
+    }
+
+    /// Builds every path around an existing memory (`new` and `reconfigure`).
+    fn with_memory(settings: Settings, memory: Memory, route: Route) -> Result<Self, Error> {
         let plan = RatePlan::for_host(settings.host_rate_hz)?;
         let one_pass = OnePass::new(&settings, &plan);
         let latency = latency_samples(&plan, &settings, &one_pass);
@@ -194,6 +239,12 @@ impl Pipeline {
             settings,
             one_pass,
             latency,
+            recorder: RecordPath::new(&settings, &plan, false, true),
+            player: PlaybackPath::new(&settings, &plan, false),
+            memory,
+            transport: Transport::default(),
+            route,
+            plan_l_m: paths::l_m(&plan),
         })
     }
 
@@ -204,7 +255,9 @@ impl Pipeline {
     ///
     /// # Errors
     ///
-    /// [`Error::LengthMismatch`] if the lengths differ. The pipeline state is not changed.
+    /// [`Error::LengthMismatch`] if the lengths differ, [`Error::RecordingInProgress`] or
+    /// [`Error::PlaybackInProgress`] while a path is active (spec 006 FR-009). The pipeline
+    /// state is not changed.
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) -> Result<BlockInfo, Error> {
         if input.len() != output.len() {
             return Err(Error::LengthMismatch {
@@ -212,6 +265,7 @@ impl Pipeline {
                 output: output.len(),
             });
         }
+        self.refuse_if_active()?;
         Ok(self.run_block(Some(input), output, &mut []))
     }
 
@@ -219,7 +273,13 @@ impl Pipeline {
     ///
     /// The block's output is `buffer[..produced]` (see [`BlockInfo`]); samples past `produced`
     /// are unspecified. Output index never exceeds input index, so in-place processing is safe.
+    /// While a recording or playback is in progress the call is refused: nothing is processed
+    /// and `produced` is 0 (this signature has no error channel; [`process`](Self::process)
+    /// and [`state`](Self::state) report the reason; spec 006 FR-009).
     pub fn process_in_place(&mut self, buffer: &mut [f32]) -> BlockInfo {
+        if self.refuse_if_active().is_err() {
+            return self.refused_block();
+        }
         self.run_block(None, buffer, &mut [])
     }
 
@@ -231,8 +291,9 @@ impl Pipeline {
     ///
     /// # Errors
     ///
-    /// [`Error::LengthMismatch`] if `input` and `output` lengths differ. The pipeline state is
-    /// not changed.
+    /// [`Error::LengthMismatch`] if `input` and `output` lengths differ,
+    /// [`Error::RecordingInProgress`] or [`Error::PlaybackInProgress`] while a path is active
+    /// (spec 006 FR-009). The pipeline state is not changed.
     pub fn process_with_events(
         &mut self,
         input: &[f32],
@@ -245,17 +306,31 @@ impl Pipeline {
                 output: output.len(),
             });
         }
+        self.refuse_if_active()?;
         Ok(self.run_block(Some(input), output, events))
     }
 
     /// As [`process_in_place`](Self::process_in_place), and writes the block's VAS events to
     /// `events` as [`process_with_events`](Self::process_with_events) does. Real-time safe.
+    /// Refused (nothing processed, `produced` 0) while a path is active.
     pub fn process_in_place_with_events(
         &mut self,
         buffer: &mut [f32],
         events: &mut [VasEvent],
     ) -> BlockInfo {
+        if self.refuse_if_active().is_err() {
+            return self.refused_block();
+        }
         self.run_block(None, buffer, events)
+    }
+
+    /// The report of a refused in-place call: nothing produced, the stream's paused state.
+    fn refused_block(&self) -> BlockInfo {
+        BlockInfo {
+            produced: 0,
+            events: 0,
+            paused: self.one_pass.rec.paused(),
+        }
     }
 
     /// An `events` length for [`process_with_events`](Self::process_with_events) that is always
@@ -310,26 +385,49 @@ impl Pipeline {
         self.latency
     }
 
-    /// Returns the pipeline to its freshly created state, without allocating (FR-017): the
-    /// limiter's capacitor is discharged, every filter and the VAS reset.
+    /// Returns the pipeline to idle and to its freshly created path state, without allocating
+    /// (FR-017; spec 006 FR-019): the limiter's capacitor is discharged, every filter, the VAS
+    /// and the conversions reset, in the one-pass stream and in both split paths. A recording
+    /// in progress is discarded without flush (its samples leave the store); a playback stops
+    /// without drain. The memory's recordings and the route are kept.
     pub fn reset(&mut self) {
         self.one_pass.reset();
+        self.recorder.reset();
+        self.player.reset();
+        self.memory.discard_in_progress();
+        self.transport.reset();
     }
 
-    /// Applies new settings and resets all state, as if the pipeline had been created anew
-    /// with `settings` (FR-008). The new configuration is built completely before it replaces
-    /// the old one, so on error the pipeline is unchanged: same settings, latency and state.
+    /// Applies new settings and resets all path state, as if the pipeline had been created
+    /// anew with `settings` (FR-008), **keeping the memory's recordings and the route** (spec
+    /// 006 FR-019): with the same capacity the store is kept as it is; with a different one
+    /// that still holds the recordings a new store is reserved and they are copied. The new
+    /// configuration is built completely before it replaces the old one, so on error the
+    /// pipeline is unchanged: same settings, latency, state and memory.
     ///
     /// May allocate; **not** real-time safe. Call it between streams, not from the audio
     /// callback.
     ///
     /// # Errors
     ///
-    /// [`Error::UnsupportedHostRate`] if `settings.host_rate_hz` is not supported, or
+    /// [`Error::RecordingInProgress`] or [`Error::PlaybackInProgress`] unless the engine is
+    /// idle; [`Error::UnsupportedHostRate`] if `settings.host_rate_hz` is not supported;
     /// [`Error::InvalidSetting`] if an AGC, VAS or memory setting is invalid (spec 002 FR-011,
-    /// spec 003 FR-012, spec 006 FR-010).
+    /// spec 003 FR-012, spec 006 FR-010); [`Error::StoredExceedsCapacity`] when the stored
+    /// recordings or their count would not fit the new capacity; [`Error::AllocationFailed`]
+    /// when a new store cannot be reserved.
     pub fn reconfigure(&mut self, settings: Settings) -> Result<(), Error> {
-        *self = Self::new(settings)?;
+        self.refuse_if_active()?;
+        validate(&settings)?;
+        if !self.memory.fits(&settings.memory) {
+            return Err(Error::StoredExceedsCapacity);
+        }
+        let memory = if self.memory.same_capacity(&settings.memory) {
+            self.memory.clone()
+        } else {
+            self.memory.copied_to(&settings.memory)?
+        };
+        *self = Self::with_memory(settings, memory, self.route)?;
         Ok(())
     }
 

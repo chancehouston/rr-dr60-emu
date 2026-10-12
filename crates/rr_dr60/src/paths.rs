@@ -78,7 +78,7 @@ fn host_latency(plan: &RatePlan, tau_device: f64, host_rate_hz: u32) -> u32 {
 }
 
 /// `(l, m)` of a plan: `m / l` host samples per device sample (`1 / 1` at the identity rate).
-fn l_m(plan: &RatePlan) -> (u64, u64) {
+pub(crate) fn l_m(plan: &RatePlan) -> (u64, u64) {
     match *plan {
         RatePlan::Identity => (1, 1),
         RatePlan::Convert { l, m, .. } => (u64::from(l), u64::from(m)),
@@ -446,6 +446,18 @@ impl RecordPath {
     /// The VAS runs and is paused.
     pub(crate) fn paused(&self) -> bool {
         self.half.paused()
+    }
+
+    /// Closes a mute-mode region still open at the end of a recording with a synthesized
+    /// event: position = its start, length = the kept count − start (spec 006 FR-005; plan
+    /// review P5b). `None` when no region is open.
+    pub(crate) fn close_open_region(&mut self) -> Option<VasEvent> {
+        let start = self.counters.mute_start.take()?;
+        let end = self.counters.position();
+        Some(VasEvent {
+            output_position: start,
+            input_length: end - start,
+        })
     }
 
     /// An event count that is always enough for a block of `frames` host samples (spec 003
