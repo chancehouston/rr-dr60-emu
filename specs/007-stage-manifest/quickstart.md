@@ -61,6 +61,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 cargo llvm-cov --all-features --workspace --fail-under-lines 80
 scripts/check-traceability.sh
+CARGO_TARGET_DIR=target/msrv RUSTFLAGS="-D warnings" cargo +1.85 test --workspace --all-features
 ```
 
 **T038 walk (2026-10-12):** observed fmt and clippy clean, 457 tests passing with no failing suite, coverage **98.20 %** lines (first run 96.19 %: the core's compile-time check functions never execute under the profiler and the harness's error branches had no tests; runtime calls, should-panic tests of every rule and a unit-test module for the parsers, rules and renderers brought `manifest.rs` to 98.99 % and `manifest_checks.rs` to 93.26 %), traceability OK, the header up to date, the MSRV 1.85 suite green in `target/msrv`, release timing one-pass 62.7 / record + play 64.0 ns per sample (ratio 1.021) and 61.3 / 60.0 / 60.3 at 4096 blocks against the 0.6 baseline 62.6 / 64.0 (1.022) and 61.1 / 61.5 / 61.4. Expected: all green; coverage within 1 point of 98.58 % (the new core module is fully exercised by its unit tests and the harness).

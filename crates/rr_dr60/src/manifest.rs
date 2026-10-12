@@ -5,10 +5,11 @@
 //! reads it once at start-up and generates its "about this model" view from it, so the view
 //! cannot drift from the project's hardware registers: a harness test cross-checks every entry
 //! against `docs/hardware/sources.md`, `docs/hardware/assumptions.md`, the signal-chain table
-//! and the CHANGELOG (spec 007 FR-013), and a unit test here touches each modeled stage's
-//! bypass control so a stage modeled in code cannot stay out of the manifest unnoticed. That
-//! guard binds the manifest to the registers; the code is bound to the registers by that unit
-//! test, the traceability script and review.
+//! and the CHANGELOG (spec 007 FR-013), and a unit test here maps every bypass control and
+//! tap in the public API to a stage and asserts that stage is modeled, so a stage modeled in
+//! code cannot stay out of the manifest unnoticed. That guard binds the manifest to the
+//! registers; the code is bound to the manifest by that unit test, and to the registers by
+//! the traceability script and review.
 //!
 //! The strings describe only what each stage does to the signal (the claims policy in
 //! `CLAUDE.md`): they say "modeled on" rather than claiming accuracy, they state sourced
@@ -762,27 +763,76 @@ mod tests {
 
     #[test]
     fn bypass_control_anchor() {
-        // Research R-01 (hardware review P5): every modeled stage has a bypass or capacity
-        // control in the public API, touched here by stage number, so a renamed control fails
-        // to compile and a newly modeled stage without a manifest row fails at review of this
-        // match (constitution Principle V).
-        let s = Settings::new(6000);
-        for e in manifest().stages() {
-            if e.status == StageStatus::NotModeled {
-                continue;
-            }
-            let touched = match e.number {
-                3 => s.agc.enabled,
-                4 => s.record_stage_enabled,
-                5 => s.vas.enabled,
-                8 => s.memory.capacity_s > 0,
-                10 => s.playback_stage_enabled,
-                n => panic!("modeled stage {n} has no bypass control"),
+        // Research R-01 (hardware reviews P5 and G1): every bypass control and tap in the public
+        // API maps to a stage, and that stage must be modeled in the manifest. The destructuring
+        // is exhaustive, so a new control or tap fails to compile until it is mapped here, and
+        // mapping it to a stage the manifest calls "not modeled" fails the assertion. This is
+        // the code → manifest half of the guard (constitution Principle V).
+        use crate::{AgcSettings, MemorySettings, Tap, VasSettings};
+        let Settings {
+            host_rate_hz: _,
+            record_stage_enabled,
+            playback_stage_enabled,
+            adc_clamp_enabled,
+            tap,
+            seed: _,
+            agc,
+            vas,
+            memory,
+        } = Settings::new(6000);
+        let AgcSettings {
+            enabled: agc_enabled,
+            knee_dbfs: _,
+            attack_ms: _,
+            release_ms: _,
+        } = agc;
+        let VasSettings {
+            enabled: vas_enabled,
+            mode: _,
+            sensitivity: _,
+            threshold_dbfs: _,
+            hang_ms: _,
+            onset_ms: _,
+        } = vas;
+        let MemorySettings {
+            capacity_s,
+            max_recordings: _,
+        } = memory;
+        let controls: &[(u32, bool)] = &[
+            (3, agc_enabled),
+            (4, record_stage_enabled),
+            (4, adc_clamp_enabled),
+            (5, vas_enabled),
+            (8, capacity_s > 0),
+            (10, playback_stage_enabled),
+        ];
+        let m = manifest();
+        for (n, on) in controls {
+            assert!(on, "stage {n}'s control is off in the device defaults");
+            let e = m.stage(*n).unwrap();
+            assert_ne!(
+                e.status,
+                StageStatus::NotModeled,
+                "stage {n} has a control in the API but the manifest says not modeled"
+            );
+        }
+        for t in [
+            Tap::AfterAgc,
+            Tap::AfterRecord,
+            Tap::AfterVas,
+            Tap::AfterPlayback,
+            tap,
+        ] {
+            let n = match t {
+                Tap::AfterAgc => 3,
+                Tap::AfterRecord => 4,
+                Tap::AfterVas => 5,
+                Tap::AfterPlayback => 10,
             };
-            assert!(
-                touched,
-                "stage {} control is off in the device defaults",
-                e.number
+            assert_ne!(
+                m.stage(n).unwrap().status,
+                StageStatus::NotModeled,
+                "tap {t:?} exposes stage {n} but the manifest says not modeled"
             );
         }
     }

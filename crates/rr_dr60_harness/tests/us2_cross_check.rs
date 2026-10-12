@@ -257,9 +257,10 @@ fn cells_and_edge_cells() {
 fn status_classes() {
     // 007 FR-004: the first-word rule, with the "S-### only" condition for verified.
     let c = |s: &str| mc::classify_status(s);
+    // "adopted"/"revised" anywhere in the cell flag the row (hardware review G2b).
     assert_eq!(
         c("verified (S-002); adopted by spec 004"),
-        (StatusClass::DocumentVerified, false)
+        (StatusClass::DocumentVerified, true)
     );
     assert_eq!(
         c("verified (topology, S-002); values in A-029"),
@@ -280,6 +281,10 @@ fn status_classes() {
     );
     assert_eq!(
         c("assumed (adopted by spec 004, 2026-10-11)"),
+        (StatusClass::Open, true)
+    );
+    assert_eq!(
+        c("assumed; refined by spec 005"),
         (StatusClass::Open, false)
     );
     assert_eq!(c("partially verified (S-002)"), (StatusClass::Open, false));

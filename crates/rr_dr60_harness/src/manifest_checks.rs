@@ -265,10 +265,14 @@ fn a_id_anywhere() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"A-\d{3}").unwrap())
 }
 
-/// Classifies a Status cell by its first word (007 FR-004) and flags "adopted"/"revised".
+/// Classifies a Status cell by its first word (007 FR-004) and flags a cell that says
+/// "adopted" or "revised" anywhere (hardware review G2b; the register rules say so).
 pub fn classify_status(cell: &str) -> (StatusClass, bool) {
+    static ADOPTED: OnceLock<Regex> = OnceLock::new();
     let lower = cell.trim().to_lowercase();
-    let flag = lower.starts_with("adopted") || lower.starts_with("revised");
+    let flag = ADOPTED
+        .get_or_init(|| Regex::new(r"\b(adopted|revised)\b").unwrap())
+        .is_match(&lower);
     let class = if lower.starts_with("superseded") {
         StatusClass::Superseded
     } else if lower.starts_with("verified") && !a_id_anywhere().is_match(cell) {
@@ -279,6 +283,25 @@ pub fn classify_status(cell: &str) -> (StatusClass, bool) {
         StatusClass::Open
     };
     (class, flag)
+}
+
+/// A Status cell the classifier would read differently from what its author meant (hardware
+/// review G2c, G2d): `superseded` anywhere but first (the row would stay current), or a
+/// `verified` cell that speaks of a unit, a capture or a measurement (a measurement is
+/// `measured`, never `verified`). `None` when the cell is unambiguous.
+pub fn status_cell_problem(cell: &str) -> Option<String> {
+    static UNIT: OnceLock<Regex> = OnceLock::new();
+    let lower = cell.trim().to_lowercase();
+    if lower.contains("superseded") && !lower.starts_with("superseded") {
+        return Some("'superseded' is not the first word, so the row would stay current".into());
+    }
+    let unit = UNIT.get_or_init(|| Regex::new(r"\b(unit|capture|measur\w*)\b").unwrap());
+    if lower.starts_with("verified") && unit.is_match(&lower) {
+        return Some(
+            "a 'verified' cell names a unit, capture or measurement; write 'measured'".into(),
+        );
+    }
+    None
 }
 
 /// The first High/Medium/Low word in a Confidence cell (007 FR-006).
@@ -315,6 +338,14 @@ pub fn parse_assumptions(text: &str) -> (Vec<AssumptionRow>, Vec<Finding>) {
                 ),
             ));
             continue;
+        }
+        if let Some(problem) = status_cell_problem(&cells[6]) {
+            findings.push(finding(
+                Rule::Parse,
+                None,
+                Some(&cells[0]),
+                format!("assumptions.md line {line}: ambiguous Status cell: {problem}"),
+            ));
         }
         let (class, adopted_or_revised) = classify_status(&cells[6]);
         rows.push(AssumptionRow {
@@ -1131,17 +1162,21 @@ mod tests {
         m.header.counts.assumed += 1;
         assert!(has(&cross_check(&m, &r), Rule::Counts, None));
 
-        for (label, version) in [
-            ("empty", ""),
-            ("malformed", "x"),
-            ("above", "9.9.9"),
-            ("absent", "0.0.9"),
+        // "0.0.9" relies on that token never appearing in the CHANGELOG.
+        for (label, version, detail) in [
+            ("empty", "", "no model version"),
+            ("malformed", "x", "malformed"),
+            ("above", "9.9.9", "above the library's"),
+            ("absent", "0.0.9", "not in the CHANGELOG"),
         ] {
             let mut m = base;
             m.stages[2].model_version = version;
+            let f = cross_check(&m, &r);
             assert!(
-                has(&cross_check(&m, &r), Rule::ModelVersion, Some(3)),
-                "{label}"
+                f.iter().any(|x| x.rule == Rule::ModelVersion
+                    && x.stage == Some(3)
+                    && x.detail.contains(detail)),
+                "{label}: {f:?}"
             );
         }
 
@@ -1237,5 +1272,21 @@ mod tests {
         assert_eq!(status_word(StageStatus::Checked), "checked");
         assert_eq!(path_word(StagePath::Both), "both");
         assert_eq!(confidence_word(Confidence::High), "high");
+    }
+
+    #[test]
+    fn status_cell_problems() {
+        // Hardware review G2c, G2d.
+        assert!(status_cell_problem("measured (capture 3); superseded by A-050").is_some());
+        assert!(status_cell_problem("verified against a unit (capture 2)").is_some());
+        assert!(status_cell_problem("verified by measurement").is_some());
+        assert!(status_cell_problem("superseded by A-026 (spec 004)").is_none());
+        assert!(status_cell_problem("assumed; modeled on the circuit, not measured").is_none());
+        assert!(status_cell_problem("verified (S-002); adopted by spec 004").is_none());
+        let (_, f) = parse_assumptions(
+            "| ID | Stage | Assumption | Rationale | Confidence | How to verify | Status |\n|---|---|---|---|---|---|---|\n| A-900 | X | a | b | Low | c | measured; superseded by A-901 |\n",
+        );
+        assert_eq!(rules(&f), vec![Rule::Parse]);
+        assert_eq!(f[0].id.as_deref(), Some("A-900"));
     }
 }

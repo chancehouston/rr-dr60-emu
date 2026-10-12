@@ -42,7 +42,7 @@ The IDs refer to [sources.md](sources.md) (`S-###`) and [assumptions.md](assumpt
 | 14 | Clock | `clock` | 8 MHz ceramic resonator → DSP → PLL → codec BCLK ≈ 500 kHz and 6 kHz sync; 32 kHz crystal for the microcontroller (S-002) | ±0.5 % per-unit deviation (A-011) | Slight pitch offset between units |
 | 15 | Power | `power` | 2× AAA → 3.3 V DC-DC converter; switched 3.2 V analog rail; lithium memory back-up (S-002) | Battery effects not modeled in v1 (A-013) | — |
 
-The engine's stage manifest ([spec 007](../../specs/007-stage-manifest/spec.md)) mirrors this table: the Identifier column is the key the manifest and its cross-check use, and a row is *modeled* exactly when its Known or Assumed cell contains **Modeled by** (the harness test `us2_cross_check` reads this page). A stage that is modeled in code must be marked here and in the manifest in the same change.
+The engine's stage manifest ([spec 007](../../specs/007-stage-manifest/spec.md)) mirrors this table: the Identifier column is the key the manifest and its cross-check use, and a row is *modeled* exactly when its Known or Assumed cell contains the literal text `**Modeled by` (bold in the rendered page; the asterisks are part of the marker). The parser expects exactly fifteen numbered rows of six cells (`#`, Stage, Identifier, Known, Assumed, Character) with no `|` inside a cell; the harness test `us2_cross_check` reads this page. A stage that is modeled in code must be marked here and in the manifest in the same change.
 
 ## Emulator requirements that apply to every stage
 
