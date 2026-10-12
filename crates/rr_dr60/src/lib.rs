@@ -48,6 +48,22 @@
 //! The crate describes signal processing only: gain control, band-limiting,
 //! voice-activated pausing, latency and level. It makes no claims about what recorded audio contains.
 //!
+//! **What the engine says about itself** (spec 007): the [`manifest()`] is constant data
+//! describing the fifteen signal-chain stages, one [`StageEntry`] per stage under a
+//! [`Header`], with each stage's status (not modeled, assumed, sourced, checked against a real
+//! unit), its source and assumption IDs, the project's confidence, what the engine leaves out,
+//! which controls touch it and the version that last changed its model. An app generates its
+//! "about this model" view from it; a harness test keeps it consistent with the hardware
+//! registers. Reading it allocates nothing:
+//!
+//! ```
+//! let m = rr_dr60::manifest();
+//! println!("{} stages, {} checked against a real unit", m.header.stage_count, m.header.counts.checked);
+//! for s in m.stages() {
+//!     println!("{} {}: {:?} ({:?}) {}", s.number, s.name, s.status, s.confidence, s.description);
+//! }
+//! ```
+//!
 //! **Level scale:** 0 dBFS (a sine of peak amplitude 1.0) is the codec's full scale, about
 //! 0.196 V peak at the microphone amplifier's output (A-030); speech at a conversational
 //! distance is assumed roughly 10–35 dB below it (A-029, low confidence). The limiter holds
@@ -80,6 +96,7 @@ extern crate alloc;
 
 mod error;
 mod form;
+pub mod manifest;
 mod memory;
 mod paths;
 mod pipeline;
@@ -94,6 +111,9 @@ mod transport;
 mod validate;
 
 pub use error::{Error, Setting};
+pub use manifest::{
+    Confidence, Header, Manifest, StageEntry, StagePath, StageStatus, StatusCounts, manifest,
+};
 pub use memory::MemoryStatus;
 pub use pipeline::{BlockInfo, Pipeline, VasEvent};
 pub use settings::{

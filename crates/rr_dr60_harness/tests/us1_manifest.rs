@@ -1,0 +1,198 @@
+//! Spec 007 User Story 1: the stage manifest read from Rust, with no engine and no register
+//! file (007 FR-001 – FR-008, FR-012, FR-016; SC-006; tasks.md T003).
+//!
+//! Everything here is checked against the spec's own statements of the content (spec 007 ›
+//! Key Entities; data-model.md › The fifteen entries), not against the registers: that is
+//! User Story 2's job (`us2_cross_check.rs`).
+
+use rr_dr60::{Confidence, StageEntry, StagePath, StageStatus, manifest};
+
+/// data-model.md › The fifteen entries: the identifiers in signal-chain order.
+const IDENTIFIERS: [&str; 15] = [
+    "mic_capsule",
+    "mic_amp",
+    "limiter",
+    "codec_input",
+    "vas",
+    "noise_reduction",
+    "encoder",
+    "memory",
+    "decoder",
+    "codec_output",
+    "volume_amp",
+    "speaker",
+    "earphone",
+    "clock",
+    "power",
+];
+
+/// 007 FR-012: the basis sentence while no stage is checked against a real unit.
+const BASIS: &str = "Modeled on the RR-DR60 service manual and the codec family datasheets; no stage has been checked against a real unit.";
+
+fn modeled(e: &StageEntry) -> bool {
+    e.status != StageStatus::NotModeled
+}
+
+#[test]
+fn fifteen_entries_in_signal_chain_order() {
+    // 007 FR-001, FR-002: fifteen entries numbered 1..=15, index = number - 1.
+    let m = manifest();
+    assert_eq!(m.stages().len(), 15);
+    for (i, e) in m.stages().iter().enumerate() {
+        assert_eq!(
+            usize::from(e.number),
+            i + 1,
+            "entry {i} has number {}",
+            e.number
+        );
+        assert_eq!(
+            e.identifier, IDENTIFIERS[i],
+            "entry {} identifier",
+            e.number
+        );
+        assert!(
+            !e.name.is_empty() && !e.description.is_empty(),
+            "stage {}",
+            e.number
+        );
+    }
+}
+
+#[test]
+fn header_figures() {
+    // SC-006; 007 FR-003: the header's figures today.
+    let h = manifest().header();
+    assert_eq!(h.stage_count, 15);
+    assert_eq!(h.device_rate_hz, 6000); // A-026
+    assert_eq!(h.library_version, rr_dr60::VERSION);
+    assert_eq!(h.counts.not_modeled, 10);
+    assert_eq!(h.counts.assumed, 5);
+    assert_eq!(h.counts.sourced, 0);
+    assert_eq!(h.counts.checked, 0);
+    assert_eq!(
+        h.counts.not_modeled + h.counts.assumed + h.counts.sourced + h.counts.checked,
+        h.stage_count
+    );
+    assert_eq!(h.basis, BASIS);
+    for link in [h.evidence_link, h.assumptions_link, h.sources_link] {
+        assert!(
+            link.starts_with("https://github.com/chancehouston/rr-dr60-emu/"),
+            "link {link}"
+        );
+    }
+}
+
+#[test]
+fn literal_statuses() {
+    // The register-free reading of US1 scenario 5 (007 FR-004): stages 3, 4, 5, 8 and 10 are
+    // modeled on open assumptions, every other stage is not modeled.
+    for e in manifest().stages() {
+        let want = match e.number {
+            3 | 4 | 5 | 8 | 10 => StageStatus::Assumed,
+            _ => StageStatus::NotModeled,
+        };
+        assert_eq!(e.status, want, "stage {} status", e.number);
+    }
+}
+
+#[test]
+fn not_modeled_invariants() {
+    // 007 FR-006, FR-008, FR-002 (coverage note): a stage that is not modeled carries no
+    // confidence, no model version and no coverage note.
+    for e in manifest().stages().iter().filter(|e| !modeled(e)) {
+        assert_eq!(
+            e.confidence,
+            Confidence::NotApplicable,
+            "stage {}",
+            e.number
+        );
+        assert!(
+            e.model_version.is_empty(),
+            "stage {} model version",
+            e.number
+        );
+        assert!(e.coverage.is_empty(), "stage {} coverage", e.number);
+    }
+}
+
+#[test]
+fn modeled_invariants() {
+    // 007 FR-006, FR-007, FR-008, FR-013 (g): a modeled stage has a model version, a controls
+    // note and a confidence level.
+    for e in manifest().stages().iter().filter(|e| modeled(e)) {
+        assert!(
+            !e.model_version.is_empty(),
+            "stage {} model version",
+            e.number
+        );
+        assert!(!e.controls.is_empty(), "stage {} controls", e.number);
+        assert_ne!(
+            e.confidence,
+            Confidence::NotApplicable,
+            "stage {}",
+            e.number
+        );
+    }
+}
+
+#[test]
+fn paths() {
+    // 007 FR-002: record 1–7, playback 9–13, both for the memory, the clock and the power.
+    for e in manifest().stages() {
+        let want = match e.number {
+            1..=7 => StagePath::Record,
+            9..=13 => StagePath::Playback,
+            _ => StagePath::Both,
+        };
+        assert_eq!(e.path, want, "stage {} path", e.number);
+    }
+}
+
+#[test]
+fn lookup() {
+    // 007 FR-016: lookup by stage number; nothing for 0 or above 15.
+    let m = manifest();
+    assert!(m.stage(0).is_none());
+    assert!(m.stage(16).is_none());
+    assert!(m.stage(u32::MAX).is_none());
+    for n in 1..=15u32 {
+        assert_eq!(u32::from(m.stage(n).unwrap().number), n);
+    }
+}
+
+#[test]
+fn identical_across_reads() {
+    // 007 FR-016, SC-004: the same data, at the same address, every time.
+    let a = manifest();
+    let b = manifest();
+    assert!(core::ptr::eq(a, b));
+    assert_eq!(a, b);
+    assert_eq!(*a, *b);
+}
+
+#[test]
+fn id_lists_ascending_and_well_formed() {
+    // 007 FR-002, FR-005: IDs are the registers' strings verbatim, in ascending order.
+    fn well_formed(id: &str, prefix: u8) -> bool {
+        let b = id.as_bytes();
+        b.len() == 5 && b[0] == prefix && b[1] == b'-' && b[2..].iter().all(|c| c.is_ascii_digit())
+    }
+    for e in manifest().stages() {
+        for id in e.sources {
+            assert!(well_formed(id, b'S'), "stage {} source {id}", e.number);
+        }
+        for id in e.assumptions {
+            assert!(well_formed(id, b'A'), "stage {} assumption {id}", e.number);
+        }
+        assert!(
+            e.sources.windows(2).all(|w| w[0] < w[1]),
+            "stage {} sources",
+            e.number
+        );
+        assert!(
+            e.assumptions.windows(2).all(|w| w[0] < w[1]),
+            "stage {} assumptions",
+            e.number
+        );
+    }
+}
