@@ -7,8 +7,9 @@
  *     error returns RR_DR60_STATUS_INTERNAL_ERROR and poisons the handle until
  *     rr_dr60_reset (or rr_dr60_reconfigure) succeeds.
  *  2. A failed call changes nothing: out-parameters are untouched and state is unchanged.
- *     Exception: out_info in rr_dr60_process and rr_dr60_process_with_events is always written
- *     when not NULL, so a host that only checks `produced` never reads a stale count.
+ *     Exception: the info struct of rr_dr60_process, rr_dr60_process_with_events,
+ *     rr_dr60_record, rr_dr60_stop_recording and rr_dr60_play is always written when not
+ *     NULL, so a host that only checks `produced` or `stored` never reads a stale count.
  *  3. The caller owns all buffers; the library never keeps a pointer after a call returns.
  *     Using a handle after rr_dr60_destroy is undefined behavior.
  *  4. A handle must not be used by two threads at the same time; separate handles are
@@ -16,8 +17,16 @@
  *  5. RrDr60Settings only grows at the end; always start from rr_dr60_settings_default().
  *
  * Real-time safe: rr_dr60_process, rr_dr60_process_with_events, rr_dr60_max_events,
- *   rr_dr60_reset, rr_dr60_latency_samples, rr_dr60_settings_validate.
- * Not real-time safe (allocate): rr_dr60_create, rr_dr60_destroy, rr_dr60_reconfigure.
+ *   rr_dr60_reset, rr_dr60_latency_samples, rr_dr60_settings_validate,
+ *   rr_dr60_start_recording, rr_dr60_record, rr_dr60_max_record_events,
+ *   rr_dr60_stop_recording, rr_dr60_start_playback, rr_dr60_play, rr_dr60_stop_playback,
+ *   rr_dr60_set_route, rr_dr60_get_route, rr_dr60_get_state, rr_dr60_memory_status,
+ *   rr_dr60_recording_length, rr_dr60_export_len, rr_dr60_record_latency_samples,
+ *   rr_dr60_playback_latency_samples, rr_dr60_drain_samples, rr_dr60_footprint_bytes.
+ * Not real-time safe: rr_dr60_create, rr_dr60_destroy, rr_dr60_reconfigure (allocate);
+ *   rr_dr60_erase, rr_dr60_erase_all (a bounded memmove); rr_dr60_export, rr_dr60_import
+ *   (a CRC over the recording). The memory's figures and lengths are device samples:
+ *   divide by 6000 for seconds (A-026).
  *
  * SPDX-License-Identifier: MIT
  */
@@ -185,6 +194,67 @@ typedef uint32_t RrDr60VasMode;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
+// The output route (spec 006 FR-015), passed as `uint32_t`: a label in this version, the two
+// routes produce identical output until stages 11–13 are modeled.
+enum RrDr60Route
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+  // The built-in speaker (the default).
+  RR_DR60_ROUTE_SPEAKER = 0,
+  // The earphone jack (S-001; its path bypasses the power amplifier, A-032).
+  RR_DR60_ROUTE_EARPHONE = 1,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum RrDr60Route RrDr60Route;
+#else
+typedef uint32_t RrDr60Route;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// The engine's state (spec 006 FR-003), in `RrDr60EngineState.state`.
+enum RrDr60State
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+  // Neither recording nor playing.
+  RR_DR60_STATE_IDLE = 0,
+  // A recording is in progress; the speaker is muted (S-002).
+  RR_DR60_STATE_RECORDING = 1,
+  // A playback is in progress toward the selected route.
+  RR_DR60_STATE_PLAYING = 2,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum RrDr60State RrDr60State;
+#else
+typedef uint32_t RrDr60State;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// Why a recording stopped by itself (spec 006 FR-012), in `RrDr60RecordInfo.stop_reason`.
+enum RrDr60StopReason
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+  // It did not stop by itself.
+  RR_DR60_STOP_REASON_NONE = 0,
+  // The stored total reached the time capacity (S-001 "FULL"; the partial recording is
+  // kept, A-039).
+  RR_DR60_STOP_REASON_MEMORY_FULL = 1,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum RrDr60StopReason RrDr60StopReason;
+#else
+typedef uint32_t RrDr60StopReason;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
 // Opaque pipeline handle.
 typedef struct RrDr60Pipeline RrDr60Pipeline;
 
@@ -278,6 +348,72 @@ typedef struct RrDr60VasEvent {
   uint64_t input_length;
 } RrDr60VasEvent;
 
+// The report of one `rr_dr60_record` call, and of the stop flush (spec 006 FR-006, FR-012).
+typedef struct RrDr60RecordInfo {
+  // Device samples appended to the recording by this call.
+  uintptr_t stored;
+  // VAS events this call generated; `rr_dr60_max_record_events` sizes the event buffer.
+  uintptr_t events;
+  // The VAS is paused at the end of the call.
+  bool paused;
+  // The recording stopped by itself during this call: the engine is idle and the recording
+  // is kept (a following `rr_dr60_stop_recording` is `NOT_RECORDING`).
+  bool stopped;
+  // An `RrDr60StopReason` value; `NONE` unless `stopped`.
+  uint32_t stop_reason;
+} RrDr60RecordInfo;
+
+// The result of `rr_dr60_stop_recording` (spec 006 FR-005, FR-012).
+typedef struct RrDr60StopOutcome {
+  // The stop flush's report (all zeros when the flush was skipped).
+  struct RrDr60RecordInfo flush;
+  // The recording is in the memory; false when no input was fed and it was discarded as
+  // empty (A-039).
+  bool kept;
+  // Its number (1 to the count) when kept, else 0.
+  uint32_t number;
+  // Its length in device samples (÷ 6000 for seconds, A-026) when kept, else 0.
+  uint64_t length_samples;
+} RrDr60StopOutcome;
+
+// The report of one `rr_dr60_play` call (spec 006 FR-006, FR-008).
+typedef struct RrDr60PlayInfo {
+  // Host samples written to `output[0 .. produced)`.
+  uintptr_t produced;
+  // The recording and its drain ended in this call; the engine is idle.
+  bool finished;
+} RrDr60PlayInfo;
+
+// The engine's readable state, from `rr_dr60_get_state` (spec 006 FR-003, FR-015).
+typedef struct RrDr60EngineState {
+  // An `RrDr60State` value.
+  uint32_t state;
+  // An `RrDr60Route` value: the selected output route.
+  uint32_t route;
+  // The number of the recording in progress (the count plus one) or being played; 0 when
+  // idle.
+  uint32_t current_recording;
+  // The speaker is muted: while recording (S-002). A label in this version.
+  bool speaker_muted;
+} RrDr60EngineState;
+
+// The memory's figures, from `rr_dr60_memory_status` (spec 006 FR-011), in device samples:
+// divide by 6000 for seconds (A-026); C has no seconds helpers.
+typedef struct RrDr60MemoryStatus {
+  // The configured capacity (`memory_capacity_s` × 6000).
+  uint64_t capacity_samples;
+  // Device samples stored, the recording in progress included.
+  uint64_t used_samples;
+  // `capacity_samples − used_samples`.
+  uint64_t remaining_samples;
+  // The configured recording count.
+  uint32_t max_recordings;
+  // Recordings in the memory (the one in progress not counted).
+  uint32_t count;
+  // `max_recordings − count`.
+  uint32_t slots_remaining;
+} RrDr60MemoryStatus;
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -363,7 +499,9 @@ RrDr60Status rr_dr60_max_events(const struct RrDr60Pipeline *pipeline,
 // `pipeline` must be a live handle. `out_samples` must be NULL or writable.
 RrDr60Status rr_dr60_latency_samples(const struct RrDr60Pipeline *pipeline, uint32_t *out_samples);
 
-// Returns the pipeline to its freshly created state and clears a poisoned handle.
+// Returns the pipeline to idle with its path state cleared and clears a poisoned handle
+// (spec 006 FR-019): a recording in progress is discarded without flush, a playback stops
+// without drain, the memory's contents and the route are kept. Allowed in any state.
 // Real-time safe.
 //
 // # Safety
@@ -371,9 +509,13 @@ RrDr60Status rr_dr60_latency_samples(const struct RrDr60Pipeline *pipeline, uint
 // `pipeline` must be a live handle.
 RrDr60Status rr_dr60_reset(struct RrDr60Pipeline *pipeline);
 
-// Applies new settings and resets all state, as if the pipeline were created anew. On
-// success a poisoned handle becomes usable again. On error the pipeline is unchanged. Not
-// real-time safe (allocates).
+// Applies new settings and resets the path state; the memory's contents and the route are
+// kept (spec 006 FR-019). On success a poisoned handle becomes usable again. On error the
+// pipeline is unchanged. Not real-time safe (allocates).
+//
+// Statuses: `RECORDING_IN_PROGRESS`, `PLAYBACK_IN_PROGRESS` (allowed only when idle);
+// `STORED_EXCEEDS_CAPACITY` when the stored recordings would not fit the new capacity;
+// `ALLOCATION_FAILED`; the settings statuses of `rr_dr60_create`.
 //
 // # Safety
 //
@@ -393,6 +535,255 @@ RrDr60Status rr_dr60_reconfigure(struct RrDr60Pipeline *pipeline,
 // writable.
 RrDr60Status rr_dr60_settings_validate(const struct RrDr60Settings *settings,
                                        RrDr60SettingField *out_field);
+
+// Starts a recording (spec 006 FR-003, FR-004, FR-012): the record path starts from its reset
+// state and the recording in progress is number `count + 1`. Real-time safe.
+//
+// Statuses: `RECORDING_IN_PROGRESS`, `PLAYBACK_IN_PROGRESS`, `MEMORY_FULL`,
+// `NO_RECORDING_SLOTS`.
+//
+// # Safety
+//
+// `pipeline` must be a live handle.
+RrDr60Status rr_dr60_start_recording(struct RrDr60Pipeline *pipeline);
+
+// Feeds `frames` host samples to the record path and appends what it produces to the
+// recording in progress; writes the block's VAS events (positions in the recording's device
+// samples from its start) to `events`, the first `events_capacity` of them (spec 006 FR-001,
+// FR-006). The recording stops by itself at the exact sample at which the memory fills
+// (`out_info->stopped`, FR-012). `out_info` is always written when not NULL (zeros on an
+// error). `events` may be NULL only when `events_capacity` is 0; `input` may be NULL only when
+// `frames` is 0. Real-time safe.
+//
+// Statuses: `NOT_RECORDING`.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. When `frames > 0`, `input` must be readable for `frames`
+// floats. `out_info` must be NULL or writable. When `events_capacity > 0`, `events` must be
+// writable for that many values.
+RrDr60Status rr_dr60_record(struct RrDr60Pipeline *pipeline,
+                            const float *input,
+                            uintptr_t frames,
+                            struct RrDr60RecordInfo *out_info,
+                            struct RrDr60VasEvent *events,
+                            uintptr_t events_capacity);
+
+// Writes to `*out_capacity` an `events_capacity` that is always enough for a `rr_dr60_record`
+// block of `frames` host samples with the current settings. Real-time safe.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_capacity` must be NULL or writable.
+RrDr60Status rr_dr60_max_record_events(struct RrDr60Pipeline *pipeline,
+                                       uintptr_t frames,
+                                       uintptr_t *out_capacity);
+
+// Stops the recording (spec 006 FR-005): flushes the record path's own latency of silence
+// through it (its events go to `events`), and keeps the recording (`kept`, its number and
+// length) or, when nothing was fed since the start, discards it as empty (A-039).
+// `out_outcome` is always written when not NULL (zeros on an error). Real-time safe.
+//
+// Statuses: `NOT_RECORDING` (including after a memory-full stop).
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_outcome` must be NULL or writable. When
+// `events_capacity > 0`, `events` must be writable for that many values.
+RrDr60Status rr_dr60_stop_recording(struct RrDr60Pipeline *pipeline,
+                                    struct RrDr60StopOutcome *out_outcome,
+                                    struct RrDr60VasEvent *events,
+                                    uintptr_t events_capacity);
+
+// Starts playback of recording `number` (1 to the count) through the playback path, from its
+// reset state (spec 006 FR-002, FR-004). Real-time safe.
+//
+// Statuses: `RECORDING_IN_PROGRESS`, `PLAYBACK_IN_PROGRESS`, `NO_SUCH_RECORDING`.
+//
+// # Safety
+//
+// `pipeline` must be a live handle.
+RrDr60Status rr_dr60_start_playback(struct RrDr60Pipeline *pipeline, uint32_t number);
+
+// Produces the next block of host samples of the recording being played into
+// `output[0 .. produced)` (spec 006 FR-002, FR-008): the recording, then its drain, then
+// `finished` and idle. `out_info` is always written when not NULL (zeros on an error).
+// `frames == 0` is OK (`output` may then be NULL). Real-time safe.
+//
+// Statuses: `NOT_PLAYING`.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. When `frames > 0`, `output` must be writable for `frames`
+// floats. `out_info` must be NULL or writable.
+RrDr60Status rr_dr60_play(struct RrDr60Pipeline *pipeline,
+                          float *output,
+                          uintptr_t frames,
+                          struct RrDr60PlayInfo *out_info);
+
+// Stops the playback at once, without the drain (spec 006 FR-008). Real-time safe.
+//
+// Statuses: `NOT_PLAYING`.
+//
+// # Safety
+//
+// `pipeline` must be a live handle.
+RrDr60Status rr_dr60_stop_playback(struct RrDr60Pipeline *pipeline);
+
+// Selects the output route, an `RrDr60Route` value (spec 006 FR-015): at any time, during
+// playback too; it survives `rr_dr60_reset` and `rr_dr60_reconfigure`. Real-time safe.
+//
+// Statuses: `INVALID_ARGUMENT` for a value that is not a route (the route is unchanged).
+//
+// # Safety
+//
+// `pipeline` must be a live handle.
+RrDr60Status rr_dr60_set_route(struct RrDr60Pipeline *pipeline, uint32_t route);
+
+// Writes the selected route, an `RrDr60Route` value, to `*out_route`. Real-time safe.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_route` must be NULL or writable.
+RrDr60Status rr_dr60_get_route(struct RrDr60Pipeline *pipeline, uint32_t *out_route);
+
+// Writes the engine's state (idle, recording or playing), the route, the current recording's
+// number and whether the speaker is muted to `*out_state` (spec 006 FR-003). Real-time safe.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_state` must be NULL or writable.
+RrDr60Status rr_dr60_get_state(struct RrDr60Pipeline *pipeline,
+                               struct RrDr60EngineState *out_state);
+
+// Writes the memory's figures to `*out_status`, in device samples (÷ 6000 for seconds,
+// A-026; spec 006 FR-011). Real-time safe.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_status` must be NULL or writable.
+RrDr60Status rr_dr60_memory_status(struct RrDr60Pipeline *pipeline,
+                                   struct RrDr60MemoryStatus *out_status);
+
+// Writes the length of recording `number` in device samples (÷ 6000 for seconds, A-026) to
+// `*out_samples`. Real-time safe.
+//
+// Statuses: `NO_SUCH_RECORDING`.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_samples` must be NULL or writable.
+RrDr60Status rr_dr60_recording_length(struct RrDr60Pipeline *pipeline,
+                                      uint32_t number,
+                                      uint64_t *out_samples);
+
+// Erases recording `number` (spec 006 FR-013; S-001): its time returns to "remaining" and
+// the later recordings move down by one. Erasing the recording being played, or erasing all,
+// stops the playback first; erasing a lower number renumbers the played item. **Not real-time
+// safe** (a memmove bounded by the store's size; no allocation).
+//
+// Statuses: `RECORDING_IN_PROGRESS`, `NO_SUCH_RECORDING`.
+//
+// # Safety
+//
+// `pipeline` must be a live handle.
+RrDr60Status rr_dr60_erase(struct RrDr60Pipeline *pipeline, uint32_t number);
+
+// Erases every recording (spec 006 FR-013; S-001 "erase all"); a playback stops first; the
+// capacity is kept. Not real-time safe.
+//
+// Statuses: `RECORDING_IN_PROGRESS`.
+//
+// # Safety
+//
+// `pipeline` must be a live handle.
+RrDr60Status rr_dr60_erase_all(struct RrDr60Pipeline *pipeline);
+
+// Writes the exported length of recording `number`, in bytes, to `*out_len`, so the caller
+// can size the buffer for `rr_dr60_export` (spec 006 FR-014). Real-time safe.
+//
+// Statuses: `NO_SUCH_RECORDING`.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_len` must be NULL or writable.
+RrDr60Status rr_dr60_export_len(struct RrDr60Pipeline *pipeline,
+                                uint32_t number,
+                                uintptr_t *out_len);
+
+// Writes recording `number` as an opaque byte sequence into `out_bytes` (`capacity` bytes)
+// and the bytes written to `*out_written` (spec 006 FR-014). The host stores or sends the
+// bytes unchanged and never parses them; the same recording exports to the same bytes every
+// time. The form is the engine's (version 1: the record path's device-rate output; it will
+// become encoded frames when the codec is modeled, A-004, told apart by the version field).
+// Allowed in any state. Not real-time safe (a CRC over the recording; no allocation).
+//
+// Statuses: `NO_SUCH_RECORDING`; `BUFFER_TOO_SMALL` leaves `out_bytes` untouched and writes
+// the needed length to `*out_written` when not NULL; `NULL_POINTER` for a NULL `out_bytes`
+// (size queries go through `rr_dr60_export_len`).
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_bytes` must be writable for `capacity` bytes.
+// `out_written` must be NULL or writable.
+RrDr60Status rr_dr60_export(struct RrDr60Pipeline *pipeline,
+                            uint32_t number,
+                            uint8_t *out_bytes,
+                            uintptr_t capacity,
+                            uintptr_t *out_written);
+
+// Adds a recording from the `len` bytes of an export (this or another engine of the same
+// version, any host rate) and writes its number to `*out_number` when not NULL (spec 006
+// FR-014). Allowed while idle or playing; refused while recording. Not real-time safe
+// (validates the whole sequence; no allocation).
+//
+// Statuses: `RECORDING_IN_PROGRESS`, `UNKNOWN_FORM`, `UNSUPPORTED_FORM_VERSION`, `DAMAGED`,
+// `DOES_NOT_FIT` (the remaining time or slots); the memory is unchanged on every error.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `bytes` must be readable for `len` bytes. `out_number`
+// must be NULL or writable.
+RrDr60Status rr_dr60_import(struct RrDr60Pipeline *pipeline,
+                            const uint8_t *bytes,
+                            uintptr_t len,
+                            uint32_t *out_number);
+
+// Writes the record path's latency in host samples (input samples until the corresponding
+// device sample is stored; the stop flush is this long) to `*out_samples` (spec 006 FR-016).
+// Real-time safe.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_samples` must be NULL or writable.
+RrDr60Status rr_dr60_record_latency_samples(struct RrDr60Pipeline *pipeline, uint32_t *out_samples);
+
+// Writes the playback path's latency in host samples (output samples from the start of
+// playback until the first stored sample is represented) to `*out_samples` (spec 006 FR-016).
+// The two path latencies sum to `rr_dr60_latency_samples` within one sample. Real-time safe.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_samples` must be NULL or writable.
+RrDr60Status rr_dr60_playback_latency_samples(struct RrDr60Pipeline *pipeline,
+                                              uint32_t *out_samples);
+
+// Writes the host samples `rr_dr60_play` produces after the recording's own (the playback
+// path's settling drain) to `*out_samples` (spec 006 FR-008). Real-time safe.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_samples` must be NULL or writable.
+RrDr60Status rr_dr60_drain_samples(struct RrDr60Pipeline *pipeline, uint32_t *out_samples);
+
+// Writes the bytes reserved for the recording store and its span table to `*out_bytes`
+// (spec 006 FR-017, SC-007): about 86 MB at the default capacity, virtual until recordings
+// are written. Real-time safe.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_bytes` must be NULL or writable.
+RrDr60Status rr_dr60_footprint_bytes(struct RrDr60Pipeline *pipeline, uintptr_t *out_bytes);
 
 // The library version as a static NUL-terminated string, e.g. `"0.1.0"`. Never NULL; do not
 // free.

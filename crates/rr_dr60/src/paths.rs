@@ -14,6 +14,7 @@
 //! objects' code in the same order on the same device samples, so record-then-play is
 //! bit-identical to the one-pass processing by construction (R-01).
 
+#[cfg(any(test, feature = "__test-hooks"))]
 use alloc::vec::Vec;
 
 use crate::pipeline::VasEvent;
@@ -21,6 +22,7 @@ use crate::rate::RatePlan;
 use crate::resample::{self, PolyphaseDown, PolyphaseUp};
 use crate::sanitize::{narrow_out, sanitize_in};
 use crate::settings::{DEVICE_RATE_HZ, Settings, Tap, VasMode};
+#[cfg(any(test, feature = "__test-hooks"))]
 use crate::stages::biquad::Biquad;
 use crate::stages::clamp::ClampStage;
 use crate::stages::limiter::Limiter;
@@ -36,10 +38,12 @@ pub(crate) const N10: usize = 121; // 006 FR-008 (engineering target: −100 dB)
 
 /// Impulse-response samples examined by [`settling_len`]: far longer than any committed tail
 /// (engineering target, spec 006 research R-06).
+#[cfg(any(test, feature = "__test-hooks"))]
 const SETTLING_SCAN: usize = 10_000; // engineering target (006 R-06)
 
 /// The settling length of a biquad cascade: the first index after which |h| stays below
 /// `rel` × its peak. Test and design-time use only (allocates).
+#[cfg(any(test, feature = "__test-hooks"))]
 pub(crate) fn settling_len(sos: &[[f64; 5]], rel: f64) -> usize {
     let mut sections: Vec<Biquad> = sos.iter().map(|&s| Biquad::from_sos(s)).collect();
     let mut h = Vec::with_capacity(SETTLING_SCAN);
@@ -337,6 +341,7 @@ pub(crate) struct RecordPath {
     /// The rate plan's `(l, m)`, for the event bound (whatever unit the counters use).
     plan_l: u64,
     plan_m: u64,
+    #[cfg_attr(not(any(test, feature = "__test-hooks")), allow(dead_code))]
     host_rate_hz: u32,
     tap_after_agc: bool,
     latency: u32,

@@ -2,9 +2,9 @@
 //! at all seven host rates including the 6 kHz identity rate (spec 004 FR-016, FR-017; 004
 //! tasks.md T028).
 
-use rr_dr60::Pipeline;
+use rr_dr60::{Pipeline, Route, State, StopReason, StopResult, VasEvent};
 use rr_dr60_ffi::*;
-use rr_dr60_harness::{configs, golden, stimulus};
+use rr_dr60_harness::{chain_checks, configs, golden, smoke_reference, split_checks, stimulus};
 
 fn create(s: &RrDr60Settings) -> *mut RrDr60Pipeline {
     let mut p = std::ptr::null_mut();
@@ -939,6 +939,44 @@ mod panics {
         unsafe { rr_dr60_destroy(p) };
     }
 
+    /// 006 T041: a panic inside `rr_dr60_record` poisons the handle; `rr_dr60_reset` recovers
+    /// it with the recording in progress discarded (no flush, count unchanged).
+    #[test]
+    fn panic_while_recording_poisons_and_reset_discards() {
+        let p = create(&rr_dr60_settings_default(48_000));
+        let x = [0.1f32; 480];
+        let mut info = RrDr60RecordInfo::default();
+        let mut st = RrDr60EngineState::default();
+        let mut status = RrDr60MemoryStatus::default();
+        // SAFETY: live handle; valid buffers.
+        unsafe {
+            assert_eq!(rr_dr60_start_recording(p), RrDr60Status::Ok);
+            assert_eq!(
+                rr_dr60_record(p, x.as_ptr(), 480, &mut info, std::ptr::null_mut(), 0),
+                RrDr60Status::Ok
+            );
+            assert!(info.stored > 0);
+            rr_dr60__test_force_panic(p);
+            assert_eq!(
+                rr_dr60_record(p, x.as_ptr(), 480, &mut info, std::ptr::null_mut(), 0),
+                RrDr60Status::InternalError
+            );
+            assert_eq!(info, RrDr60RecordInfo::default());
+            assert_eq!(rr_dr60_get_state(p, &mut st), RrDr60Status::InternalError);
+            assert_eq!(
+                rr_dr60_stop_recording(p, std::ptr::null_mut(), std::ptr::null_mut(), 0),
+                RrDr60Status::InternalError
+            );
+            assert_eq!(rr_dr60_reset(p), RrDr60Status::Ok);
+            assert_eq!(rr_dr60_get_state(p, &mut st), RrDr60Status::Ok);
+            assert_eq!(st.state, RrDr60State::Idle as u32);
+            assert_eq!(rr_dr60_memory_status(p, &mut status), RrDr60Status::Ok);
+            assert_eq!((status.count, status.used_samples), (0, 0));
+            works(p);
+            rr_dr60_destroy(p);
+        }
+    }
+
     #[test]
     fn panic_poisons_and_reconfigure_recovers() {
         let p = create(&rr_dr60_settings_default(48_000));
@@ -950,4 +988,545 @@ mod panics {
         // SAFETY: from rr_dr60_create.
         unsafe { rr_dr60_destroy(p) };
     }
+}
+
+// ---- Spec 006 User Story 4 (FR-020, SC-005; T041): the record/stop/export/import/play loop
+// through C against Rust, the state table as C codes, BUFFER_TOO_SMALL, the smoke reference.
+
+/// The record half of the loop through C: `RecordInfo` per block, the stop outcome.
+struct CRecorded {
+    infos: Vec<RrDr60RecordInfo>,
+    events: Vec<RrDr60VasEvent>,
+    outcome: RrDr60StopOutcome,
+}
+
+fn c_record(p: *mut RrDr60Pipeline, x: &[f32], block: usize) -> CRecorded {
+    let mut capacity = 0usize;
+    // SAFETY: live handle; valid out pointer.
+    assert_eq!(
+        unsafe { rr_dr60_max_record_events(p, block, &mut capacity) },
+        RrDr60Status::Ok
+    );
+    let mut slots = vec![RrDr60VasEvent::default(); capacity + 8];
+    let mut r = CRecorded {
+        infos: Vec::new(),
+        events: Vec::new(),
+        outcome: RrDr60StopOutcome::default(),
+    };
+    // SAFETY: live handle.
+    assert_eq!(unsafe { rr_dr60_start_recording(p) }, RrDr60Status::Ok);
+    for chunk in x.chunks(block) {
+        let mut info = RrDr60RecordInfo::default();
+        // SAFETY: live handle; the buffers are valid for their lengths.
+        let status = unsafe {
+            rr_dr60_record(
+                p,
+                chunk.as_ptr(),
+                chunk.len(),
+                &mut info,
+                slots.as_mut_ptr(),
+                slots.len(),
+            )
+        };
+        assert_eq!(status, RrDr60Status::Ok);
+        r.events.extend_from_slice(&slots[..info.events]);
+        r.infos.push(info);
+        assert!(!info.stopped);
+    }
+    // SAFETY: live handle; valid buffers.
+    let status =
+        unsafe { rr_dr60_stop_recording(p, &mut r.outcome, slots.as_mut_ptr(), slots.len()) };
+    assert_eq!(status, RrDr60Status::Ok);
+    r.events.extend_from_slice(&slots[..r.outcome.flush.events]);
+    r
+}
+
+/// The playback half through C: the output to `finished`, with the per-block info checked.
+fn c_play(p: *mut RrDr60Pipeline, number: u32, block: usize) -> Vec<f32> {
+    // SAFETY: live handle.
+    assert_eq!(
+        unsafe { rr_dr60_start_playback(p, number) },
+        RrDr60Status::Ok
+    );
+    let mut out = Vec::new();
+    let mut buf = vec![0.0f32; block];
+    loop {
+        let mut info = RrDr60PlayInfo::default();
+        // SAFETY: live handle; valid buffer.
+        assert_eq!(
+            unsafe { rr_dr60_play(p, buf.as_mut_ptr(), buf.len(), &mut info) },
+            RrDr60Status::Ok
+        );
+        out.extend_from_slice(&buf[..info.produced]);
+        if info.finished {
+            break;
+        }
+        assert_eq!(info.produced, block);
+    }
+    out
+}
+
+fn c_rec_info(i: rr_dr60::RecordInfo) -> RrDr60RecordInfo {
+    RrDr60RecordInfo {
+        stored: i.stored,
+        events: i.events,
+        paused: i.paused,
+        stopped: i.stopped.is_some(),
+        stop_reason: match i.stopped {
+            Some(StopReason::MemoryFull) => RrDr60StopReason::MemoryFull as u32,
+            _ => RrDr60StopReason::None as u32,
+        },
+    }
+}
+
+fn c_state(p: *mut RrDr60Pipeline) -> RrDr60EngineState {
+    let mut st = RrDr60EngineState::default();
+    // SAFETY: live handle; valid out pointer.
+    assert_eq!(unsafe { rr_dr60_get_state(p, &mut st) }, RrDr60Status::Ok);
+    st
+}
+
+fn c_memory(p: *mut RrDr60Pipeline) -> RrDr60MemoryStatus {
+    let mut st = RrDr60MemoryStatus::default();
+    // SAFETY: live handle; valid out pointer.
+    assert_eq!(
+        unsafe { rr_dr60_memory_status(p, &mut st) },
+        RrDr60Status::Ok
+    );
+    st
+}
+
+fn rust_state(p: &Pipeline) -> RrDr60EngineState {
+    let st = p.state();
+    RrDr60EngineState {
+        state: match st.state {
+            State::Idle => 0,
+            State::Recording => 1,
+            State::Playing => 2,
+            _ => 99,
+        },
+        route: match st.route {
+            Route::Speaker => 0,
+            Route::Earphone => 1,
+            _ => 99,
+        },
+        current_recording: st.current.unwrap_or(0),
+        speaker_muted: st.speaker_muted,
+    }
+}
+
+fn rust_memory(p: &Pipeline) -> RrDr60MemoryStatus {
+    let m = p.memory_status();
+    RrDr60MemoryStatus {
+        capacity_samples: m.capacity_samples,
+        used_samples: m.used_samples,
+        remaining_samples: m.remaining_samples,
+        max_recordings: m.max_recordings,
+        count: m.count,
+        slots_remaining: m.slots_remaining,
+    }
+}
+
+/// US4 scenario 1 (FR-020): the loop at the seven rates through C versus Rust: per-block
+/// `RecordInfo`, the events, the stop outcome, the state at each step, the memory figures, the
+/// recording length, the exported bytes, the import into a second handle, both playbacks,
+/// the three latency reads, erase and erase all; everything bit-identical or equal.
+#[test]
+fn c_api_record_play_loop_matches_rust_at_all_rates() {
+    for rate in configs::all_rates() {
+        let s = configs::memory_capacity(configs::settings("default_vas", rate), 10, 3);
+        let (x, _) =
+            chain_checks::speech_like_pattern(rate, chain_checks::BURST_DBFS, -60.0, 0x0D64);
+        let x = &x[..(2 * rate as usize).min(x.len())];
+        let block = 480;
+        // Rust.
+        let mut rust = Pipeline::new(s).unwrap();
+        let mut slots = vec![VasEvent::default(); rust.max_record_events(block) + 8];
+        let mut states = vec![rust_state(&rust)];
+        rust.start_recording().unwrap();
+        let mut want_infos = Vec::new();
+        let mut want_events = Vec::new();
+        for chunk in x.chunks(block) {
+            let info = rust.record(chunk, &mut slots).unwrap();
+            want_events.extend(slots[..info.events].iter().map(|&e| c_event(e)));
+            want_infos.push(c_rec_info(info));
+        }
+        let out = rust.stop_recording(&mut slots).unwrap();
+        want_events.extend(slots[..out.flush.events].iter().map(|&e| c_event(e)));
+        let (kept, number, length) = match out.result {
+            StopResult::Kept { number, length } => (true, number, length),
+            _ => (false, 0, 0),
+        };
+        let want_outcome = RrDr60StopOutcome {
+            flush: c_rec_info(out.flush),
+            kept,
+            number,
+            length_samples: length,
+        };
+        states.push(rust_state(&rust));
+        let want_memory = rust_memory(&rust);
+        let want_bytes = split_checks::export_bytes(&rust, 1);
+        let want_play = split_checks::play_to_end(&mut rust, 1, 997);
+        // C.
+        let p = create(&configs::c_settings(&s));
+        let idle = c_state(p);
+        assert_eq!(idle, states[0], "{rate} Hz: idle state");
+        let r = c_record(p, x, block);
+        assert_eq!(r.infos, want_infos, "{rate} Hz: per-block RecordInfo");
+        assert_eq!(r.events, want_events, "{rate} Hz: events");
+        assert_eq!(r.outcome, want_outcome, "{rate} Hz: stop outcome");
+        assert_eq!(c_state(p), states[1], "{rate} Hz: state after stop");
+        assert_eq!(c_memory(p), want_memory, "{rate} Hz: memory status");
+        let mut len_samples = 0u64;
+        let mut len = 0usize;
+        // SAFETY: live handle; valid out pointers.
+        unsafe {
+            assert_eq!(
+                rr_dr60_recording_length(p, 1, &mut len_samples),
+                RrDr60Status::Ok
+            );
+            assert_eq!(len_samples, length);
+            assert_eq!(rr_dr60_export_len(p, 1, &mut len), RrDr60Status::Ok);
+        }
+        assert_eq!(len, want_bytes.len());
+        let mut bytes = vec![0u8; len];
+        let mut written = 0usize;
+        // SAFETY: live handle; valid buffer.
+        assert_eq!(
+            unsafe { rr_dr60_export(p, 1, bytes.as_mut_ptr(), bytes.len(), &mut written) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(written, len);
+        assert_eq!(bytes, want_bytes, "{rate} Hz: exported bytes");
+        // A second handle imports the bytes.
+        let q = create(&configs::c_settings(&s));
+        let mut imported = 0u32;
+        // SAFETY: live handle; valid buffer and out pointer.
+        assert_eq!(
+            unsafe { rr_dr60_import(q, bytes.as_ptr(), bytes.len(), &mut imported) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(imported, 1);
+        assert_eq!(c_play(p, 1, 997), want_play, "{rate} Hz: C playback");
+        assert_eq!(c_play(q, 1, 997), want_play, "{rate} Hz: imported playback");
+        assert_eq!(c_state(p), states[0]);
+        // Latencies and the drain.
+        let (mut a, mut b, mut c, mut f) = (0u32, 0u32, 0u32, 0usize);
+        // SAFETY: live handle; valid out pointers.
+        unsafe {
+            assert_eq!(rr_dr60_record_latency_samples(p, &mut a), RrDr60Status::Ok);
+            assert_eq!(
+                rr_dr60_playback_latency_samples(p, &mut b),
+                RrDr60Status::Ok
+            );
+            assert_eq!(rr_dr60_drain_samples(p, &mut c), RrDr60Status::Ok);
+            assert_eq!(rr_dr60_footprint_bytes(p, &mut f), RrDr60Status::Ok);
+        }
+        assert_eq!(
+            (a, b, c, f),
+            (
+                rust.record_latency_samples(),
+                rust.playback_latency_samples(),
+                rust.drain_samples(),
+                rust.footprint_bytes()
+            )
+        );
+        // Route round trip during playback, then erase and erase all.
+        let mut route = 9u32;
+        // SAFETY: live handle; valid out pointer.
+        unsafe {
+            assert_eq!(rr_dr60_start_playback(q, 1), RrDr60Status::Ok);
+            assert_eq!(
+                rr_dr60_set_route(q, RrDr60Route::Earphone as u32),
+                RrDr60Status::Ok
+            );
+            assert_eq!(rr_dr60_get_route(q, &mut route), RrDr60Status::Ok);
+            assert_eq!(route, 1);
+            assert_eq!(c_state(q).route, 1);
+            assert_eq!(
+                rr_dr60_erase(q, 1),
+                RrDr60Status::Ok,
+                "erasing the played item stops playback"
+            );
+            assert_eq!(c_state(q).state, 0);
+            assert_eq!(c_memory(q).count, 0);
+            assert_eq!(
+                rr_dr60_import(q, bytes.as_ptr(), bytes.len(), &mut imported),
+                RrDr60Status::Ok
+            );
+            assert_eq!(
+                rr_dr60_import(q, bytes.as_ptr(), bytes.len(), &mut imported),
+                RrDr60Status::Ok
+            );
+            assert_eq!(imported, 2);
+            assert_eq!(rr_dr60_erase_all(q), RrDr60Status::Ok);
+            assert_eq!(c_memory(q), rust_memory(&Pipeline::new(s).unwrap()));
+            rr_dr60_destroy(p);
+            rr_dr60_destroy(q);
+        }
+    }
+}
+
+/// SC-005 (FR-020): the state table's refusals as C codes, each leaving the state unchanged.
+#[test]
+fn c_api_state_table_refusals() {
+    let s = configs::memory_capacity(configs::settings("default_agc", 48_000), 1, 1);
+    let p = create(&configs::c_settings(&s));
+    let x = [0.25f32; 4800];
+    let mut y = [0.0f32; 480];
+    let mut info = RrDr60RecordInfo::default();
+    let mut play = RrDr60PlayInfo::default();
+    let mut outcome = RrDr60StopOutcome::default();
+    let c = configs::c_settings(&s);
+    // SAFETY: live handle; valid buffers.
+    unsafe {
+        // Idle.
+        assert_eq!(
+            rr_dr60_record(p, x.as_ptr(), 480, &mut info, std::ptr::null_mut(), 0),
+            RrDr60Status::NotRecording
+        );
+        assert_eq!(
+            rr_dr60_stop_recording(p, &mut outcome, std::ptr::null_mut(), 0),
+            RrDr60Status::NotRecording
+        );
+        assert_eq!(
+            rr_dr60_play(p, y.as_mut_ptr(), 480, &mut play),
+            RrDr60Status::NotPlaying
+        );
+        assert_eq!(rr_dr60_stop_playback(p), RrDr60Status::NotPlaying);
+        assert_eq!(rr_dr60_start_playback(p, 0), RrDr60Status::NoSuchRecording);
+        assert_eq!(rr_dr60_start_playback(p, 1), RrDr60Status::NoSuchRecording);
+        assert_eq!(rr_dr60_erase(p, 1), RrDr60Status::NoSuchRecording);
+        let mut n = 0u64;
+        assert_eq!(
+            rr_dr60_recording_length(p, 1, &mut n),
+            RrDr60Status::NoSuchRecording
+        );
+        assert_eq!(c_state(p).state, 0);
+        // Recording.
+        assert_eq!(rr_dr60_start_recording(p), RrDr60Status::Ok);
+        assert_eq!(
+            c_state(p),
+            RrDr60EngineState {
+                state: 1,
+                route: 0,
+                current_recording: 1,
+                speaker_muted: true
+            }
+        );
+        assert_eq!(
+            rr_dr60_start_recording(p),
+            RrDr60Status::RecordingInProgress
+        );
+        assert_eq!(
+            rr_dr60_start_playback(p, 1),
+            RrDr60Status::RecordingInProgress
+        );
+        assert_eq!(rr_dr60_erase(p, 1), RrDr60Status::RecordingInProgress);
+        assert_eq!(rr_dr60_erase_all(p), RrDr60Status::RecordingInProgress);
+        assert_eq!(
+            rr_dr60_import(p, x.as_ptr().cast(), 8, std::ptr::null_mut()),
+            RrDr60Status::RecordingInProgress
+        );
+        assert_eq!(
+            rr_dr60_reconfigure(p, &c),
+            RrDr60Status::RecordingInProgress
+        );
+        assert_eq!(
+            rr_dr60_process(p, x.as_ptr(), y.as_mut_ptr(), 480, std::ptr::null_mut()),
+            RrDr60Status::RecordingInProgress
+        );
+        assert_eq!(
+            rr_dr60_play(p, y.as_mut_ptr(), 480, &mut play),
+            RrDr60Status::NotPlaying
+        );
+        assert_eq!(c_state(p).state, 1);
+        // Fill the 1 s memory inside a block: stopped with MEMORY_FULL, then NOT_RECORDING.
+        let mut total = 0;
+        loop {
+            assert_eq!(
+                rr_dr60_record(p, x.as_ptr(), 4800, &mut info, std::ptr::null_mut(), 0),
+                RrDr60Status::Ok
+            );
+            total += info.stored;
+            if info.stopped {
+                break;
+            }
+        }
+        assert_eq!(info.stop_reason, RrDr60StopReason::MemoryFull as u32);
+        assert_eq!(total, 6000);
+        assert_eq!(c_state(p).state, 0);
+        assert_eq!(
+            rr_dr60_stop_recording(p, &mut outcome, std::ptr::null_mut(), 0),
+            RrDr60Status::NotRecording
+        );
+        assert_eq!(rr_dr60_start_recording(p), RrDr60Status::MemoryFull);
+        // Playing.
+        assert_eq!(rr_dr60_start_playback(p, 1), RrDr60Status::Ok);
+        assert_eq!(
+            c_state(p),
+            RrDr60EngineState {
+                state: 2,
+                route: 0,
+                current_recording: 1,
+                speaker_muted: false
+            }
+        );
+        assert_eq!(rr_dr60_start_recording(p), RrDr60Status::PlaybackInProgress);
+        assert_eq!(
+            rr_dr60_start_playback(p, 1),
+            RrDr60Status::PlaybackInProgress
+        );
+        assert_eq!(rr_dr60_reconfigure(p, &c), RrDr60Status::PlaybackInProgress);
+        assert_eq!(
+            rr_dr60_process(p, x.as_ptr(), y.as_mut_ptr(), 480, std::ptr::null_mut()),
+            RrDr60Status::PlaybackInProgress
+        );
+        assert_eq!(
+            rr_dr60_record(p, x.as_ptr(), 480, &mut info, std::ptr::null_mut(), 0),
+            RrDr60Status::NotRecording
+        );
+        assert_eq!(rr_dr60_stop_playback(p), RrDr60Status::Ok);
+        assert_eq!(c_state(p).state, 0);
+        // Slots: a 1-slot memory after an erase and a re-import... the time is the limit here;
+        // use a fresh 10 s / 1-slot handle for NO_RECORDING_SLOTS and DOES_NOT_FIT.
+        let mut len = 0usize;
+        assert_eq!(rr_dr60_export_len(p, 1, &mut len), RrDr60Status::Ok);
+        let mut bytes = vec![0u8; len];
+        let mut written = 0usize;
+        assert_eq!(
+            rr_dr60_export(p, 1, bytes.as_mut_ptr(), len, &mut written),
+            RrDr60Status::Ok
+        );
+        let two_slots = configs::c_settings(&configs::memory_capacity(
+            configs::settings("default_agc", 48_000),
+            10,
+            2,
+        ));
+        let q = create(&two_slots);
+        let mut number = 0u32;
+        assert_eq!(
+            rr_dr60_import(q, bytes.as_ptr(), len, &mut number),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_import(q, bytes.as_ptr(), len, &mut number),
+            RrDr60Status::Ok
+        );
+        assert_eq!(number, 2);
+        assert_eq!(rr_dr60_start_recording(q), RrDr60Status::NoRecordingSlots);
+        assert_eq!(
+            rr_dr60_import(q, bytes.as_ptr(), len, &mut number),
+            RrDr60Status::DoesNotFit
+        );
+        // Corrupt forms.
+        assert_eq!(
+            rr_dr60_import(q, bytes.as_ptr(), 4, &mut number),
+            RrDr60Status::UnknownForm
+        );
+        let mut v2 = bytes.clone();
+        v2[8] = 2;
+        assert_eq!(
+            rr_dr60_import(q, v2.as_ptr(), v2.len(), &mut number),
+            RrDr60Status::UnsupportedFormVersion
+        );
+        let mut flipped = bytes.clone();
+        flipped[40] ^= 1;
+        assert_eq!(
+            rr_dr60_import(q, flipped.as_ptr(), flipped.len(), &mut number),
+            RrDr60Status::Damaged
+        );
+        assert_eq!(
+            rr_dr60_import(q, bytes.as_ptr(), len - 1, &mut number),
+            RrDr60Status::Damaged
+        );
+        // Reconfigure below the stored time.
+        let same = configs::c_settings(&configs::memory_capacity(
+            configs::settings("default_agc", 48_000),
+            1,
+            1,
+        ));
+        assert_eq!(
+            rr_dr60_reconfigure(p, &same),
+            RrDr60Status::Ok,
+            "same capacity: kept"
+        );
+        // q holds 2 × 6000 samples in 2 slots: neither 1 s nor 1 slot fits them.
+        let mut tiny = two_slots;
+        tiny.memory_capacity_s = 1;
+        assert_eq!(
+            rr_dr60_reconfigure(q, &tiny),
+            RrDr60Status::StoredExceedsCapacity
+        );
+        tiny = two_slots;
+        tiny.memory_max_recordings = 1;
+        assert_eq!(
+            rr_dr60_reconfigure(q, &tiny),
+            RrDr60Status::StoredExceedsCapacity
+        );
+        assert_eq!(c_memory(q).count, 2, "a refusal changes nothing");
+        rr_dr60_destroy(p);
+        rr_dr60_destroy(q);
+    }
+}
+
+/// FR-020 (contracts/c-api.md): `BUFFER_TOO_SMALL` leaves the buffer untouched and reports the
+/// needed length in `out_written` (when not NULL).
+#[test]
+fn c_api_buffer_too_small_leaves_the_buffer_untouched() {
+    let s = configs::memory_capacity(configs::settings("default_agc", 48_000), 10, 3);
+    let p = create(&configs::c_settings(&s));
+    let x = [0.25f32; 4800];
+    let mut outcome = RrDr60StopOutcome::default();
+    let mut needed = 0usize;
+    let mut buf = vec![0xAAu8; 10];
+    let mut written = 0usize;
+    // SAFETY: live handle; valid buffers.
+    unsafe {
+        assert_eq!(rr_dr60_start_recording(p), RrDr60Status::Ok);
+        assert_eq!(
+            rr_dr60_record(
+                p,
+                x.as_ptr(),
+                4800,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0
+            ),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_stop_recording(p, &mut outcome, std::ptr::null_mut(), 0),
+            RrDr60Status::Ok
+        );
+        assert_eq!(rr_dr60_export_len(p, 1, &mut needed), RrDr60Status::Ok);
+        assert_eq!(
+            rr_dr60_export(p, 1, buf.as_mut_ptr(), buf.len(), &mut written),
+            RrDr60Status::BufferTooSmall
+        );
+        assert_eq!(written, needed);
+        assert!(buf.iter().all(|&b| b == 0xAA));
+        assert_eq!(
+            rr_dr60_export(p, 1, buf.as_mut_ptr(), buf.len(), std::ptr::null_mut()),
+            RrDr60Status::BufferTooSmall
+        );
+        let mut full = vec![0u8; needed + 3];
+        assert_eq!(
+            rr_dr60_export(p, 1, full.as_mut_ptr(), full.len(), &mut written),
+            RrDr60Status::Ok
+        );
+        assert_eq!(written, needed);
+        assert_eq!(&full[..8], b"RRDR60RC");
+        rr_dr60_destroy(p);
+    }
+}
+
+/// The smoke test's reference (US4 scenario 1; contracts/c-api.md › Smoke test additions): the
+/// Rust playback of the smoke stimulus hashes to the constant `smoke.c` embeds, so the C
+/// program compares its playback with the Rust path's bit for bit.
+#[test]
+fn smoke_reference_hash_is_pinned() {
+    let (hash, samples) = smoke_reference::rust_playback_hash();
+    println!("smoke reference: {samples} samples, FNV-1a 64 {hash:#018x}");
+    assert_eq!(hash, smoke_reference::SMOKE_REFERENCE_HASH);
 }
