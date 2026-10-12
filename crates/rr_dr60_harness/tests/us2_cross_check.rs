@@ -458,14 +458,12 @@ fn check_readme_region(name: &str, want: &str) {
 }
 
 #[test]
-#[ignore = "T033 adds the README markers and un-ignores this test"]
 fn readme_table_matches() {
     // 007 FR-019: the generated fidelity table.
     check_readme_region("manifest-table", &render_readme_table(manifest()));
 }
 
 #[test]
-#[ignore = "T033 adds the README markers and un-ignores this test"]
 fn readme_code_blocks_match() {
     // SC-001: the README's Rust block is the example file, its C block the smoke function.
     let root = mc::repo_root();

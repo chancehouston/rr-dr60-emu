@@ -7,8 +7,8 @@
 //! copies of any of them. It never panics on malformed input: it reports [`Rule::Parse`].
 //!
 //! Bless switches: `RR_DR60_BLESS=manifest cargo test -p rr_dr60_harness --test us2_cross_check
-//! canonical` rewrites `golden/manifest-v1.txt`; `RR_DR60_BLESS=readme … readme` rewrites the
-//! README's three marked regions. Both are content changes recorded in the CHANGELOG
+//! canonical` rewrites `golden/manifest-v1.txt`; `RR_DR60_BLESS=readme … readme -- --test-threads=1`
+//! rewrites the README's three marked regions (single-threaded: two tests write the same file). Both are content changes recorded in the CHANGELOG
 //! (007 FR-015).
 
 use std::fmt;

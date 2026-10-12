@@ -38,6 +38,9 @@ release PR or issue and tick each item. The reason for each item is in brackets.
       code uses has an A-/S- ID, and any change to an assumed value is in the CHANGELOG.
       [Constitution II, FR-018]
 - [ ] `scripts/check-traceability.sh` passes (CI runs it in the `check` job). [SC-007]
+- [ ] **The README's manifest table and code blocks equal the manifest's output**
+      (`cargo test -p rr_dr60_harness --test us2_cross_check readme`); a changed stage string,
+      status, confidence, coverage note or model version is in the CHANGELOG. [007 FR-015, FR-019]
 - [ ] **SemVer:** the version is bumped in `Cargo.toml` (workspace) for both the Rust API and the
       C API. The C version defines (`RR_DR60_VERSION_*` in `crates/rr_dr60_ffi/src/lib.rs`)
       match, and the header has been regenerated. Breaking changes to either surface need a
