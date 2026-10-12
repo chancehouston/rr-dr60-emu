@@ -1530,3 +1530,105 @@ fn smoke_reference_hash_is_pinned() {
     println!("smoke reference: {samples} samples, FNV-1a 64 {hash:#018x}");
     assert_eq!(hash, smoke_reference::SMOKE_REFERENCE_HASH);
 }
+
+// ---- Spec 007 User Story 3: the manifest through the C API equals the Rust manifest ----
+
+fn cstr(p: *const std::ffi::c_char) -> &'static str {
+    assert!(!p.is_null(), "a manifest string pointer is NULL");
+    // SAFETY: every manifest string is a static NUL-terminated UTF-8 string (contracts/c-api.md).
+    unsafe { std::ffi::CStr::from_ptr(p) }.to_str().unwrap()
+}
+
+#[test]
+fn manifest_header_matches_rust() {
+    // 007 FR-017; US3 scenarios 1 and 4.
+    let m = rr_dr60::manifest();
+    let mut h = RrDr60ManifestHeader::default();
+    // SAFETY: valid out pointer.
+    assert_eq!(unsafe { rr_dr60_manifest_header(&mut h) }, RrDr60Status::Ok);
+    assert_eq!(cstr(h.library_version), m.header.library_version);
+    assert_eq!(h.device_rate_hz, m.header.device_rate_hz);
+    assert_eq!(h.stage_count, m.header.stage_count);
+    assert_eq!(h.count_not_modeled, m.header.counts.not_modeled);
+    assert_eq!(h.count_assumed, m.header.counts.assumed);
+    assert_eq!(h.count_sourced, m.header.counts.sourced);
+    assert_eq!(h.count_checked, m.header.counts.checked);
+    assert_eq!(cstr(h.basis), m.header.basis);
+    assert_eq!(cstr(h.evidence_link), m.header.evidence_link);
+    assert_eq!(cstr(h.assumptions_link), m.header.assumptions_link);
+    assert_eq!(cstr(h.sources_link), m.header.sources_link);
+    assert_eq!(rr_dr60_manifest_stage_count(), m.header.stage_count);
+}
+
+#[test]
+fn manifest_stages_match_rust() {
+    // 007 FR-017; US3 scenario 1: every field of every stage, the IDs through the accessors.
+    for e in rr_dr60::manifest().stages() {
+        let n = u32::from(e.number);
+        let mut c = RrDr60StageEntry::default();
+        // SAFETY: valid out pointer.
+        assert_eq!(
+            unsafe { rr_dr60_manifest_stage(n, &mut c) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(c.number, n);
+        assert_eq!(cstr(c.identifier), e.identifier);
+        assert_eq!(cstr(c.name), e.name);
+        assert_eq!(cstr(c.description), e.description);
+        assert_eq!(c.status, e.status as u32);
+        assert_eq!(c.path, e.path as u32);
+        assert_eq!(c.confidence, e.confidence as u32);
+        assert_eq!(c.source_count as usize, e.sources.len());
+        assert_eq!(c.assumption_count as usize, e.assumptions.len());
+        assert_eq!(cstr(c.coverage), e.coverage);
+        assert_eq!(cstr(c.controls), e.controls);
+        assert_eq!(cstr(c.model_version), e.model_version);
+        for (i, want) in e.sources.iter().enumerate() {
+            let mut id = std::ptr::null();
+            // SAFETY: valid out pointer.
+            assert_eq!(
+                unsafe { rr_dr60_manifest_stage_source(n, i as u32, &mut id) },
+                RrDr60Status::Ok
+            );
+            assert_eq!(cstr(id), *want);
+        }
+        for (i, want) in e.assumptions.iter().enumerate() {
+            let mut id = std::ptr::null();
+            // SAFETY: valid out pointer.
+            assert_eq!(
+                unsafe { rr_dr60_manifest_stage_assumption(n, i as u32, &mut id) },
+                RrDr60Status::Ok
+            );
+            assert_eq!(cstr(id), *want);
+        }
+    }
+}
+
+#[test]
+fn manifest_refusals() {
+    // US3 scenario 2: 0 and 16 refused with a distinct code; an index at the count refused.
+    let mut c = RrDr60StageEntry::default();
+    let mut id = std::ptr::null();
+    // SAFETY: valid out pointers.
+    unsafe {
+        assert_eq!(rr_dr60_manifest_stage(0, &mut c), RrDr60Status::NoSuchStage);
+        assert_eq!(
+            rr_dr60_manifest_stage(16, &mut c),
+            RrDr60Status::NoSuchStage
+        );
+        assert_eq!(rr_dr60_manifest_stage(3, &mut c), RrDr60Status::Ok);
+        assert_eq!(
+            rr_dr60_manifest_stage_source(3, c.source_count, &mut id),
+            RrDr60Status::InvalidArgument
+        );
+        assert_eq!(
+            rr_dr60_manifest_stage_assumption(3, c.assumption_count, &mut id),
+            RrDr60Status::InvalidArgument
+        );
+        assert_eq!(
+            rr_dr60_manifest_stage_assumption(16, 0, &mut id),
+            RrDr60Status::NoSuchStage
+        );
+    }
+    assert!(id.is_null());
+}

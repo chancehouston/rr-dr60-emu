@@ -37,31 +37,40 @@ Exact specifications for the RR-DR60 aren't fully public. Where they're unknown,
 
 ### Fidelity status by stage
 
-What each modeled stage rests on today. "Documented" means the behavior is taken from the device's own documentation (service manual, datasheets); "assumed" means an educated guess registered in the assumption register; nothing is **verified** against a real unit yet.
+The engine's **stage manifest** ([spec 007](specs/007-stage-manifest/spec.md)) is the canonical per-stage status; this table is generated from it (`RR_DR60_BLESS=readme cargo test -p rr_dr60_harness --test us2_cross_check readme -- --test-threads=1` regenerates it, and the same test fails when it drifts). Four words: **sourced** means every assumption the stage rests on is confirmed by a document; **assumed** means at least one is still open; **not modeled** means the engine passes the stage through or represents it as a label; **checked against a real unit** means every assumption the stage rests on is confirmed by a document or by a measurement of a real RR-DR60, at least one of them by measurement. No stage is checked yet. "Not modeled here" names what the engine leaves out at a stage it does model; the basis column lists the source (S-) and assumption (A-) IDs from [docs/hardware/](docs/hardware/).
 
-| Stage | Built? | Basis | Notes |
-|---|---|---|---|
-| Codec band-limiting (record and playback filters) | yes ([spec 004](specs/004-device-rate-6khz/spec.md)) | documented rate (A-026, verified from the service manual); datasheet templates scaled to it (A-027, assumed, medium confidence) | Revised by spec 004: the stages run at the device's **6 kHz** rate and follow the codec family datasheet's transmit band-pass and receive low-pass templates scaled to that clock (band about 225–2550 Hz, unity gain at 765 Hz, minimum-phase). Not measured against a real unit; the response between 2550 Hz and 3 kHz is a design choice no source constrains, and the device's own aliasing and DAC imaging above the band are not modeled. |
-| AGC (a limiter) | yes ([spec 005](specs/005-limiter-agc/spec.md)) | modeled on the circuit (S-002, A-028); the dead time, release and polarity are estimates (A-034–A-036), low confidence on timing | A peak-detecting limiter just below the codec's full scale: nothing below the knee, a hard ceiling above it after a few milliseconds of clipped onset, recovery over about 1.4 s. Modeled on the service manual's schematic with estimated transistor parameters; not measured against a unit. A real unit may clip at full scale instead of holding just below it. |
-| ADC full-scale clamp | yes ([spec 005](specs/005-limiter-agc/spec.md)) | documented (A-030: the codec's full-scale code) | Samples beyond full scale saturate after the record filter; this gives loud onsets their clipped start. Not measured. |
-| VAS (voice-activated pausing) | yes ([spec 003](specs/003-vas/spec.md)) | documented behavior (owner's manual), assumed values (A-022–A-025) | Threshold (−40 dBFS at level 3, re-anchored by spec 005), hang and onset times are guesses until captures exist. |
-| Microphone and mic amp | no | documented topology (A-005, A-006, A-029) | Gain and noise are estimates from the circuit. |
-| µ-law quantization | no | documented (A-003) | |
-| CELP speech codec, 4 kbit/s | no | documented bitrate and type (A-004); the exact codec is unknown | The stage most responsible for the device's sound; the hardest to get right. |
-| Flash memory (capacity and recordings) | capacity only ([spec 006](specs/006-record-playback-split/spec.md)) | documented figures (60 minutes, 99 recordings, S-001); the accounting assumed (A-038, A-039) | A memory the recordings go into and come out of, with the device's limits: recording stops at the limit, numbering and erase as the owner's manual describes. The stored form is the engine's own 32-bit samples until the codec is modeled, so it says nothing about the device's sound. |
-| Speaker amp, speaker, earphone path | no | documented topology (A-031, A-032); speaker acoustics assumed (A-010) | Spec 006 reserves the speaker/earphone **route** as a selectable label (the two routes are exclusive on the device, S-001); it does not change the sound yet. |
+<!-- manifest-table:start -->
+| # | Stage | Status | Confidence | Basis | Not modeled here | Model version |
+|---|---|---|---|---|---|---|
+| 1 | Microphone capsule | not modeled | — | S-002; A-005 |  |  |
+| 2 | Microphone amplifier | not modeled | — | S-002; A-006, A-029 |  |  |
+| 3 | Limiter (AGC) | assumed | low | S-001, S-002; A-007, A-019, A-020, A-028, A-030, A-034, A-035, A-036, A-037 | a soft knee, if the circuit has one; the DC block and 13 kHz roll-off ahead of the peak circuit | 0.5.0 |
+| 4 | Codec input: filter, ADC and µ-law | assumed | medium | S-002, S-003, S-005, S-007; A-003, A-015, A-016, A-026, A-027, A-030 | µ-law quantization, idle noise, the input amp's clipping ahead of the filter, and aliasing of input above 3 kHz | 0.5.0 |
+| 5 | Voice-activated pause (VAS) | assumed | low | S-001, S-002; A-008, A-021, A-022, A-023, A-024, A-025, A-033, A-037 | a digital gain from the sensitivity setting, if the device applies one | 0.5.0 |
+| 6 | Noise reduction | not modeled | — | S-002, S-004; A-009 |  |  |
+| 7 | Speech encoder (CELP, 4 kbit/s) | not modeled | — | S-002, S-004; A-004 |  |  |
+| 8 | Flash memory | assumed | low | S-001, S-002; A-037, A-038, A-039 | encoded CELP frames as the stored form (the engine keeps its own samples); item locking (F.LOCK) | 0.6.0 |
+| 9 | Speech decoder (CELP) | not modeled | — | S-002; A-004 |  |  |
+| 10 | Codec output: DAC and reconstruction filter | assumed | medium | S-002, S-003, S-005, S-007; A-015, A-016, A-026, A-027, A-030 | µ-law expansion, idle noise on the playback side, DAC imaging residue above 3 kHz; the SLOW/FAST speed control | 0.4.0 |
+| 11 | Volume control and power amplifier | not modeled | — | S-001, S-002, S-006; A-031 |  |  |
+| 12 | Speaker | not modeled | — | S-001, S-002; A-010 |  |  |
+| 13 | Earphone output | not modeled | — | S-001, S-002; A-012, A-032 |  |  |
+| 14 | Clock | not modeled | — | S-002; A-011 |  |  |
+| 15 | Power supply | not modeled | — | S-001, S-002; A-013 |  |  |
+<!-- manifest-table:end -->
 
 Nothing in this table claims the emulator sounds like a real RR-DR60 yet. It claims that each stage is built to a stated, traceable description, and that the harness checks the build against that description.
 
 ## Using the library
 
-What exists today ([spec 001](specs/001-pipeline-skeleton/spec.md), [spec 003](specs/003-vas/spec.md), [spec 004](specs/004-device-rate-6khz/spec.md), [spec 005](specs/005-limiter-agc/spec.md), which replaced [spec 002](specs/002-agc/spec.md)'s AGC model, and [spec 006](specs/006-record-playback-split/spec.md)). **What changed from 0.5:** the [CHANGELOG](CHANGELOG.md)'s 0.6.0 entry lists the new recording and playback calls, the one inaudible output change and the C structure change.
+What exists today ([spec 001](specs/001-pipeline-skeleton/spec.md), [spec 003](specs/003-vas/spec.md), [spec 004](specs/004-device-rate-6khz/spec.md), [spec 005](specs/005-limiter-agc/spec.md), which replaced [spec 002](specs/002-agc/spec.md)'s AGC model, [spec 006](specs/006-record-playback-split/spec.md) and [spec 007](specs/007-stage-manifest/spec.md)). **What changed from 0.6:** the [CHANGELOG](CHANGELOG.md)'s 0.7.0 entry lists the stage manifest and its C functions; nothing in the sound changed. **What changed from 0.5:** the [CHANGELOG](CHANGELOG.md)'s 0.6.0 entry lists the new recording and playback calls, the one inaudible output change and the C structure change.
 
 - Mono audio at **6, 8, 16, 44.1, 48, 88.2 or 96 kHz** goes in, in blocks of any size, and audio comes out at the same rate. By default the output can be **shorter** than the input, because the VAS drops pauses; each call reports how many samples it produced.
 - Inside, the audio is converted to the device's internal **6 kHz** rate (verified from the service manual, [A-026](docs/hardware/assumptions.md); 6 kHz input passes through unconverted) and goes through two band-limiting stages that model the record and playback filters of the recorder's MSM7702 voice-band codec. They follow the codec family datasheet's transmit band-pass and receive low-pass templates scaled to the 6 kHz clock ([A-027](docs/hardware/assumptions.md), medium confidence): flat within about 0.2 dB from 225 to 2250 Hz, 0.31 dB (record) and 0.48 dB (playback) down at 2550 Hz against datasheet typicals of 0.4 and 0.56 dB, the record filter removing DC and the playback filter passing it, both minimum-phase ([A-016](docs/hardware/assumptions.md)). They are modeled on the datasheet scaled to the measured clock, not measured against a real unit; the roll-off between 2550 Hz and 3 kHz is a design choice no source constrains, and the device's own aliasing of 3–3.45 kHz input and its DAC imaging above the band are not modeled (the emulator removes both).
 - A record-path **limiter**, the device's automatic gain control (AGC), on by default, and the codec's **full-scale clamp**. See [AGC](#agc-signal-chain-stage-3) below.
 - A record-path **Voice Activated System** (VAS), on by default: recording pauses while the signal stays below a threshold, and the paused audio is removed. See [VAS](#vas-signal-chain-stage-5) below.
 - **Recording and playback like the device:** a record path into a memory of 60 minutes and 99 recordings, and a playback path out of it, with numbering, erase, export and import. See [Recording and playback](#recording-and-playback) below. The one-pass processing call stays for hosts that only want the sound.
+- **What the engine says about itself:** a constant **stage manifest** of the fifteen signal-chain stages, each with its status, confidence, source and assumption IDs, what the engine leaves out, and the version that last changed its model, so an app's "about this model" view is generated from the engine. See [What the engine says about itself](#what-the-engine-says-about-itself) below.
 - Fixed, reported latency: 483 samples (about 10.1 ms) at 48 kHz in the default configuration, and 1 sample at 6 kHz. It is under 20 ms at every supported rate, and each configuration reports its own; the "after AGC" tap reports 0.
 - **Real-time safe:** `process`, `process_in_place`, `process_with_events` and `reset` never allocate, lock or do I/O, and neither do the recording and playback calls (`start_recording`, `record`, `stop_recording`, `start_playback`, `play`, `stop_playback`, `set_route`, the state and figure reads, `export_len`, the latency reads). `erase`, `erase_all` (a bounded move of stored samples), `export` and `import` (a checksum over the recording) are not. Processing runs at about 350× real time at 48 kHz on a laptop (about 60 ns per sample) with the limiter and the VAS on, and the same with the limiter alone or with neither; recording and playing back through the memory costs about 2 % more than the one-pass call (measured 1.024×): below its knee the limiter costs one exponential per sample and nothing more. `Pipeline::new` and `reconfigure` allocate, so call them outside the audio callback.
 - **Deterministic:** the same input and settings give bit-identical output for any block size, and on every supported platform. Three golden files (001, AGC and VAS) are checked on Linux, macOS and Windows (x86-64 and ARM64) and on iOS.
@@ -127,6 +136,181 @@ if let StopResult::Kept { number, length } = outcome.result {
 ```
 
 In C the same calls are `rr_dr60_start_recording`, `rr_dr60_record`, `rr_dr60_stop_recording`, `rr_dr60_start_playback`, `rr_dr60_play`, `rr_dr60_get_state`, `rr_dr60_memory_status`, `rr_dr60_erase`, `rr_dr60_export_len`, `rr_dr60_export`, `rr_dr60_import` and `rr_dr60_set_route`, each refusal a distinct status; `crates/rr_dr60_ffi/tests/c/smoke.c` runs the whole loop.
+
+### What the engine says about itself
+
+Since [spec 007](specs/007-stage-manifest/spec.md) the library carries a **stage manifest**: constant data describing the fifteen stages of the signal chain ([docs/hardware/signal-chain.md](docs/hardware/signal-chain.md)), one entry per stage under a header. Each entry gives the stage's number and a stable identifier, a name, one sentence on what the stage does to sound **on the device**, its status (not modeled, assumed, sourced, checked against a real unit), which path it sits on, the project's confidence, the source and assumption IDs its model rests on, a note on what the engine does **not** model there, the Rust API items that touch it, and the library version in which its model last changed. The header carries the library version, the 6 kHz device rate, the counts by status, one basis sentence and three links: the hardware-evidence form and the two register pages. Reading the manifest allocates nothing and needs no engine; it is the same on every platform.
+
+Two things the strings are not: they describe the device, not the model (what the model leaves out is in the separate "not modeled here" note, so a card must label both), and they make no claim about what recordings contain. The identifiers (`mic_capsule`, `mic_amp`, `limiter`, `codec_input`, `vas`, `noise_reduction`, `encoder`, `memory`, `decoder`, `codec_output`, `volume_amp`, `speaker`, `earphone`, `clock`, `power`) are the keys for localization; the English text may change in a minor version, the identifiers and numbers may not. The register links are page links; to land near an ID append a text fragment, `#:~:text=A-028`, which scrolls to the ID's first mention on the page.
+
+A harness test keeps the manifest consistent with the registers: every cited ID must exist and not be superseded, every current assumption and source must be cited, the signal-chain table's identifiers and its **Modeled by** marker must agree with each entry, and a wording check enforces the length rules and a list of words the project avoids. The test runs in CI on every change to the registers, the CHANGELOG or this file (`.github/workflows/registers.yml`). The guard binds the manifest to the registers; the code is bound to them by a unit test that touches each modeled stage's bypass control, by the traceability script and by review.
+
+The Rust program below prints the whole manifest in its canonical text form (it is `crates/rr_dr60_harness/examples/manifest.rs`, verbatim):
+
+<!-- manifest-example-rust:start -->
+```rust
+//! Prints the stage manifest in its canonical text form (spec 007; data-model.md › Canonical
+//! rendering). Self-contained: the README's Rust example is this file verbatim.
+//!
+//! Run: `cargo run -q -p rr_dr60_harness --example manifest`
+
+use rr_dr60::{Confidence, StagePath, StageStatus, manifest};
+
+fn status(s: StageStatus) -> &'static str {
+    match s {
+        StageStatus::NotModeled => "not_modeled",
+        StageStatus::Assumed => "assumed",
+        StageStatus::Sourced => "sourced",
+        StageStatus::Checked => "checked",
+        _ => "unknown",
+    }
+}
+
+fn path(p: StagePath) -> &'static str {
+    match p {
+        StagePath::Record => "record",
+        StagePath::Playback => "playback",
+        StagePath::Both => "both",
+        _ => "unknown",
+    }
+}
+
+fn confidence(c: Confidence) -> &'static str {
+    match c {
+        Confidence::NotApplicable => "not_applicable",
+        Confidence::Low => "low",
+        Confidence::Medium => "medium",
+        Confidence::High => "high",
+        _ => "unknown",
+    }
+}
+
+/// Prints `key: value`, or `key:` with nothing after the colon when the value is empty.
+fn line(key: &str, value: &str) {
+    if value.is_empty() {
+        println!("{key}:");
+    } else {
+        println!("{key}: {value}");
+    }
+}
+
+fn main() {
+    let m = manifest();
+    let h = &m.header;
+    println!("rr_dr60 manifest");
+    println!("library_version: {}", h.library_version);
+    println!("device_rate_hz: {}", h.device_rate_hz);
+    println!("stage_count: {}", h.stage_count);
+    println!(
+        "counts: not_modeled={} assumed={} sourced={} checked={}",
+        h.counts.not_modeled, h.counts.assumed, h.counts.sourced, h.counts.checked
+    );
+    println!("basis: {}", h.basis);
+    println!("evidence_link: {}", h.evidence_link);
+    println!("assumptions_link: {}", h.assumptions_link);
+    println!("sources_link: {}", h.sources_link);
+    for s in m.stages() {
+        println!();
+        println!("stage {} {}", s.number, s.identifier);
+        println!("name: {}", s.name);
+        println!("description: {}", s.description);
+        println!("status: {}", status(s.status));
+        println!("path: {}", path(s.path));
+        println!("confidence: {}", confidence(s.confidence));
+        line("sources", &s.sources.join(", "));
+        line("assumptions", &s.assumptions.join(", "));
+        line("coverage", s.coverage);
+        line("controls", s.controls);
+        line("model_version", s.model_version);
+    }
+}
+```
+<!-- manifest-example-rust:end -->
+
+The same from C (the `print_manifest` function of `crates/rr_dr60_ffi/tests/c/smoke.c`, verbatim; `smoke --manifest` prints exactly what the Rust program prints):
+
+<!-- manifest-example-c:start -->
+```c
+/* The stage manifest (spec 007): the fifteen signal-chain stages and what the engine says
+ * about each, printed in the canonical text form. Needs no handle; every string pointer is
+ * static for the life of the process. */
+static const char *status_word(uint32_t s) {
+  switch (s) {
+    case RR_DR60_STAGE_STATUS_NOT_MODELED: return "not_modeled";
+    case RR_DR60_STAGE_STATUS_ASSUMED: return "assumed";
+    case RR_DR60_STAGE_STATUS_SOURCED: return "sourced";
+    case RR_DR60_STAGE_STATUS_CHECKED: return "checked";
+    default: return "unknown";
+  }
+}
+
+static const char *path_word(uint32_t p) {
+  switch (p) {
+    case RR_DR60_STAGE_PATH_RECORD: return "record";
+    case RR_DR60_STAGE_PATH_PLAYBACK: return "playback";
+    case RR_DR60_STAGE_PATH_BOTH: return "both";
+    default: return "unknown";
+  }
+}
+
+static const char *confidence_word(uint32_t c) {
+  switch (c) {
+    case RR_DR60_CONFIDENCE_NOT_APPLICABLE: return "not_applicable";
+    case RR_DR60_CONFIDENCE_LOW: return "low";
+    case RR_DR60_CONFIDENCE_MEDIUM: return "medium";
+    case RR_DR60_CONFIDENCE_HIGH: return "high";
+    default: return "unknown";
+  }
+}
+
+/* Prints "key: value", or "key:" with nothing after the colon when the value is empty. */
+static void manifest_line(const char *key, const char *value) {
+  if (value[0]) printf("%s: %s\n", key, value);
+  else printf("%s:\n", key);
+}
+
+static void print_manifest(void) {
+  RrDr60ManifestHeader h;
+  if (rr_dr60_manifest_header(&h) != RR_DR60_STATUS_OK) return;
+  printf("rr_dr60 manifest\n");
+  manifest_line("library_version", h.library_version);
+  printf("device_rate_hz: %u\n", h.device_rate_hz);
+  printf("stage_count: %u\n", h.stage_count);
+  printf("counts: not_modeled=%u assumed=%u sourced=%u checked=%u\n", h.count_not_modeled, h.count_assumed,
+         h.count_sourced, h.count_checked);
+  manifest_line("basis", h.basis);
+  manifest_line("evidence_link", h.evidence_link);
+  manifest_line("assumptions_link", h.assumptions_link);
+  manifest_line("sources_link", h.sources_link);
+  for (uint32_t n = 1; n <= rr_dr60_manifest_stage_count(); n++) {
+    RrDr60StageEntry e;
+    if (rr_dr60_manifest_stage(n, &e) != RR_DR60_STATUS_OK) return;
+    printf("\nstage %u %s\n", e.number, e.identifier);
+    manifest_line("name", e.name);
+    manifest_line("description", e.description);
+    manifest_line("status", status_word(e.status));
+    manifest_line("path", path_word(e.path));
+    manifest_line("confidence", confidence_word(e.confidence));
+    printf("sources:");
+    for (uint32_t i = 0; i < e.source_count; i++) {
+      const char *id = NULL;
+      if (rr_dr60_manifest_stage_source(n, i, &id) == RR_DR60_STATUS_OK) printf("%s%s", i ? ", " : " ", id);
+    }
+    printf("\nassumptions:");
+    for (uint32_t i = 0; i < e.assumption_count; i++) {
+      const char *id = NULL;
+      if (rr_dr60_manifest_stage_assumption(n, i, &id) == RR_DR60_STATUS_OK) printf("%s%s", i ? ", " : " ", id);
+    }
+    printf("\n");
+    manifest_line("coverage", e.coverage);
+    manifest_line("controls", e.controls);
+    manifest_line("model_version", e.model_version);
+  }
+}
+```
+<!-- manifest-example-c:end -->
+
+C names derive from the Rust names: `RrDr60Settings` fields are the Rust field path in snake case with the group as prefix (`agc.knee_dbfs` → `agc_knee_dbfs`, `vas.hang_ms` → `vas_hang_ms`, `memory.capacity_s` → `memory_capacity_s`), top-level fields keep their names (`record_stage_enabled`), enum variants are `RR_DR60_` plus the type and the variant in screaming snake case (`Tap::AfterAgc` → `RR_DR60_TAP_AFTER_AGC`, `Route::Speaker` → `RR_DR60_ROUTE_SPEAKER`), functions are `rr_dr60_` plus the method name, and the value readers `route` and `state` take `get_` (`rr_dr60_get_route`, `rr_dr60_get_state`); `EngineState.speaker_muted` is `RrDr60EngineState.speaker_muted`. The manifest's own C functions are `rr_dr60_manifest_stage_count`, `rr_dr60_manifest_header`, `rr_dr60_manifest_stage`, `rr_dr60_manifest_stage_source` and `rr_dr60_manifest_stage_assumption`; a stage number outside 1 to 15 is refused with `RR_DR60_STATUS_NO_SUCH_STAGE`, and every string pointer stays valid for the life of the process.
 
 ### AGC (signal-chain stage 3)
 
@@ -229,7 +413,7 @@ The limiter is **modeled on** the service manual's circuit with *estimated* tran
 
 - Portable **Rust** library (`rr_dr60`) with a stable **C API** for use from Swift/iOS, C/C++, and other languages
 - Offline (file) processing and **real-time** streaming from one deterministic engine
-- Each stage configurable, bypassable, and tap-able (e.g. "codec only")
+- Each stage configurable, bypassable, and tap-able (e.g. "codec only"); the built stages are, and the stage manifest reports which they are
 - Swift Package / XCFramework distribution for iOS (an iOS app is planned as a separate project)
 
 ## Development

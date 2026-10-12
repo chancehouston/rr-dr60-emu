@@ -1,6 +1,6 @@
 /*
  * C smoke test for rr_dr60.h (001 tasks.md T038; spec 004 contracts/c-api.md, T029; spec 005
- * contracts/c-api.md › Smoke test additions, T032).
+ * contracts/c-api.md › Smoke test additions, T032; spec 007 contracts/c-api.md, T028).
  * Build and run with crates/rr_dr60_ffi/tests/c/run_smoke.sh.
  */
 #include "rr_dr60.h"
@@ -38,7 +38,90 @@ static double rms(const float *x, size_t from, size_t to) {
   return sqrt(acc / (double)(to - from));
 }
 
-int main(void) {
+/* manifest-example-c:start */
+/* The stage manifest (spec 007): the fifteen signal-chain stages and what the engine says
+ * about each, printed in the canonical text form. Needs no handle; every string pointer is
+ * static for the life of the process. */
+static const char *status_word(uint32_t s) {
+  switch (s) {
+    case RR_DR60_STAGE_STATUS_NOT_MODELED: return "not_modeled";
+    case RR_DR60_STAGE_STATUS_ASSUMED: return "assumed";
+    case RR_DR60_STAGE_STATUS_SOURCED: return "sourced";
+    case RR_DR60_STAGE_STATUS_CHECKED: return "checked";
+    default: return "unknown";
+  }
+}
+
+static const char *path_word(uint32_t p) {
+  switch (p) {
+    case RR_DR60_STAGE_PATH_RECORD: return "record";
+    case RR_DR60_STAGE_PATH_PLAYBACK: return "playback";
+    case RR_DR60_STAGE_PATH_BOTH: return "both";
+    default: return "unknown";
+  }
+}
+
+static const char *confidence_word(uint32_t c) {
+  switch (c) {
+    case RR_DR60_CONFIDENCE_NOT_APPLICABLE: return "not_applicable";
+    case RR_DR60_CONFIDENCE_LOW: return "low";
+    case RR_DR60_CONFIDENCE_MEDIUM: return "medium";
+    case RR_DR60_CONFIDENCE_HIGH: return "high";
+    default: return "unknown";
+  }
+}
+
+/* Prints "key: value", or "key:" with nothing after the colon when the value is empty. */
+static void manifest_line(const char *key, const char *value) {
+  if (value[0]) printf("%s: %s\n", key, value);
+  else printf("%s:\n", key);
+}
+
+static void print_manifest(void) {
+  RrDr60ManifestHeader h;
+  if (rr_dr60_manifest_header(&h) != RR_DR60_STATUS_OK) return;
+  printf("rr_dr60 manifest\n");
+  manifest_line("library_version", h.library_version);
+  printf("device_rate_hz: %u\n", h.device_rate_hz);
+  printf("stage_count: %u\n", h.stage_count);
+  printf("counts: not_modeled=%u assumed=%u sourced=%u checked=%u\n", h.count_not_modeled, h.count_assumed,
+         h.count_sourced, h.count_checked);
+  manifest_line("basis", h.basis);
+  manifest_line("evidence_link", h.evidence_link);
+  manifest_line("assumptions_link", h.assumptions_link);
+  manifest_line("sources_link", h.sources_link);
+  for (uint32_t n = 1; n <= rr_dr60_manifest_stage_count(); n++) {
+    RrDr60StageEntry e;
+    if (rr_dr60_manifest_stage(n, &e) != RR_DR60_STATUS_OK) return;
+    printf("\nstage %u %s\n", e.number, e.identifier);
+    manifest_line("name", e.name);
+    manifest_line("description", e.description);
+    manifest_line("status", status_word(e.status));
+    manifest_line("path", path_word(e.path));
+    manifest_line("confidence", confidence_word(e.confidence));
+    printf("sources:");
+    for (uint32_t i = 0; i < e.source_count; i++) {
+      const char *id = NULL;
+      if (rr_dr60_manifest_stage_source(n, i, &id) == RR_DR60_STATUS_OK) printf("%s%s", i ? ", " : " ", id);
+    }
+    printf("\nassumptions:");
+    for (uint32_t i = 0; i < e.assumption_count; i++) {
+      const char *id = NULL;
+      if (rr_dr60_manifest_stage_assumption(n, i, &id) == RR_DR60_STATUS_OK) printf("%s%s", i ? ", " : " ", id);
+    }
+    printf("\n");
+    manifest_line("coverage", e.coverage);
+    manifest_line("controls", e.controls);
+    manifest_line("model_version", e.model_version);
+  }
+}
+/* manifest-example-c:end */
+
+int main(int argc, char **argv) {
+  if (argc > 1 && strcmp(argv[1], "--manifest") == 0) {
+    print_manifest();
+    return 0;
+  }
   static float in[N], out[N];
   for (size_t i = 0; i < N; i++) in[i] = (float)(0.1 * sin(2.0 * PI * 1000.0 * (double)i / FS));
 
@@ -433,6 +516,43 @@ int main(void) {
     rr_dr60_destroy(a);
     rr_dr60_destroy(b);
     rr_dr60_destroy(c);
+  }
+
+  /* Spec 007 US3: the stage manifest through the C API (contracts/c-api.md › Smoke test). */
+  {
+    RrDr60ManifestHeader h;
+    RrDr60StageEntry e;
+    const char *id = NULL;
+    const char *kept = NULL;
+    CHECK(rr_dr60_manifest_stage_count() == 15, "stage count %u", rr_dr60_manifest_stage_count());
+    CHECK(rr_dr60_manifest_header(&h) == RR_DR60_STATUS_OK, "manifest header");
+    CHECK(h.count_not_modeled + h.count_assumed + h.count_sourced + h.count_checked == h.stage_count, "counts sum");
+    CHECK(h.count_checked == 0, "no stage is checked against a real unit today");
+    CHECK(h.library_version && h.basis && h.evidence_link && h.assumptions_link && h.sources_link, "header strings");
+    e.number = 0xFFFFFFFFu;
+    CHECK(rr_dr60_manifest_stage(0, &e) == RR_DR60_STATUS_NO_SUCH_STAGE, "stage 0 refused");
+    CHECK(rr_dr60_manifest_stage(16, &e) == RR_DR60_STATUS_NO_SUCH_STAGE, "stage 16 refused");
+    CHECK(e.number == 0xFFFFFFFFu, "a refused read leaves the struct untouched");
+    for (uint32_t n = 1; n <= 15; n++) {
+      CHECK(rr_dr60_manifest_stage(n, &e) == RR_DR60_STATUS_OK, "stage %u", n);
+      CHECK(e.number == n && e.identifier && e.name && e.description && e.coverage && e.controls && e.model_version,
+            "stage %u fields", n);
+      for (uint32_t i = 0; i < e.source_count; i++)
+        CHECK(rr_dr60_manifest_stage_source(n, i, &id) == RR_DR60_STATUS_OK && id && id[0] == 'S', "stage %u source %u", n, i);
+      for (uint32_t i = 0; i < e.assumption_count; i++)
+        CHECK(rr_dr60_manifest_stage_assumption(n, i, &id) == RR_DR60_STATUS_OK && id && id[0] == 'A', "stage %u assumption %u", n, i);
+      CHECK(rr_dr60_manifest_stage_source(n, e.source_count, &id) == RR_DR60_STATUS_INVALID_ARGUMENT, "index at count");
+      if (n == 3) kept = e.name;
+    }
+    /* US3 scenario 3: a kept pointer survives a create/destroy cycle. */
+    {
+      RrDr60Settings ms = rr_dr60_settings_default(FS);
+      RrDr60Pipeline *mp = NULL;
+      CHECK(rr_dr60_create(&ms, &mp) == RR_DR60_STATUS_OK, "create for the pointer-lifetime check");
+      rr_dr60_destroy(mp);
+      CHECK(rr_dr60_manifest_stage(3, &e) == RR_DR60_STATUS_OK, "stage 3 again");
+      CHECK(kept && strcmp(kept, e.name) == 0 && strcmp(kept, "Limiter (AGC)") == 0, "kept pointer still valid");
+    }
   }
 
   if (failures) {

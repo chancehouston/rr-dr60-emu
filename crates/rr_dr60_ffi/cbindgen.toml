@@ -34,7 +34,10 @@ header = """
  *   rr_dr60_stop_recording, rr_dr60_start_playback, rr_dr60_play, rr_dr60_stop_playback,
  *   rr_dr60_set_route, rr_dr60_get_route, rr_dr60_get_state, rr_dr60_memory_status,
  *   rr_dr60_recording_length, rr_dr60_export_len, rr_dr60_record_latency_samples,
- *   rr_dr60_playback_latency_samples, rr_dr60_drain_samples, rr_dr60_footprint_bytes.
+ *   rr_dr60_playback_latency_samples, rr_dr60_drain_samples, rr_dr60_footprint_bytes,
+ *   and the stage manifest reads rr_dr60_manifest_stage_count, rr_dr60_manifest_header,
+ *   rr_dr60_manifest_stage, rr_dr60_manifest_stage_source, rr_dr60_manifest_stage_assumption
+ *   (spec 007; they need no handle and their strings are static for the life of the process).
  * Not real-time safe: rr_dr60_create, rr_dr60_destroy, rr_dr60_reconfigure (allocate);
  *   rr_dr60_erase, rr_dr60_erase_all (a bounded memmove); rr_dr60_export, rr_dr60_import
  *   (a CRC over the recording). The memory's figures and lengths are device samples:
@@ -44,7 +47,7 @@ header = """
  */"""
 
 [export]
-include = ["RrDr60Tap", "RrDr60VasMode", "RrDr60Route", "RrDr60State", "RrDr60StopReason"]
+include = ["RrDr60Tap", "RrDr60VasMode", "RrDr60Route", "RrDr60State", "RrDr60StopReason", "RrDr60StageStatus", "RrDr60StagePath", "RrDr60Confidence"]
 exclude = ["rr_dr60__test_force_panic"]
 
 [enum]

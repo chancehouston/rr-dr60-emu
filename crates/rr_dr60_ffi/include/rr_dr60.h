@@ -22,7 +22,10 @@
  *   rr_dr60_stop_recording, rr_dr60_start_playback, rr_dr60_play, rr_dr60_stop_playback,
  *   rr_dr60_set_route, rr_dr60_get_route, rr_dr60_get_state, rr_dr60_memory_status,
  *   rr_dr60_recording_length, rr_dr60_export_len, rr_dr60_record_latency_samples,
- *   rr_dr60_playback_latency_samples, rr_dr60_drain_samples, rr_dr60_footprint_bytes.
+ *   rr_dr60_playback_latency_samples, rr_dr60_drain_samples, rr_dr60_footprint_bytes,
+ *   and the stage manifest reads rr_dr60_manifest_stage_count, rr_dr60_manifest_header,
+ *   rr_dr60_manifest_stage, rr_dr60_manifest_stage_source, rr_dr60_manifest_stage_assumption
+ *   (spec 007; they need no handle and their strings are static for the life of the process).
  * Not real-time safe: rr_dr60_create, rr_dr60_destroy, rr_dr60_reconfigure (allocate);
  *   rr_dr60_erase, rr_dr60_erase_all (a bounded memmove); rr_dr60_export, rr_dr60_import
  *   (a CRC over the recording). The memory's figures and lengths are device samples:
@@ -42,7 +45,7 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 6
+#define RR_DR60_VERSION_MINOR 7
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
@@ -96,6 +99,8 @@ enum RrDr60Status
   // `rr_dr60_export` into a buffer shorter than the recording's byte form; nothing written,
   // the needed length reported (spec 006 FR-014).
   RR_DR60_STATUS_BUFFER_TOO_SMALL = 19,
+  // A stage manifest number that is 0 or above the stage count (spec 007 FR-017).
+  RR_DR60_STATUS_NO_SUCH_STAGE = 20,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -252,6 +257,76 @@ enum RrDr60StopReason
 typedef enum RrDr60StopReason RrDr60StopReason;
 #else
 typedef uint32_t RrDr60StopReason;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// Whether and on what basis the engine models a stage (spec 007 FR-004); carried in
+// `RrDr60StageEntry.status` as a `uint32_t`.
+enum RrDr60StageStatus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+  // The engine passes the signal through or represents the stage as a label.
+  RR_DR60_STAGE_STATUS_NOT_MODELED = 0,
+  // Modeled, at least one cited assumption open.
+  RR_DR60_STAGE_STATUS_ASSUMED = 1,
+  // Modeled, every cited assumption verified against a document (none today).
+  RR_DR60_STAGE_STATUS_SOURCED = 2,
+  // Modeled, every cited assumption verified or measured, at least one measured against a
+  // real unit (none today).
+  RR_DR60_STAGE_STATUS_CHECKED = 3,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum RrDr60StageStatus RrDr60StageStatus;
+#else
+typedef uint32_t RrDr60StageStatus;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// Which signal path a stage belongs to; carried in `RrDr60StageEntry.path` as a `uint32_t`.
+enum RrDr60StagePath
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+  // Microphone to memory.
+  RR_DR60_STAGE_PATH_RECORD = 0,
+  // Memory to speaker or earphone.
+  RR_DR60_STAGE_PATH_PLAYBACK = 1,
+  // Both paths.
+  RR_DR60_STAGE_PATH_BOTH = 2,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum RrDr60StagePath RrDr60StagePath;
+#else
+typedef uint32_t RrDr60StagePath;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// The project's confidence in a modeled stage; carried in `RrDr60StageEntry.confidence` as a
+// `uint32_t`. `NOT_APPLICABLE` exactly for stages that are not modeled.
+enum RrDr60Confidence
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+  // Not modeled.
+  RR_DR60_CONFIDENCE_NOT_APPLICABLE = 0,
+  // Low.
+  RR_DR60_CONFIDENCE_LOW = 1,
+  // Medium.
+  RR_DR60_CONFIDENCE_MEDIUM = 2,
+  // High.
+  RR_DR60_CONFIDENCE_HIGH = 3,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum RrDr60Confidence RrDr60Confidence;
+#else
+typedef uint32_t RrDr60Confidence;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -413,6 +488,68 @@ typedef struct RrDr60MemoryStatus {
   // `max_recordings − count`.
   uint32_t slots_remaining;
 } RrDr60MemoryStatus;
+
+// The stage manifest's header (spec 007 FR-003), filled by `rr_dr60_manifest_header`.
+//
+// Every `const char *` is non-NULL, NUL-terminated UTF-8, points at static storage inside the
+// library and stays valid and unchanged for the life of the process: keep it by reference,
+// never free it. The struct grows only at the end.
+typedef struct RrDr60ManifestHeader {
+  // The library's version, e.g. `"0.7.0"`.
+  const char *library_version;
+  // The device's internal sample rate, 6000 Hz (A-026).
+  uint32_t device_rate_hz;
+  // The number of stage entries, 15.
+  uint32_t stage_count;
+  // Stages with status `RR_DR60_STAGE_STATUS_NOT_MODELED`.
+  uint32_t count_not_modeled;
+  // Stages with status `RR_DR60_STAGE_STATUS_ASSUMED`.
+  uint32_t count_assumed;
+  // Stages with status `RR_DR60_STAGE_STATUS_SOURCED`.
+  uint32_t count_sourced;
+  // Stages with status `RR_DR60_STAGE_STATUS_CHECKED`; the four counts sum to `stage_count`.
+  uint32_t count_checked;
+  // One neutral sentence on what the model rests on.
+  const char *basis;
+  // The hardware-evidence capture form.
+  const char *evidence_link;
+  // The assumption register page (append `#:~:text=A-028` to land on a row).
+  const char *assumptions_link;
+  // The source register page.
+  const char *sources_link;
+} RrDr60ManifestHeader;
+
+// One stage of the manifest (spec 007 FR-002), filled by `rr_dr60_manifest_stage`.
+//
+// Strings as in `RrDr60ManifestHeader`: static, NUL-terminated UTF-8, never NULL; an empty
+// note is `""`. The IDs are reached by index through `rr_dr60_manifest_stage_source` and
+// `rr_dr60_manifest_stage_assumption`. The struct grows only at the end.
+typedef struct RrDr60StageEntry {
+  // 1 to 15, the signal-chain table's row number.
+  uint32_t number;
+  // The stable ASCII key (the key for localization).
+  const char *identifier;
+  // The display name.
+  const char *name;
+  // One sentence on what the stage does to sound on the device.
+  const char *description;
+  // `RrDr60StageStatus`.
+  uint32_t status;
+  // `RrDr60StagePath`.
+  uint32_t path;
+  // `RrDr60Confidence`.
+  uint32_t confidence;
+  // How many source IDs `rr_dr60_manifest_stage_source` can return.
+  uint32_t source_count;
+  // How many assumption IDs `rr_dr60_manifest_stage_assumption` can return.
+  uint32_t assumption_count;
+  // What the engine leaves out at this stage (`""` when nothing or not modeled).
+  const char *coverage;
+  // The Rust API items that touch the stage (`""` when none).
+  const char *controls;
+  // The library version in which the stage's model last changed (`""` when not modeled).
+  const char *model_version;
+} RrDr60StageEntry;
 
 #ifdef __cplusplus
 extern "C" {
@@ -788,6 +925,48 @@ RrDr60Status rr_dr60_footprint_bytes(struct RrDr60Pipeline *pipeline, uintptr_t 
 // The library version as a static NUL-terminated string, e.g. `"0.1.0"`. Never NULL; do not
 // free.
 const char *rr_dr60_version_string(void);
+
+// The number of stage entries in the manifest, 15 (spec 007 FR-017). Real-time safe.
+uint32_t rr_dr60_manifest_stage_count(void);
+
+// Copies the manifest's header into `*out` (spec 007 FR-003, FR-017). Real-time safe; needs no
+// handle and may be called before any `rr_dr60_create`.
+//
+// # Safety
+//
+// `out` must be NULL (then `RR_DR60_STATUS_NULL_POINTER`, nothing written) or point to a
+// writable `RrDr60ManifestHeader`.
+RrDr60Status rr_dr60_manifest_header(struct RrDr60ManifestHeader *out);
+
+// Copies stage `number` (1 to 15) into `*out` (spec 007 FR-002, FR-017). Real-time safe.
+// Check order: NULL first, then the range; nothing is written on a refusal.
+//
+// # Safety
+//
+// `out` must be NULL (then `RR_DR60_STATUS_NULL_POINTER`) or point to a writable
+// `RrDr60StageEntry`.
+RrDr60Status rr_dr60_manifest_stage(uint32_t number, struct RrDr60StageEntry *out);
+
+// Writes the `index`-th (0-based, ascending) source ID (`S-###`) of stage `number` into
+// `*out_id` (spec 007 FR-005, FR-017). `RR_DR60_STATUS_NO_SUCH_STAGE` for a number outside
+// 1 to 15, `RR_DR60_STATUS_INVALID_ARGUMENT` for `index >= source_count`; nothing written on
+// a refusal. Real-time safe.
+//
+// # Safety
+//
+// `out_id` must be NULL (then `RR_DR60_STATUS_NULL_POINTER`) or point to a writable pointer.
+RrDr60Status rr_dr60_manifest_stage_source(uint32_t number, uint32_t index, const char **out_id);
+
+// Writes the `index`-th (0-based, ascending) assumption ID (`A-###`) of stage `number` into
+// `*out_id` (spec 007 FR-005, FR-017); refusals as `rr_dr60_manifest_stage_source`. Real-time
+// safe.
+//
+// # Safety
+//
+// `out_id` must be NULL (then `RR_DR60_STATUS_NULL_POINTER`) or point to a writable pointer.
+RrDr60Status rr_dr60_manifest_stage_assumption(uint32_t number,
+                                               uint32_t index,
+                                               const char **out_id);
 
 #ifdef __cplusplus
 }  // extern "C"
