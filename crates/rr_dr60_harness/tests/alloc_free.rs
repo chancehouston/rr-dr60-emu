@@ -215,6 +215,10 @@ fn transport_cases(rate: u32, sizes: &[usize]) {
             );
             let _ = (p.footprint_bytes(), p.recording_length(number).unwrap());
             let len = p.export_len(number).unwrap();
+            assert!(
+                len <= bytes.len(),
+                "{rate} Hz {config}: the export buffer is too small"
+            );
             assert_eq!(p.export(number, &mut bytes[..len]).unwrap(), len);
         }
         assert_eq!(p.import(&bytes[..p.export_len(2).unwrap()]), Ok(3));

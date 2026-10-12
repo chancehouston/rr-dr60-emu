@@ -339,8 +339,9 @@ impl Pipeline {
             }
         }
         let erased = self.memory.erase(number).expect("checked above");
-        if self.transport.state == State::Playing && number < self.transport.cursor.number + 1 {
-            // The played recording's samples moved down with the store (its number already did).
+        // `cursor.number` is the played item's new number, so this holds exactly when the
+        // erased one was below it: its samples moved down with the store.
+        if self.transport.state == State::Playing && number <= self.transport.cursor.number {
             self.transport.cursor.span.start -= erased.len;
         }
         Ok(())
@@ -416,8 +417,7 @@ impl Pipeline {
             return Err(Error::RecordingInProgress);
         }
         let samples = form::validate(bytes)?;
-        self.memory
-            .import_samples(samples.len() / 4, form::decode(samples))
+        self.memory.import_samples(form::decode(samples))
     }
 
     /// Selects the output route (spec 006 FR-015): speaker or earphone, at any time, during

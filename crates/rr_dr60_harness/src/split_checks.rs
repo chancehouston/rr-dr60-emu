@@ -1566,7 +1566,25 @@ pub fn footprint() -> Vec<MeasurementResult> {
     let fs = f64::from(rate);
     let p = Pipeline::new(Settings::new(rate)).expect("default");
     let (store, spans) = __test_hooks::memory_capacities(&p);
+    let st = p.memory_status();
     let mut rows = vec![
+        limit_row(
+            "006/FR-011",
+            "default figures: 0 recordings, 0 used, 3600 s and 99 slots remaining",
+            rate,
+            "default_vas",
+            "default capacity",
+            pass(
+                st.count == 0
+                    && st.used_samples == 0
+                    && st.remaining_samples == 21_600_000 // S-001: 60 min × 6000 Hz (A-026)
+                    && st.remaining_seconds() == 3600.0
+                    && st.slots_remaining == 99
+                    && st.max_recordings == 99,
+            ),
+            "",
+            Tolerance::Exact(1.0), // FR-011, US2 scenario 1
+        ),
         limit_row(
             "006/SC-007",
             "default footprint",
@@ -1626,6 +1644,9 @@ pub fn footprint() -> Vec<MeasurementResult> {
     let _ = record_one(&mut p, &x[..fs as usize]);
     p.erase_all().expect("idle");
     same(&p, "footprint unchanged after erase all", &mut rows);
+    let n = record_one(&mut p, &x[..fs as usize]);
+    let _ = play_to_end(&mut p, n, PLAY_BLOCK);
+    same(&p, "footprint unchanged after a playback", &mut rows);
     let c = p.clone();
     same(&c, "a clone reserves the same footprint", &mut rows);
     rows
@@ -1847,9 +1868,10 @@ pub fn corruption_set(rate: u32) -> Vec<MeasurementResult> {
         good[..n - 1].to_vec(),
         Error::Damaged,
     ));
-    // A single-byte flip at 64 positions spread over header, payload and CRC.
-    for i in 0..FLIP_POSITIONS {
-        let pos = i * (n - 1) / (FLIP_POSITIONS - 1);
+    // A single-byte flip at 64 evenly spaced positions (the first and last bytes included),
+    // plus one in every header field (version, flags, rate, library version, reserved, the
+    // low and high bytes of K) and one inside the CRC.
+    let flip = |pos: usize| {
         let mut b = good.clone();
         b[pos] ^= 0x40;
         let want = match pos {
@@ -1860,7 +1882,13 @@ pub fn corruption_set(rate: u32) -> Vec<MeasurementResult> {
             10..12 => Error::UnsupportedFormVersion { version: 1 },
             _ => Error::Damaged,
         };
-        cases.push((format!("byte {pos} flipped"), b, want));
+        (format!("byte {pos} flipped"), b, want)
+    };
+    for i in 0..FLIP_POSITIONS {
+        cases.push(flip(i * (n - 1) / (FLIP_POSITIONS - 1)));
+    }
+    for pos in [8, 10, 12, 16, 22, 24, 31, n - 3] {
+        cases.push(flip(pos));
     }
     // Foreign bytes behind a valid magic (seeded, so the expected reason is fixed).
     let mut rng = stimulus::Pcg32::new(0x0D63, 7);

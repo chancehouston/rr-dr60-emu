@@ -88,6 +88,18 @@ impl Memory {
         Self::with_capacity_samples(capacity_samples, settings.max_recordings as usize)
     }
 
+    /// A memory of no capacity that reserves nothing: the placeholder `reconfigure` leaves
+    /// behind while it moves the real one (spec 006 FR-019; research R-03).
+    pub(crate) fn empty() -> Self {
+        Self {
+            store: Vec::new(),
+            spans: Vec::new(),
+            capacity_samples: 0,
+            max_recordings: 0,
+            in_progress: false,
+        }
+    }
+
     /// A memory of `capacity_samples` device samples and `max_recordings` recordings.
     pub(crate) fn with_capacity_samples(
         capacity_samples: usize,
@@ -200,7 +212,7 @@ impl Memory {
         Some(span)
     }
 
-    /// Adds a recording of `k` validated samples (spec 006 FR-014): refused when they exceed the
+    /// Adds a recording of the validated `samples` (spec 006 FR-014): refused when they exceed the
     /// remaining time or no slot is left; otherwise appended within the reserved capacity (no
     /// allocation) as a new closed recording, whose number is returned. The samples come from
     /// `samples` in order, so the decode writes straight into the store. Allowed while playing:
@@ -211,16 +223,20 @@ impl Memory {
     /// [`Error::DoesNotFit`] (time or slots); the memory is unchanged.
     pub(crate) fn import_samples(
         &mut self,
-        k: usize,
-        samples: impl Iterator<Item = f32>,
+        samples: impl ExactSizeIterator<Item = f32>,
     ) -> Result<u32, Error> {
         debug_assert!(!self.in_progress);
+        let k = samples.len();
         if k > self.capacity_samples - self.store.len() || self.spans.len() >= self.max_recordings {
             return Err(Error::DoesNotFit);
         }
         let start = self.store.len();
-        self.store.extend(samples.take(k));
-        debug_assert_eq!(self.store.len(), start + k);
+        self.store.extend(samples);
+        assert_eq!(
+            self.store.len(),
+            start + k,
+            "an exact-size iterator keeps its word"
+        );
         self.spans.push(Span { start, len: k });
         Ok(self.spans.len() as u32)
     }
@@ -370,6 +386,19 @@ mod tests {
         // The device figures: 3600 s × 6000 Hz samples, 100 spans (S-001, A-026).
         let d = Memory::new(&MemorySettings::DEVICE).unwrap();
         assert_eq!(d.capacities(), (21_600_000, 100));
+        // US2 scenario 1 (FR-011): the device's figures before anything is recorded.
+        assert_eq!(
+            d.status(),
+            MemoryStatus {
+                capacity_samples: 21_600_000,
+                used_samples: 0,
+                remaining_samples: 21_600_000,
+                max_recordings: 99,
+                count: 0,
+                slots_remaining: 99,
+            }
+        );
+        assert_eq!(d.status().remaining_seconds(), 3600.0);
         assert_eq!(d.footprint_bytes(), 21_600_000 * 4 + 100 * 16);
         assert!(d.footprint_bytes() <= 90_000_000, "SC-007 budget"); // engineering target
     }

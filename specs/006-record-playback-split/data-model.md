@@ -33,7 +33,7 @@ host input → [limiter] → host→device conversion → [stage 4] → [clamp] 
 
 Derived: `used = store.len()`, `remaining = capacity_samples − used`, `count = spans.len()` (minus one while recording), `slots_remaining = max_recordings − count`, `footprint_bytes = capacity_samples × 4 + (max_recordings + 1) × 16`.
 
-Operations: `open()` (push an empty span; refuses when `remaining == 0` → `MemoryFull`, or `count == max` → `NoRecordingSlots`), `append(f32) -> bool` (false exactly when the store is full after the push; the caller stops), `close(fed_any) -> StopResult` (`Kept { number, length }` or `DiscardedEmpty`, which pops the empty span), `erase(n)`, `erase_all()`, `import(&[f32])` (after validation; `DoesNotFit` when `len > remaining` or no slot), `span(n)`, `status() -> MemoryStatus`. Invariants: spans are contiguous and ordered; `Σ len == store.len()`; `store.capacity() == capacity_samples` at all times (asserted in debug and by `footprint()`).
+Operations: `open()` (push an empty span; refuses when `remaining == 0` → `MemoryFull`, or `count == max` → `NoRecordingSlots`), `append(f32) -> bool` (false exactly when the store is full after the push; the caller stops), `close(fed_any) -> StopResult` (`Kept { number, length }` or `DiscardedEmpty`, which pops the empty span; also when input was fed but nothing stored, FR-012 insurance), `erase(n) -> Option<Span>` (the erased span, so the transport re-bases the player's cursor), `erase_all()`, `import_samples(iter)` (decodes validated bytes straight into the reserved store through an exact-size iterator; `DoesNotFit` when its length exceeds the remaining samples or no slot is left), `discard_in_progress()` (reset), `samples(span)`, `fits` / `same_capacity` / `copied_to` / `empty` (reconfigure), `span(n)`, `status() -> MemoryStatus`. Invariants: spans are contiguous and ordered; `Σ len == store.len()`; `store.capacity() == capacity_samples` at all times (asserted in debug and by `footprint()`).
 
 `Clone`: manual, reserving the same capacity. `reconfigure`: idle only; keeps the data when it fits (same capacity → same `Vec`; different → a new reservation and a copy), else `StoredExceedsCapacity`.
 
@@ -50,7 +50,7 @@ Operations: `open()` (push an empty span; refuses when `remaining == 0` → `Mem
 | `StopResult` | `Kept { number: u32, length: u64 }`, `DiscardedEmpty` |
 | `PlayInfo` | `produced: usize` (host samples written), `finished: bool` (the drain ended in this call; the state is idle) |
 | `MemoryStatus` | `capacity_samples: u64`, `used_samples: u64`, `remaining_samples: u64`, `max_recordings: u32`, `count: u32`, `slots_remaining: u32` |
-| Player cursor | `span: Span` (a copy of the played span), `offset` (stored samples pulled so far), `produced: u64` (host samples produced so far), `total: u64` (⌈K·m/l⌉ + the drain, R-06), `number: u32` |
+| Player cursor | `span: Span` (a copy of the played span, re-based by `erase` of a lower number: `span.start −= erased.len`), `offset` (stored samples pulled so far; keeps counting through the drain), `produced: u64` (host samples produced so far), `total: u64` (⌈K·m/l⌉ + the drain, R-06), `number: u32` |
 | Recorder flags | `fed_any: bool` (any host sample pushed since start, an empty block does not count; decides the flush and the empty case); an open mute-mode region is closed by a synthesized event at stop |
 
 ### Transitions
@@ -66,7 +66,7 @@ Operations: `open()` (push an empty span; refuses when `remaining == 0` → `Mem
 | Playing | `play(output)` | Playing, or Idle when the drain completes (`finished`) | — |
 | Playing | `stop_playback` | Idle | — |
 | Playing | `erase(n == current)` / `erase_all` | Idle (playback stopped first), then erased | — |
-| Playing | `erase(n ≠ current)` | Playing (current renumbered if `n < current`) | — |
+| Playing | `erase(n ≠ current)` | Playing (current renumbered and the cursor's span start moved down by the erased length if `n < current`) | — |
 | any | `record` when not Recording | unchanged | `NotRecording` |
 | any | `play` / `stop_playback` when not Playing | unchanged | `NotPlaying` |
 | any | `set_route`, `route`, `state`, `memory_status`, `recording_length`, `export_len`, `export`, latencies, `drain_samples`, `footprint_bytes` | unchanged | `NoSuchRecording` for a bad number; `BufferTooSmall { needed }` for `export` |

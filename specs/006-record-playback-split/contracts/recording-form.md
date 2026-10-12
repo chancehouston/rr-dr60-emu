@@ -25,6 +25,7 @@ Total length `36 + 4·K`. `export_len(n)` returns it; `export` writes exactly it
 | Check | Refusal |
 |---|---|
 | length < 8, or magic ≠ `RRDR60RC` | `UnknownForm` |
+| length < 12 (truncated inside the version or flags field; the version cannot be read) | `Damaged` |
 | version ≠ 1, or flags ≠ 0 | `UnsupportedFormVersion { version }` |
 | length < 36 (checked before K is read) | `Damaged` |
 | (length − 36) not a multiple of 4; K ≠ (length − 36) / 4 (compared as 64-bit, never computing 36 + 4·K); device rate ≠ 6000; K = 0; CRC mismatch; any sample NaN, ±Inf or subnormal | `Damaged` |

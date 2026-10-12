@@ -17,6 +17,13 @@ pub(crate) const FORM_VERSION: u16 = 1; // contracts/recording-form.md (FR-014)
 const HEADER_LEN: usize = 32; // contracts/recording-form.md (FR-014)
 /// Header plus the trailing CRC-32.
 const OVERHEAD: usize = HEADER_LEN + 4; // contracts/recording-form.md (FR-014)
+/// The header fields' offsets (contracts/recording-form.md › Layout; FR-014).
+const OFF_VERSION: usize = 8; // contracts/recording-form.md (FR-014)
+const OFF_FLAGS: usize = 10; // contracts/recording-form.md (FR-014)
+const OFF_RATE: usize = 12; // contracts/recording-form.md (FR-014)
+const OFF_LIB_VERSION: usize = 16; // contracts/recording-form.md (FR-014)
+const OFF_RESERVED: usize = 22; // contracts/recording-form.md (FR-014)
+const OFF_COUNT: usize = 24; // contracts/recording-form.md (FR-014)
 /// The IEEE 802.3 polynomial, reflected (research R-04).
 const CRC_POLY: u32 = 0xEDB8_8320; // contracts/recording-form.md (FR-014)
 
@@ -87,15 +94,16 @@ pub(crate) fn export(samples: &[f32], out: &mut [u8]) -> Result<usize, Error> {
         return Err(Error::BufferTooSmall { needed });
     }
     let out = &mut out[..needed];
-    out[0..8].copy_from_slice(&MAGIC);
-    out[8..10].copy_from_slice(&FORM_VERSION.to_le_bytes());
-    out[10..12].copy_from_slice(&0u16.to_le_bytes());
-    out[12..16].copy_from_slice(&DEVICE_RATE_HZ.to_le_bytes()); // A-026
-    out[16..18].copy_from_slice(&LIB_VERSION[0].to_le_bytes());
-    out[18..20].copy_from_slice(&LIB_VERSION[1].to_le_bytes());
-    out[20..22].copy_from_slice(&LIB_VERSION[2].to_le_bytes());
-    out[22..24].copy_from_slice(&0u16.to_le_bytes());
-    out[24..32].copy_from_slice(&(samples.len() as u64).to_le_bytes());
+    out[..MAGIC.len()].copy_from_slice(&MAGIC);
+    out[OFF_VERSION..OFF_FLAGS].copy_from_slice(&FORM_VERSION.to_le_bytes());
+    out[OFF_FLAGS..OFF_RATE].copy_from_slice(&0u16.to_le_bytes());
+    out[OFF_RATE..OFF_LIB_VERSION].copy_from_slice(&DEVICE_RATE_HZ.to_le_bytes()); // A-026
+    for (i, part) in LIB_VERSION.iter().enumerate() {
+        let at = OFF_LIB_VERSION + 2 * i;
+        out[at..at + 2].copy_from_slice(&part.to_le_bytes());
+    }
+    out[OFF_RESERVED..OFF_COUNT].copy_from_slice(&0u16.to_le_bytes());
+    out[OFF_COUNT..HEADER_LEN].copy_from_slice(&(samples.len() as u64).to_le_bytes());
     for (slot, s) in out[HEADER_LEN..needed - 4].chunks_exact_mut(4).zip(samples) {
         slot.copy_from_slice(&s.to_le_bytes());
     }
@@ -116,14 +124,14 @@ pub(crate) fn export(samples: &[f32], out: &mut [u8]) -> Result<usize, Error> {
 /// stated K, another device rate, K = 0, a CRC mismatch, or a sample that is NaN, infinite or
 /// subnormal).
 pub(crate) fn validate(bytes: &[u8]) -> Result<&[u8], Error> {
-    if bytes.len() < MAGIC.len() || bytes[..8] != MAGIC {
+    if bytes.len() < MAGIC.len() || bytes[..MAGIC.len()] != MAGIC {
         return Err(Error::UnknownForm);
     }
-    if bytes.len() < 12 {
-        return Err(Error::Damaged); // truncated inside the version field
+    if bytes.len() < OFF_RATE {
+        return Err(Error::Damaged); // truncated inside the version or flags field
     }
-    let version = u16::from_le_bytes([bytes[8], bytes[9]]);
-    let flags = u16::from_le_bytes([bytes[10], bytes[11]]);
+    let version = u16::from_le_bytes([bytes[OFF_VERSION], bytes[OFF_VERSION + 1]]);
+    let flags = u16::from_le_bytes([bytes[OFF_FLAGS], bytes[OFF_FLAGS + 1]]);
     if version != FORM_VERSION || flags != 0 {
         return Err(Error::UnsupportedFormVersion { version });
     }
@@ -134,11 +142,15 @@ pub(crate) fn validate(bytes: &[u8]) -> Result<&[u8], Error> {
     if body % 4 != 0 {
         return Err(Error::Damaged);
     }
-    let k = u64::from_le_bytes(bytes[24..32].try_into().expect("8 bytes"));
+    let k = u64::from_le_bytes(bytes[OFF_COUNT..HEADER_LEN].try_into().expect("8 bytes"));
     if k != (body / 4) as u64 || k == 0 {
         return Err(Error::Damaged);
     }
-    let rate = u32::from_le_bytes(bytes[12..16].try_into().expect("4 bytes"));
+    let rate = u32::from_le_bytes(
+        bytes[OFF_RATE..OFF_LIB_VERSION]
+            .try_into()
+            .expect("4 bytes"),
+    );
     if rate != DEVICE_RATE_HZ {
         return Err(Error::Damaged); // A-026
     }
@@ -156,7 +168,7 @@ pub(crate) fn validate(bytes: &[u8]) -> Result<&[u8], Error> {
 }
 
 /// The samples of validated sample bytes, in order, bit-exact.
-pub(crate) fn decode(sample_bytes: &[u8]) -> impl Iterator<Item = f32> + '_ {
+pub(crate) fn decode(sample_bytes: &[u8]) -> impl ExactSizeIterator<Item = f32> + '_ {
     sample_bytes
         .chunks_exact(4)
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))

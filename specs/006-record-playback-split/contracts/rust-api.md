@@ -46,11 +46,11 @@ All `Clone, Copy, Debug, PartialEq, Eq`; the infos `Default` and `#[must_use]`.
 | `state(&self) -> EngineState` | yes | — |
 | `memory_status(&self) -> MemoryStatus` | yes | — |
 | `recording_length(&self, number: u32) -> Result<u64, Error>` | yes | `NoSuchRecording` |
-| `erase(&mut self, number: u32) -> Result<(), Error>` | no (bounded memmove, no allocation) | `RecordingInProgress`, `NoSuchRecording` |
-| `erase_all(&mut self) -> Result<(), Error>` | no | `RecordingInProgress` |
-| `export_len(&self, number: u32) -> Result<usize, Error>` | yes | `NoSuchRecording` |
-| `export(&self, number: u32, out: &mut [u8]) -> Result<usize, Error>` | no (CRC over the recording) | `NoSuchRecording`, `BufferTooSmall { needed }` |
-| `import(&mut self, bytes: &[u8]) -> Result<u32, Error>` (the new number) | no | `RecordingInProgress`, `UnknownForm`, `UnsupportedFormVersion { version }`, `Damaged`, `DoesNotFit` |
+| `erase(&mut self, number: u32) -> Result<(), Error>` (idle or playing; the played item or all stops playback first) | no (bounded memmove, no allocation) | `RecordingInProgress`, `NoSuchRecording` |
+| `erase_all(&mut self) -> Result<(), Error>` (idle or playing) | no | `RecordingInProgress` |
+| `export_len(&self, number: u32) -> Result<usize, Error>` (any state) | yes | `NoSuchRecording` |
+| `export(&self, number: u32, out: &mut [u8]) -> Result<usize, Error>` (any state) | no (CRC over the recording) | `NoSuchRecording`, `BufferTooSmall { needed }` |
+| `import(&mut self, bytes: &[u8]) -> Result<u32, Error>` (the new number; idle or playing, it only appends) | no (validates the whole sequence) | `RecordingInProgress`, `UnknownForm`, `UnsupportedFormVersion { version }`, `Damaged`, `DoesNotFit` |
 | `record_latency_samples(&self) -> u32`, `playback_latency_samples(&self) -> u32`, `drain_samples(&self) -> u32` | yes | — (host samples) |
 | `footprint_bytes(&self) -> usize` | yes | — |
 

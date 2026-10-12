@@ -428,7 +428,7 @@ impl Pipeline {
         let memory = if self.memory.same_capacity(&settings.memory) {
             // Kept by move (research R-03): no second reservation and no copy. Nothing below
             // can fail, so the pipeline is never left without its store.
-            core::mem::replace(&mut self.memory, Memory::with_capacity_samples(0, 0)?)
+            core::mem::replace(&mut self.memory, Memory::empty())
         } else {
             self.memory.copied_to(&settings.memory)?
         };

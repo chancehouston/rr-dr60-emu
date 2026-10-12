@@ -103,7 +103,7 @@ The host records several times and the engine behaves like the device: recording
 
 **Why this priority**: the device's limits are part of its character ("60 minutes, 99 items") and the free tier of the app is defined as the device with its limits (`docs/product/monetization.md`); the Workbench's expanded memory is the same mechanism with a larger figure.
 
-**Independent Test**: with a small configured capacity (so tests stay fast), record until the time limit and until the count limit, check the stop reasons and the exact sample at which recording stopped, erase one and all recordings and check the numbering and the figures. Uses the record path only; no playback or persistence is needed.
+**Independent Test**: with a small configured capacity (so tests stay fast), record until the time limit and until the count limit, check the stop reasons and the exact sample at which recording stopped, erase one and all recordings and check the numbering and the figures; the renumbered recordings' content is compared by playing them (US1), the only public read of a recording. No persistence is needed.
 
 **Acceptance Scenarios**:
 
