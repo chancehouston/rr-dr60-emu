@@ -54,7 +54,9 @@ impl Row {
 /// decimator, the limiter and stage 4 bypassed; the clamp of an `f32`-exact value and the VAS's
 /// keep/drop/zero are exact), nor at that rate when nothing after it does (stage 10 not running
 /// and no interpolator: the output's `narrow_out` then performs the very same rounding, so the
-/// stored stream moved but the output did not).
+/// stored stream moved but the output did not). An AGC-on entry below the knee at 6 kHz with
+/// stages 4 and 10 off would also be exact (the limiter is bit-exact below its knee, spec 005
+/// FR-003); none exists, so the predicate requires the AGC off; extend it when one is added.
 fn expected_unchanged(s: &Settings) -> bool {
     let identity = s.host_rate_hz == rr_dr60::DEVICE_RATE_HZ;
     let exact_before = !s.agc.enabled && !s.record_stage_enabled;

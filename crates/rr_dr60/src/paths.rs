@@ -64,8 +64,9 @@ pub(crate) fn settling_len(sos: &[[f64; 5]], rel: f64) -> usize {
 /// (spec 006 FR-009; research R-02). The one-pass engine and the record path narrow here
 /// alike, so a 32-bit store and the one-pass processing see the same samples, and the playback
 /// half widens with `f64::from`, which is exact. The physical defence is one of inaudibility,
-/// not fidelity: at this point the device holds an 8-bit µ-law code (A-003), 16 bits coarser
-/// than this rounding. `narrow_out` rounds to nearest, flushes `f32` subnormals to 0.0 and
+/// not fidelity: at this point the device holds an 8-bit µ-law code (A-003) whose finest step
+/// is about 2⁻¹² of full scale (G.711 segment 0), while this rounding's error is at most 2⁻²⁵,
+/// about 12 bits finer. `narrow_out` rounds to nearest, flushes `f32` subnormals to 0.0 and
 /// saturates at ±`f32::MAX` (with the clamp on the sample is within ±1.0, so saturation never
 /// acts).
 #[inline]

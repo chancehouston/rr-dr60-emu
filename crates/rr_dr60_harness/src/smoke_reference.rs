@@ -2,9 +2,10 @@
 //! additions): the Rust path's playback of the smoke stimulus, hashed, so `tests/c/smoke.c`
 //! can compare its own playback against the Rust path without a file exchange.
 //!
-//! The stimulus is a 1 kHz square wave at −20 dBFS (±0.1, 24 samples up and 24 down at
-//! 48 kHz): every sample is exactly representable, so C and Rust feed identical bits, which a
-//! `sin()` from two libms would not guarantee.
+//! The stimulus is a 1 kHz square wave at −18 dBFS (±0.125, 24 samples up and 24 down at
+//! 48 kHz): ±0.125 is exactly representable in binary32 (0.1 is not; a C literal need only be
+//! nearest-or-adjacent, C11 6.4.4.2), so C and Rust feed identical bits, which a `sin()` from
+//! two libms would not guarantee either.
 
 use rr_dr60::Pipeline;
 
@@ -18,12 +19,12 @@ pub const SMOKE_BLOCK: usize = 480; // engineering target (006 US4)
 /// FNV-1a 64 of the Rust playback (pre-drain and drain) of the smoke stimulus with the default
 /// settings at 48 kHz; `smoke.c` embeds the same value. Re-pin it only with an intended output
 /// change (the golden procedure, spec 006 R-09).
-pub const SMOKE_REFERENCE_HASH: u64 = 0xc3e9_0464_3c88_24d7; // measured 2026-10-12 (49 692 samples); pinned by `ffi_parity::smoke_reference_hash_is_pinned`
+pub const SMOKE_REFERENCE_HASH: u64 = 0x81b8_12b9_699d_c614; // measured 2026-10-12 (49692 samples, the ±0.125 stimulus); pinned by `ffi_parity::smoke_reference_hash_is_pinned`
 
 /// The smoke stimulus.
 pub fn stimulus() -> Vec<f32> {
     (0..SMOKE_SAMPLES)
-        .map(|i| if i % 48 < 24 { 0.1 } else { -0.1 })
+        .map(|i| if i % 48 < 24 { 0.125 } else { -0.125 })
         .collect()
 }
 

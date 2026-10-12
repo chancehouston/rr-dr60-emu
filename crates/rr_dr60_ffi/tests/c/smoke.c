@@ -16,9 +16,9 @@
 #define N (FS / 2)
 #define FS6 6000 /* the device rate (A-026): the rate conversion boundary is the identity */
 #define N6 (FS6 / 10)
-/* FNV-1a 64 of the Rust path's playback of the 006 smoke stimulus (49 692 samples), pinned by
+/* FNV-1a 64 of the Rust path's playback of the 006 smoke stimulus (49692 samples), pinned by
  * the harness's `ffi_parity::smoke_reference_hash_is_pinned` (US4 scenario 1). */
-#define RR_DR60_SMOKE_REFERENCE_HASH 0xc3e904643c8824d7ULL
+#define RR_DR60_SMOKE_REFERENCE_HASH 0x81b812b9699dc614ULL
 
 static int failures = 0;
 
@@ -270,7 +270,7 @@ int main(void) {
   /* Spec 006 US4 (contracts/c-api.md › Smoke test additions; T042): the record, stop, export,
    * import, play loop at 48 kHz with the default settings (the VAS on), the state at each step,
    * the memory figures, the refusals, a memory-full stop, erase all. The stimulus is a 1 kHz
-   * square wave at -20 dBFS (+/-0.1, 24 samples up, 24 down): exactly representable, so the
+   * square wave at -18 dBFS (+/-0.125, 24 samples up, 24 down): exactly representable in binary32, so the
    * Rust harness feeds the same bits and `ffi_parity` pins the FNV-1a 64 hash of the Rust
    * playback that both C playbacks must reproduce (US4 scenario 1). */
   {
@@ -289,7 +289,7 @@ int main(void) {
           "memory field numbers");
 
     static float sq[FS];
-    for (size_t i = 0; i < FS; i++) sq[i] = (i % 48) < 24 ? 0.1f : -0.1f;
+    for (size_t i = 0; i < FS; i++) sq[i] = (i % 48) < 24 ? 0.125f : -0.125f;
     RrDr60Settings d = rr_dr60_settings_default(FS);
     RrDr60Pipeline *a = NULL;
     CHECK(rr_dr60_create(&d, &a) == RR_DR60_STATUS_OK && a != NULL, "create (006 loop)");
