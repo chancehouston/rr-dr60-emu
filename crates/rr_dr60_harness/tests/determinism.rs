@@ -301,9 +301,17 @@ fn record_then_play_partitions() {
 #[test]
 fn manifest_canonical_text_is_identical_on_every_target() {
     // Spec 007 SC-004 (research R-09): the manifest's canonical text equals the committed golden
-    // text on every CI target (the golden-matrix and ios jobs run this file).
+    // text on every CI target (the golden-matrix and ios jobs run this file), and (US1
+    // scenario 3) it is unchanged after audio has been processed.
     let path = rr_dr60_harness::manifest_checks::golden_text_path();
     let want = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    assert_eq!(
+        rr_dr60_harness::manifest_checks::render(rr_dr60::manifest()),
+        want
+    );
+    let mut p = rr_dr60::Pipeline::new(rr_dr60::Settings::new(48_000)).unwrap();
+    let mut buf = vec![0.25f32; 4800];
+    let _ = p.process_in_place(&mut buf);
     assert_eq!(
         rr_dr60_harness::manifest_checks::render(rr_dr60::manifest()),
         want

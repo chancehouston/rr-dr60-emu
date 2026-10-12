@@ -41,7 +41,7 @@ typedef struct {
 } RrDr60StageEntry;                 /* 80 bytes on 64-bit targets, 48 on 32-bit */
 ```
 
-Every `const char *` is non-NULL, NUL-terminated UTF-8, points at static storage inside the library and stays valid and unchanged for the life of the process (keep it by reference; never free it). Both structs grow only at the end; before 1.0 a new trailing field is a minor change that needs a recompile, after 1.0 new data arrives through new accessor functions.
+Every `const char *` is non-NULL, NUL-terminated UTF-8, points at static storage inside the library and stays valid and unchanged for the life of the process (keep it by reference; never free it). On the Rust side both structs implement `Default` (null pointers, zeros) for the tests; the C header is unaffected. Both structs grow only at the end; before 1.0 a new trailing field is a minor change that needs a recompile, after 1.0 new data arrives through new accessor functions.
 
 ## Functions
 

@@ -6,6 +6,7 @@ Additive (0.6 → 0.7; nothing released). No existing item changes.
 
 ```text
 pub fn manifest() -> &'static Manifest;                       // also rr_dr60::manifest()
+pub const STAGE_COUNT: usize = 15;                            // rr_dr60::manifest::STAGE_COUNT (the FFI uses it)
 
 #[non_exhaustive] #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Manifest { pub header: Header, pub stages: [StageEntry; 15] }

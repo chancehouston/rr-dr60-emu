@@ -18,7 +18,7 @@ Manifest
 | | `counts` | `StatusCounts` | computed from the entries at compile time; sums to 15 (FR-003, FR-013 (f)) |
 | | `basis` | `&'static str` | FR-012's sentence; ≤ 160 characters |
 | | `evidence_link` | `&'static str` | the hardware-evidence capture form (`issues/new?template=hardware_evidence.yml`); ≤ 200 |
-| | `assumptions_link` | `&'static str` | `docs/hardware/assumptions.md` on the default branch; ≤ 200; the page has no row anchors, a host appends a text fragment `#:~:text=A-028` (plan reviews 2026-10-12) |
+| | `assumptions_link` | `&'static str` | `docs/hardware/assumptions.md` on the default branch; ≤ 200; the page has no row anchors, a host appends a text fragment `#:~:text=A-028`, which scrolls to the ID's first mention (plan reviews 2026-10-12) |
 | | `sources_link` | `&'static str` | `docs/hardware/sources.md` likewise |
 | `StatusCounts` | `not_modeled`, `assumed`, `sourced`, `checked` | `u32` | one per `StageStatus` |
 | `StageEntry` | `number` | `u8` | 1–15, stable (FR-002) |
@@ -50,19 +50,19 @@ The hidden C twin table (`manifest::__c`) carries the same values with every str
 |---|---|---|---|---|---|---|---|---|
 | 1 | `mic_capsule` | Record | NotModeled | NotApplicable | S-002 | A-005 | | |
 | 2 | `mic_amp` | Record | NotModeled | NotApplicable | S-002 | A-006, A-029 | | |
-| 3 | `limiter` | Record | Assumed | Low | S-001, S-002 | A-007, A-019, A-020, A-028, A-030, A-034, A-035, A-036, A-037 | 0.5.0 | |
-| 4 | `codec_input` | Record | Assumed | Medium | S-002, S-003, S-005, S-007 | A-003, A-015, A-016, A-026, A-027, A-030 | 0.5.0 | µ-law quantization, idle noise and the device's own aliasing above 3 kHz |
+| 3 | `limiter` | Record | Assumed | Low | S-001, S-002 | A-007, A-019, A-020, A-028, A-030, A-034, A-035, A-036, A-037 | 0.5.0 | a soft knee, if the circuit has one; the DC block and 13 kHz roll-off ahead of the peak circuit |
+| 4 | `codec_input` | Record | Assumed | Medium | S-002, S-003, S-005, S-007 | A-003, A-015, A-016, A-026, A-027, A-030 | 0.5.0 | µ-law quantization, idle noise, the input amp's clipping ahead of the filter, and aliasing of input above 3 kHz |
 | 5 | `vas` | Record | Assumed | Low | S-001, S-002 | A-008, A-021, A-022, A-023, A-024, A-025, A-033, A-037 | 0.5.0 | a digital gain from the sensitivity setting, if the device applies one |
-| 6 | `noise_reduction` | Record | NotModeled | NotApplicable | S-004 | A-009 | | |
+| 6 | `noise_reduction` | Record | NotModeled | NotApplicable | S-002, S-004 | A-009 | | |
 | 7 | `encoder` | Record | NotModeled | NotApplicable | S-002, S-004 | A-004 | | |
-| 8 | `memory` | Both | Assumed | Low | S-001, S-002 | A-037, A-038, A-039 | 0.6.0 | the stored form is the engine's own samples, not encoded frames; no item locking (F.LOCK) |
+| 8 | `memory` | Both | Assumed | Low | S-001, S-002 | A-037, A-038, A-039 | 0.6.0 | encoded CELP frames as the stored form (the engine keeps its own samples); item locking (F.LOCK) |
 | 9 | `decoder` | Playback | NotModeled | NotApplicable | S-002 | A-004 | | |
-| 10 | `codec_output` | Playback | Assumed | Medium | S-002, S-003, S-005, S-007 | A-015, A-016, A-026, A-027, A-030 | 0.4.0 | µ-law expansion, receive idle noise and DAC imaging residue above 3 kHz |
+| 10 | `codec_output` | Playback | Assumed | Medium | S-002, S-003, S-005, S-007 | A-015, A-016, A-026, A-027, A-030 | 0.4.0 | µ-law expansion, idle noise on the playback side, DAC imaging residue above 3 kHz; the SLOW/FAST speed control |
 | 11 | `volume_amp` | Playback | NotModeled | NotApplicable | S-001, S-002, S-006 | A-031 | | |
-| 12 | `speaker` | Playback | NotModeled | NotApplicable | S-002 | A-010 | | |
+| 12 | `speaker` | Playback | NotModeled | NotApplicable | S-001, S-002 | A-010 | | |
 | 13 | `earphone` | Playback | NotModeled | NotApplicable | S-001, S-002 | A-012, A-032 | | |
 | 14 | `clock` | Both | NotModeled | NotApplicable | S-002 | A-011 | | |
-| 15 | `power` | Both | NotModeled | NotApplicable | S-002 | A-013 | | |
+| 15 | `power` | Both | NotModeled | NotApplicable | S-001, S-002 | A-013 | | |
 
 Names, descriptions and controls notes: the spec's Key Entities table and its "Controls notes (initial)" paragraph, verbatim. Header counts: not modeled 10, assumed 5, sourced 0, checked 0.
 
@@ -89,14 +89,14 @@ library_version: 0.7.0
 device_rate_hz: 6000
 stage_count: 15
 counts: not_modeled=10 assumed=5 sourced=0 checked=0
-basis: Modeled on the RR-DR60 service manual and the codec family datasheets; no stage has been checked against a real unit.
+basis: Modeled on the RR-DR60 owner's and service manuals and the codec family datasheets; no stage has been checked against a real unit.
 evidence_link: https://github.com/chancehouston/rr-dr60-emu/issues/new?template=hardware_evidence.yml
 assumptions_link: https://github.com/chancehouston/rr-dr60-emu/blob/main/docs/hardware/assumptions.md
 sources_link: https://github.com/chancehouston/rr-dr60-emu/blob/main/docs/hardware/sources.md
 
 stage 1 mic_capsule
 name: Microphone capsule
-description: Turns sound pressure into an electrical signal with a small two-terminal electret capsule.
+description: Turns sound pressure into an electrical signal with a two-terminal electret capsule.
 status: not_modeled
 path: record
 confidence: not_applicable

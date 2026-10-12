@@ -28,8 +28,9 @@
 //!   least one is measured against a real unit. Applies to no stage today.
 //!
 //! The register links in the header are page links; the pages have no row anchors, so a host
-//! that wants to open an ID's row appends a text fragment, `#:~:text=` followed by the ID
-//! (for example `…/assumptions.md#:~:text=A-028`).
+//! that wants to land near an ID appends a text fragment, `#:~:text=` followed by the ID (for
+//! example `…/assumptions.md#:~:text=A-028`), which scrolls to the ID's first mention on the
+//! page.
 //!
 //! Reading the manifest allocates nothing, performs no I/O and takes no lock: it is a
 //! `static` (007 FR-016). The data is identical on every supported platform.
@@ -113,9 +114,9 @@ pub struct Header {
     pub basis: &'static str,
     /// The hardware-evidence capture form, so an app can offer "Own one? Help check it".
     pub evidence_link: &'static str,
-    /// The assumption register page (append `#:~:text=A-028` to land on a row).
+    /// The assumption register page (append `#:~:text=A-028` to scroll to the ID's first mention).
     pub assumptions_link: &'static str,
-    /// The source register page (append `#:~:text=S-002` to land on a row).
+    /// The source register page (append `#:~:text=S-002` to scroll to the ID's first mention).
     pub sources_link: &'static str,
 }
 
@@ -200,7 +201,7 @@ pub fn manifest() -> &'static Manifest {
 macro_rules! basis_text {
     () => {
         // 007 FR-012: the sentence while no stage is checked against a real unit.
-        "Modeled on the RR-DR60 service manual and the codec family datasheets; no stage has been checked against a real unit."
+        "Modeled on the RR-DR60 owner's and service manuals and the codec family datasheets; no stage has been checked against a real unit."
     };
 }
 macro_rules! evidence_link {
@@ -343,14 +344,14 @@ macro_rules! stage_table {
 stage_table! {
     {
         number: 1, identifier: "mic_capsule", name: "Microphone capsule",
-        description: "Turns sound pressure into an electrical signal with a small two-terminal electret capsule.",
+        description: "Turns sound pressure into an electrical signal with a two-terminal electret capsule.",
         status: NotModeled, path: Record, confidence: NotApplicable,
         sources: ["S-002"], assumptions: ["A-005"],
         coverage: "", controls: "", model_version: "",
     },
     {
         number: 2, identifier: "mic_amp", name: "Microphone amplifier",
-        description: "Amplifies the microphone signal ahead of the codec and carries the limiter's attenuator.",
+        description: "Amplifies the microphone signal ahead of the codec and carries the AGC's attenuator.",
         status: NotModeled, path: Record, confidence: NotApplicable,
         sources: ["S-002"], assumptions: ["A-006", "A-029"],
         coverage: "", controls: "", model_version: "",
@@ -361,7 +362,7 @@ stage_table! {
         status: Assumed, path: Record, confidence: Low,
         sources: ["S-001", "S-002"],
         assumptions: ["A-007", "A-019", "A-020", "A-028", "A-030", "A-034", "A-035", "A-036", "A-037"],
-        coverage: "",
+        coverage: "a soft knee, if the circuit has one; the DC block and 13 kHz roll-off ahead of the peak circuit",
         controls: "agc.enabled, agc.knee_dbfs, agc.attack_ms, agc.release_ms; Tap::AfterAgc",
         model_version: "0.5.0",
     },
@@ -371,7 +372,7 @@ stage_table! {
         status: Assumed, path: Record, confidence: Medium,
         sources: ["S-002", "S-003", "S-005", "S-007"],
         assumptions: ["A-003", "A-015", "A-016", "A-026", "A-027", "A-030"],
-        coverage: "µ-law quantization, idle noise and the device's own aliasing above 3 kHz",
+        coverage: "µ-law quantization, idle noise, the input amp's clipping ahead of the filter, and aliasing of input above 3 kHz",
         controls: "record_stage_enabled; adc_clamp_enabled; Tap::AfterRecord",
         model_version: "0.5.0",
     },
@@ -387,9 +388,9 @@ stage_table! {
     },
     {
         number: 6, identifier: "noise_reduction", name: "Noise reduction",
-        description: "Reduces background noise, according to one secondary account.",
+        description: "Claimed by one secondary account to reduce background noise; the service manual lists no such function.",
         status: NotModeled, path: Record, confidence: NotApplicable,
-        sources: ["S-004"], assumptions: ["A-009"],
+        sources: ["S-002", "S-004"], assumptions: ["A-009"],
         coverage: "", controls: "", model_version: "",
     },
     {
@@ -401,15 +402,15 @@ stage_table! {
     },
     {
         number: 8, identifier: "memory", name: "Flash memory",
-        description: "Stores up to 99 recordings and 60 minutes in total; a new recording cannot start while either limit is reached.",
+        description: "Stores up to 99 recordings and 60 minutes in total; a new recording cannot start once either limit is reached.",
         status: Assumed, path: Both, confidence: Low,
         sources: ["S-001", "S-002"], assumptions: ["A-037", "A-038", "A-039"],
-        coverage: "the stored form is the engine's own samples, not encoded frames; no item locking (F.LOCK)",
+        coverage: "encoded CELP frames as the stored form (the engine keeps its own samples); item locking (F.LOCK)",
         controls: "memory.capacity_s, memory.max_recordings; memory_status, recording_length, erase, erase_all, export, import",
         model_version: "0.6.0",
     },
     {
-        number: 9, identifier: "decoder", name: "Speech decoder",
+        number: 9, identifier: "decoder", name: "Speech decoder (CELP)",
         description: "Rebuilds the voice-band stream from the stored CELP frames.",
         status: NotModeled, path: Playback, confidence: NotApplicable,
         sources: ["S-002"], assumptions: ["A-004"],
@@ -421,13 +422,13 @@ stage_table! {
         status: Assumed, path: Playback, confidence: Medium,
         sources: ["S-002", "S-003", "S-005", "S-007"],
         assumptions: ["A-015", "A-016", "A-026", "A-027", "A-030"],
-        coverage: "µ-law expansion, receive idle noise and DAC imaging residue above 3 kHz",
+        coverage: "µ-law expansion, idle noise on the playback side, DAC imaging residue above 3 kHz; the SLOW/FAST speed control",
         controls: "playback_stage_enabled; Tap::AfterPlayback",
         model_version: "0.4.0",
     },
     {
         number: 11, identifier: "volume_amp", name: "Volume control and power amplifier",
-        description: "Sets the playback level and drives the speaker through a small power amplifier that is muted while recording.",
+        description: "Sets the playback level and drives the speaker through a power amplifier that is muted while recording.",
         status: NotModeled, path: Playback, confidence: NotApplicable,
         sources: ["S-001", "S-002", "S-006"], assumptions: ["A-031"],
         coverage: "", controls: "set_route, route; EngineState.speaker_muted", model_version: "",
@@ -436,7 +437,7 @@ stage_table! {
         number: 12, identifier: "speaker", name: "Speaker",
         description: "Turns the amplified signal into sound through a 2.8 cm, 8 Ω speaker.",
         status: NotModeled, path: Playback, confidence: NotApplicable,
-        sources: ["S-002"], assumptions: ["A-010"],
+        sources: ["S-001", "S-002"], assumptions: ["A-010"],
         coverage: "", controls: "Route::Speaker", model_version: "",
     },
     {
@@ -455,9 +456,9 @@ stage_table! {
     },
     {
         number: 15, identifier: "power", name: "Power supply",
-        description: "Two AAA cells feed a 3.3 V converter for the digital section and a switched rail for the analog recording circuit.",
+        description: "Two AAA cells feed a 3.3 V converter for the digital section and a switched rail for the analog section.",
         status: NotModeled, path: Both, confidence: NotApplicable,
-        sources: ["S-002"], assumptions: ["A-013"],
+        sources: ["S-001", "S-002"], assumptions: ["A-013"],
         coverage: "", controls: "", model_version: "",
     },
 }

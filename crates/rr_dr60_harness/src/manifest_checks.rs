@@ -691,7 +691,7 @@ pub fn cross_check(m: &Manifest, r: &Registers<'_>) -> Vec<Finding> {
                 Rule::TableShape,
                 Some(e.number),
                 None,
-                format!("row {i} is numbered {}", row.number),
+                format!("row {} is numbered {}", i + 1, row.number),
             )),
             Some(row) if row.identifier != e.identifier => out.push(finding(
                 Rule::TableShape,

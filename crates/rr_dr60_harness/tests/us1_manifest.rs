@@ -27,7 +27,7 @@ const IDENTIFIERS: [&str; 15] = [
 ];
 
 /// 007 FR-012: the basis sentence while no stage is checked against a real unit.
-const BASIS: &str = "Modeled on the RR-DR60 service manual and the codec family datasheets; no stage has been checked against a real unit.";
+const BASIS: &str = "Modeled on the RR-DR60 owner's and service manuals and the codec family datasheets; no stage has been checked against a real unit.";
 
 fn modeled(e: &StageEntry) -> bool {
     e.status != StageStatus::NotModeled
@@ -168,6 +168,17 @@ fn identical_across_reads() {
     assert!(core::ptr::eq(a, b));
     assert_eq!(a, b);
     assert_eq!(*a, *b);
+}
+
+#[test]
+fn wording_is_clean() {
+    // US1 scenario 4; 007 FR-002, FR-003, FR-011; SC-003, register-free (the renderer module
+    // reads no file for this). FR-010, sourced properties only, is judged by review (T029).
+    let f = rr_dr60_harness::manifest_checks::wording_findings(manifest());
+    for x in &f {
+        println!("{x}");
+    }
+    assert!(f.is_empty(), "{} findings", f.len());
 }
 
 #[test]
