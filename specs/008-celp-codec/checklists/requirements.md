@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [x] No [NEEDS CLARIFICATION] markers remain (five defaults are marked **[default; clarify]** for `/speckit-clarify`: FR-004, FR-005, FR-011, FR-012, FR-020)
+- [x] No [NEEDS CLARIFICATION] markers remain (the five **[default; clarify]** items were settled in the clarify session of 2026-10-12)
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,5 +31,5 @@
 
 ## Notes
 
-- Validated 2026-10-12 after writing, then re-validated after the coach (C1–C12) and hardware-emulation (D1–D12) reviews were applied at the reviewers' proposed fixes. The tolerances in FR-004 – FR-006 are engineering targets calibrated at plan time against an equal-density reference coder (FR-005); the five **[default; clarify]** items are the clarify session's questions, together with the user confirmations listed under Clarifications.
+- Validated 2026-10-12 after writing, then re-validated after the coach (C1–C12) and hardware-emulation (D1–D12) reviews were applied at the reviewers' proposed fixes. The tolerances in FR-004 – FR-006 are engineering targets calibrated at plan time against an equal-density reference coder (FR-005); the clarify session (2026-10-12) settled the five open items and the user confirmations at the recommended defaults; no markers remain.
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`
