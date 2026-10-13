@@ -12,7 +12,7 @@ All items are in `rr_dr60`; every public item has rustdoc citing its FR and S-/A
 
 ## Constants and info (`rr_dr60::speech_codec`)
 
-`FRAME_SAMPLES: u32 = 120`, `FRAME_MS: u32 = 20`, `SUBFRAME_SAMPLES = 60`, `BITS_PER_FRAME = 80`, `FRAME_BYTES = 10`, `LOOKAHEAD_SAMPLES = 30`, `DELAY_SAMPLES = 150`, `LPC_ORDER = 8`, `MIN_LAG = 15`, `MAX_LAG = 120`, `FRAMES_PER_SECOND = 50`, `MODEL_VERSION: [u16; 3] = [0, 8, 0]`; `pub fn info() -> SpeechCodecInfo` (`repr(C)`, `Copy`, 24 bytes: `frame_samples, frame_ms, bits_per_frame, delay_samples: u32; model_version: [u16; 3]; reserved: u16`). The encoder and decoder types stay `pub(crate)`.
+`FRAME_SAMPLES: u32 = 120`, `FRAME_MS: u32 = 20`, `SUBFRAME_SAMPLES = 60`, `BITS_PER_FRAME = 80`, `FRAME_BYTES = 10`, `LOOKAHEAD_SAMPLES = 60`, `DELAY_SAMPLES = 180`, `LPC_ORDER = 8`, `MIN_LAG = 15`, `MAX_LAG = 120`, `FRAMES_PER_SECOND = 50`, `MODEL_VERSION: [u16; 3] = [0, 8, 0]`; `pub fn info() -> SpeechCodecInfo` (`repr(C)`, `Copy`, 24 bytes: `frame_samples, frame_ms, bits_per_frame, delay_samples: u32; model_version: [u16; 3]; reserved: u16`). The encoder and decoder types stay `pub(crate)`.
 
 ## Reports
 
@@ -20,7 +20,7 @@ All items are in `rr_dr60`; every public item has rustdoc citing its FR and S-/A
 |---|---|
 | `BlockInfo` | `frames: usize` (one-pass frames encoded in the block) |
 | `RecordInfo` | `frames: usize`, `frames_total: u64` |
-| `StopOutcome` | `silence_fed_samples: u64` (post-VAS device samples of silence fed by the stop: the pre-encoder flush and the padding to the frame boundary) |
+| `StopOutcome` | `silence_fed_samples: u64` (post-VAS device samples of silence produced after the last represented input sample: the padding to the frame boundary plus the look-ahead; 0 with the codec bypassed) |
 | `PlayInfo` | `frames: usize`, `frame_index: u64` |
 
 All report structs stay `Copy`; `VasEvent` unchanged.
@@ -29,13 +29,13 @@ All report structs stay `Copy`; `VasEvent` unchanged.
 
 | Call | Change |
 |---|---|
-| `process*` (one-pass) | with the codec on and the tap at or after `AfterDecoder`, the device stream is delayed by exactly 150 kept samples and passes through encoder and decoder; `latency_samples()` includes the delay |
-| `start_recording` / `record` | frames appended per 120 kept samples (+ 30 look-ahead); `RecordInfo.frames*`; "memory full" at a frame boundary |
-| `stop_recording` | feeds host silence for the pre-encoder latency, then to the frame boundary with the VAS held open; `StopOutcome.silence_fed_samples`; the length is a whole number of frames |
-| `play` | decodes frame by frame; `PlayInfo.frames`, `frame_index`; the drain unchanged |
+| `process*` (one-pass) | with the codec on and the tap at or after `AfterDecoder`, the device stream is delayed by exactly 180 kept samples and passes through encoder and decoder; `latency_samples()` includes the delay; VAS event positions stay post-VAS stream indices |
+| `start_recording` / `record` | frames appended per 120 kept samples (+ 60 look-ahead); `RecordInfo.frames*`; "memory full" at a frame boundary (the frame that did not fit is dropped; events in that block may name positions up to 179 samples past the stored length) |
+| `stop_recording` | with no kept sample: discards as 006 does; otherwise feeds host silence for the pre-encoder latency, then to the frame boundary and the look-ahead, with the VAS gate held open in drop mode (a forced resume records its splice event); `StopOutcome.silence_fed_samples`; the length is a whole number of frames; bounded work (≤ flush + 179 device samples' worth); byte-identical to 006 when the codec is bypassed |
+| `play` | decodes frame by frame; `PlayInfo.frames`, `frame_index` (held at the last frame during the drain); the drain unchanged |
 | `record_latency_samples` | includes the codec delay; `playback_latency_samples` unchanged; the sum rule holds |
 | `export_len` / `export` / `import` | form version 2 (contracts/recording-form.md) |
-| `reconfigure` | a change of `speech_codec_enabled` with recordings present → `Error::StoredExceedsCapacity` (documented as "the stored recordings do not fit the new configuration"); with an empty memory the store is re-reserved |
+| `reconfigure` | a change of `speech_codec_enabled` with recordings present → `Error::StoredExceedsCapacity` (documented as "the stored recordings do not fit the new configuration"); with an empty memory the store is re-reserved; every other reconfigure (a tap change among them) follows 006's rules unchanged |
 | `recording_length`, `memory_status` | unchanged types; figures are multiples of 120 device samples with the codec on |
 | `reset` | also resets the one-pass codec pair |
 
@@ -45,4 +45,4 @@ All report structs stay `Copy`; `VasEvent` unchanged.
 
 ## Test hooks (`__test-hooks` feature only)
 
-`Memory::__with_unit_samples(7)` to exercise the capacity rounding rule; `OnePass::__codec_fifo_fill()` to assert the 150-sample delay; `codec::__search_trace` (counts of criterion evaluations per frame) for the cost bound.
+`Memory::__with_unit_samples(7)` to exercise the capacity rounding rule; `OnePass::__codec_fifo_fill()` to assert the 180-sample delay; `codec::__search_trace` (counts of criterion evaluations per frame) for the cost bound. `Tap` is `#[non_exhaustive]`, so `AfterDecoder` breaks no exhaustive match outside the crate.
