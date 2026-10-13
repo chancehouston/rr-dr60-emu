@@ -222,7 +222,7 @@ fn as4_c_parity_and_rejection() {
         }
     }
     // Rejection, named, in both interfaces (005 FR-010, FR-015).
-    let mut bad = Settings::new(48_000);
+    let mut bad = rr_dr60_harness::configs::settings_007(48_000);
     bad.agc.knee_dbfs = 4.0; // above the +3 dBFS cap (005 FR-010)
     assert_eq!(
         Pipeline::new(bad).err(),
@@ -285,7 +285,7 @@ fn invalid_settings_are_named_and_rejected() {
     ];
     let x = stimulus::step(1000.0, &[-30.0], &[0.2], 48_000.0);
     for (setting, break_it) in cases {
-        let mut bad = Settings::new(48_000);
+        let mut bad = rr_dr60_harness::configs::settings_007(48_000);
         break_it(&mut bad);
         let want = Error::InvalidSetting { setting };
         assert_eq!(Pipeline::new(bad).err(), Some(want));

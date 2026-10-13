@@ -7,7 +7,7 @@ Rules of spec 001's contract apply (opaque handle, status codes, caller buffers,
 | Offset | Field | Type | Notes |
 |---|---|---|---|
 | 0 – 83 | as 0.7.0 | | unchanged |
-| 84 | (padding) | | |
+| 84 | `reserved_008` | `u32` | ignored; write 0 (fills the 0.7 tail padding so the next field sits at 88; `repr(C)` would otherwise place a `bool` at 84 and keep the size at 88) |
 | **88** | `speech_codec_enabled` | `bool` | default `true` |
 | 89 – 95 | (tail padding) | | |
 

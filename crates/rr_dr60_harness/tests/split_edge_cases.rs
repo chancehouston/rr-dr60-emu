@@ -1,9 +1,7 @@
 //! Spec 006 Edge Cases, one test each (task T038), for what the story tests and the unit tests
 //! do not already cover at the harness level: plain assertions through the public API.
 
-use rr_dr60::{
-    Error, Pipeline, Route, Setting, Settings, State, StopReason, StopResult, VasEvent, VasMode,
-};
+use rr_dr60::{Error, Pipeline, Route, Setting, State, StopReason, StopResult, VasEvent, VasMode};
 use rr_dr60_harness::{configs, split_checks, stimulus};
 
 /// A −20 dBFS 1 kHz tone of `secs` at `rate`.
@@ -376,5 +374,5 @@ fn device_rate_figures() {
     assert_eq!(st.used_seconds(), length as f64 / 6000.0);
     assert_eq!(st.capacity_samples, 60_000);
     assert_eq!(st.used_samples + st.remaining_samples, st.capacity_samples);
-    let _ = Settings::new(6000); // the device rate is not a setting (A-026)
+    let _ = rr_dr60_harness::configs::settings_007(6000); // the device rate is not a setting (A-026)
 }

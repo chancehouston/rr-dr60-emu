@@ -58,7 +58,7 @@ fn as1_bypassed_vas_reproduces_the_001_golden_file() {
 fn as2_tap_after_vas_equals_stage_10_bypassed() {
     for rate in configs::all_rates() {
         let x = burst_gap(&[(true, 0.5), (false, 2.0), (true, 0.5)], rate);
-        let mut tapped = Settings::new(rate);
+        let mut tapped = rr_dr60_harness::configs::settings_007(rate);
         tapped.tap = Tap::AfterVas;
         let mut bypassed = tapped;
         bypassed.playback_stage_enabled = false;

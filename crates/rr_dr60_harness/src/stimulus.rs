@@ -355,6 +355,140 @@ pub fn noise(seed: u64, len: usize) -> Vec<f32> {
         .collect()
 }
 
+/// A synthetic **voiced** speech-like stimulus for the speech codec checks (spec 008 FR-005;
+/// research R-09): a glottal pulse train whose period glides exponentially 90 → 220 → 90 Hz
+/// over the duration, through three time-varying two-pole resonators (centres sweeping
+/// 300 → 750, 1100 → 1900 and 2300 → 2600 Hz, bandwidths 80 – 150 Hz; the third sits at the
+/// band's top edge, as a real third formant would), plus aspiration noise (`Pcg32(seed)`,
+/// shaped by the same resonators) 20 dB below the harmonics; scaled to `level_dbfs` RMS.
+///
+/// Generated directly at `fs` from the same formulas (detmath only), so it is deterministic
+/// at every rate; the codec checks compare the codec's output with the same stimulus through
+/// the same configuration with the codec bypassed, so no cross-rate identity is needed.
+/// Synthetic: it is not speech and makes no claim about speech.
+pub fn voiced(fs: f64, seconds: f64, level_dbfs: f64, seed: u64) -> Vec<f32> {
+    let len = (fs * seconds) as usize;
+    let mut rng = Pcg32::new(seed, 7);
+    let mut res = [Resonator::default(); 3];
+    let mut phase = 0.0f64; // glottal cycle phase in 0..1
+    let mut out = Vec::with_capacity(len);
+    let mut pulse_env = 0.0f64;
+    for n in 0..len {
+        let t = n as f64 / fs;
+        let u = t / seconds; // 0..1
+        // Pitch glide 90 → 220 → 90 Hz, exponential (one octave and a third each way).
+        let tri = if u < 0.5 { 2.0 * u } else { 2.0 - 2.0 * u };
+        let f0 = 90.0 * exp(tri * ln(220.0 / 90.0));
+        phase += f0 / fs;
+        let mut excitation = 0.0;
+        if phase >= 1.0 {
+            phase -= 1.0;
+            pulse_env = 1.0;
+        }
+        // A two-sided exponential glottal pulse: a sharp rise decaying over ~1 ms.
+        excitation += pulse_env;
+        pulse_env *= exp(-1.0 / (fs * 0.0008));
+        // Aspiration noise 20 dB below the harmonics (the pulse train's RMS ≈ 0.25 at this
+        // decay), shaped by the same resonators.
+        let noise = ((rng.next_u32() >> 8) as f64 * (1.0 / 16_777_216.0) - 0.5) * 2.0;
+        excitation += noise * 0.1 * 0.25;
+        // Formant-like resonators with slowly moving centres.
+        let centres = [300.0 + 450.0 * u, 1100.0 + 800.0 * u, 2300.0 + 300.0 * u];
+        let bws = [80.0, 110.0, 150.0];
+        let mut y = 0.0;
+        for (r, (&fc, &bw)) in res.iter_mut().zip(centres.iter().zip(bws.iter())) {
+            y += r.step(excitation, fc, bw, fs);
+        }
+        out.push(y);
+    }
+    scale_to_level(&out, level_dbfs)
+}
+
+/// A synthetic **unvoiced-to-voiced** sequence (spec 008 FR-005, FR-006): 300 ms of resonator-
+/// shaped noise at −10 dB relative to the voiced part, a 50 ms ramp, then the voiced stimulus,
+/// repeated until `seconds`; scaled so the voiced part sits at `level_dbfs` RMS. Used for the
+/// level-tracking check (no pumping or dropouts).
+pub fn unvoiced_voiced(fs: f64, seconds: f64, level_dbfs: f64, seed: u64) -> Vec<f32> {
+    let len = (fs * seconds) as usize;
+    let cycle_s = 1.35; // 0.3 s noise + 0.05 s ramp + 1.0 s voiced
+    let voiced_part = voiced(fs, 1.0, level_dbfs, seed);
+    let mut rng = Pcg32::new(seed ^ 0x5151, 9);
+    let mut res = [Resonator::default(); 3];
+    let noise_gain = amplitude(level_dbfs - 10.0) / sqrt(2.0);
+    let mut out = Vec::with_capacity(len);
+    let mut n_in_cycle = 0usize;
+    let cycle_len = (fs * cycle_s) as usize;
+    let noise_len = (fs * 0.3) as usize;
+    let ramp_len = (fs * 0.05) as usize;
+    let mut noise_acc = Vec::with_capacity(noise_len + ramp_len);
+    for _ in 0..len {
+        if n_in_cycle == 0 {
+            noise_acc.clear();
+            for _ in 0..noise_len + ramp_len {
+                let x = ((rng.next_u32() >> 8) as f64 * (1.0 / 16_777_216.0) - 0.5) * 2.0;
+                let mut y = 0.0;
+                for (r, (&fc, &bw)) in res.iter_mut().zip(
+                    [1500.0, 2200.0, 2600.0]
+                        .iter()
+                        .zip([300.0, 400.0, 300.0].iter()),
+                ) {
+                    y += r.step(x, fc, bw, fs);
+                }
+                noise_acc.push(y);
+            }
+            let ms = noise_acc.iter().fold(0.0, |a, &v| a + v * v) / noise_acc.len() as f64;
+            let k = noise_gain / sqrt(ms.max(1e-30));
+            for v in &mut noise_acc {
+                *v *= k;
+            }
+        }
+        let v = if n_in_cycle < noise_len {
+            noise_acc[n_in_cycle]
+        } else if n_in_cycle < noise_len + ramp_len {
+            let a = (n_in_cycle - noise_len) as f64 / ramp_len as f64;
+            noise_acc[n_in_cycle] * (1.0 - a)
+                + f64::from(voiced_part[(n_in_cycle - noise_len) % voiced_part.len()]) * a
+        } else {
+            let i = n_in_cycle - noise_len;
+            f64::from(voiced_part[i % voiced_part.len()])
+        };
+        out.push(v as f32);
+        n_in_cycle += 1;
+        if n_in_cycle >= cycle_len {
+            n_in_cycle = 0;
+        }
+    }
+    out
+}
+
+/// A two-pole resonator with a per-sample centre and bandwidth (detmath only).
+#[derive(Clone, Copy, Debug, Default)]
+struct Resonator {
+    y1: f64,
+    y2: f64,
+}
+
+impl Resonator {
+    fn step(&mut self, x: f64, fc_hz: f64, bw_hz: f64, fs: f64) -> f64 {
+        let r = exp(-PI * bw_hz / fs);
+        let theta = TAU * fc_hz / fs;
+        let a1 = 2.0 * r * cos(theta);
+        let a2 = -r * r;
+        let gain = 1.0 - r;
+        let y = gain * x + a1 * self.y1 + a2 * self.y2;
+        self.y2 = self.y1;
+        self.y1 = y;
+        y
+    }
+}
+
+/// Scales `x` to `level_dbfs` RMS (0 dBFS = a full-scale sine, RMS 1/√2).
+fn scale_to_level(x: &[f64], level_dbfs: f64) -> Vec<f32> {
+    let ms = x.iter().fold(0.0, |a, &v| a + v * v) / x.len().max(1) as f64;
+    let k = amplitude(level_dbfs) / sqrt(2.0) / sqrt(ms.max(1e-30));
+    x.iter().map(|&v| (v * k) as f32).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -616,5 +750,37 @@ mod tests {
         };
         assert!((inst(0) / f0 - 1.0).abs() < 0.01, "start {}", inst(0));
         assert!((inst(n - 2) / f1 - 1.0).abs() < 0.01, "end {}", inst(n - 2));
+    }
+
+    /// Spec 008 FR-005 (T004): the speech-like stimuli are deterministic, sit at their level,
+    /// and populate every third-octave band from 315 to 2000 Hz.
+    #[test]
+    fn voiced_stimulus_level_determinism_and_bands() {
+        for &fs in &[6000.0, 48_000.0] {
+            let a = voiced(fs, 2.0, -20.0, 0x0D60);
+            let b = voiced(fs, 2.0, -20.0, 0x0D60);
+            assert_eq!(a, b, "same seed, same samples at {fs} Hz");
+            let ms = a.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / a.len() as f64;
+            let level = 10.0 * ln(ms * 2.0) / ln(10.0);
+            assert!(
+                (level + 20.0).abs() < 0.1,
+                "RMS level {level:.2} dBFS at {fs} Hz"
+            );
+            let bands = crate::analysis::third_octave_levels(&a, fs);
+            let peak = bands.iter().cloned().fold(f64::MIN, f64::max);
+            for (i, &b) in bands.iter().enumerate().take(9) {
+                assert!(
+                    peak - b < 40.0,
+                    "band {i} is {:.1} dB below the peak at {fs} Hz",
+                    peak - b
+                );
+            }
+        }
+        let c = voiced(6000.0, 1.0, -20.0, 1);
+        let d = voiced(6000.0, 1.0, -20.0, 2);
+        assert_ne!(c, d, "different seeds differ (the aspiration noise)");
+        let uv = unvoiced_voiced(6000.0, 3.0, -20.0, 0x0D60);
+        assert_eq!(uv.len(), 18_000);
+        assert_eq!(uv, unvoiced_voiced(6000.0, 3.0, -20.0, 0x0D60));
     }
 }

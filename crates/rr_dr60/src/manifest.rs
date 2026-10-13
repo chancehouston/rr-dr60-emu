@@ -779,6 +779,7 @@ mod tests {
             agc,
             vas,
             memory,
+            speech_codec_enabled,
         } = Settings::new(6000);
         let AgcSettings {
             enabled: agc_enabled,
@@ -807,6 +808,19 @@ mod tests {
             (10, playback_stage_enabled),
         ];
         let m = manifest();
+        // Spec 008 T011: the speech codec's control and tap exist before stages 7 and 9 are
+        // modeled; T037 moves them into `controls` and the tap match below. // 008 T037 flips this
+        assert!(
+            speech_codec_enabled,
+            "the speech codec is on in the device defaults (A-004)"
+        );
+        for n in [7u32, 9] {
+            assert_eq!(
+                m.stage(n).unwrap().status,
+                StageStatus::NotModeled,
+                "stage {n}: the codec control exists but the stage is not modeled yet (008 T037)"
+            );
+        }
         for (n, on) in controls {
             assert!(on, "stage {n}'s control is off in the device defaults");
             let e = m.stage(*n).unwrap();
@@ -828,7 +842,13 @@ mod tests {
                 Tap::AfterRecord => 4,
                 Tap::AfterVas => 5,
                 Tap::AfterPlayback => 10,
+                // 008 T037 flips this: the decoder tap exposes stage 9, not modeled yet.
+                Tap::AfterDecoder => 9,
             };
+            if t == Tap::AfterDecoder {
+                assert_eq!(m.stage(n).unwrap().status, StageStatus::NotModeled);
+                continue;
+            }
             assert_ne!(
                 m.stage(n).unwrap().status,
                 StageStatus::NotModeled,

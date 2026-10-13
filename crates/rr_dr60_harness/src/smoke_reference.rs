@@ -43,7 +43,7 @@ pub fn fnv1a64(samples: &[f32]) -> u64 {
 /// The Rust path's playback of the smoke stimulus (default settings, the VAS on, recorded in
 /// `SMOKE_BLOCK` blocks and played in the same blocks to `finished`), hashed, with its length.
 pub fn rust_playback_hash() -> (u64, usize) {
-    let mut p = Pipeline::new(rr_dr60::Settings::new(SMOKE_RATE)).expect("rate");
+    let mut p = Pipeline::new(crate::configs::settings_007(SMOKE_RATE)).expect("rate");
     p.start_recording().expect("idle");
     for chunk in stimulus().chunks(SMOKE_BLOCK) {
         let info = p.record(chunk, &mut []).expect("recording");

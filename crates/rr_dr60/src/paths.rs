@@ -137,7 +137,11 @@ impl RecordHalf {
             clamp: ClampStage::new(settings.adc_clamp_enabled),
             vas: VasStage::new(&settings.vas),
             run_vas: settings.vas.enabled
-                && (!honour_tap || matches!(settings.tap, Tap::AfterVas | Tap::AfterPlayback)),
+                && (!honour_tap
+                    || matches!(
+                        settings.tap,
+                        Tap::AfterVas | Tap::AfterDecoder | Tap::AfterPlayback
+                    )),
             mute: settings.vas.mode == VasMode::Mute,
         }
     }

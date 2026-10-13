@@ -127,7 +127,7 @@ int main(int argc, char **argv) {
 
   RrDr60Settings s = rr_dr60_settings_default(FS);
   CHECK(s.struct_size == sizeof(RrDr60Settings), "struct_size %u", s.struct_size);
-  CHECK(s.struct_size == 88, "struct_size %u (must be 88 since 0.6, spec 006 contracts/c-api.md)", s.struct_size);
+  CHECK(s.struct_size == 96, "struct_size %u (must be 96 since 0.8, spec 008 contracts/c-api.md)", s.struct_size);
   CHECK(s.memory_capacity_s == 3600, "default memory capacity %u s (S-001: 60 minutes)", s.memory_capacity_s);
   CHECK(s.memory_max_recordings == 99, "default recording count %u (S-001: 99 items)", s.memory_max_recordings);
   CHECK(s.tap == RR_DR60_TAP_AFTER_PLAYBACK, "default tap");

@@ -239,7 +239,7 @@ fn taps_before_the_vas_are_fixed_length() {
     for rate in RATES {
         for tap in [Tap::AfterAgc, Tap::AfterRecord] {
             let x = burst_gap(&[(true, 0.5), (false, 3.0), (true, 0.5)], rate);
-            let mut a = Settings::new(rate);
+            let mut a = rr_dr60_harness::configs::settings_007(rate);
             a.tap = tap;
             let mut b = a;
             b.vas.sensitivity = 5;
@@ -262,7 +262,7 @@ fn taps_before_the_vas_are_fixed_length() {
 #[test]
 fn mute_with_playback_stage_keeps_length_and_may_ring() {
     for rate in RATES {
-        let mut s = Settings::new(rate);
+        let mut s = rr_dr60_harness::configs::settings_007(rate);
         s.agc.enabled = false;
         s.record_stage_enabled = false;
         s.vas.mode = VasMode::Mute; // stage 10 on, tap after playback
@@ -299,7 +299,7 @@ fn mute_with_playback_stage_keeps_length_and_may_ring() {
 #[test]
 fn agc_runs_while_paused() {
     for rate in RATES {
-        let mut s = Settings::new(rate);
+        let mut s = rr_dr60_harness::configs::settings_007(rate);
         s.record_stage_enabled = false;
         s.tap = Tap::AfterVas;
         let x = burst_gap(

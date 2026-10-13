@@ -94,6 +94,19 @@
 
 extern crate alloc;
 
+/// The speech codec's constants and info (signal-chain stages 7 and 9; spec 008).
+///
+/// The encoder and decoder themselves are internal: hosts reach them through the engine's
+/// record, playback and one-pass calls and the `speech_codec_enabled` setting.
+pub mod speech_codec {
+    pub use crate::codec::{
+        BITS_PER_FRAME, DELAY_SAMPLES, DEVICE_RATE_HZ, FRAME_BYTES, FRAME_MS, FRAME_SAMPLES,
+        FRAMES_PER_SECOND, Frame, LOOKAHEAD_SAMPLES, LPC_ORDER, MAX_LAG, MIN_LAG, MODEL_VERSION,
+        SUBFRAME_SAMPLES, SpeechCodecInfo, info,
+    };
+}
+
+mod codec;
 mod error;
 mod form;
 pub mod manifest;
@@ -114,7 +127,7 @@ pub use error::{Error, Setting};
 pub use manifest::{
     Confidence, Header, Manifest, StageEntry, StagePath, StageStatus, StatusCounts, manifest,
 };
-pub use memory::MemoryStatus;
+pub use memory::{Encoding, MemoryStatus};
 pub use pipeline::{BlockInfo, Pipeline, VasEvent};
 pub use settings::{
     AgcSettings, DEVICE_RATE_HZ, MemorySettings, Route, SUPPORTED_HOST_RATES, Settings, Tap,

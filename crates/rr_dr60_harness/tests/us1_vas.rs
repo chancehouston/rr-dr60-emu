@@ -176,7 +176,7 @@ fn fr011_no_added_latency() {
             Tap::AfterVas,
             Tap::AfterPlayback,
         ] {
-            let mut on = Settings::new(rate);
+            let mut on = rr_dr60_harness::configs::settings_007(rate);
             on.tap = tap;
             let mut off = on;
             off.vas.enabled = false;

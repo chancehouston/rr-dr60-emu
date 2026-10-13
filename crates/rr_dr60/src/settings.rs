@@ -34,6 +34,11 @@ pub enum Tap {
     /// band-limits on both record and playback (A-002).
     #[default]
     AfterPlayback,
+    /// After signal-chain stage 9 (the speech decoder), before stage 10: "the codec's output"
+    /// (spec 008 FR-015). The speech encoder and decoder run in line with their 180-sample
+    /// delay; stage 10 does not. With the speech codec bypassed this tap equals
+    /// [`Tap::AfterVas`]. Appended in 0.8.
+    AfterDecoder,
 }
 
 /// Record-path automatic gain control, signal-chain stage 3: a **limiter** (spec 005; replaces
@@ -317,6 +322,15 @@ pub struct Settings {
     pub vas: VasSettings,
     /// The modeled memory's capacity. Default [`MemorySettings::DEVICE`] (spec 006).
     pub memory: MemorySettings,
+    /// Signal-chain stages 7 and 9, the **speech codec** (encoder and decoder together), on
+    /// (`true`, default: the device has no bypass; A-004 adopted by spec 008) or bypassed. On, a
+    /// recording is stored as 4 kbit/s frames and the one-pass processing runs encoder and
+    /// decoder in line with a 180-sample delay; bypassed, the engine stores and plays the
+    /// post-VAS device-rate samples as in 0.7, a combination the device cannot produce. The
+    /// setting also fixes the memory's encoding (spec 008 FR-002, FR-012): changing it with
+    /// recordings present is refused. Modeled on a 4 kbit/s CELP-class coder of the period, not
+    /// on the device's own coder (A-040, A-041).
+    pub speech_codec_enabled: bool,
 }
 
 impl Settings {
@@ -336,6 +350,7 @@ impl Settings {
             agc: AgcSettings::DEVICE,       // A-020, A-028, A-034, A-035
             vas: VasSettings::DEVICE,       // S-001, A-008, A-021 – A-024
             memory: MemorySettings::DEVICE, // S-001: 60 min, 99 items (006 FR-010)
+            speech_codec_enabled: true,     // A-004 adopted (008 FR-002): the device has no bypass
         }
     }
 

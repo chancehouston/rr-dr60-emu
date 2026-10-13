@@ -45,7 +45,7 @@ use rr_dr60::{
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 7;
+pub const RR_DR60_VERSION_MINOR: u32 = 8;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -98,6 +98,12 @@ pub enum RrDr60Status {
     BufferTooSmall = 19,
     /// A stage manifest number that is 0 or above the stage count (spec 007 FR-017).
     NoSuchStage = 20,
+    /// An import whose encoding (frames or samples) differs from the engine's configuration
+    /// (spec 008 FR-012).
+    EncodingDiffers = 21,
+    /// The bytes carry speech-codec frames of a model version this release cannot decode
+    /// (spec 008 FR-010, FR-011).
+    UnsupportedCodecModelVersion = 22,
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -151,6 +157,9 @@ pub enum RrDr60Tap {
     AfterAgc = 2,
     /// After signal-chain stage 5 (VAS). Stage 10 is not run (spec 003 FR-003).
     AfterVas = 3,
+    /// After signal-chain stage 9 (the speech decoder), before stage 10 (spec 008 FR-015).
+    /// Appended in 0.8.
+    AfterDecoder = 4,
 }
 
 /// What the VAS does with paused audio, passed as `uint32_t` in [`RrDr60Settings::vas_mode`]
@@ -310,8 +319,8 @@ pub struct RrDr60MemoryStatus {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RrDr60Settings {
-    /// Must be `sizeof(RrDr60Settings)`: 88 since 0.6 (80 in 0.5, 72 in 0.3 and 0.4, rejected
-    /// as `STRUCT_SIZE`). Lets the struct grow in later versions.
+    /// Must be `sizeof(RrDr60Settings)`: 96 since 0.8 (88 in 0.6 and 0.7, 80 in 0.5, 72 in 0.3
+    /// and 0.4, rejected as `STRUCT_SIZE`). Lets the struct grow in later versions.
     pub struct_size: u32,
     /// Host sample rate in Hz: 6000, 8000, 16000, 44100, 48000, 88200 or 96000 (spec 004
     /// FR-002; 6000 is the device rate, A-026, and needs no rate conversion).
@@ -368,11 +377,19 @@ pub struct RrDr60Settings {
     /// The most recordings the memory holds. Default 99 (S-001). Range 1 to 9 999. Appended in
     /// 0.6 at offset 80 (spec 006 FR-010).
     pub memory_max_recordings: u32,
+    /// Ignored; reserved since 0.8 (it fills the 0.7 layout's tail padding so that the next field
+    /// sits at offset 88). Write 0.
+    pub reserved_008: u32,
+    /// Signal-chain stages 7 and 9, the speech codec (encoder and decoder together), on (true,
+    /// default; the device has no bypass, A-004) or bypassed. Also fixes the memory's encoding:
+    /// frames when on, device-rate samples when bypassed (spec 008 FR-002, FR-012). Appended in
+    /// 0.8 at offset 88.
+    pub speech_codec_enabled: bool,
 }
 
 // spec 006 contracts/c-api.md: the 0.6 layout is 88 bytes; the 0.5 offsets are kept and the two
 // memory fields sit at 76 and 80 (the unit tests assert every offset).
-const _: () = assert!(size_of::<RrDr60Settings>() == 88);
+const _: () = assert!(size_of::<RrDr60Settings>() == 96); // spec 008 contracts/c-api.md: 88 → 96
 // spec 003 contracts/c-api.md: the C event type and the core's `repr(C)` `VasEvent` share one
 // layout, so `rr_dr60_process_with_events` can pass the caller's buffer straight through.
 const _: () = assert!(
@@ -475,6 +492,12 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
         ),
         Error::AllocationFailed => (RrDr60Status::AllocationFailed, RrDr60SettingField::None),
         Error::BufferTooSmall { .. } => (RrDr60Status::BufferTooSmall, RrDr60SettingField::None),
+        // Spec 008 contracts/c-api.md: statuses 21 and 22.
+        Error::EncodingDiffers => (RrDr60Status::EncodingDiffers, RrDr60SettingField::None),
+        Error::UnsupportedCodecModelVersion { .. } => (
+            RrDr60Status::UnsupportedCodecModelVersion,
+            RrDr60SettingField::None,
+        ),
         _ => (RrDr60Status::InvalidArgument, RrDr60SettingField::None),
     }
 }
@@ -507,6 +530,7 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Sett
         1 => Tap::AfterPlayback,
         2 => Tap::AfterAgc,
         3 => Tap::AfterVas,
+        4 => Tap::AfterDecoder,
         _ => return Err(invalid(RrDr60SettingField::Tap)),
     };
     let vas_mode = match s.vas_mode {
@@ -533,6 +557,7 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Sett
     out.vas.onset_ms = s.vas_onset_ms;
     out.memory.capacity_s = s.memory_capacity_s;
     out.memory.max_recordings = s.memory_max_recordings;
+    out.speech_codec_enabled = s.speech_codec_enabled;
     Ok(out)
 }
 
@@ -568,6 +593,8 @@ pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings 
         adc_clamp_enabled: defaults.adc_clamp_enabled, // A-030
         memory_capacity_s: memory.capacity_s,
         memory_max_recordings: memory.max_recordings,
+        reserved_008: 0,
+        speech_codec_enabled: defaults.speech_codec_enabled, // A-004 adopted (008 FR-002)
     }
 }
 
@@ -2191,7 +2218,7 @@ mod tests {
     #[test]
     fn settings_layout_is_88_bytes_with_the_contract_offsets() {
         use std::mem::offset_of;
-        assert_eq!(size_of::<RrDr60Settings>(), 88);
+        assert_eq!(size_of::<RrDr60Settings>(), 96); // spec 008 contracts/c-api.md
         assert_eq!(offset_of!(RrDr60Settings, struct_size), 0);
         assert_eq!(offset_of!(RrDr60Settings, host_rate_hz), 4);
         assert_eq!(offset_of!(RrDr60Settings, record_stage_enabled), 8);
@@ -2220,7 +2247,7 @@ mod tests {
     #[test]
     fn settings_default_has_the_0_6_values() {
         let s = rr_dr60_settings_default(48_000);
-        assert_eq!(s.struct_size, 88);
+        assert_eq!(s.struct_size, 96); // spec 008
         assert_eq!(s.memory_capacity_s, 3600); // S-001: 60 minutes
         assert_eq!(s.memory_max_recordings, 99); // S-001: 99 items
         assert!(s.agc_enabled); // A-020

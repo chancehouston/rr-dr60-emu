@@ -3,7 +3,7 @@
 //! the one-pass is a record path feeding a playback path).
 
 use crate::error::Error;
-use crate::memory::Memory;
+use crate::memory::{Encoding, Memory};
 use crate::paths::{self, PlaybackPath, RecordPath};
 use crate::rate::RatePlan;
 use crate::settings::{DEVICE_RATE_HZ, Route, Settings, Tap};
@@ -249,7 +249,9 @@ impl Pipeline {
     pub fn new(settings: Settings) -> Result<Self, Error> {
         validate(&settings)?;
         let plan = RatePlan::for_host(settings.host_rate_hz)?;
-        let memory = Memory::new(&settings.memory)?;
+        // 008 T020: `Encoding::for_settings(&settings)` once the codec stores frames; until then
+        // the transport stores post-VAS samples whatever the codec setting (the codec is a no-op).
+        let memory = Memory::new(&settings.memory, Encoding::Samples)?;
         Ok(Self::with_memory(settings, &plan, memory, Route::default()))
     }
 
@@ -443,16 +445,17 @@ impl Pipeline {
     pub fn reconfigure(&mut self, settings: Settings) -> Result<(), Error> {
         self.refuse_if_active()?;
         validate(&settings)?;
-        if !self.memory.fits(&settings.memory) {
+        let encoding = Encoding::Samples; // 008 T020: Encoding::for_settings(&settings)
+        if !self.memory.fits(&settings.memory, encoding) {
             return Err(Error::StoredExceedsCapacity);
         }
         let plan = RatePlan::for_host(settings.host_rate_hz)?;
-        let memory = if self.memory.same_capacity(&settings.memory) {
+        let memory = if self.memory.same_capacity(&settings.memory, encoding) {
             // Kept by move (research R-03): no second reservation and no copy. Nothing below
             // can fail, so the pipeline is never left without its store.
             core::mem::replace(&mut self.memory, Memory::empty())
         } else {
-            self.memory.copied_to(&settings.memory)?
+            self.memory.copied_to(&settings.memory, encoding)?
         };
         *self = Self::with_memory(settings, &plan, memory, self.route);
         Ok(())

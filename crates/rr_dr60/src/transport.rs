@@ -535,7 +535,7 @@ impl Pipeline {
         let room = match self.recorder.push(x) {
             Some(kept) => {
                 info.stored += 1;
-                self.memory.append(kept)
+                self.memory.append_sample(kept)
             }
             None => true,
         };

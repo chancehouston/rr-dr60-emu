@@ -77,6 +77,21 @@ pub enum Error {
         /// The length the buffer needs (`export_len`).
         needed: usize,
     },
+    /// An import whose encoding (speech-codec frames or device-rate samples) differs from the
+    /// engine's configured one; one memory holds one encoding (spec 008 FR-012). The memory is
+    /// unchanged.
+    EncodingDiffers,
+    /// The bytes carry speech-codec frames of a model version this release cannot decode
+    /// (spec 008 FR-010, FR-011: before 1.0 a dropped model version is refused; from 1.0 every
+    /// released one keeps its decoder).
+    UnsupportedCodecModelVersion {
+        /// The model version found: major.
+        major: u16,
+        /// Minor.
+        minor: u16,
+        /// Patch.
+        patch: u16,
+    },
 }
 
 /// Inclusive range of `memory.capacity_s`, in seconds: one second to 24 hours (engineering
@@ -214,6 +229,14 @@ impl fmt::Display for Error {
             Error::BufferTooSmall { needed } => {
                 write!(f, "buffer too small: the export needs {needed} bytes")
             }
+            Error::EncodingDiffers => {
+                f.write_str("encoding differs from the engine's configuration")
+            }
+            Error::UnsupportedCodecModelVersion {
+                major,
+                minor,
+                patch,
+            } => write!(f, "unsupported codec model version {major}.{minor}.{patch}"),
         }
     }
 }
@@ -249,7 +272,7 @@ mod tests {
     /// refusal has a `Display` that names the reason in the spec's words and includes its field.
     #[test]
     fn transport_errors_display_the_reason_and_their_field() {
-        let cases: [(Error, &[&str]); 14] = [
+        let cases: [(Error, &[&str]); 16] = [
             (Error::RecordingInProgress, &["recording in progress"]),
             (Error::PlaybackInProgress, &["playback in progress"]),
             (Error::NotRecording, &["not recording"]),
@@ -275,6 +298,16 @@ mod tests {
             (
                 Error::BufferTooSmall { needed: 1234 },
                 &["buffer too small", "1234"],
+            ),
+            // Spec 008 FR-010, FR-012.
+            (Error::EncodingDiffers, &["encoding differs"]),
+            (
+                Error::UnsupportedCodecModelVersion {
+                    major: 0,
+                    minor: 7,
+                    patch: 0,
+                },
+                &["unsupported codec model version", "0.7.0"],
             ),
         ];
         let mut texts = std::vec::Vec::new();

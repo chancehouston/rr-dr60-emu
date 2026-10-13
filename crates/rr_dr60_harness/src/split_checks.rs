@@ -329,10 +329,12 @@ pub fn live_stimuli(rate: u32) -> Vec<(String, Vec<f32>)> {
 /// (4801 / 997 and 1 / 1). The two partitions agree with each other too (FR-018).
 pub fn live_equivalence(rate: u32) -> Vec<MeasurementResult> {
     let mut rows = Vec::new();
-    let mut mute = Settings::new(rate);
+    let mut mute = crate::configs::settings_007(rate);
     mute.vas.mode = VasMode::Mute;
-    let configs: [(&'static str, Settings); 2] =
-        [("default_vas", Settings::new(rate)), ("default_mute", mute)];
+    let configs: [(&'static str, Settings); 2] = [
+        ("default_vas", crate::configs::settings_007(rate)),
+        ("default_mute", mute),
+    ];
     for (name, x) in live_stimuli(rate) {
         for (config, settings) in configs {
             let probe = Pipeline::new(settings).expect("supported settings");
@@ -399,7 +401,7 @@ pub fn length_rule(rate: u32) -> Vec<MeasurementResult> {
         assert_eq!(record_one(&mut p, &x), k);
         assert_eq!(p.recording_length(k), Ok(u64::from(k)));
     }
-    p.reconfigure(Settings::new(rate))
+    p.reconfigure(crate::configs::settings_007(rate))
         .expect("reconfigure keeps the memory");
     let drain = u64::from(p.drain_samples());
     (1..=50u32)
@@ -423,7 +425,7 @@ pub fn length_rule(rate: u32) -> Vec<MeasurementResult> {
 /// FR-015: the same recording played on each route is bit-identical, and the route is
 /// reported.
 pub fn route_identity(rate: u32) -> Vec<MeasurementResult> {
-    let mut p = Pipeline::new(Settings::new(rate)).expect("supported settings");
+    let mut p = Pipeline::new(crate::configs::settings_007(rate)).expect("supported settings");
     let x = golden::stimulus("sweep_log", rate);
     let n = record_one(&mut p, &x);
     p.set_route(Route::Speaker);
@@ -462,7 +464,7 @@ pub fn route_identity(rate: u32) -> Vec<MeasurementResult> {
 /// reset at the start, so no limiter charge carries over).
 pub fn two_items(rate: u32) -> Vec<MeasurementResult> {
     let fs = f64::from(rate);
-    let settings = Settings::new(rate);
+    let settings = crate::configs::settings_007(rate);
     let mut p = Pipeline::new(settings).expect("supported settings");
     let phase = stimulus::peak_phase(1000.0, rate);
     let loud = stimulus::tone_at_phase(1000.0, 9.0, phase, fs, rate as usize);
@@ -642,7 +644,7 @@ pub fn drain_level(rate: u32) -> Vec<MeasurementResult> {
 /// not the figure the engine reports (spec Clarifications, implementation session).
 pub fn latency_sum(rate: u32) -> Vec<MeasurementResult> {
     let mut rows = Vec::new();
-    let p = Pipeline::new(Settings::new(rate)).expect("rate");
+    let p = Pipeline::new(crate::configs::settings_007(rate)).expect("rate");
     let sum = f64::from(p.record_latency_samples()) + f64::from(p.playback_latency_samples());
     rows.push(row(
         "006/FR-016",
@@ -666,7 +668,7 @@ pub fn latency_sum(rate: u32) -> Vec<MeasurementResult> {
     }
     assert_eq!(record_one(&mut p, &[1.0]), 3);
     for stage10 in [true, false] {
-        let mut s = Settings::new(rate);
+        let mut s = crate::configs::settings_007(rate);
         s.playback_stage_enabled = stage10;
         p.reconfigure(s).expect("reconfigure keeps the memory");
         let reported = f64::from(p.playback_latency_samples());
@@ -724,7 +726,7 @@ pub fn latency_sum(rate: u32) -> Vec<MeasurementResult> {
 /// playing.
 pub fn state_table(rate: u32) -> Vec<MeasurementResult> {
     let mut rows = Vec::new();
-    let mut p = Pipeline::new(Settings::new(rate)).expect("rate");
+    let mut p = Pipeline::new(crate::configs::settings_007(rate)).expect("rate");
     let x = golden::stimulus("tone_1k_m20", rate);
     let mut y = vec![0.0f32; x.len()];
     let check = |rows: &mut Vec<MeasurementResult>, what: &'static str, ok: bool| {
@@ -803,7 +805,7 @@ pub fn state_table(rate: u32) -> Vec<MeasurementResult> {
     check(
         &mut rows,
         "recording: reconfigure -> RecordingInProgress",
-        p.reconfigure(Settings::new(rate)) == Err(Error::RecordingInProgress),
+        p.reconfigure(crate::configs::settings_007(rate)) == Err(Error::RecordingInProgress),
     );
     check(
         &mut rows,
@@ -853,7 +855,7 @@ pub fn state_table(rate: u32) -> Vec<MeasurementResult> {
     check(
         &mut rows,
         "playing: reconfigure -> PlaybackInProgress",
-        p.reconfigure(Settings::new(rate)) == Err(Error::PlaybackInProgress),
+        p.reconfigure(crate::configs::settings_007(rate)) == Err(Error::PlaybackInProgress),
     );
     check(
         &mut rows,
@@ -1564,7 +1566,7 @@ pub fn expanded_capacity_past_device() -> Vec<MeasurementResult> {
 pub fn footprint() -> Vec<MeasurementResult> {
     let rate = 48_000;
     let fs = f64::from(rate);
-    let p = Pipeline::new(Settings::new(rate)).expect("default");
+    let p = Pipeline::new(crate::configs::settings_007(rate)).expect("default");
     let (store, spans) = __test_hooks::memory_capacities(&p);
     let st = p.memory_status();
     let mut rows = vec![

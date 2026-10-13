@@ -309,7 +309,7 @@ fn manifest_canonical_text_is_identical_on_every_target() {
         rr_dr60_harness::manifest_checks::render(rr_dr60::manifest()),
         want
     );
-    let mut p = rr_dr60::Pipeline::new(rr_dr60::Settings::new(48_000)).unwrap();
+    let mut p = rr_dr60::Pipeline::new(rr_dr60_harness::configs::settings_007(48_000)).unwrap();
     let mut buf = vec![0.25f32; 4800];
     let _ = p.process_in_place(&mut buf);
     assert_eq!(

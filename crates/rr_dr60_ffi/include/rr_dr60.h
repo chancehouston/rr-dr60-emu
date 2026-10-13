@@ -45,7 +45,7 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 7
+#define RR_DR60_VERSION_MINOR 8
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
@@ -101,6 +101,12 @@ enum RrDr60Status
   RR_DR60_STATUS_BUFFER_TOO_SMALL = 19,
   // A stage manifest number that is 0 or above the stage count (spec 007 FR-017).
   RR_DR60_STATUS_NO_SUCH_STAGE = 20,
+  // An import whose encoding (frames or samples) differs from the engine's configuration
+  // (spec 008 FR-012).
+  RR_DR60_STATUS_ENCODING_DIFFERS = 21,
+  // The bytes carry speech-codec frames of a model version this release cannot decode
+  // (spec 008 FR-010, FR-011).
+  RR_DR60_STATUS_UNSUPPORTED_CODEC_MODEL_VERSION = 22,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -170,6 +176,9 @@ enum RrDr60Tap
   RR_DR60_TAP_AFTER_AGC = 2,
   // After signal-chain stage 5 (VAS). Stage 10 is not run (spec 003 FR-003).
   RR_DR60_TAP_AFTER_VAS = 3,
+  // After signal-chain stage 9 (the speech decoder), before stage 10 (spec 008 FR-015).
+  // Appended in 0.8.
+  RR_DR60_TAP_AFTER_DECODER = 4,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -341,8 +350,8 @@ typedef struct RrDr60Pipeline RrDr60Pipeline;
 // the two reserved slots at 32 and 36, `adc_clamp_enabled` at 72) and the two memory fields
 // are appended at 76 and 80 (spec 006 contracts/c-api.md).
 typedef struct RrDr60Settings {
-  // Must be `sizeof(RrDr60Settings)`: 88 since 0.6 (80 in 0.5, 72 in 0.3 and 0.4, rejected
-  // as `STRUCT_SIZE`). Lets the struct grow in later versions.
+  // Must be `sizeof(RrDr60Settings)`: 96 since 0.8 (88 in 0.6 and 0.7, 80 in 0.5, 72 in 0.3
+  // and 0.4, rejected as `STRUCT_SIZE`). Lets the struct grow in later versions.
   uint32_t struct_size;
   // Host sample rate in Hz: 6000, 8000, 16000, 44100, 48000, 88200 or 96000 (spec 004
   // FR-002; 6000 is the device rate, A-026, and needs no rate conversion).
@@ -399,6 +408,14 @@ typedef struct RrDr60Settings {
   // The most recordings the memory holds. Default 99 (S-001). Range 1 to 9 999. Appended in
   // 0.6 at offset 80 (spec 006 FR-010).
   uint32_t memory_max_recordings;
+  // Ignored; reserved since 0.8 (it fills the 0.7 layout's tail padding so that the next field
+  // sits at offset 88). Write 0.
+  uint32_t reserved_008;
+  // Signal-chain stages 7 and 9, the speech codec (encoder and decoder together), on (true,
+  // default; the device has no bypass, A-004) or bypassed. Also fixes the memory's encoding:
+  // frames when on, device-rate samples when bypassed (spec 008 FR-002, FR-012). Appended in
+  // 0.8 at offset 88.
+  bool speech_codec_enabled;
 } RrDr60Settings;
 
 // The result of one `rr_dr60_process` call (spec 003 FR-004, FR-005).
