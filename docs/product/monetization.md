@@ -46,6 +46,6 @@ One non-consumable in-app purchase, $7.99 (to be tested between $4.99 and $9.99)
 ## Copy rules for every paid or free feature
 
 - Describe signal processing only: band-limiting, limiting, gating, codec artifacts, speaker response.
-- Say "modeled on" until a stage is verified against a real unit; never "authentic", "identical", "measured", "closely matches".
+- Say "modeled on" until a stage is checked against a real unit; never "authentic", "identical", "measured", "closely matches".
 - Never "capture", "reveal", "enhance", "communicate"; never "fake", "debunk", "entertainment only".
 - Name tools by what they do ("band filter"), not by what a user might hope they do.

@@ -29,7 +29,7 @@ The transition is part of the personality: rather than switching tabs, the devic
 - **Group-hunt and one-time users** flip once and go back to the front. The front must stand alone.
 - **Vintage-gear enthusiasts and library developers**: the inside is a living demonstration of the engine's taps and meters, so it shapes the API for everyone without a dedicated mode (see the vintage-gear decision in decisions.md).
 
-The inside supports the positioning in decisions.md ("stage by stage, from the service manual, shows which stages are verified") better than copy can: no competitor can render a chain it has not modeled (competitors.md).
+The inside supports the positioning in decisions.md ("stage by stage, from the service manual, shows which stages are checked against a real unit") better than copy can: no competitor can render a chain it has not modeled (competitors.md).
 
 ### Rules that keep it honest
 
