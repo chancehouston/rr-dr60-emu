@@ -28,7 +28,7 @@ The test `codec_matrix::stimulus_digests` asserts these digests; a stimulus chan
 | unvoiced-voiced −20 dBFS | 60 | −0.16 | 2.37 | 6.94 | 5.68 | +0.5 +0.5 +0.6 +0.1 −0.5 −2.9 −2.3 −1.8 −4.6 −3.1 |
 | unvoiced-voiced −40 dBFS | 60 | −0.17 | 2.31 | 7.68 | 5.76 | +0.5 +0.5 +0.5 −0.0 −0.5 −3.2 −2.5 −2.0 −4.4 −2.9 |
 
-The lag of 60 samples is G.723.1's 7.5 ms look-ahead (S-008), a sanity check of the measurement. Third-octave deviations are measured at 8 kHz band edges; the model's are measured at 6 kHz with the same centres.
+The lag of 60 samples is G.723.1's 7.5 ms look-ahead (S-008), a sanity check of the measurement. Third-octave deviations are measured at 8 kHz band edges; the model's are measured at the same 8 kHz after resampling from the host rate (`codec_checks::METRIC_RATE_HZ`; US1 review, 2026-10-14).
 
 ## Tolerances for the model (spec FR-005, FR-006; `codec_checks.rs`)
 

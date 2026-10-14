@@ -158,12 +158,10 @@ pub fn bit_rate(rate: u32) -> Vec<MeasurementResult> {
             "samples",
             Tolerance::Exact(0.0), // FR-003
         ));
-        // In integers: frames × 80 bits over frames × 120 ⁄ 6000 seconds.
-        let bit_rate = if frames == 0 {
-            0
-        } else {
-            frames * 80 * 6000 / (frames * 120)
-        };
+        // In integers, from two independent counters: the stop's frame count × 80 bits over
+        // the recording's device-sample length ⁄ 6000 (an exact 4000 only when every stored
+        // frame covers 120 samples and nothing else is stored).
+        let bit_rate = (frames * 80 * 6000).checked_div(length).unwrap_or(0);
         rows.push(row(
             "008/FR-003",
             "bit rate",

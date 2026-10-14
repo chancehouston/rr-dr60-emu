@@ -126,8 +126,9 @@ pub struct PlayInfo {
     pub finished: bool,
     /// Speech-codec frames decoded in this call (spec 008 FR-008); 0 with the codec bypassed.
     pub frames: usize,
-    /// The index (0-based) of the frame being played at the end of the call, held at the last
-    /// frame during the drain; 0 with the codec bypassed (spec 008 FR-008).
+    /// The index (0-based) of the frame whose decoded samples are entering the playback path
+    /// at the end of the call (what is heard lags by `playback_latency_samples`), held at the
+    /// last frame during the drain; 0 with the codec bypassed (spec 008 FR-008).
     pub frame_index: u64,
 }
 
@@ -598,6 +599,7 @@ impl Pipeline {
     }
 
     /// Until form version 2 (spec 008 T027): a memory of frames has no byte form yet.
+    // TODO(008 T027): remove with form version 2; an engine must not refuse its own form.
     fn refuse_frames_form(&self) -> Result<(), Error> {
         match self.memory.encoding() {
             Encoding::Samples => Ok(()),
@@ -1745,17 +1747,27 @@ mod codec_tests {
         let out = p.stop_recording(&mut []).unwrap();
         let (_, length) = kept(&out);
         assert_eq!(length, 120);
-        // The kept total is one frame plus the look-ahead; n′ is the one sample plus what the
-        // 006 flush (242 host samples, 30 device samples) represents of it.
+        // The kept total is one frame plus the look-ahead: 180. n′ is 30: the sample itself
+        // (a device sample at once) plus the 29 more the 006 flush (242 host samples at 8 per
+        // device sample) yields, so the silence fed is 120·1 − 30 + 60 = 150.
         assert_eq!(
             info.stored as u64 + out.flush.stored as u64,
             120 + u64::from(LOOKAHEAD_SAMPLES)
         );
-        assert!(
-            (148..=179).contains(&out.silence_fed_samples),
-            "{}",
-            out.silence_fed_samples
+        assert_eq!(out.silence_fed_samples, 150);
+        // The same at 44.1 kHz (a non-integer ratio): one device sample from one host sample,
+        // and the kept total 180 again.
+        let mut q = Pipeline::new(codec_only(44_100, 10, 2)).unwrap();
+        q.start_recording().unwrap();
+        let info44 = q.record(&[0.25f32], &mut []).unwrap();
+        assert_eq!(
+            (info44.stored, info44.frames),
+            (1, 0),
+            "44.1 kHz: a device sample at once"
         );
+        let out44 = q.stop_recording(&mut []).unwrap();
+        assert_eq!(kept(&out44).1, 120);
+        assert_eq!(info44.stored as u64 + out44.flush.stored as u64, 180);
         assert_eq!(out.flush.frames_total, 1);
         assert_eq!(p.memory_status().count, 1);
         p.start_recording().unwrap();
@@ -1802,6 +1814,39 @@ mod codec_tests {
         assert_eq!(info.stored, 300, "fresh: unpaused for the hang time only");
         assert!(info.paused);
         p.reset();
+        // At 48 kHz with stage 4 on the pre-encoder flush is 242 host samples: the gate is
+        // held open through it too, so its device samples are kept (and counted in n′) where
+        // 006 would have dropped them, the forced resume falls on the flush's first device
+        // sample (position = the kept count at the stop), and the length is a whole frame.
+        let mut s = codec_only(48_000, 10, 2);
+        s.vas.enabled = true;
+        s.vas.hang_ms = 50.0;
+        s.record_stage_enabled = true;
+        let mut p = Pipeline::new(s).unwrap();
+        assert_eq!(p.record_latency_samples(), 242 + 1440);
+        let x = [tone(-30.0, 1.0, 48_000.0), std::vec![0.0f32; 48_000]].concat();
+        p.start_recording().unwrap();
+        let info = p.record(&x, &mut ev).unwrap();
+        assert!(info.paused);
+        assert_eq!(info.events, 0);
+        let out = p.stop_recording(&mut ev).unwrap();
+        let (_, length) = kept(&out);
+        let kept_total = info.stored as u64 + out.flush.stored as u64;
+        let n_prime = kept_total - out.silence_fed_samples;
+        assert!(
+            n_prime > info.stored as u64,
+            "the flush's samples are kept: n′ {n_prime}"
+        );
+        assert_eq!(length, n_prime.div_ceil(120) * 120, "a whole frame");
+        assert_eq!(out.silence_fed_samples, length - n_prime + 60);
+        assert_eq!(kept_total, length + 60);
+        assert_eq!(out.flush.events, 1, "{out:?}");
+        assert_eq!(
+            ev[0].output_position, info.stored as u64,
+            "the forced resume at the stop"
+        );
+        assert!(ev[0].input_length > 5000, "{:?}", ev[0]);
+        assert_eq!(p.recording_length(1), Ok(length));
     }
 
     /// FR-013 (plan review Q3c): in mute mode nothing is dropped, so nothing is forced: the
@@ -1838,7 +1883,7 @@ mod codec_tests {
     /// FR-021 (plan review P9): with the codec bypassed the stop is spec 006's: the flush
     /// alone, no padding, `silence_fed_samples` 0 and no frames.
     #[test]
-    fn stop_bypassed_is_byte_identical_to_006() {
+    fn stop_bypassed_follows_006_with_no_padding() {
         let mut s = codec_only(48_000, 10, 2);
         s.speech_codec_enabled = false;
         s.vas.enabled = true;

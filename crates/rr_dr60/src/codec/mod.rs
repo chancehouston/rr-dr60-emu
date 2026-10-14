@@ -746,6 +746,30 @@ mod tests {
         assert!(out.iter().any(|&v| v != 0.0));
     }
 
+    /// A-029 (contracts/codec-design.md › Fixed gain, on the encoder itself): two seconds of
+    /// −10 dBFS seeded white noise encode with every fixed-gain correction index strictly
+    /// inside 0 … 7 once the predictor has converged (after the tenth frame): the top of the
+    /// gain range is not reached.
+    #[test]
+    fn minus_10_dbfs_noise_is_not_gain_limited_in_the_encoder() {
+        let mut rng = Pcg32::new(0x0D60, 11);
+        let amp = 10f64.powf(-10.0 / 20.0) / 2f64.sqrt() * 3f64.sqrt(); // uniform noise at −10 dBFS RMS
+        let x: Vec<f32> = (0..12_180)
+            .map(|_| ((f64::from(rng.next_u32() >> 8) / 16_777_216.0 - 0.5) * 2.0 * amp) as f32)
+            .collect();
+        let (frames, _) = encode_all(&mut SpeechEncoder::new(), &x);
+        assert_eq!(frames.len(), 101);
+        let mut top = 0;
+        for (k, f) in frames.iter().enumerate().skip(10) {
+            let p = bits::unpack(f);
+            for idx in [p.fixed_gain1, p.fixed_gain2] {
+                assert!((1..=6).contains(&idx), "frame {k}: correction index {idx}");
+                top = top.max(idx);
+            }
+        }
+        std::println!("−10 dBFS noise: highest fixed-gain correction index {top} of 7");
+    }
+
     /// FR-005 (a core-side smoke figure; the harness measures properly): a 2 s voiced burst at
     /// −20 dBFS keeps its RMS within 1.5 dB through encoder and decoder, measured after the
     /// 180-sample delay.

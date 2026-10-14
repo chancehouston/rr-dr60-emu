@@ -292,7 +292,7 @@ mod tests {
     /// 32768 · 10^(−N/20), 3 dB above the project's AES17 convention. Both are noted for the
     /// post-implementation hardware review (T053); the harness measures the −40 dBFS level.
     #[test]
-    fn level_anchor_ends_are_not_gain_limited() {
+    fn level_anchor_top_end_inside_the_range_and_bottom_end_reported() {
         let pulse_factor = 20.0 * (60.0f64 / 4.0).sqrt().log10(); // ≈ 11.76 dB
         let required = |level_dbfs: f64, prediction_gain_db: f64| -> f64 {
             // AES17: a full-scale sine is 0 dBFS, RMS 1/√2.
