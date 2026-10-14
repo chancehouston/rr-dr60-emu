@@ -1055,6 +1055,37 @@ mod tests {
         f.iter().any(|x| x.rule == rule && x.stage == stage)
     }
 
+    /// Spec 008 T033 (US3 scenario 2): a copy of the committed assumption register without
+    /// A-040 fails the cross-check naming stage 7 (and stage 9) with the missing ID.
+    #[test]
+    fn doctored_register_without_a040_names_stage_7() {
+        let r = committed_registers();
+        let before = r.assumptions.lines().count();
+        let assumptions: Vec<&str> = r
+            .assumptions
+            .lines()
+            .filter(|l| !l.starts_with("| A-040 |"))
+            .collect();
+        assert_eq!(assumptions.len() + 1, before, "exactly one A-040 row");
+        let assumptions = assumptions.join("\n");
+        let f = cross_check(
+            manifest(),
+            &Registers {
+                assumptions: &assumptions,
+                ..r
+            },
+        );
+        for stage in [7u8, 9] {
+            assert!(
+                f.iter().any(|x| x.rule == Rule::UnknownId
+                    && x.stage == Some(stage)
+                    && x.id.as_deref() == Some("A-040")),
+                "stage {stage}: {f:?}"
+            );
+        }
+        assert!(cross_check(manifest(), &r).is_empty());
+    }
+
     #[test]
     fn finding_display() {
         let a = finding(Rule::Parse, None, None, "no rows");

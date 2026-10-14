@@ -2,7 +2,7 @@ rr_dr60 manifest
 library_version: 0.8.0
 device_rate_hz: 6000
 stage_count: 15
-counts: not_modeled=10 assumed=5 sourced=0 checked=0
+counts: not_modeled=8 assumed=7 sourced=0 checked=0
 basis: Modeled on the RR-DR60 owner's and service manuals and the codec family datasheets; no stage has been checked against a real unit.
 evidence_link: https://github.com/chancehouston/rr-dr60-emu/issues/new?template=hardware_evidence.yml
 assumptions_link: https://github.com/chancehouston/rr-dr60-emu/blob/main/docs/hardware/assumptions.md
@@ -83,14 +83,14 @@ model_version:
 stage 7 encoder
 name: Speech encoder (CELP, 4 kbit/s)
 description: Compresses the voice-band stream into 4 kbit/s CELP frames for storage.
-status: not_modeled
+status: assumed
 path: record
-confidence: not_applicable
-sources: S-002, S-004
-assumptions: A-004
-coverage:
-controls:
-model_version:
+confidence: low
+sources: S-002, S-008, S-009, S-010, S-011
+assumptions: A-004, A-040, A-041
+coverage: the device's own coder: frame length, look-ahead, codebooks and bit allocation unidentified; 8-bit µ-law input (A-030)
+controls: speech_codec_enabled; RecordInfo.frames, RecordInfo.frames_total, BlockInfo.frames
+model_version: 0.8.0
 
 stage 8 memory
 name: Flash memory
@@ -100,21 +100,21 @@ path: both
 confidence: low
 sources: S-001, S-002
 assumptions: A-037, A-038, A-039
-coverage: encoded CELP frames as the stored form (the engine keeps its own samples); item locking (F.LOCK)
+coverage: item locking (F.LOCK)
 controls: memory.capacity_s, memory.max_recordings; memory_status, recording_length, erase, erase_all, export, import
-model_version: 0.6.0
+model_version: 0.8.0
 
 stage 9 decoder
 name: Speech decoder (CELP)
 description: Rebuilds the voice-band stream from the stored CELP frames.
-status: not_modeled
+status: assumed
 path: playback
-confidence: not_applicable
-sources: S-002
-assumptions: A-004
-coverage:
-controls:
-model_version:
+confidence: low
+sources: S-002, S-008, S-009, S-010, S-011
+assumptions: A-004, A-040, A-041
+coverage: the device's own decoder and postfilter (A-041)
+controls: speech_codec_enabled; Tap::AfterDecoder; PlayInfo.frames, PlayInfo.frame_index
+model_version: 0.8.0
 
 stage 10 codec_output
 name: Codec output: DAC and reconstruction filter
