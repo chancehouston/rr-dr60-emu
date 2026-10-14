@@ -2540,6 +2540,9 @@ mod tests {
         s.memory_capacity_s = 10;
         s.memory_max_recordings = 3;
         s.vas_enabled = false;
+        // Spec 008 T041: the frames byte form (version 2) lands with US2 and the C export of
+        // frames with US4; the 006 export and import rules are checked with the codec off.
+        s.speech_codec_enabled = false;
         let mut handle: *mut RrDr60Pipeline = std::ptr::null_mut();
         // SAFETY: both pointers are valid for the call.
         assert_eq!(unsafe { rr_dr60_create(&s, &mut handle) }, RrDr60Status::Ok);

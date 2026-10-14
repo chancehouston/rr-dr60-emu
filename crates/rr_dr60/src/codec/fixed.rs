@@ -10,17 +10,15 @@
 //! (S-009, S-008) in form only; they are written here and hold no device figure.
 
 /// The largest Q15 value.
-pub(crate) const Q15_MAX: i32 = 32767;
+pub(crate) const Q15_MAX: i32 = 32767; // S-009's basic-operator formats
 /// The smallest Q15 value.
 pub(crate) const Q15_MIN: i32 = -32768;
 /// One in Q15 as an `i64` scale (not representable as a Q15 value itself).
 pub(crate) const Q15_ONE: i64 = 32768;
-/// One in Q14 (the adaptive-gain table's format, `tables::ADAPT_GAIN`).
-pub(crate) const Q14_ONE: i64 = 16384;
 /// One in Q12 (the format of the LPC coefficients, S-009 §3.2.2).
 pub(crate) const Q12_ONE: i64 = 4096;
 /// Rounding constant for a `>> 15`.
-const HALF_Q15: i64 = 1 << 14;
+const HALF_Q15: i64 = 1 << 14; // S-009's basic-operator formats
 /// Rounding constant for a `>> 12`.
 const HALF_Q12: i64 = 1 << 11;
 
@@ -39,6 +37,8 @@ pub(crate) fn sat32(x: i64) -> i32 {
 }
 
 /// Q15 + Q15, saturated to 16 bits.
+#[allow(dead_code)]
+// the contract's operator set (codec-design.md › Arithmetic); unit-tested, not all used by this model version
 #[inline]
 pub(crate) fn add(a: i32, b: i32) -> i32 {
     sat16(i64::from(a).saturating_add(i64::from(b)))
@@ -69,12 +69,16 @@ pub(crate) fn mac(acc: i64, a: i32, b: i32) -> i64 {
 }
 
 /// `acc − a·b` in the `i64` accumulator, saturated.
+#[allow(dead_code)]
+// the contract's operator set (codec-design.md › Arithmetic); unit-tested, not all used by this model version
 #[inline]
 pub(crate) fn msu(acc: i64, a: i32, b: i32) -> i64 {
     acc.saturating_sub(i64::from(a).saturating_mul(i64::from(b)))
 }
 
 /// A Q15 value shifted left by `n` (0 … 31), saturated to 16 bits.
+#[allow(dead_code)]
+// the contract's operator set (codec-design.md › Arithmetic); unit-tested, not all used by this model version
 #[inline]
 pub(crate) fn shl(a: i32, n: u32) -> i32 {
     // range-proven: |a| < 2³¹ and n ≤ 31, so the i64 shift cannot overflow.
@@ -82,12 +86,16 @@ pub(crate) fn shl(a: i32, n: u32) -> i32 {
 }
 
 /// A Q15 value shifted right by `n` (0 … 31), arithmetic (toward −∞).
+#[allow(dead_code)]
+// the contract's operator set (codec-design.md › Arithmetic); unit-tested, not all used by this model version
 #[inline]
 pub(crate) fn shr(a: i32, n: u32) -> i32 {
     a.wrapping_shr(n.min(31))
 }
 
 /// A Q31 accumulator rounded to Q15 (`(x + 2¹⁵) >> 16`), saturated to 16 bits.
+#[allow(dead_code)]
+// the contract's operator set (codec-design.md › Arithmetic); unit-tested, not all used by this model version
 #[inline]
 pub(crate) fn round16(x: i64) -> i32 {
     sat16(x.saturating_add(1 << 15).wrapping_shr(16))
@@ -153,6 +161,8 @@ pub(crate) fn shift_signed(x: i64, shift: i32) -> i64 {
 /// Q15 of `num / den` for `0 ≤ num ≤ den`, `den > 0`; saturates to 32767 at `num == den` and
 /// above. Integer division is exact and platform-independent, so it replaces the reference
 /// code's 15-step restoring division (R-03). A non-positive `den` gives 32767.
+#[allow(dead_code)]
+// the contract's operator set (codec-design.md › Arithmetic); unit-tested, not all used by this model version
 #[inline]
 pub(crate) fn div_pos(num: i32, den: i32) -> i32 {
     if den <= 0 || num < 0 {

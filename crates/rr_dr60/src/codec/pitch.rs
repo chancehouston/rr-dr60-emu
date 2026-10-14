@@ -14,16 +14,16 @@ use super::tables::{
 };
 
 /// Past excitation kept: the longest lag plus the interpolator's six-sample reach, with slack.
-pub(crate) const PAST_EXC: usize = 132;
+pub(crate) const PAST_EXC: usize = 132; // engineering target (008 R-04): MAX_LAG + the interpolator's reach, with slack
 /// The interpolator's taps (positions −5.5 … +5.5 around the half-sample point).
-const INTERP_TAPS: usize = 12;
+const INTERP_TAPS: usize = 12; // design constant (008 R-02; tools/celp-design: INTERP_HALF)
 /// The periodic extension's reach: the subframe plus the interpolator's upper half.
-const EXTENSION: usize = SUBFRAME_SAMPLES + INTERP_TAPS / 2;
+const EXTENSION: usize = SUBFRAME_SAMPLES + INTERP_TAPS / 2; // engineering target (008 R-04; S-009 §3.7.1)
 /// The shortest and longest lags in half-samples.
-pub(crate) const HALF_MIN: u32 = 2 * MIN_LAG as u32;
-pub(crate) const HALF_MAX: u32 = 2 * MAX_LAG as u32;
+pub(crate) const HALF_MIN: u32 = 2 * MIN_LAG as u32; // design constant (008 R-02; A-041)
+pub(crate) const HALF_MAX: u32 = 2 * MAX_LAG as u32; // design constant (008 R-02; A-041)
 /// Half-sample lags below this (72 = lag 36) have their own subframe-1 codes.
-const HALF_FINE_LIMIT: u32 = 2 * HALF_SAMPLE_BELOW as u32;
+const HALF_FINE_LIMIT: u32 = 2 * HALF_SAMPLE_BELOW as u32; // design constant (008 R-02; A-041)
 /// The number of half-sample codes: 42 (lags 15 … 35.5).
 const FINE_CODES: u32 = HALF_FINE_LIMIT - HALF_MIN;
 const _: () = assert!(FINE_CODES == 42 && HALF_FINE_LIMIT == 72); // contracts/codec-design.md
@@ -42,6 +42,9 @@ pub(crate) const WSP_LEN: usize = PAST_WEIGHTED + FRAME_SAMPLES;
 
 /// Subframe 1's 7-bit lag code → the lag in half-samples; `None` for code 127 (unused).
 pub(crate) fn lag_code_to_half(code: u8) -> Option<u32> {
+    if code >= UNUSED_LAG_CODE {
+        return None;
+    }
     LAG_CODE_TO_HALF
         .get(usize::from(code))
         .map(|&h| u32::from(h))
@@ -113,6 +116,7 @@ impl Default for Excitation {
 }
 
 impl Excitation {
+    #[cfg(test)]
     pub(crate) fn reset(&mut self) {
         self.buf = [0; PAST_EXC];
     }

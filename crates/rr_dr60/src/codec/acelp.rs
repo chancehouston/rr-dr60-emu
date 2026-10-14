@@ -10,11 +10,16 @@ use super::fixed::{mac, ratio_sq_greater};
 use super::tables::{PULSE_TRACKS, SUBFRAME_SAMPLES};
 
 /// Pulses per subframe.
-pub(crate) const PULSES: usize = 4;
+pub(crate) const PULSES: usize = 4; // S-008 §2.16
 /// Bits of the codebook code.
 pub(crate) const CODE_BITS: u32 = 17;
+// The allocation table's two codebook fields carry exactly this code (contracts/codec-design.md).
+const _: () = assert!(
+    super::tables::ALLOCATION[9] as u32 == CODE_BITS
+        && super::tables::ALLOCATION[13] as u32 == CODE_BITS
+);
 /// Positions per track.
-const POSITIONS: u8 = 8;
+const POSITIONS: u8 = 8; // S-008 §2.16
 /// A greedy pick: (C, E, m, the placed position and sign).
 type Pick = (i64, i64, u8, Option<(usize, i64)>);
 

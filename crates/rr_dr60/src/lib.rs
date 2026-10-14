@@ -172,6 +172,31 @@ pub mod __test_hooks {
         crate::paths::N10
     }
 
+    /// The one-pass speech codec's delay line: the decoded samples waiting to be emitted, or
+    /// `None` with the codec bypassed (spec 008 research R-06; contracts/rust-api.md › Test
+    /// hooks: `OnePass::__codec_fifo_fill`).
+    pub fn codec_fifo_fill(pipeline: &crate::Pipeline) -> Option<usize> {
+        pipeline.codec_fifo_fill()
+    }
+
+    /// The stored frame bytes of recording `number`, 10 per frame (spec 008 SC-008: the
+    /// determinism and mutation tests compare and alter them before the byte form of US2
+    /// exists); empty for a samples memory or a bad number.
+    pub fn stored_frames(pipeline: &crate::Pipeline, number: u32) -> &[u8] {
+        pipeline.stored_frames(number)
+    }
+
+    /// Flips one bit of recording `number`'s stored frames (spec 008 SC-008: a one-bit change
+    /// must change the playback). Returns whether a byte was there to flip.
+    pub fn flip_stored_frame_bit(
+        pipeline: &mut crate::Pipeline,
+        number: u32,
+        byte: usize,
+        bit: u8,
+    ) -> bool {
+        pipeline.flip_stored_frame_bit(number, byte, bit)
+    }
+
     /// The settling length of a biquad cascade: the first index after which |h| stays below
     /// `rel` × its own peak (spec 006 research R-06). Allocates; test use only.
     pub fn stage_settling(sos: &[[f64; 5]], rel: f64) -> usize {

@@ -15,7 +15,7 @@ use super::tables::{LAG_WINDOW, LPC_ORDER, LPC_WINDOW, WINDOW_SAMPLES, WN_CORR_E
 pub(crate) type Lpc = [i32; LPC_ORDER + 1];
 
 /// The flat predictor: `A(z) = 1`.
-pub(crate) const FLAT: Lpc = [Q12_ONE as i32, 0, 0, 0, 0, 0, 0, 0, 0];
+pub(crate) const FLAT: Lpc = [Q12_ONE as i32, 0, 0, 0, 0, 0, 0, 0, 0]; // A(z) = 1 in S-009 §3.2.2's format
 
 /// A reflection coefficient of this magnitude or more (Q31 of 1 − 2⁻¹¹) marks a
 /// non-minimum-phase solution: the previous coefficients are kept (contracts/codec-design.md

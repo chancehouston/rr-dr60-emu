@@ -257,6 +257,42 @@ pub fn from_db(db: f64) -> f64 {
     10f64.powf(db / 20.0)
 }
 
+/// `x` at `fs_in` resampled to `fs_out` by a windowed-sinc interpolator (a Hamming window over
+/// 64 zero crossings at the lower of the two rates, cut-off at 0.45 of the lower rate): the
+/// codec checks measure the spectral figures at the calibration's 8 kHz whatever the host rate
+/// (spec 008 research R-09). Measurement only (not bit-critical; `f64` with `std` math).
+pub fn resample_to<T: Copy + Into<f64>>(x: &[T], fs_in: f64, fs_out: f64) -> Vec<f64> {
+    if (fs_in - fs_out).abs() < 1e-9 {
+        return x.iter().map(|&v| v.into()).collect();
+    }
+    let lower = fs_in.min(fs_out);
+    let cutoff = 0.45 * lower / fs_in; // cycles per input sample
+    let half_span = (32.0 * fs_in / lower).ceil() as i64; // 32 zero crossings each side
+    let out_len = (x.len() as f64 * fs_out / fs_in).floor() as usize;
+    let mut out = Vec::with_capacity(out_len);
+    let xs: Vec<f64> = x.iter().map(|&v| v.into()).collect();
+    for m in 0..out_len {
+        let centre = m as f64 * fs_in / fs_out;
+        let c0 = centre.floor() as i64;
+        let mut acc = 0.0;
+        for n in (c0 - half_span)..=(c0 + half_span + 1) {
+            if n < 0 || n >= xs.len() as i64 {
+                continue;
+            }
+            let t = n as f64 - centre;
+            let sinc = if t.abs() < 1e-12 {
+                1.0
+            } else {
+                (TAU * cutoff * t).sin() / (TAU * cutoff * t)
+            };
+            let w = 0.54 + 0.46 * (std::f64::consts::PI * t / (half_span as f64 + 1.0)).cos();
+            acc += xs[n as usize] * sinc * w;
+        }
+        out.push(acc * 2.0 * cutoff);
+    }
+    out
+}
+
 /// RMS level in dBFS of `x` (0 dBFS = a full-scale sine, RMS 1/√2).
 pub fn rms_dbfs<T: Copy + Into<f64>>(x: &[T]) -> f64 {
     let ms = x.iter().map(|&v| v.into() * v.into()).sum::<f64>() / x.len().max(1) as f64;

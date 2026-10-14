@@ -17,7 +17,7 @@ use super::tables::{
 /// The predictor's order (S-009 §3.9).
 const ORDER: usize = 4;
 /// Q8 dB: 1 dB.
-const DB_Q8: i32 = 256;
+const DB_Q8: i32 = 256; // the predictor's 1/256 dB format (A-041)
 /// The correction index whose correction is 0 dB (the predicted level itself).
 pub(crate) const NEUTRAL_CORRECTION: u8 = 3;
 
@@ -69,6 +69,7 @@ pub(crate) struct GainPredictor {
 }
 
 impl GainPredictor {
+    #[cfg(test)]
     pub(crate) fn reset(&mut self) {
         self.past = [0; ORDER];
     }
@@ -176,7 +177,9 @@ pub(crate) fn gains_for(predicted_q8: i32, adaptive_index: u8, fixed_index: u8) 
 /// minimizing the weighted error with the fixed gain at its predicted level (correction 0 dB),
 /// then the fixed index minimizing it given that adaptive gain; ties to the lowest index.
 pub(crate) fn quantize(terms: &Terms, predicted_q8: i32) -> Gains {
-    let g_c_pred = i64::from(amplitude_from_db_q8(predicted_q8));
+    let g_c_pred = i64::from(amplitude_from_db_q8(
+        predicted_q8.saturating_add(correction_q8(NEUTRAL_CORRECTION)),
+    ));
     let mut best_a = (i128::MAX, 0u8);
     for idx in 0..8u8 {
         let e = terms.error(i64::from(adaptive_gain_q14(idx)), g_c_pred);

@@ -30,7 +30,6 @@
 //! synthesis and adds the postfilter.
 
 #![deny(clippy::arithmetic_side_effects)]
-#![allow(dead_code)] // 008 T020 wires the encoder and decoder into the transport and the one-pass
 
 pub(crate) mod acelp;
 pub(crate) mod bits;
@@ -145,9 +144,9 @@ const PAST_INPUT: usize = WINDOW_SAMPLES - FRAME - tables::LOOKAHEAD_SAMPLES; //
 const FRAME_START: usize = PAST_INPUT;
 const FRAME_END: usize = PAST_INPUT + FRAME;
 /// A unit impulse in Q12: the impulse response comes out in the predictor's format.
-const IMPULSE_Q12: i32 = fixed::Q12_ONE as i32;
+const IMPULSE_Q12: i32 = fixed::Q12_ONE as i32; // the predictor's Q12 format (S-009 §3.2.2)
 /// The adaptive gain's ceiling before quantization: 1.4 in Q14 (the table's top entry).
-const ADAPT_GAIN_MAX_Q14: i64 = 22938;
+const ADAPT_GAIN_MAX_Q14: i64 = 22938; // design constant (A-041; tools/celp-design: ADAPT_GAIN[7])
 
 /// The predictor order as `usize`.
 const ORDER: usize = tables::LPC_ORDER;

@@ -22,7 +22,7 @@ const NC: usize = LPC_ORDER / 2;
 /// Bisection steps inside the grid cell that holds a sign change (S-009 §3.2.3).
 const BISECTIONS: usize = 4;
 /// π as a Q15 angle.
-const PI_Q15: i32 = 32768;
+const PI_Q15: i32 = 32768; // the angle format of the LSP tables (A-041)
 /// The angle table's step: 256 entries over 0 … π, 128 Q15 units each.
 const COS_STEP_BITS: u32 = 7;
 

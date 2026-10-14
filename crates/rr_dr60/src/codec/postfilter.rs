@@ -1,9 +1,14 @@
 //! The decoder's short-term postfilter (spec 008 research R-05; contracts/codec-design.md ›
 //! Decoder): `H(z) = Â(z/0.65) / Â(z/0.75)` (S-008 §3.6, factors as published), a first-order
-//! tilt compensation `1 − μ z⁻¹` with `μ = 0.25 · k₁` (k₁ the first reflection coefficient of
-//! the numerator's impulse response) and gain scaling to the subframe energy before the
-//! postfilter, smoothed per sample with a one-pole smoother of 0.9 (S-008 §3.7). No pitch
-//! postfilter in this model version (A-041). Design constants of the model, not device figures.
+//! tilt compensation `1 − μ z⁻¹` in the form of S-008's reference code (`Spf`, "Section 3.8"):
+//! k₁ = R(1)/R(0) of the **synthesized speech entering the postfilter** in the subframe,
+//! smoothed as `p = 0.75 p + 0.25 k₁`, and `μ = 0.5 p` (the reference's `PreCoef` is −0.25·2;
+//! the design tool's `TILT_FACTOR` 0.25 is the smoother's weight and half the coefficient), and
+//! gain scaling to the subframe energy before the postfilter, smoothed per sample with a
+//! one-pole smoother of 0.9 (S-008 §3.7). No pitch postfilter in this model version (A-041).
+//! Design constants of the model, not device figures. (The first implementation took k₁ from
+//! the filter's own response with the 0.25 factor; the US1 transparency check read 2 – 3 dB low
+//! above 1.2 kHz, which this form recovers.)
 
 use super::fixed::{Q12_ONE, Q15_ONE, div_q, isqrt, mac, mult, round_q12, sat16};
 use super::lpc::{self, Lpc};
@@ -25,6 +30,8 @@ pub(crate) struct Postfilter {
     den_mem: [i32; LPC_ORDER],
     /// The tilt filter's memory: the previous all-pole output.
     tilt_mem: i32,
+    /// The smoothed first reflection coefficient of the input speech, Q15 (S-008 `Park`).
+    park: i32,
     /// The smoothed gain, Q12.
     gain_q12: i32,
 }
@@ -35,26 +42,35 @@ impl Default for Postfilter {
             num_mem: [0; LPC_ORDER],
             den_mem: [0; LPC_ORDER],
             tilt_mem: 0,
+            park: 0,
             gain_q12: GAIN_ONE_Q12,
         }
     }
 }
 
-/// `μ = 0.25 · k₁` (Q15) of the numerator polynomial `an`: k₁ = r(1) / r(0) of its impulse
-/// response (the nine coefficients themselves).
-pub(crate) fn tilt_mu(an: &Lpc) -> i32 {
+/// The tilt parameter's smoother: `p = 0.75 p + 0.25 k₁` (S-008 `Spf`; `TILT_FACTOR` is the 0.25).
+const TILT_SMOOTH_Q15: i32 = 32768 - TILT_FACTOR;
+/// The tilt coefficient on the smoothed k₁: 0.5 (S-008 `PreCoef = −0.25·2`).
+const TILT_COEF_Q15: i32 = 2 * TILT_FACTOR;
+
+/// k₁ = R(1)/R(0) of a subframe (Q15, −32767 … 32767): the first reflection coefficient of the
+/// speech entering the postfilter (S-008 `Spf`); 0 for silence.
+pub(crate) fn first_reflection(x: &[i32; SUBFRAME_SAMPLES]) -> i32 {
     let (mut r0, mut r1) = (0i64, 0i64);
-    for (i, &a) in an.iter().enumerate() {
-        r0 = mac(r0, a, a);
-        if let Some(&next) = an.get(i.wrapping_add(1)) {
-            r1 = mac(r1, a, next);
+    for (i, &v) in x.iter().enumerate() {
+        r0 = mac(r0, v, v);
+        if let Some(&next) = x.get(i.wrapping_add(1)) {
+            r1 = mac(r1, v, next);
         }
     }
-    let k1 = sat16(div_q(r1, r0.max(1), 15));
-    mult(TILT_FACTOR, k1)
+    if r0 == 0 {
+        return 0;
+    }
+    sat16(div_q(r1, r0, 15)).clamp(-32767, 32767)
 }
 
 impl Postfilter {
+    #[cfg(test)]
     pub(crate) fn reset(&mut self) {
         *self = Self::default();
     }
@@ -73,8 +89,12 @@ impl Postfilter {
         lpc::fir(&an, input, &mut self.num_mem, &mut r);
         let mut y = [0i32; SUBFRAME_SAMPLES];
         lpc::iir(&ad, &r, &mut self.den_mem, &mut y);
-        // Tilt compensation: t[n] = y[n] − μ y[n−1].
-        let mu = tilt_mu(&an);
+        // Tilt compensation (S-008 `Spf`): p = 0.75 p + 0.25 k₁(input); t[n] = y[n] − 0.5 p y[n−1].
+        self.park = sat16(
+            i64::from(mult(self.park, TILT_SMOOTH_Q15))
+                .saturating_add(i64::from(mult(first_reflection(input), TILT_FACTOR))),
+        );
+        let mu = mult(self.park, TILT_COEF_Q15);
         let mut t = [0i32; SUBFRAME_SAMPLES];
         let mut prev = self.tilt_mem;
         for (tn, &yn) in t.iter_mut().zip(&y) {
@@ -126,14 +146,18 @@ mod tests {
     #[test]
     fn unity_gain_on_a_flat_spectrum() {
         let mut pf = Postfilter::default();
-        let mut x = [0i32; 60];
-        for (n, v) in x.iter_mut().enumerate() {
-            *v = ((n as i32 * 1931) % 16001) - 8000;
-        }
+        // A period-4 pattern (+ + − −) with its last sample zeroed has R(1) = 0 exactly (the 58
+        // lag-1 products alternate in sign): no tilt either, so the identity is exact.
+        let x: [i32; 60] = core::array::from_fn(|n| match n % 4 {
+            _ if n == 59 => 0,
+            0 | 1 => 8000,
+            _ => -8000,
+        });
+        assert_eq!(first_reflection(&x), 0);
         let mut y = [0i32; 60];
         pf.process(&FLAT, &x, &mut y);
-        assert_eq!(y, x);
-        assert_eq!(tilt_mu(&FLAT), 0);
+        assert_eq!(y, x, "the flat predictor and a zero k₁: the identity");
+        assert_eq!(pf.park, 0);
         let db = 10.0 * (energy(&y) / energy(&x)).log10();
         assert!(db.abs() <= 0.1, "{db} dB");
         assert_eq!(pf.gain_q12, 4096);
@@ -163,23 +187,40 @@ mod tests {
         assert_eq!(pf.gain_q12, 4096);
     }
 
-    /// The tilt term's sign follows k₁ of the numerator: a numerator with a positive first
-    /// coefficient (its impulse response correlates positively at lag 1) gives μ > 0, a negative
-    /// one μ < 0, and |μ| ≤ 0.25.
+    /// The tilt term follows the input speech's first reflection coefficient (S-008 `Spf`): a
+    /// low-pass (falling-spectrum) input gives k₁ > 0, a smoothed `park` that converges to it
+    /// over a few subframes, and μ = 0.5·park > 0 so that `1 − μ z⁻¹` lifts the highs; an
+    /// alternating input gives k₁ < 0 and the opposite tilt; silence gives 0.
     #[test]
-    fn tilt_sign_follows_the_numerator() {
-        let mut up = FLAT;
-        up[1] = 2048; // h = [1, 0.5]: r1 > 0
-        let mu_up = tilt_mu(&up);
-        assert!(mu_up > 0, "{mu_up}");
-        let mut down = FLAT;
-        down[1] = -2048;
-        let mu_down = tilt_mu(&down);
-        assert!(mu_down < 0, "{mu_down}");
-        assert_eq!(mu_up, -mu_down);
-        // k₁ = 0.5 / 1.25 = 0.4 → μ = 0.1.
-        assert!((mu_up - 3277).abs() <= 2, "{mu_up}");
-        assert!(mu_up.abs() <= 8192 && mu_down.abs() <= 8192);
+    fn tilt_follows_the_inputs_first_reflection_coefficient() {
+        let mut low = [0i32; 60];
+        let mut v = 0i64;
+        for (n, s) in low.iter_mut().enumerate() {
+            v = (v * 9) / 10 + if n % 7 == 0 { 6000 } else { 0 };
+            *s = v as i32;
+        }
+        let k1 = first_reflection(&low);
+        assert!(k1 > 20_000, "k₁ {k1}");
+        let high: [i32; 60] = core::array::from_fn(|n| if n % 2 == 0 { 5000 } else { -5000 });
+        assert!(first_reflection(&high) < -30_000);
+        assert_eq!(first_reflection(&[0; 60]), 0);
+        let mut pf = Postfilter::default();
+        let mut y = [0i32; 60];
+        for _ in 0..40 {
+            pf.process(&FLAT, &low, &mut y);
+        }
+        assert!((pf.park - k1).abs() < 400, "park {} vs k₁ {k1}", pf.park);
+        let mu = mult(pf.park, TILT_COEF_Q15);
+        assert!(mu > 10_000 && mu <= 16384, "μ {mu}");
+        // The flat predictor leaves only the tilt: the output has more high-frequency energy
+        // relative to its low-frequency energy than the input (a lifted spectrum).
+        let ratio = |x: &[i32; 60]| {
+            let diff: f64 = x.windows(2).map(|w| f64::from(w[1] - w[0]).powi(2)).sum();
+            diff / energy(x)
+        };
+        assert!(ratio(&y) > ratio(&low), "{} vs {}", ratio(&y), ratio(&low));
+        assert_eq!(TILT_SMOOTH_Q15, 24576);
+        assert_eq!(TILT_COEF_Q15, 16384);
         assert_eq!(TILT_FACTOR, 8192);
         assert_eq!(POST_GAIN_SMOOTH, 29491);
     }

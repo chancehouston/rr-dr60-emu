@@ -220,7 +220,6 @@ impl Memory {
         Self::with_units(capacity_samples, max_recordings, Encoding::Samples)
     }
 
-    #[allow(dead_code)] // 008 T020: used once the codec stores frames
     /// The memory's encoding (spec 008 FR-012).
     pub(crate) fn encoding(&self) -> Encoding {
         self.encoding
@@ -278,7 +277,6 @@ impl Memory {
         }
     }
 
-    #[allow(dead_code)] // 008 T020: used once the codec stores frames
     /// Appends one speech-codec frame to the recording in progress (the frames encoding; spec
     /// 008 FR-010, FR-013). Returns whether room remains: `false` exactly when the store
     /// reached its capacity with this frame, so "memory full" falls on a frame boundary.
@@ -468,7 +466,6 @@ impl Memory {
         }
     }
 
-    #[allow(dead_code)] // 008 T020: used once the codec stores frames
     /// The stored frame bytes of `span` (the frames encoding): `len × 10` bytes.
     pub(crate) fn frames(&self, span: Span) -> &[u8] {
         let b = self.encoding.unit_bytes();
@@ -476,6 +473,17 @@ impl Memory {
             Store::Frames(v) => &v[span.start * b..(span.start + span.len) * b],
             // coverage: unreachable by construction (Constitution III): see `samples`.
             Store::Samples(_) => unreachable!("frames of a samples memory"),
+        }
+    }
+
+    /// Test-only: the stored frame bytes of `span`, mutable (the harness's one-bit mutation,
+    /// spec 008 SC-008; `__test_hooks::flip_stored_frame_bit`).
+    #[cfg(any(test, feature = "__test-hooks"))]
+    pub(crate) fn frames_mut(&mut self, span: Span) -> &mut [u8] {
+        let b = self.encoding.unit_bytes();
+        match &mut self.store {
+            Store::Frames(v) => &mut v[span.start * b..(span.start + span.len) * b],
+            Store::Samples(_) => &mut [],
         }
     }
 

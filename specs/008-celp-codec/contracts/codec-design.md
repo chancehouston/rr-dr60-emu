@@ -44,7 +44,7 @@ The encoder emits frame *k* on the push of post-VAS sample 120(k+1) + 59 (zero-b
 ## Decoder
 
 - Excitation u = ĝ_a·v(lag) + ĝ_c·c(code); synthesis 1/Â(z) per subframe; past-excitation update.
-- Postfilter: H(z) = Â(z/0.65)/Â(z/0.75) (factors as published, S-008 §3.6); tilt compensation 1 − μz⁻¹ with μ = 0.25·k₁ (k₁ the first reflection coefficient of the postfilter numerator); gain scaling to the subframe energy before the postfilter with a one-pole smoother (0.9). No pitch postfilter in this model version (A-041; G.723.1's shapes its rendering of noise and is a candidate for a later model version).
+- Postfilter: H(z) = Â(z/0.65)/Â(z/0.75) (factors as published, S-008 §3.6); tilt compensation 1 − μz⁻¹ in the form of S-008's reference code (`Spf`): k₁ = R(1)/R(0) of the synthesized speech entering the postfilter, smoothed p = 0.75·p + 0.25·k₁, and μ = 0.5·p (the reference's `PreCoef` is −0.25·2; the tool's 0.25 is the smoother's weight and half the coefficient; *implementation note, T019/T021: the first wording, "μ = 0.25·k₁ of the postfilter numerator", gave the opposite sign and a third of the strength, which the US1 transparency check caught as a 2 – 3 dB loss above 1.2 kHz; to record in the spec at T055 and for the hardware review*); gain scaling to the subframe energy before the postfilter with a one-pole smoother (0.9). No pitch postfilter in this model version (A-041; G.723.1's shapes its rendering of noise and is a candidate for a later model version).
 - Output Q15 → f32 by ÷ 32768; the decoder adds no delay.
 
 ## Arithmetic (research R-03)
