@@ -233,8 +233,9 @@ pub fn frame_causality() -> Vec<MeasurementResult> {
     let mut rows = Vec::new();
     let mut largest_changing: Option<usize> = None;
     for k in [2usize, 9] {
-        let frame_out = d + 120 * k..d + 120 * (k + 1);
-        let window_end = 120 * (k + 1) + 60;
+        let frame = speech_codec::FRAME_SAMPLES as usize;
+        let frame_out = d + frame * k..d + frame * (k + 1);
+        let window_end = frame * (k + 1) + speech_codec::LOOKAHEAD_SAMPLES as usize;
         let mut violations = 0;
         for j in 0..180 {
             let start = 120 * (k + 1) + j;
@@ -392,7 +393,7 @@ pub fn noise_floor(rate: u32, level: f64) -> Vec<MeasurementResult> {
 
 /// FR-009 (SC-002): record-then-play equals the one-pass. The one-pass is fed the input, then
 /// 006's record-latency host silence (the part before the encoder), then
-/// (`silence_fed_samples` + 120) device samples' worth of host silence; its output is skipped
+/// (`silence_fed_samples` + the delay less the look-ahead, one frame) device samples' worth of host silence; its output is skipped
 /// by the codec's delay in host samples and compared with the playback before the drain,
 /// bit for bit, under 006's slack of one device sample's worth (research R-06). In
 /// `default_codec` with the VAS bypassed and in `codec_only_vas` with the VAS open at the end
@@ -424,8 +425,11 @@ pub fn one_pass_equivalence(rate: u32) -> Vec<MeasurementResult> {
                 // device sample's worth: 006's slack (at an exact ratio such as 1:8 the
                 // conversion yields no rounding surplus of its own).
                 let pre_encoder = p.record_latency_samples() as usize - d;
+                // FR-009: the delay less the look-ahead (one frame) drains the last frame.
+                let drain =
+                    (speech_codec::DELAY_SAMPLES - speech_codec::LOOKAHEAD_SAMPLES) as usize;
                 let tail =
-                    pre_encoder + (run.stop.silence_fed_samples as usize + 120 + 1) * per_device;
+                    pre_encoder + (run.stop.silence_fed_samples as usize + drain + 1) * per_device;
                 let mut y = x.clone();
                 y.extend(std::iter::repeat_n(0.0f32, tail));
                 let (want, _) = one_pass(settings, &y, 4096);

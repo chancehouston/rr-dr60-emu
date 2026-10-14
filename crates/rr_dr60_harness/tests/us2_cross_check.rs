@@ -196,9 +196,28 @@ fn readme_codec_section_and_changelog_entry_pass_the_denylist() {
     assert!(section.len() > 500, "the codec section is written");
     assert_eq!(mc::denylist_hit(section), None, "README codec section");
     let changelog = std::fs::read_to_string(mc::repo_root().join("CHANGELOG.md")).unwrap();
-    let entry = mc::readme_region(&changelog, "0.8.0").expect("CHANGELOG has the 0.8.0 markers");
-    assert!(entry.contains("0.8.0"));
-    assert_eq!(mc::denylist_hit(entry), None, "CHANGELOG 0.8.0 entry");
+    // The entry is split by change type (Added, Changed, Documentation), each part between
+    // its own `0.8.0` markers (T045); every part is scanned.
+    let mut rest = changelog.as_str();
+    let mut parts = 0;
+    while let Some(entry) = mc::readme_region(rest, "0.8.0") {
+        assert!(
+            entry.contains("0.8.0") || entry.contains("Spec 008"),
+            "{entry}"
+        );
+        assert_eq!(
+            mc::denylist_hit(entry),
+            None,
+            "CHANGELOG 0.8.0 entry: {entry}"
+        );
+        parts += 1;
+        let end = rest.find("<!-- 0.8.0:end -->").unwrap() + "<!-- 0.8.0:end -->".len();
+        rest = &rest[end..];
+    }
+    assert_eq!(
+        parts, 3,
+        "the 0.8.0 entry has an Added, a Changed and a Documentation part"
+    );
 }
 
 #[test]
