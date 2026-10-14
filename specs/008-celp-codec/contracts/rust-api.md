@@ -30,7 +30,7 @@ All report structs stay `Copy`; `VasEvent` unchanged.
 | Call | Change |
 |---|---|
 | `process*` (one-pass) | with the codec on and the tap at or after `AfterDecoder`, the device stream is delayed by exactly 180 kept samples and passes through encoder and decoder; `latency_samples()` includes the delay; VAS event positions stay post-VAS stream indices |
-| `start_recording` / `record` | frames appended per 120 kept samples (+ 60 look-ahead); `RecordInfo.frames*`; "memory full" at a frame boundary (the frame that did not fit is dropped; events in that block may name positions up to 179 samples past the stored length) |
+| `start_recording` / `record` | frames appended per 120 kept samples (+ 60 look-ahead); `RecordInfo.frames*`; "memory full" at a frame boundary (the recording closes on the push that completes the frame filling the memory; the 60 look-ahead samples kept after it are not represented, so a VAS event in that block may name a position at most 60 device samples, the look-ahead, past the stored length; not clamped) |
 | `stop_recording` | with no kept sample: discards as 006 does; otherwise feeds host silence for the pre-encoder latency, then to the frame boundary and the look-ahead, with the VAS gate held open in drop mode (a forced resume records its splice event); `StopOutcome.silence_fed_samples`; the length is a whole number of frames; bounded work (≤ flush + 179 device samples' worth); byte-identical to 006 when the codec is bypassed |
 | `play` | decodes frame by frame; `PlayInfo.frames`, `frame_index` (held at the last frame during the drain); the drain unchanged |
 | `record_latency_samples` | includes the codec delay; `playback_latency_samples` unchanged; the sum rule holds |

@@ -31,7 +31,7 @@ Total length 52 + K × unit bytes. `export_len(n)` returns it; `export` writes e
 | length < 12 | `Damaged` |
 | version ≠ 2, or flags ≠ 0 (version 1 included: the never-shipped sample form of 0.6/0.7) | `UnsupportedFormVersion { version }` |
 | length < 52 | `Damaged` |
-| encoding ∉ {1, 2}; reserved ≠ 0; device rate ≠ 6000; K = 0; (frames) frame samples ≠ 120 or bits ≠ 80; (samples) model version ≠ 0; data length ≠ K × unit bytes (compared as 64-bit) | `Damaged` |
+| encoding ∉ {1, 2}; reserved ≠ 0; device rate ≠ 6000; K = 0; (frames) frame samples ≠ 120 or bits ≠ 80; (samples) model version ≠ 0, frame samples ≠ 0 or bits ≠ 0; data length ≠ K × unit bytes (compared as 64-bit) | `Damaged` |
 | (frames) codec model version not decodable by this release (≠ `MODEL_VERSION` before 1.0; not in the kept set from 1.0) | `UnsupportedCodecModelVersion { major, minor, patch }` |
 | CRC mismatch | `Damaged` |
 | (samples) any sample NaN, ±Inf or subnormal; (frames) any frame whose subframe-1 lag code is 127 | `Damaged` |
