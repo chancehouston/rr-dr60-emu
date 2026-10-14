@@ -1424,10 +1424,10 @@ fn c_api_state_table_refusals() {
             rr_dr60_import(q, bytes.as_ptr(), 4, &mut number),
             RrDr60Status::UnknownForm
         );
-        let mut v2 = bytes.clone();
-        v2[8] = 2;
+        let mut v3 = bytes.clone();
+        v3[8] = 3; // a later form version (version 2 is this release's, spec 008 FR-011)
         assert_eq!(
-            rr_dr60_import(q, v2.as_ptr(), v2.len(), &mut number),
+            rr_dr60_import(q, v3.as_ptr(), v3.len(), &mut number),
             RrDr60Status::UnsupportedFormVersion
         );
         let mut flipped = bytes.clone();

@@ -55,8 +55,9 @@ pub enum Error {
     /// The bytes are not an exported recording of this engine (no magic, or too short to carry
     /// one; spec 006 FR-014).
     UnknownForm,
-    /// The bytes carry a form version (or flags) this engine does not read (spec 006 FR-014;
-    /// US3 scenario 5).
+    /// The bytes carry a form version (or flags) this engine does not read: version 1, spec
+    /// 006's never-shipped samples form, and any later version are refused (spec 008 FR-011;
+    /// spec 006 FR-014, US3 scenario 5).
     UnsupportedFormVersion {
         /// The form version found.
         version: u16,
@@ -65,8 +66,10 @@ pub enum Error {
     /// count, device rate, CRC-32, or a sample that is not finite or is subnormal; spec 006
     /// FR-014).
     Damaged,
-    /// `reconfigure` with a capacity smaller than what the memory holds (time or count); the
-    /// engine is unchanged (spec 006 FR-019).
+    /// `reconfigure` to a configuration the stored recordings do not fit: a capacity smaller
+    /// than what the memory holds (time or count; spec 006 FR-019), or the other speech-codec
+    /// setting while recordings are present (one memory holds one encoding; spec 008 FR-012).
+    /// The engine is unchanged.
     StoredExceedsCapacity,
     /// The recording store for the configured capacity could not be reserved (spec 006 FR-017;
     /// an error, not an abort).
@@ -221,7 +224,7 @@ impl fmt::Display for Error {
                 f.write_str("damaged: the exported recording is truncated, altered or inconsistent")
             }
             Error::StoredExceedsCapacity => {
-                f.write_str("stored recordings exceed the new capacity")
+                f.write_str("stored recordings do not fit the new configuration")
             }
             Error::AllocationFailed => {
                 f.write_str("the recording store for the configured capacity could not be reserved")
@@ -292,7 +295,7 @@ mod tests {
             (Error::Damaged, &["damaged"]),
             (
                 Error::StoredExceedsCapacity,
-                &["stored recordings exceed the new capacity"],
+                &["stored recordings do not fit the new configuration"],
             ),
             (Error::AllocationFailed, &["could not be reserved"]),
             (

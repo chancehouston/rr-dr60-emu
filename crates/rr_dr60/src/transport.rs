@@ -239,7 +239,11 @@ impl Pipeline {
     /// codec on, the kept samples go to the encoder and every completed frame to the memory
     /// (spec 008 FR-008). The recording stops by itself at the exact device sample (or frame)
     /// at which the memory fills (`stopped`, FR-012); the rest of the block is discarded and
-    /// the engine is idle. Real-time safe.
+    /// the engine is idle. With the speech codec on, a VAS event reported in the stopping block
+    /// may name a position up to the look-ahead (60 device samples) past the stored length: the
+    /// recording closes on the push that completes the frame filling the memory, and the
+    /// look-ahead samples kept after that frame are not represented (spec 008 FR-014; research
+    /// R-07). Real-time safe.
     ///
     /// # Errors
     ///
@@ -538,72 +542,74 @@ impl Pipeline {
     }
 
     /// The exported length of recording `number`, in bytes, so the host can size its buffer
-    /// (spec 006 FR-014): 36 + 4 × the stored samples in form version 1. Real-time safe.
+    /// (spec 006 FR-014; spec 008 FR-010): 52 + 10 × the stored frames with the speech codec
+    /// on, 52 + 4 × the stored samples when it is bypassed (form version 2). Real-time safe.
     ///
     /// # Errors
     ///
-    /// [`Error::NoSuchRecording`]; and, until form version 2 lands (spec 008 FR-010, T027),
-    /// [`Error::UnsupportedFormVersion`] `{ version: 2 }` for a memory of speech-codec frames.
+    /// [`Error::NoSuchRecording`].
     pub fn export_len(&self, number: u32) -> Result<usize, Error> {
         let span = self
             .memory
             .span(number)
             .ok_or(Error::NoSuchRecording { number })?;
-        self.refuse_frames_form()?; // 008 T027 replaces this with form version 2
-        Ok(form::export_len(span.len))
+        Ok(form::export_len(self.memory.encoding(), span.len))
     }
 
     /// Writes recording `number` as an opaque byte sequence into `out` and returns the bytes
-    /// written, always [`export_len`](Self::export_len) (spec 006 FR-014). The host stores or
-    /// sends the bytes unchanged and never parses them; the same recording exports to the same
-    /// bytes every time. The form (contracts/recording-form.md, version 1) is the record path's
-    /// device-rate output; the frames form (version 2) arrives with spec 008 T027. Allowed in
-    /// any state. Allocates nothing, but computes a CRC over the recording: not real-time safe
-    /// (FR-017).
+    /// written, always [`export_len`](Self::export_len) (spec 006 FR-014; spec 008 FR-010). The
+    /// host stores or sends the bytes unchanged and never parses them; the same recording
+    /// exports to the same bytes every time. The form (contracts/recording-form.md, version 2)
+    /// declares the recording's encoding, speech-codec frames or device-rate samples when the
+    /// codec was bypassed, and for frames the codec's model version, so an importer knows which
+    /// decoder they need (FR-011). Allowed in any state. Allocates nothing, but computes a CRC
+    /// over the recording: not real-time safe (FR-017).
     ///
     /// # Errors
     ///
     /// [`Error::NoSuchRecording`]; [`Error::BufferTooSmall`] with the needed length, `out`
-    /// untouched; [`Error::UnsupportedFormVersion`] `{ version: 2 }` for a memory of frames
-    /// until form version 2 lands.
+    /// untouched.
     pub fn export(&self, number: u32, out: &mut [u8]) -> Result<usize, Error> {
         let span = self
             .memory
             .span(number)
             .ok_or(Error::NoSuchRecording { number })?;
-        self.refuse_frames_form()?; // 008 T027 replaces this with form version 2
-        form::export(self.memory.samples(span), out)
+        let payload = match self.memory.encoding() {
+            Encoding::Frames => form::Payload::Frames(self.memory.frames(span)),
+            Encoding::Samples => form::Payload::Samples(self.memory.samples(span)),
+        };
+        form::export(payload, out)
     }
 
     /// Adds a recording from the bytes of an export, in this or another engine instance of
-    /// the same version, at any host rate (spec 006 FR-014); returns its number. The
-    /// recording has the length and the playback output of the original. Allowed while idle or
-    /// playing (it only appends); refused while recording. Allocates nothing (the store is
-    /// reserved), but validates the whole sequence: not real-time safe.
+    /// the same version configured with the same encoding, at any host rate (spec 006 FR-014;
+    /// spec 008 FR-010, FR-012); returns its number. The recording has the length and the
+    /// playback output of the original. Allowed while idle or playing (it only appends);
+    /// refused while recording. Allocates nothing (the store is reserved), but validates the
+    /// whole sequence: not real-time safe.
     ///
     /// # Errors
     ///
-    /// [`Error::RecordingInProgress`]; then, in order, [`Error::UnknownForm`],
-    /// [`Error::UnsupportedFormVersion`] (a later form version, or non-zero flags),
-    /// [`Error::Damaged`] (truncated, altered, another device rate, no samples, or a sample
-    /// that is not finite or lies outside the record path's output range),
-    /// [`Error::EncodingDiffers`] (a samples form into a memory of frames, spec 008 FR-012) and
-    /// [`Error::DoesNotFit`] (the remaining time or slots). The memory is unchanged on every
-    /// error.
+    /// [`Error::RecordingInProgress`]; then, in the contract's order, [`Error::UnknownForm`],
+    /// [`Error::UnsupportedFormVersion`] (version 1, spec 006's never-shipped samples form, a
+    /// later version, or non-zero flags), [`Error::Damaged`] (truncated, altered, another device
+    /// rate, an unknown encoding, no units, a sample that is not finite or lies outside the
+    /// record path's output range, or a frame with a code point the encoder never produces),
+    /// [`Error::UnsupportedCodecModelVersion`] (frames this release cannot decode; FR-011: from
+    /// the 1.0 release every released codec model version keeps its decoder, before it a dropped
+    /// version is refused),
+    /// [`Error::EncodingDiffers`] (the other encoding than the engine's; checked before the fit
+    /// so the host learns the real reason) and [`Error::DoesNotFit`] (the remaining time or
+    /// slots). The memory is unchanged on every error.
     pub fn import(&mut self, bytes: &[u8]) -> Result<u32, Error> {
         if self.transport.state == State::Recording {
             return Err(Error::RecordingInProgress);
         }
-        let samples = form::validate(bytes)?;
-        self.memory.import_samples(form::decode(samples))
-    }
-
-    /// Until form version 2 (spec 008 T027): a memory of frames has no byte form yet.
-    // TODO(008 T027): remove with form version 2; an engine must not refuse its own form.
-    fn refuse_frames_form(&self) -> Result<(), Error> {
-        match self.memory.encoding() {
-            Encoding::Samples => Ok(()),
-            _ => Err(Error::UnsupportedFormVersion { version: 2 }),
+        let v = form::validate(bytes)?;
+        // Both imports check the encoding (`EncodingDiffers`) before the fit (`DoesNotFit`).
+        match v.encoding {
+            Encoding::Frames => self.memory.import_frames(v.units),
+            Encoding::Samples => self.memory.import_samples(form::decode(v.units)),
         }
     }
 
@@ -1613,7 +1619,7 @@ mod tests {
         assert_eq!(p.export_len(0), Err(Error::NoSuchRecording { number: 0 }));
         assert_eq!(p.export_len(2), Err(Error::NoSuchRecording { number: 2 }));
         let needed = p.export_len(1).unwrap();
-        assert_eq!(needed, 36 + 4 * 1201);
+        assert_eq!(needed, 52 + 4 * 1201); // form version 2, the samples encoding (008 FR-010)
         let mut buf = std::vec![0xEEu8; 10];
         assert_eq!(
             p.export(2, &mut buf),
@@ -2078,17 +2084,191 @@ mod codec_tests {
         p.reconfigure(s).unwrap();
         assert_eq!(p.encoding(), Encoding::Frames);
         assert_eq!(p.footprint_bytes(), 100 * 10 + 4 * 16);
-        // Until form version 2 (T027) a frames memory has no byte form.
+    }
+
+    /// 008 T025 (FR-012; SC-007): at the default capacity a codec change on an empty memory
+    /// re-reserves the store for the other encoding: 1 801 600 bytes of frames (180 000 × 10 +
+    /// 100 spans × 16) against 86 401 600 of samples, and back.
+    #[test]
+    fn reconfigure_codec_with_empty_memory_rereserves() {
+        let on = Settings::new(6000);
+        let mut off = on;
+        off.speech_codec_enabled = false;
+        let mut p = Pipeline::new(on).unwrap();
+        assert_eq!(p.footprint_bytes(), 1_801_600);
+        assert_eq!(p.memory_status().capacity_samples, 21_600_000);
+        p.reconfigure(off).unwrap();
+        assert_eq!(p.encoding(), Encoding::Samples);
+        assert_eq!(p.footprint_bytes(), 86_401_600);
+        assert_eq!(p.memory_status().capacity_samples, 21_600_000);
+        p.reconfigure(on).unwrap();
+        assert_eq!(p.encoding(), Encoding::Frames);
+        assert_eq!(p.footprint_bytes(), 1_801_600);
+    }
+
+    /// Plays recording `number` to the end in blocks of `block`; the whole output.
+    fn play_to_end(p: &mut Pipeline, number: u32, block: usize) -> Vec<f32> {
+        p.start_playback(number).unwrap();
+        let mut out = Vec::new();
+        let mut buf = std::vec![0.0f32; block];
+        loop {
+            let info = p.play(&mut buf).unwrap();
+            out.extend_from_slice(&buf[..info.produced]);
+            if info.finished {
+                return out;
+            }
+        }
+    }
+
+    /// Records `x` in one block, stops, and returns the recording's exported bytes.
+    fn record_export(p: &mut Pipeline, x: &[f32]) -> Vec<u8> {
         p.start_recording().unwrap();
-        let _ = p.record(&tone(-20.0, 0.5, 6000.0), &mut []).unwrap();
-        let _ = p.stop_recording(&mut []).unwrap();
-        assert_eq!(
-            p.export_len(1),
-            Err(Error::UnsupportedFormVersion { version: 2 })
+        assert!(p.record(x, &mut []).unwrap().stopped.is_none());
+        let (number, _) = kept(&p.stop_recording(&mut []).unwrap());
+        let mut bytes = std::vec![0u8; p.export_len(number).unwrap()];
+        assert_eq!(p.export(number, &mut bytes).unwrap(), bytes.len());
+        bytes
+    }
+
+    /// 008 T025 (FR-012): a samples form into a memory of frames and a frames form into a
+    /// memory of samples are both `EncodingDiffers`, checked before the fit (a form far larger
+    /// than the memory still reports the encoding), with the memory unchanged.
+    #[test]
+    fn import_other_encoding_refused_encoding_differs() {
+        let on = codec_only(6000, 10, 3);
+        let mut off = on;
+        off.speech_codec_enabled = false;
+        let mut frames_engine = Pipeline::new(on).unwrap();
+        let mut samples_engine = Pipeline::new(off).unwrap();
+        let x = tone(-20.0, 2.0, 6000.0);
+        let frames = record_export(&mut frames_engine, &x);
+        let samples = record_export(&mut samples_engine, &x);
+        assert_eq!(u16::from_le_bytes([frames[22], frames[23]]), 1);
+        assert_eq!(u16::from_le_bytes([samples[22], samples[23]]), 2);
+        let before = frames_engine.memory_status();
+        assert_eq!(frames_engine.import(&samples), Err(Error::EncodingDiffers));
+        assert_eq!(frames_engine.memory_status(), before);
+        let before = samples_engine.memory_status();
+        assert_eq!(samples_engine.import(&frames), Err(Error::EncodingDiffers));
+        assert_eq!(samples_engine.memory_status(), before);
+        // Encoding before fit: a 2 s samples form into a 1 s frames memory.
+        let mut tiny = Pipeline::new(codec_only(6000, 1, 1)).unwrap();
+        assert_eq!(tiny.import(&samples), Err(Error::EncodingDiffers));
+        // The same bytes import into an engine of their own encoding.
+        assert_eq!(frames_engine.import(&frames), Ok(2));
+        assert_eq!(samples_engine.import(&samples), Ok(2));
+    }
+
+    /// 008 T025 (FR-013): an import of frames counts against the capacity in frames: 100
+    /// frames into a 1 s memory (50 frames) is `DoesNotFit`, as is a second recording into one
+    /// slot; the memory is unchanged either way.
+    #[test]
+    fn import_frames_counts_against_capacity_in_frames() {
+        let mut src = Pipeline::new(codec_only(6000, 10, 3)).unwrap();
+        let two_s = record_export(&mut src, &tone(-20.0, 2.0, 6000.0));
+        assert_eq!(src.recording_length(1), Ok(100 * 120));
+        assert_eq!(two_s.len(), 52 + 10 * 100);
+        let mut one_s = Pipeline::new(codec_only(48_000, 1, 3)).unwrap();
+        let before = one_s.memory_status();
+        assert_eq!(before.remaining_samples, 6000);
+        assert_eq!(one_s.import(&two_s), Err(Error::DoesNotFit));
+        assert_eq!(one_s.memory_status(), before);
+        // 100 frames into a 3 s memory with 50 frames taken: 100 > 150 − 50 is false, so it
+        // fits exactly; a third does not.
+        let mut three_s = Pipeline::new(codec_only(48_000, 3, 3)).unwrap();
+        let one = record_export(&mut src, &tone(-20.0, 1.0, 6000.0));
+        assert_eq!(three_s.import(&one), Ok(1));
+        assert_eq!(three_s.import(&two_s), Ok(2));
+        assert_eq!(three_s.memory_status().remaining_samples, 0);
+        let before = three_s.memory_status();
+        assert_eq!(three_s.import(&one), Err(Error::DoesNotFit));
+        assert_eq!(three_s.memory_status(), before);
+        // Slots.
+        let mut slot = Pipeline::new(codec_only(44_100, 10, 1)).unwrap();
+        assert_eq!(slot.import(&one), Ok(1));
+        let before = slot.memory_status();
+        assert_eq!(slot.import(&one), Err(Error::DoesNotFit));
+        assert_eq!(slot.memory_status(), before);
+        assert_eq!(slot.recording_length(1), Ok(50 * 120));
+    }
+
+    /// 008 T025 (FR-010, SC-009): a frames export imports into an engine at another host rate
+    /// with the same length and bit-identical playback, and re-exports to the same bytes.
+    #[test]
+    fn frames_round_trip_across_rates() {
+        let mut src = Pipeline::new(codec_only(48_000, 10, 3)).unwrap();
+        let bytes = record_export(&mut src, &tone(-20.0, 1.0, 48_000.0));
+        let again = {
+            let mut b = std::vec![0u8; src.export_len(1).unwrap()];
+            src.export(1, &mut b).unwrap();
+            b
+        };
+        assert_eq!(again, bytes, "export is identical every time");
+        let length = src.recording_length(1).unwrap();
+        assert_eq!(length % 120, 0);
+        assert_eq!(bytes.len(), 52 + 10 * (length / 120) as usize);
+        let mut dst = Pipeline::new(codec_only(44_100, 10, 3)).unwrap();
+        assert_eq!(dst.import(&bytes), Ok(1));
+        assert_eq!(dst.recording_length(1), Ok(length));
+        src.reconfigure(codec_only(44_100, 10, 3)).unwrap();
+        let want = play_to_end(&mut src, 1, 997);
+        let got = play_to_end(&mut dst, 1, 997);
+        assert_eq!(want.len(), got.len());
+        assert!(
+            want.iter()
+                .zip(&got)
+                .all(|(a, b)| a.to_bits() == b.to_bits())
         );
-        assert_eq!(
-            p.export(1, &mut [0u8; 64]),
-            Err(Error::UnsupportedFormVersion { version: 2 })
+        let mut re = std::vec![0u8; dst.export_len(1).unwrap()];
+        dst.export(1, &mut re).unwrap();
+        assert_eq!(re, bytes);
+    }
+
+    /// 008 T025 (research R-07; plan review P11): at "memory full" the last frame is appended
+    /// when the kept count reaches its boundary plus the look-ahead, so a VAS event in the
+    /// stopping block may name a position past the stored length, by at most the look-ahead
+    /// (60 device samples); documented, not clamped. A 1 s memory in drop mode with the tone
+    /// ending so that the gate pauses between kept 6000 and 6060.
+    #[test]
+    fn events_may_exceed_the_length_at_memory_full() {
+        let mut s = codec_only(6000, 1, 2);
+        s.vas.enabled = true;
+        s.vas.hang_ms = 50.0; // the shortest hang: 300 device samples
+        let mut past_the_length = 0;
+        for tone_samples in (5600..5800).step_by(4) {
+            let mut p = Pipeline::new(s).unwrap();
+            p.start_recording().unwrap();
+            let mut x = tone(-20.0, tone_samples as f64 / 6000.0, 6000.0);
+            x.resize(7000, 0.0);
+            let mut ev = [VasEvent::default(); 8];
+            let info = p.record(&x, &mut ev).unwrap();
+            let mut events: Vec<VasEvent> = ev[..info.events].to_vec();
+            if info.stopped.is_none() {
+                // The gate paused before the 50th frame completed; the stop feed (gate held
+                // open) completes it and fills the memory.
+                let mut sev = [VasEvent::default(); 8];
+                let out = p.stop_recording(&mut sev).unwrap();
+                assert_eq!(out.flush.stopped, Some(StopReason::MemoryFull));
+                events.extend_from_slice(&sev[..out.flush.events]);
+            } else {
+                assert_eq!(info.stopped, Some(StopReason::MemoryFull));
+            }
+            let length = p.recording_length(1).unwrap();
+            assert_eq!(length, 6000, "{tone_samples}");
+            for e in &events {
+                assert!(
+                    e.output_position <= length + u64::from(LOOKAHEAD_SAMPLES),
+                    "{tone_samples}: event at {} past 6000 + 60",
+                    e.output_position
+                );
+                if e.output_position > length {
+                    past_the_length += 1;
+                }
+            }
+        }
+        assert!(
+            past_the_length > 0,
+            "no tone length produced an event past the length"
         );
     }
 }

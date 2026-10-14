@@ -1,10 +1,106 @@
-//! Spec 008: the seven-rate codec matrix (FR-022; SC-001 – SC-009; arrives with US1 and US2),
-//! the calibration reader (research R-09; `--ignored`: needs the decoded references that
-//! `tools/celp-calibrate/calibrate.py` writes) and the stimulus digests that pin the
+//! Spec 008 FR-022: the seven-rate codec matrix (SC-001 – SC-009; task T029), every
+//! `codec_checks` check of US1 and US2 in one `-- --nocapture` report; the release-only cases
+//! (the 60-minute recording through the codec and the 7 × 7 cross-rate grid, `--ignored`); the
+//! calibration reader (research R-09; `--ignored`: needs the decoded references that
+//! `tools/celp-calibrate/calibrate.py` writes); and the stimulus digests that pin the
 //! calibration's inputs (T008).
+//!
+//! `cargo test -p rr_dr60_harness --test codec_matrix -- --nocapture`
 
+use rr_dr60_harness::checks::{MeasurementResult, assert_all};
 use rr_dr60_harness::stimulus::{unvoiced_voiced, voiced};
+use rr_dr60_harness::{codec_checks, configs, report};
 use sha2::{Digest, Sha256};
+
+type Check = (&'static str, fn(u32) -> Vec<MeasurementResult>);
+
+/// Every per-rate check (research R-09; US1 and US2).
+const CHECKS: &[Check] = &[
+    ("bit_rate", codec_checks::bit_rate),
+    ("delay_lag", codec_checks::delay_lag),
+    ("one_pass_equivalence", codec_checks::one_pass_equivalence),
+    (
+        "after_vas_tap_unchanged",
+        codec_checks::after_vas_tap_unchanged,
+    ),
+    ("vas_events_unchanged", codec_checks::vas_events_unchanged),
+    ("latency_bound", codec_checks::latency_bound),
+    ("frame_reports", codec_checks::frame_reports),
+    ("bypassed_equals_006", codec_checks::bypassed_equals_006),
+    ("footprint", codec_checks::footprint),
+    ("capacity_frames", codec_checks::capacity_frames),
+    ("mid_frame_stop", codec_checks::mid_frame_stop),
+    ("round_trip", codec_checks::round_trip),
+    ("corruption_set", codec_checks::corruption_set),
+    (
+        "vas_splices_inside_frames",
+        codec_checks::vas_splices_inside_frames,
+    ),
+];
+
+/// The full matrix: every check at the seven rates, the three-level transparency and noise
+/// checks, and the causality probe; one report, every row within tolerance.
+#[test]
+fn codec_matrix() {
+    let mut results = Vec::new();
+    let mut counts = Vec::new();
+    for (name, check) in CHECKS {
+        let before = results.len();
+        for rate in configs::all_rates() {
+            results.extend(check(rate));
+        }
+        counts.push((*name, results.len() - before));
+    }
+    for (name, check) in [
+        (
+            "transparency",
+            codec_checks::transparency as fn(u32, f64) -> Vec<MeasurementResult>,
+        ),
+        ("noise_floor", codec_checks::noise_floor),
+    ] {
+        let before = results.len();
+        for rate in configs::all_rates() {
+            for level in codec_checks::LEVELS_DBFS {
+                results.extend(check(rate, level));
+            }
+        }
+        counts.push((name, results.len() - before));
+    }
+    let before = results.len();
+    results.extend(codec_checks::frame_causality());
+    counts.push(("frame_causality (6 kHz)", results.len() - before));
+    report::print(&results);
+    for (name, n) in &counts {
+        println!("{name:>32}: {n} rows");
+    }
+    println!("codec matrix: {} rows at seven rates", results.len());
+    assert_all(&results);
+}
+
+/// The 60-minute recording through the codec at the device's own capacity (S-001), 6 kHz;
+/// release only.
+#[test]
+#[ignore = "60 minutes of audio through the codec; run with --release -- --ignored"]
+fn sixty_minutes_6k() {
+    let results = codec_checks::sixty_minutes();
+    report::print(&results);
+    assert_all(&results);
+}
+
+/// The 7 × 7 cross-rate grid with a 5 s voiced recording (FR-010); release only.
+#[test]
+#[ignore = "49 five-second recordings through the codec; run with --release -- --ignored"]
+fn cross_rate_grid() {
+    let mut results = Vec::new();
+    for record_rate in configs::all_rates() {
+        for play_rate in configs::all_rates() {
+            results.extend(codec_checks::cross_rate(record_rate, play_rate));
+        }
+    }
+    report::print(&results);
+    println!("cross-rate grid: {} rows", results.len());
+    assert_all(&results);
+}
 
 /// The calibration stimuli at 8 kHz, as `examples/codec_stimuli.rs` writes them (stem, voiced?,
 /// level dBFS, SHA-256 of the raw s16le bytes). A stimulus change moves a digest and

@@ -87,6 +87,13 @@ pub const MODEL_VERSION: [u16; 3] = [0, 8, 0];
 /// (contracts/codec-design.md › Bit order).
 pub type Frame = [u8; FRAME_BYTES as usize];
 
+/// Whether `frame` uses a code point the encoder never produces: subframe 1's lag code 127
+/// (spec 008 FR-010; contracts/codec-design.md). The decoder reads it as the longest lag, so it
+/// would decode, but import refuses such a frame as damaged (contracts/recording-form.md).
+pub(crate) fn uses_unused_code(frame: &Frame) -> bool {
+    bits::unpack(frame).lag1 == pitch::UNUSED_LAG_CODE
+}
+
 /// The codec's constants as one plain struct, for hosts and for the C API
 /// (`rr_dr60_speech_codec_info`; spec 008 FR-003, FR-008).
 #[repr(C)]

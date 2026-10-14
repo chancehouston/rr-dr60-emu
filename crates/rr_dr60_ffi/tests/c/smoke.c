@@ -417,6 +417,8 @@ int main(int argc, char **argv) {
     uint64_t len_samples = 0;
     CHECK(rr_dr60_recording_length(a, 1, &len_samples) == RR_DR60_STATUS_OK && len_samples == stored, "recording_length");
     size_t len = 0, written = 0;
+    /* TODO(008 T044): form version 2 with the codec on is 52 + 10 * frames (spec 008 FR-010); this
+     * check and the 20 ms latency check fail until Phase 5 rewrites the smoke loop. */
     CHECK(rr_dr60_export_len(a, 1, &len) == RR_DR60_STATUS_OK && len == 36 + 4 * stored, "export_len %zu", len);
     uint8_t small[10];
     memset(small, 0xAA, sizeof small);

@@ -868,9 +868,10 @@ RrDr60Status rr_dr60_export_len(struct RrDr60Pipeline *pipeline,
 // Writes recording `number` as an opaque byte sequence into `out_bytes` (`capacity` bytes)
 // and the bytes written to `*out_written` (spec 006 FR-014). The host stores or sends the
 // bytes unchanged and never parses them; the same recording exports to the same bytes every
-// time. The form is the engine's (version 1: the record path's device-rate output; it will
-// become encoded frames when the codec is modeled, A-004, told apart by the version field).
-// Allowed in any state. Not real-time safe (a CRC over the recording; no allocation).
+// time. The form is version 2 (spec 008 FR-010): it declares the recording's encoding, the
+// speech codec's frames or device-rate samples when the codec was bypassed, and for frames the
+// codec's model version, so an importer knows which decoder the bytes need. Allowed in any
+// state. Not real-time safe (a CRC over the recording; no allocation).
 //
 // Statuses: `NO_SUCH_RECORDING`; `BUFFER_TOO_SMALL` leaves `out_bytes` untouched and writes
 // the needed length to `*out_written` when not NULL; `NULL_POINTER` for a NULL `out_bytes`

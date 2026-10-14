@@ -74,8 +74,10 @@ pub(crate) fn decode(code: u32) -> Pulses {
     p
 }
 
-/// The codebook vector of `code`: ±1 at each placed pulse, 0 elsewhere.
+/// The codebook vector of `code` (a 17-bit code; the packer masks the field): ±1 at each placed
+/// pulse, 0 elsewhere.
 pub(crate) fn build_vector(code: u32, out: &mut [i32; SUBFRAME_SAMPLES]) {
+    debug_assert!(code < 1u32.wrapping_shl(CODE_BITS), "a 17-bit code");
     *out = [0; SUBFRAME_SAMPLES];
     let p = decode(code);
     for k in 0..PULSES {

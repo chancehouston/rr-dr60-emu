@@ -59,6 +59,16 @@ impl Encoding {
         }
     }
 
+    /// The encoding a form's encoding field names (contracts/recording-form.md), or `None` for a
+    /// code this release does not know (the importer refuses it as damaged).
+    pub(crate) const fn from_form_code(code: u16) -> Option<Self> {
+        match code {
+            1 => Some(Encoding::Frames),
+            2 => Some(Encoding::Samples),
+            _ => None,
+        }
+    }
+
     /// The encoding the engine's settings select (spec 008 FR-012).
     pub const fn for_settings(settings: &crate::Settings) -> Self {
         if settings.speech_codec_enabled {
@@ -399,7 +409,6 @@ impl Memory {
         Ok(self.spans.len() as u32)
     }
 
-    #[allow(dead_code)] // 008 T028: used once the codec stores frames
     /// Adds a recording of validated frame bytes (a multiple of the frame size; spec 008
     /// FR-010): refused when the memory holds samples, when the frames exceed the remaining
     /// time or when no slot is left.
@@ -1086,6 +1095,35 @@ mod tests {
         let flipped = empty.copied_to(&bigger, Encoding::Frames).unwrap();
         assert_eq!(flipped.encoding(), Encoding::Frames);
         assert_eq!(flipped.capacities(), (50, 6));
+    }
+
+    /// 008 T025 (FR-013): the capacity is a whole number of frames: the default 3600 s is
+    /// exactly 180 000 frames and every whole-second capacity is whole frames (6000 / 120 = 50);
+    /// a hypothetical 7-sample unit at 3600 s rounds ⌊21 600 000 / 7⌋ = 3 085 714 units, whose
+    /// reported capacity (21 599 998 samples) is the rounded figure, not the configured one.
+    #[test]
+    fn capacity_is_whole_frames() {
+        assert_eq!(21_600_000 % 120, 0);
+        for secs in [1u32, 2, 3, 7, 59, 3600, 86_400] {
+            let settings = MemorySettings {
+                capacity_s: secs,
+                max_recordings: 1,
+            };
+            let units = capacity_units_for(settings.capacity_s, Encoding::Frames.unit_samples());
+            assert_eq!(units * 120, secs as usize * 6000, "{secs} s");
+        }
+        let d = Memory::new(&MemorySettings::DEVICE, Encoding::Frames).unwrap();
+        assert_eq!(d.status().capacity_samples % 120, 0);
+        assert_eq!(d.status().capacity_samples, 21_600_000);
+        let units = capacity_units_for(3600, 7);
+        assert_eq!(units, 3_085_714);
+        assert_eq!(units * 7, 21_599_998);
+        assert!(units * 7 < 21_600_000);
+        // The form's encoding codes map back; 0 and 3 are unknown.
+        assert_eq!(Encoding::from_form_code(1), Some(Encoding::Frames));
+        assert_eq!(Encoding::from_form_code(2), Some(Encoding::Samples));
+        assert_eq!(Encoding::from_form_code(0), None);
+        assert_eq!(Encoding::from_form_code(3), None);
     }
 
     /// Spec 008 FR-013: the capacity in units is rounded down to whole units.

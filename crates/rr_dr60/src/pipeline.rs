@@ -550,8 +550,10 @@ impl Pipeline {
     /// idle; [`Error::UnsupportedHostRate`] if `settings.host_rate_hz` is not supported;
     /// [`Error::InvalidSetting`] if an AGC, VAS or memory setting is invalid (spec 002 FR-011,
     /// spec 003 FR-012, spec 006 FR-010); [`Error::StoredExceedsCapacity`] when the stored
-    /// recordings or their count would not fit the new capacity; [`Error::AllocationFailed`]
-    /// when a new store cannot be reserved.
+    /// recordings do not fit the new configuration: their time or count exceeds the new
+    /// capacity, or the speech-codec setting changes while recordings are present (one memory
+    /// holds one encoding, spec 008 FR-012; erase first); [`Error::AllocationFailed`] when a new
+    /// store cannot be reserved.
     pub fn reconfigure(&mut self, settings: Settings) -> Result<(), Error> {
         self.refuse_if_active()?;
         validate(&settings)?;
