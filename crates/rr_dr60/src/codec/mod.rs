@@ -27,6 +27,23 @@
 #[allow(dead_code)]
 pub(crate) mod tables;
 
+#[allow(dead_code)] // 008 T018: used by the encoder and decoder (T019)
+pub(crate) mod acelp;
+#[allow(dead_code)] // 008 T018: used by the encoder and decoder (T019)
+pub(crate) mod bits;
+#[allow(dead_code)] // 008 T017: used by the modules T018 – T019 add
+pub(crate) mod fixed;
+#[allow(dead_code)] // 008 T018: used by the encoder and decoder (T019)
+pub(crate) mod gains;
+#[allow(dead_code)] // 008 T018: used by the encoder and decoder (T019)
+pub(crate) mod lpc;
+#[allow(dead_code)] // 008 T018: used by the encoder and decoder (T019)
+pub(crate) mod lsp;
+#[allow(dead_code)] // 008 T018: used by the encoder and decoder (T019)
+pub(crate) mod pitch;
+#[allow(dead_code)] // 008 T018: used by the encoder and decoder (T019)
+pub(crate) mod postfilter;
+
 /// The device rate the codec runs at, in Hz (A-026).
 pub const DEVICE_RATE_HZ: u32 = tables::DEVICE_RATE_HZ;
 /// Frame length in device samples: 120 (20 ms). A design constant (A-040), not the device's.
