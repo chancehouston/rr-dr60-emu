@@ -116,13 +116,17 @@ fn codec_stages_us3_scenario_1() {
         assert!(e.assumptions.contains(&"A-040"), "stage {n}");
         assert!(e.assumptions.contains(&"A-041"), "stage {n}");
     }
-    let enc = m.stage(7).unwrap();
-    for word in ["frame length", "look-ahead", "codebooks"] {
-        assert!(
-            enc.coverage.contains(word),
-            "stage 7 coverage lacks {word:?}"
-        );
+    // Both coverage notes name the three unknowns (US3 string review, T039).
+    for n in [7u32, 9] {
+        let e = m.stage(n).unwrap();
+        for word in ["frame length", "look-ahead", "codebooks"] {
+            assert!(
+                e.coverage.contains(word),
+                "stage {n} coverage lacks {word:?}"
+            );
+        }
     }
+    let enc = m.stage(7).unwrap();
     for item in [
         "RecordInfo.frames",
         "RecordInfo.frames_total",

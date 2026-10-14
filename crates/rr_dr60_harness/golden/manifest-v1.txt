@@ -88,7 +88,7 @@ path: record
 confidence: low
 sources: S-002, S-008, S-009, S-010, S-011
 assumptions: A-004, A-040, A-041
-coverage: the device's own coder: frame length, look-ahead, codebooks and bit allocation unidentified; 8-bit µ-law input (A-030)
+coverage: the device's own coder (frame length, look-ahead, codebooks and bit allocation unidentified); 8-bit µ-law input (A-003)
 controls: speech_codec_enabled; RecordInfo.frames, RecordInfo.frames_total, BlockInfo.frames
 model_version: 0.8.0
 
@@ -106,13 +106,13 @@ model_version: 0.8.0
 
 stage 9 decoder
 name: Speech decoder (CELP)
-description: Rebuilds the voice-band stream from the stored CELP frames.
+description: Rebuilds the voice-band stream from the stored CELP frames for playback.
 status: assumed
 path: playback
 confidence: low
 sources: S-002, S-008, S-009, S-010, S-011
 assumptions: A-004, A-040, A-041
-coverage: the device's own decoder and postfilter (A-041)
+coverage: the device's own decoder (frame length, look-ahead, codebooks and its postfilter unidentified; A-040, A-041)
 controls: speech_codec_enabled; Tap::AfterDecoder; PlayInfo.frames, PlayInfo.frame_index
 model_version: 0.8.0
 
