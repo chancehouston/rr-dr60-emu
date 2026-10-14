@@ -35,6 +35,7 @@ header = """
  *   rr_dr60_set_route, rr_dr60_get_route, rr_dr60_get_state, rr_dr60_memory_status,
  *   rr_dr60_recording_length, rr_dr60_export_len, rr_dr60_record_latency_samples,
  *   rr_dr60_playback_latency_samples, rr_dr60_drain_samples, rr_dr60_footprint_bytes,
+ *   rr_dr60_get_encoding, rr_dr60_speech_codec_info (constants; no handle; spec 008),
  *   and the stage manifest reads rr_dr60_manifest_stage_count, rr_dr60_manifest_header,
  *   rr_dr60_manifest_stage, rr_dr60_manifest_stage_source, rr_dr60_manifest_stage_assumption
  *   (spec 007; they need no handle and their strings are static for the life of the process).
@@ -47,7 +48,7 @@ header = """
  */"""
 
 [export]
-include = ["RrDr60Tap", "RrDr60VasMode", "RrDr60Route", "RrDr60State", "RrDr60StopReason", "RrDr60StageStatus", "RrDr60StagePath", "RrDr60Confidence"]
+include = ["RrDr60Tap", "RrDr60VasMode", "RrDr60Route", "RrDr60State", "RrDr60StopReason", "RrDr60StageStatus", "RrDr60StagePath", "RrDr60Confidence", "RrDr60Encoding"]
 exclude = ["rr_dr60__test_force_panic"]
 
 [enum]

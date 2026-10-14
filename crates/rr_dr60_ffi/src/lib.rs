@@ -89,7 +89,9 @@ pub enum RrDr60Status {
     UnsupportedFormVersion = 15,
     /// The bytes are truncated, altered or inconsistent (spec 006 FR-014).
     Damaged = 16,
-    /// `rr_dr60_reconfigure` with a capacity below what is stored; unchanged (spec 006 FR-019).
+    /// `rr_dr60_reconfigure` to a configuration the stored recordings do not fit: a capacity
+    /// below what is stored (spec 006 FR-019), or the other `speech_codec_enabled` while
+    /// recordings are present (one memory holds one encoding, spec 008 FR-012); unchanged.
     StoredExceedsCapacity = 17,
     /// The recording store could not be reserved (spec 006 FR-017).
     AllocationFailed = 18,
@@ -184,6 +186,9 @@ pub struct RrDr60BlockInfo {
     pub events: usize,
     /// The VAS is paused at the end of the block.
     pub paused: bool,
+    /// Speech-codec frames encoded in this block (spec 008 FR-008); 0 with the codec bypassed.
+    /// Appended in 0.8 (24 → 32 bytes on 64-bit targets).
+    pub frames: usize,
 }
 
 /// A VAS splice (drop mode) or muted region (mute mode), from `rr_dr60_process_with_events`
@@ -263,9 +268,15 @@ pub struct RrDr60RecordInfo {
     pub stopped: bool,
     /// An `RrDr60StopReason` value; `NONE` unless `stopped`.
     pub stop_reason: u32,
+    /// Speech-codec frames appended to the recording in this call (spec 008 FR-008); 0 with the
+    /// codec bypassed. Appended in 0.8.
+    pub frames: usize,
+    /// Speech-codec frames in the recording so far, this call's included (spec 008 FR-008).
+    /// Appended in 0.8 (the struct grows 24 → 40 bytes on 64-bit targets).
+    pub frames_total: u64,
 }
 
-/// The result of `rr_dr60_stop_recording` (spec 006 FR-005, FR-012).
+/// The result of `rr_dr60_stop_recording` (spec 006 FR-005, FR-012; spec 008 FR-013).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RrDr60StopOutcome {
@@ -276,11 +287,17 @@ pub struct RrDr60StopOutcome {
     pub kept: bool,
     /// Its number (1 to the count) when kept, else 0.
     pub number: u32,
-    /// Its length in device samples (÷ 6000 for seconds, A-026) when kept, else 0.
+    /// Its length in device samples (÷ 6000 for seconds, A-026) when kept, else 0; a whole
+    /// number of frames with the speech codec on (spec 008 FR-013).
     pub length_samples: u64,
+    /// Post-VAS device samples of silence produced after the last represented input sample
+    /// (spec 008 FR-013): the padding to the frame boundary plus the 60-sample look-ahead; 0
+    /// with the codec bypassed or when the recording was discarded. Appended in 0.8 (the struct
+    /// grows 40 → 64 bytes on 64-bit targets, `flush` included).
+    pub silence_fed_samples: u64,
 }
 
-/// The report of one `rr_dr60_play` call (spec 006 FR-006, FR-008).
+/// The report of one `rr_dr60_play` call (spec 006 FR-006, FR-008; spec 008 FR-008).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RrDr60PlayInfo {
@@ -288,7 +305,52 @@ pub struct RrDr60PlayInfo {
     pub produced: usize,
     /// The recording and its drain ended in this call; the engine is idle.
     pub finished: bool,
+    /// Speech-codec frames decoded in this call (spec 008 FR-008); 0 with the codec bypassed.
+    /// Appended in 0.8.
+    pub frames: usize,
+    /// The index (0-based) of the frame whose decoded samples are entering the playback path at
+    /// the end of the call, held at the last frame during the drain; 0 with the codec bypassed
+    /// (spec 008 FR-008). Appended in 0.8 (the struct grows 16 → 32 bytes on 64-bit targets).
+    pub frame_index: u64,
 }
+
+/// How the memory stores recordings, from `rr_dr60_get_encoding` (spec 008 FR-010, FR-012),
+/// passed as `uint32_t`; the values are the exported form's encoding field.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RrDr60Encoding {
+    /// Speech-codec frames (the codec on, the default).
+    Frames = 1,
+    /// Device-rate samples (the codec bypassed: not a device configuration).
+    Samples = 2,
+}
+
+/// The speech codec's constants, from `rr_dr60_speech_codec_info` (spec 008 FR-003, FR-008):
+/// the same layout as the Rust `SpeechCodecInfo` (24 bytes).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RrDr60SpeechCodecInfo {
+    /// Device samples per frame: 120 (20 ms; A-040).
+    pub frame_samples: u32,
+    /// Frame length in milliseconds: 20.
+    pub frame_ms: u32,
+    /// Bits per frame: 80 (50 frames/s × 80 = 4000 bit/s, S-002).
+    pub bits_per_frame: u32,
+    /// The codec's delay in device samples: 180 (30 ms), carried by the record path and the
+    /// one-pass processing (spec 008 FR-004).
+    pub delay_samples: u32,
+    /// The codec model version (major, minor, patch) the exported form carries (spec 008
+    /// FR-010, FR-011).
+    pub model_version: [u16; 3],
+    /// Reserved; 0.
+    pub reserved: u16,
+}
+
+// spec 008 contracts/c-api.md: the C mirror and the Rust struct share one layout.
+const _: () = assert!(size_of::<RrDr60SpeechCodecInfo>() == 24);
+const _: () = assert!(
+    size_of::<RrDr60SpeechCodecInfo>() == size_of::<rr_dr60::speech_codec::SpeechCodecInfo>()
+);
 
 /// The memory's figures, from `rr_dr60_memory_status` (spec 006 FR-011), in device samples:
 /// divide by 6000 for seconds (A-026); C has no seconds helpers.
@@ -672,6 +734,7 @@ fn c_info(info: BlockInfo) -> RrDr60BlockInfo {
         produced: info.produced,
         events: info.events,
         paused: info.paused,
+        frames: info.frames,
     }
 }
 
@@ -1088,6 +1151,8 @@ fn c_record_info(i: RecordInfo) -> RrDr60RecordInfo {
             Some(StopReason::MemoryFull) => RrDr60StopReason::MemoryFull as u32,
             _ => RrDr60StopReason::None as u32,
         },
+        frames: i.frames,
+        frames_total: i.frames_total,
     }
 }
 
@@ -1101,6 +1166,7 @@ fn c_outcome(o: StopOutcome) -> RrDr60StopOutcome {
         kept,
         number,
         length_samples,
+        silence_fed_samples: o.silence_fed_samples,
     }
 }
 
@@ -1108,6 +1174,8 @@ fn c_play_info(i: PlayInfo) -> RrDr60PlayInfo {
     RrDr60PlayInfo {
         produced: i.produced,
         finished: i.finished,
+        frames: i.frames,
+        frame_index: i.frame_index,
     }
 }
 
@@ -1156,6 +1224,12 @@ pub unsafe extern "C" fn rr_dr60_start_recording(pipeline: *mut RrDr60Pipeline) 
 /// (`out_info->stopped`, FR-012). `out_info` is always written when not NULL (zeros on an
 /// error). `events` may be NULL only when `events_capacity` is 0; `input` may be NULL only when
 /// `frames` is 0. Real-time safe.
+///
+/// With the speech codec on, `out_info.frames` and `frames_total` count the frames completed
+/// (spec 008 FR-008), and a VAS event reported in the block that fills the memory may name a
+/// position up to the look-ahead (60 device samples) past the stored length: the recording
+/// closes on the push that completes the frame filling the memory, and the look-ahead samples
+/// kept after that frame are not represented (spec 008 FR-014).
 ///
 /// Statuses: `NOT_RECORDING`.
 ///
@@ -1661,12 +1735,19 @@ pub unsafe extern "C" fn rr_dr60_export(
 }
 
 /// Adds a recording from the `len` bytes of an export (this or another engine of the same
-/// version, any host rate) and writes its number to `*out_number` when not NULL (spec 006
-/// FR-014). Allowed while idle or playing; refused while recording. Not real-time safe
-/// (validates the whole sequence; no allocation).
+/// version configured with the same encoding, any host rate) and writes its number to
+/// `*out_number` when not NULL (spec 006 FR-014; spec 008 FR-010, FR-012). Allowed while idle
+/// or playing; refused while recording. Not real-time safe (validates the whole sequence; no
+/// allocation).
 ///
-/// Statuses: `RECORDING_IN_PROGRESS`, `UNKNOWN_FORM`, `UNSUPPORTED_FORM_VERSION`, `DAMAGED`,
-/// `DOES_NOT_FIT` (the remaining time or slots); the memory is unchanged on every error.
+/// Statuses, in the form contract's order: `RECORDING_IN_PROGRESS`, `UNKNOWN_FORM`,
+/// `UNSUPPORTED_FORM_VERSION` (form version 1, the never-released samples form of 0.6 and 0.7,
+/// any later version, or non-zero flags; spec 008 FR-011), `DAMAGED`,
+/// `UNSUPPORTED_CODEC_MODEL_VERSION` (frames of a codec model version this release cannot
+/// decode; from the 1.0 release every released model version keeps its decoder),
+/// `ENCODING_DIFFERS` (frames into a bypassed engine or samples into a codec engine; checked
+/// before the fit), `DOES_NOT_FIT` (the remaining time or slots); the memory is unchanged on
+/// every error.
 ///
 /// # Safety
 ///
@@ -1773,8 +1854,9 @@ pub unsafe extern "C" fn rr_dr60_drain_samples(
 }
 
 /// Writes the bytes reserved for the recording store and its span table to `*out_bytes`
-/// (spec 006 FR-017, SC-007): about 86 MB at the default capacity, virtual until recordings
-/// are written. Real-time safe.
+/// (spec 006 FR-017, SC-007; spec 008 SC-007): about 1.8 MB at the default capacity with the
+/// speech codec on, about 86 MB with it bypassed, virtual until recordings are written.
+/// Real-time safe.
 ///
 /// # Safety
 ///
@@ -1795,6 +1877,58 @@ pub unsafe extern "C" fn rr_dr60_footprint_bytes(
     // SAFETY: out_bytes is non-null and writable (caller contract).
     unsafe { *out_bytes = p.inner.footprint_bytes() };
     RrDr60Status::Ok
+}
+
+/// Writes the speech codec's constants to `*out` (spec 008 FR-003, FR-008): frame samples 120,
+/// frame ms 20, bits per frame 80, delay samples 180, the codec model version. Needs no handle;
+/// real-time safe.
+///
+/// Statuses: `NULL_POINTER`.
+///
+/// # Safety
+///
+/// `out` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_speech_codec_info(
+    out: *mut RrDr60SpeechCodecInfo,
+) -> RrDr60Status {
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let i = rr_dr60::speech_codec::info();
+    // SAFETY: out is non-null and writable (caller contract).
+    unsafe {
+        *out = RrDr60SpeechCodecInfo {
+            frame_samples: i.frame_samples,
+            frame_ms: i.frame_ms,
+            bits_per_frame: i.bits_per_frame,
+            delay_samples: i.delay_samples,
+            model_version: i.model_version,
+            reserved: 0,
+        };
+    }
+    RrDr60Status::Ok
+}
+
+/// Writes the memory's encoding to `*out_encoding` (an `RrDr60Encoding` value; spec 008
+/// FR-012): frames with the speech codec on, device-rate samples with it bypassed. An import of
+/// the other encoding is `ENCODING_DIFFERS`. Real-time safe.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_encoding` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_get_encoding(
+    pipeline: *mut RrDr60Pipeline,
+    out_encoding: *mut u32,
+) -> RrDr60Status {
+    // SAFETY: the caller contract of this function is that of `read_u32`.
+    unsafe {
+        read_u32(pipeline, out_encoding, |p| match p.encoding() {
+            rr_dr60::Encoding::Samples => RrDr60Encoding::Samples as u32,
+            _ => RrDr60Encoding::Frames as u32,
+        })
+    }
 }
 
 /// The library version as a static NUL-terminated string, e.g. `"0.1.0"`. Never NULL; do not
@@ -2241,6 +2375,9 @@ mod tests {
         assert_eq!(offset_of!(RrDr60Settings, adc_clamp_enabled), 72);
         assert_eq!(offset_of!(RrDr60Settings, memory_capacity_s), 76);
         assert_eq!(offset_of!(RrDr60Settings, memory_max_recordings), 80);
+        // Spec 008 contracts/c-api.md: 88 → 96, the codec control at 88 behind a reserved word.
+        assert_eq!(offset_of!(RrDr60Settings, reserved_008), 84);
+        assert_eq!(offset_of!(RrDr60Settings, speech_codec_enabled), 88);
     }
 
     /// 005 T008 (FR-010, FR-015), restated by 006 T017: the 0.5 defaults, the reserved slots at
@@ -2450,6 +2587,13 @@ mod tests {
             ),
             (18, RrDr60Status::AllocationFailed, "AllocationFailed"),
             (19, RrDr60Status::BufferTooSmall, "BufferTooSmall"),
+            // Spec 008 contracts/c-api.md.
+            (21, RrDr60Status::EncodingDiffers, "EncodingDiffers"),
+            (
+                22,
+                RrDr60Status::UnsupportedCodecModelVersion,
+                "UnsupportedCodecModelVersion",
+            ),
         ];
         for (value, status, name) in statuses {
             assert_eq!(status as i32, value, "{name}");
@@ -2492,6 +2636,15 @@ mod tests {
                 Error::BufferTooSmall { needed: 40 },
                 RrDr60Status::BufferTooSmall,
             ),
+            (Error::EncodingDiffers, RrDr60Status::EncodingDiffers),
+            (
+                Error::UnsupportedCodecModelVersion {
+                    major: 0,
+                    minor: 7,
+                    patch: 0,
+                },
+                RrDr60Status::UnsupportedCodecModelVersion,
+            ),
         ];
         for (e, status) in errors {
             assert_eq!(
@@ -2517,15 +2670,29 @@ mod tests {
         assert_eq!(offset_of!(RrDr60RecordInfo, paused), 2 * w);
         assert_eq!(offset_of!(RrDr60RecordInfo, stopped), 2 * w + 1);
         assert_eq!(offset_of!(RrDr60RecordInfo, stop_reason), 2 * w + 4);
-        assert_eq!(size_of::<RrDr60RecordInfo>(), 2 * w + 8);
+        // Spec 008 contracts/c-api.md: the frame fields appended (64-bit figures asserted below).
+        assert_eq!(offset_of!(RrDr60RecordInfo, frames), 2 * w + 8);
         assert_eq!(offset_of!(RrDr60StopOutcome, flush), 0);
-        assert_eq!(offset_of!(RrDr60StopOutcome, kept), 2 * w + 8);
-        assert_eq!(offset_of!(RrDr60StopOutcome, number), 2 * w + 12);
-        assert_eq!(offset_of!(RrDr60StopOutcome, length_samples), 2 * w + 16);
-        assert_eq!(size_of::<RrDr60StopOutcome>(), 2 * w + 24);
         assert_eq!(offset_of!(RrDr60PlayInfo, produced), 0);
         assert_eq!(offset_of!(RrDr60PlayInfo, finished), w);
-        assert_eq!(size_of::<RrDr60PlayInfo>(), 2 * w);
+        assert_eq!(offset_of!(RrDr60PlayInfo, frames), 2 * w);
+        assert_eq!(offset_of!(RrDr60BlockInfo, frames), 3 * w);
+        #[cfg(target_pointer_width = "64")]
+        {
+            assert_eq!(size_of::<RrDr60BlockInfo>(), 32); // 24 → 32
+            assert_eq!(offset_of!(RrDr60RecordInfo, frames_total), 32);
+            assert_eq!(size_of::<RrDr60RecordInfo>(), 40); // 24 → 40
+            assert_eq!(offset_of!(RrDr60StopOutcome, kept), 40);
+            assert_eq!(offset_of!(RrDr60StopOutcome, number), 44);
+            assert_eq!(offset_of!(RrDr60StopOutcome, length_samples), 48);
+            assert_eq!(offset_of!(RrDr60StopOutcome, silence_fed_samples), 56);
+            assert_eq!(size_of::<RrDr60StopOutcome>(), 64); // 40 → 64
+            assert_eq!(offset_of!(RrDr60PlayInfo, frame_index), 24);
+            assert_eq!(size_of::<RrDr60PlayInfo>(), 32); // 16 → 32
+        }
+        assert_eq!(size_of::<RrDr60SpeechCodecInfo>(), 24);
+        assert_eq!(offset_of!(RrDr60SpeechCodecInfo, model_version), 16);
+        assert_eq!(offset_of!(RrDr60SpeechCodecInfo, reserved), 22);
         assert_eq!(offset_of!(RrDr60MemoryStatus, capacity_samples), 0);
         assert_eq!(offset_of!(RrDr60MemoryStatus, used_samples), 8);
         assert_eq!(offset_of!(RrDr60MemoryStatus, remaining_samples), 16);
@@ -2541,8 +2708,8 @@ mod tests {
         s.memory_capacity_s = 10;
         s.memory_max_recordings = 3;
         s.vas_enabled = false;
-        // Spec 008 T041: the frames byte form (version 2) lands with US2 and the C export of
-        // frames with US4; the 006 export and import rules are checked with the codec off.
+        // The samples encoding (spec 008 FR-012): the 006 export and import rules are checked
+        // with the codec off; `codec_handle` covers the frames encoding (008 T040).
         s.speech_codec_enabled = false;
         let mut handle: *mut RrDr60Pipeline = std::ptr::null_mut();
         // SAFETY: both pointers are valid for the call.
@@ -2582,17 +2749,22 @@ mod tests {
             paused: true,
             stopped: true,
             stop_reason: 9,
+            frames: 9,
+            frames_total: 9,
         };
         let mut rec = garbage;
         let mut play = RrDr60PlayInfo {
             produced: 9,
             finished: true,
+            frames: 9,
+            frame_index: 9,
         };
         let mut outcome = RrDr60StopOutcome {
             flush: garbage,
             kept: true,
             number: 9,
             length_samples: 9,
+            silence_fed_samples: 9,
         };
         // SAFETY: a NULL handle is allowed; the buffers are valid.
         unsafe {
@@ -2865,6 +3037,267 @@ mod tests {
                     .unwrap(),
                 rr_dr60::VERSION
             );
+        }
+    }
+
+    /// A 48 kHz handle with a 10 s memory, the VAS off, the speech codec on (the frames
+    /// encoding).
+    fn codec_handle() -> *mut RrDr60Pipeline {
+        let mut s = rr_dr60_settings_default(48_000);
+        s.memory_capacity_s = 10;
+        s.memory_max_recordings = 3;
+        s.vas_enabled = false;
+        assert!(s.speech_codec_enabled, "on by default (A-004)");
+        let mut handle: *mut RrDr60Pipeline = std::ptr::null_mut();
+        // SAFETY: both pointers are valid for the call.
+        assert_eq!(unsafe { rr_dr60_create(&s, &mut handle) }, RrDr60Status::Ok);
+        handle
+    }
+
+    /// Records 0.5 s of a ±0.125 square wave on `p`, stops, and returns the exported bytes
+    /// with the stop outcome.
+    fn record_export(p: *mut RrDr60Pipeline) -> (Vec<u8>, RrDr60StopOutcome) {
+        let x: Vec<f32> = (0..24_000)
+            .map(|i| if i % 48 < 24 { 0.125 } else { -0.125 })
+            .collect();
+        let mut info = RrDr60RecordInfo::default();
+        let mut outcome = RrDr60StopOutcome::default();
+        let mut len = 0usize;
+        let mut written = 0usize;
+        // SAFETY: live handle; valid buffers.
+        unsafe {
+            assert_eq!(rr_dr60_start_recording(p), RrDr60Status::Ok);
+            assert_eq!(
+                rr_dr60_record(p, x.as_ptr(), x.len(), &mut info, std::ptr::null_mut(), 0),
+                RrDr60Status::Ok
+            );
+            assert_eq!(
+                rr_dr60_stop_recording(p, &mut outcome, std::ptr::null_mut(), 0),
+                RrDr60Status::Ok
+            );
+            assert!(outcome.kept);
+            assert_eq!(
+                rr_dr60_export_len(p, outcome.number, &mut len),
+                RrDr60Status::Ok
+            );
+            let mut bytes = vec![0u8; len];
+            assert_eq!(
+                rr_dr60_export(p, outcome.number, bytes.as_mut_ptr(), len, &mut written),
+                RrDr60Status::Ok
+            );
+            assert_eq!(written, len);
+            (bytes, outcome)
+        }
+    }
+
+    /// CRC-32 (IEEE 802.3) as the form contract states it, for the test's re-formed mutants.
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut c = 0xFFFF_FFFFu32;
+        for &b in bytes {
+            c ^= u32::from(b);
+            for _ in 0..8 {
+                c = if c & 1 != 0 {
+                    (c >> 1) ^ 0xEDB8_8320
+                } else {
+                    c >> 1
+                };
+            }
+        }
+        !c
+    }
+
+    fn reformed(mut bytes: Vec<u8>) -> Vec<u8> {
+        let n = bytes.len();
+        let c = crc32(&bytes[..n - 4]);
+        bytes[n - 4..].copy_from_slice(&c.to_le_bytes());
+        bytes
+    }
+
+    /// 008 T040 (contracts/c-api.md): 96 bytes with the codec control at 88, default `true`;
+    /// a 0.7-layout `struct_size` of 88 is `STRUCT_SIZE`; the decoder tap is 4; the encoding
+    /// values are the form's.
+    #[test]
+    fn codec_settings_tap_and_encoding_values() {
+        let s = rr_dr60_settings_default(48_000);
+        assert_eq!(s.struct_size, 96);
+        assert!(s.speech_codec_enabled);
+        assert_eq!(s.reserved_008, 0);
+        let mut old = s;
+        old.struct_size = 88;
+        assert_eq!(
+            to_settings(&old),
+            Err((
+                RrDr60Status::InvalidArgument,
+                RrDr60SettingField::StructSize
+            ))
+        );
+        assert_eq!(RrDr60Tap::AfterDecoder as u32, 4);
+        let mut tap = s;
+        tap.tap = RrDr60Tap::AfterDecoder as u32;
+        assert_eq!(to_settings(&tap).unwrap().tap, rr_dr60::Tap::AfterDecoder);
+        assert_eq!(RrDr60Encoding::Frames as u32, 1);
+        assert_eq!(RrDr60Encoding::Samples as u32, 2);
+        assert_eq!(
+            RrDr60Encoding::Frames as u32,
+            rr_dr60::Encoding::Frames.form_code() as u32
+        );
+        assert_eq!(
+            RrDr60Encoding::Samples as u32,
+            rr_dr60::Encoding::Samples.form_code() as u32
+        );
+    }
+
+    /// 008 T040: `rr_dr60_speech_codec_info` equals `speech_codec::info()` field by field;
+    /// NULL is `NULL_POINTER`.
+    #[test]
+    fn speech_codec_info_matches_rust() {
+        let mut c = RrDr60SpeechCodecInfo::default();
+        // SAFETY: valid out pointer; NULL is the refused case.
+        unsafe {
+            assert_eq!(
+                rr_dr60_speech_codec_info(std::ptr::null_mut()),
+                RrDr60Status::NullPointer
+            );
+            assert_eq!(rr_dr60_speech_codec_info(&mut c), RrDr60Status::Ok);
+        }
+        let r = rr_dr60::speech_codec::info();
+        assert_eq!(c.frame_samples, r.frame_samples);
+        assert_eq!(c.frame_ms, r.frame_ms);
+        assert_eq!(c.bits_per_frame, r.bits_per_frame);
+        assert_eq!(c.delay_samples, r.delay_samples);
+        assert_eq!(c.model_version, r.model_version);
+        assert_eq!(c.reserved, 0);
+        assert_eq!(
+            (
+                c.frame_samples,
+                c.frame_ms,
+                c.bits_per_frame,
+                c.delay_samples
+            ),
+            (120, 20, 80, 180)
+        );
+        assert_eq!(c.model_version, [0, 8, 0]);
+    }
+
+    /// 008 T040: `rr_dr60_get_encoding` reads frames on the default and samples when bypassed;
+    /// NULL out is `NULL_POINTER`.
+    #[test]
+    fn get_encoding_on_both_configurations() {
+        let on = codec_handle();
+        let off = small_handle();
+        let mut e = 0u32;
+        // SAFETY: live handles; valid out pointer.
+        unsafe {
+            assert_eq!(rr_dr60_get_encoding(on, &mut e), RrDr60Status::Ok);
+            assert_eq!(e, RrDr60Encoding::Frames as u32);
+            assert_eq!(rr_dr60_get_encoding(off, &mut e), RrDr60Status::Ok);
+            assert_eq!(e, RrDr60Encoding::Samples as u32);
+            assert_eq!(
+                rr_dr60_get_encoding(on, std::ptr::null_mut()),
+                RrDr60Status::NullPointer
+            );
+            assert_eq!(
+                rr_dr60_get_encoding(std::ptr::null_mut(), &mut e),
+                RrDr60Status::NullPointer
+            );
+            rr_dr60_destroy(on);
+            rr_dr60_destroy(off);
+        }
+    }
+
+    /// 008 T040 (US4 scenarios 1 and 2): the frame fields through C (frames per block, the
+    /// total, the silence fed, the playback frames and index), the frames form (52 + 10K), and
+    /// the refusals: 15 for a version 1 sequence, 21 for the other encoding (both directions),
+    /// 22 for a wrong codec model version, `NULL_POINTER` for a NULL `bytes`.
+    #[test]
+    fn frames_through_c_and_the_new_import_statuses() {
+        let on = codec_handle();
+        let off = small_handle();
+        let (frames, outcome) = record_export(on);
+        let (samples, _) = record_export(off);
+        // The frame fields of the outcome and the form.
+        assert_eq!(outcome.length_samples % 120, 0);
+        let k = outcome.length_samples / 120;
+        assert_eq!(outcome.flush.frames_total, k);
+        assert!(outcome.silence_fed_samples >= 60 && outcome.silence_fed_samples < 180);
+        assert_eq!(frames.len(), 52 + 10 * k as usize);
+        assert_eq!(u16::from_le_bytes([frames[22], frames[23]]), 1, "frames");
+        assert_eq!(u16::from_le_bytes([samples[22], samples[23]]), 2, "samples");
+        // Playback reports the frames decoded and the index.
+        let mut buf = vec![0.0f32; 997];
+        let mut decoded = 0usize;
+        let last_index;
+        // SAFETY: live handle; valid buffers.
+        unsafe {
+            assert_eq!(rr_dr60_start_playback(on, 1), RrDr60Status::Ok);
+            loop {
+                let mut pi = RrDr60PlayInfo::default();
+                assert_eq!(
+                    rr_dr60_play(on, buf.as_mut_ptr(), buf.len(), &mut pi),
+                    RrDr60Status::Ok
+                );
+                decoded += pi.frames;
+                if pi.finished {
+                    last_index = pi.frame_index;
+                    break;
+                }
+            }
+        }
+        assert_eq!(decoded as u64, k);
+        assert_eq!(last_index, k - 1);
+        // Refusals.
+        let mut number = 0u32;
+        let mut v1 = frames[..8].to_vec();
+        v1.extend_from_slice(&1u16.to_le_bytes());
+        v1.extend_from_slice(&0u16.to_le_bytes());
+        v1.extend_from_slice(&6000u32.to_le_bytes());
+        v1.extend_from_slice(&[0u8; 6]);
+        v1.extend_from_slice(&0u16.to_le_bytes());
+        v1.extend_from_slice(&2u64.to_le_bytes());
+        v1.extend_from_slice(&0.5f32.to_le_bytes());
+        v1.extend_from_slice(&(-0.25f32).to_le_bytes());
+        v1.extend_from_slice(&[0u8; 4]);
+        let v1 = reformed(v1);
+        let mut model = frames.clone();
+        model[24..30].copy_from_slice(&[0, 0, 7, 0, 0, 0]);
+        let model = reformed(model);
+        // SAFETY: live handles; valid buffers and out pointer.
+        unsafe {
+            assert_eq!(
+                rr_dr60_import(off, v1.as_ptr(), v1.len(), &mut number),
+                RrDr60Status::UnsupportedFormVersion
+            );
+            assert_eq!(
+                rr_dr60_import(on, v1.as_ptr(), v1.len(), &mut number),
+                RrDr60Status::UnsupportedFormVersion
+            );
+            assert_eq!(
+                rr_dr60_import(off, frames.as_ptr(), frames.len(), &mut number),
+                RrDr60Status::EncodingDiffers
+            );
+            assert_eq!(
+                rr_dr60_import(on, samples.as_ptr(), samples.len(), &mut number),
+                RrDr60Status::EncodingDiffers
+            );
+            assert_eq!(
+                rr_dr60_import(on, model.as_ptr(), model.len(), &mut number),
+                RrDr60Status::UnsupportedCodecModelVersion
+            );
+            assert_eq!(
+                rr_dr60_import(on, std::ptr::null(), 0, &mut number),
+                RrDr60Status::NullPointer
+            );
+            assert_eq!(
+                rr_dr60_import(on, frames.as_ptr(), frames.len(), &mut number),
+                RrDr60Status::Ok
+            );
+            assert_eq!(number, 2);
+            let mut st = RrDr60MemoryStatus::default();
+            assert_eq!(rr_dr60_memory_status(on, &mut st), RrDr60Status::Ok);
+            assert_eq!(st.count, 2);
+            assert_eq!(st.used_samples, 2 * outcome.length_samples);
+            rr_dr60_destroy(on);
+            rr_dr60_destroy(off);
         }
     }
 }

@@ -24,8 +24,8 @@ Rules of spec 001's contract apply (opaque handle, status codes, caller buffers,
 | Struct | New fields (appended) | Size on 64-bit |
 |---|---|---|
 | `RrDr60BlockInfo` | `frames: usize` | 24 → 32 |
-| `RrDr60RecordInfo` | `frames: usize`, `frames_total: u64` | 32 → 48 |
-| `RrDr60StopOutcome` | `silence_fed_samples: u64` | +8 |
+| `RrDr60RecordInfo` | `frames: usize`, `frames_total: u64` | 24 → 40 (the plan's "32 → 48" miscounted the 0.6 size; corrected at T043) |
+| `RrDr60StopOutcome` | `silence_fed_samples: u64` | 40 → 64 (`flush` grows by 16, the new field adds 8) |
 | `RrDr60PlayInfo` | `frames: usize`, `frame_index: u64` | 16 → 32 |
 | `RrDr60SpeechCodecInfo` (new) | `frame_samples, frame_ms, bits_per_frame, delay_samples: u32; model_version[3]: u16; reserved: u16` | 24 |
 
@@ -36,7 +36,7 @@ Each layout is const-asserted against the Rust type.
 | Function | Contract |
 |---|---|
 | `RrDr60Status rr_dr60_speech_codec_info(RrDr60SpeechCodecInfo* out)` | handle-less; constants; `NULL` → `NULL_POINTER`; real-time safe |
-| `RrDr60Status rr_dr60_get_encoding(const RrDr60Pipeline* p, RrDr60Encoding* out)` | the engine's configured encoding; real-time safe |
+| `RrDr60Status rr_dr60_get_encoding(RrDr60Pipeline* p, uint32_t* out)` | the engine's configured encoding as an `RrDr60Encoding` value; takes the handle as every other read does (a mutable handle, the library's single-pointer convention); real-time safe |
 | existing record / play / stop / export / import | the new fields and statuses; `rr_dr60_import` returns 21 / 22 for the new refusals and 15 for a version 1 sequence |
 
 ## Smoke test (`tests/c/smoke.c`)

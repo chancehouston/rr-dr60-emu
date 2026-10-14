@@ -1,6 +1,7 @@
 /*
  * C smoke test for rr_dr60.h (001 tasks.md T038; spec 004 contracts/c-api.md, T029; spec 005
- * contracts/c-api.md › Smoke test additions, T032; spec 007 contracts/c-api.md, T028).
+ * contracts/c-api.md › Smoke test additions, T032; spec 007 contracts/c-api.md, T028; spec 008
+ * contracts/c-api.md › Smoke test, T042: the loop runs through the speech codec).
  * Build and run with crates/rr_dr60_ffi/tests/c/run_smoke.sh.
  */
 #include "rr_dr60.h"
@@ -16,9 +17,15 @@
 #define N (FS / 2)
 #define FS6 6000 /* the device rate (A-026): the rate conversion boundary is the identity */
 #define N6 (FS6 / 10)
-/* FNV-1a 64 of the Rust path's playback of the 006 smoke stimulus (49692 samples), pinned by
- * the harness's `ffi_parity::smoke_reference_hash_is_pinned` (US4 scenario 1). */
-#define RR_DR60_SMOKE_REFERENCE_HASH 0x81b812b9699dc614ULL
+/* The Rust path's reference for the smoke stimulus with the 0.8 default settings (the speech codec
+ * on), pinned by the harness's `ffi_parity::smoke_reference_hash_is_pinned` (spec 006 and 008 US4
+ * scenario 1; `smoke_reference.rs`): FNV-1a 64 of the playback (50404 samples) and of the
+ * recording's frame bytes (51 frames), the frame count and the stop's silence fed. */
+#define RR_DR60_SMOKE_REFERENCE_HASH 0xb4a975be33bc9c3fULL
+#define RR_DR60_SMOKE_PLAYBACK_SAMPLES 50404
+#define RR_DR60_SMOKE_FRAMES_HASH 0xdce56fb1d5fba901ULL
+#define RR_DR60_SMOKE_FRAMES 51
+#define RR_DR60_SMOKE_SILENCE_FED 149
 
 static int failures = 0;
 
@@ -128,6 +135,8 @@ int main(int argc, char **argv) {
   RrDr60Settings s = rr_dr60_settings_default(FS);
   CHECK(s.struct_size == sizeof(RrDr60Settings), "struct_size %u", s.struct_size);
   CHECK(s.struct_size == 96, "struct_size %u (must be 96 since 0.8, spec 008 contracts/c-api.md)", s.struct_size);
+  CHECK(s.speech_codec_enabled, "speech codec on by default (spec 008 FR-002, A-004)");
+  CHECK(s.reserved_008 == 0, "reserved_008 must default to 0");
   CHECK(s.memory_capacity_s == 3600, "default memory capacity %u s (S-001: 60 minutes)", s.memory_capacity_s);
   CHECK(s.memory_max_recordings == 99, "default recording count %u (S-001: 99 items)", s.memory_max_recordings);
   CHECK(s.tap == RR_DR60_TAP_AFTER_PLAYBACK, "default tap");
@@ -140,10 +149,12 @@ int main(int argc, char **argv) {
   CHECK(s.vas_enabled && s.vas_mode == RR_DR60_VAS_MODE_DROP, "VAS on, drop mode by default (spec 003, A-008)");
   CHECK(s.vas_threshold_dbfs == -40.0f, "default VAS threshold %g dBFS (A-022 revised by spec 005)",
         (double)s.vas_threshold_dbfs);
-  /* The spec 001 checks below run with the VAS bypassed (003 FR-020). The limiter stays on: below
-   * its knee it is the identity (spec 005 FR-003), so the 1 kHz -20 dBFS level check sees only
-   * the two codec templates. */
+  /* The spec 001 checks below run with the VAS bypassed (003 FR-020) and the speech codec bypassed
+   * (008 FR-021: the earlier specs' checks keep their meaning). The limiter stays on: below its
+   * knee it is the identity (spec 005 FR-003), so the 1 kHz -20 dBFS level check sees only the
+   * two codec templates. */
   s.vas_enabled = false;
+  s.speech_codec_enabled = false;
 
   RrDr60Pipeline *p = NULL;
   CHECK(rr_dr60_create(&s, &p) == RR_DR60_STATUS_OK && p != NULL, "create");
@@ -158,7 +169,10 @@ int main(int argc, char **argv) {
 
   uint32_t latency = 0;
   CHECK(rr_dr60_latency_samples(p, &latency) == RR_DR60_STATUS_OK, "latency");
-  CHECK(latency > 0 && latency <= FS / 50, "latency %u samples (must be <= 20 ms, 004 FR-004)", latency);
+  /* The 006 figure with the codec bypassed (004 FR-004: under 20 ms); the codec-on default's 1923
+   * (008 FR-004) is checked on the default handle below. */
+  CHECK(latency == 483, "latency %u samples (must be 483 with the codec bypassed, 006)", latency);
+  uint32_t latency_default = 0;
 
   /* Spec 004 FR-002, FR-017 (contracts/c-api.md): at the 6 kHz device rate the rate conversion
    * boundary is the identity, so with every stage bypassed the output equals the input sample
@@ -171,6 +185,7 @@ int main(int argc, char **argv) {
   s6.record_stage_enabled = false;
   s6.playback_stage_enabled = false;
   s6.adc_clamp_enabled = false; /* bypass_all bypasses the clamp too (spec 005 FR-008) */
+  s6.speech_codec_enabled = false; /* and the speech codec (spec 008 FR-021) */
   RrDr60Pipeline *p6 = NULL;
   CHECK(rr_dr60_create(&s6, &p6) == RR_DR60_STATUS_OK && p6 != NULL, "create at 6000 Hz");
   CHECK(rr_dr60_process(p6, in6, out6, N6, NULL) == RR_DR60_STATUS_OK, "process at 6000 Hz");
@@ -198,6 +213,7 @@ int main(int argc, char **argv) {
    * onset exceeds 1.0. */
   RrDr60Settings record_path = rr_dr60_settings_default(FS6);
   record_path.vas_enabled = false;
+  record_path.speech_codec_enabled = false; /* spec 005's check (008 FR-021) */
   record_path.tap = RR_DR60_TAP_AFTER_RECORD;
   CHECK(rr_dr60_reconfigure(p6, &record_path) == RR_DR60_STATUS_OK, "reconfigure to the record path at 6000 Hz");
   static float loud6[FS6], loud_out6[FS6];
@@ -257,6 +273,7 @@ int main(int argc, char **argv) {
   bypass.vas_enabled = false;
   bypass.record_stage_enabled = false;
   bypass.playback_stage_enabled = false;
+  bypass.speech_codec_enabled = false;
   CHECK(rr_dr60_reconfigure(p, &bypass) == RR_DR60_STATUS_OK, "reconfigure to bypass_all");
   CHECK(rr_dr60_latency_samples(p, &latency_after) == RR_DR60_STATUS_OK && latency_after < latency,
         "bypass_all latency %u should be below default %u", latency_after, latency);
@@ -264,6 +281,7 @@ int main(int argc, char **argv) {
   /* Spec 005 limiter settings (FR-010, FR-015; contracts/c-api.md). */
   RrDr60Settings agc = rr_dr60_settings_default(FS);
   agc.vas_enabled = false; /* the spec 005 `default_agc` configuration (spec 003 FR-020) */
+  agc.speech_codec_enabled = false; /* spec 008 FR-021 */
   agc.agc_release_ms = 3000.0f;
   agc.tap = RR_DR60_TAP_AFTER_AGC;
   RrDr60SettingField field = RR_DR60_SETTING_FIELD_TAP;
@@ -307,6 +325,7 @@ int main(int argc, char **argv) {
   vas.record_stage_enabled = false;
   vas.playback_stage_enabled = false;
   vas.adc_clamp_enabled = false;
+  vas.speech_codec_enabled = false; /* spec 008 FR-021 */
   vas.tap = RR_DR60_TAP_AFTER_VAS;
   CHECK(rr_dr60_settings_validate(&vas, &field) == RR_DR60_STATUS_OK && field == RR_DR60_SETTING_FIELD_NONE,
         "validate(tap after VAS)");
@@ -322,7 +341,8 @@ int main(int argc, char **argv) {
   CHECK(rr_dr60_max_events(p, 7 * FS, &capacity) == RR_DR60_STATUS_OK && capacity >= 1, "max_events");
   RrDr60VasEvent *events = (RrDr60VasEvent *)malloc(capacity * sizeof *events);
   CHECK(events != NULL, "malloc");
-  RrDr60BlockInfo info = {0, 0, false};
+  RrDr60BlockInfo info;
+  memset(&info, 0, sizeof info);
   CHECK(rr_dr60_process_with_events(p, vin, vout, 7 * FS, &info, events, capacity) == RR_DR60_STATUS_OK,
         "process_with_events");
   /* Kept: burst + hang time (1 s) + burst minus onset (20 ms), minus the end-of-stream latency. */
@@ -363,6 +383,10 @@ int main(int argc, char **argv) {
     CHECK(rr_dr60_settings_validate(&old, &f) == RR_DR60_STATUS_INVALID_ARGUMENT &&
               f == RR_DR60_SETTING_FIELD_STRUCT_SIZE,
           "validate(struct_size = 80) names STRUCT_SIZE (006)");
+    old.struct_size = 88; /* the 0.6 / 0.7 layout (spec 008 contracts/c-api.md) */
+    CHECK(rr_dr60_settings_validate(&old, &f) == RR_DR60_STATUS_INVALID_ARGUMENT &&
+              f == RR_DR60_SETTING_FIELD_STRUCT_SIZE,
+          "validate(struct_size = 88) names STRUCT_SIZE (008)");
     RrDr60Settings zero = rr_dr60_settings_default(FS);
     zero.memory_capacity_s = 0;
     CHECK(rr_dr60_settings_validate(&zero, &f) == RR_DR60_STATUS_INVALID_SETTING &&
@@ -376,6 +400,10 @@ int main(int argc, char **argv) {
     RrDr60Settings d = rr_dr60_settings_default(FS);
     RrDr60Pipeline *a = NULL;
     CHECK(rr_dr60_create(&d, &a) == RR_DR60_STATUS_OK && a != NULL, "create (006 loop)");
+    /* Spec 008 FR-004: with the codec on the default one-pass latency is 1923 host samples at
+     * 48 kHz (483 + 1440, 40.06 ms). */
+    CHECK(rr_dr60_latency_samples(a, &latency_default) == RR_DR60_STATUS_OK && latency_default == 1923,
+          "default latency %u samples (must be 1923 with the codec on, 008 FR-004)", latency_default);
     RrDr60EngineState st;
     memset(&st, 0xEE, sizeof st);
     CHECK(rr_dr60_get_state(a, &st) == RR_DR60_STATUS_OK && st.state == RR_DR60_STATE_IDLE &&
@@ -406,20 +434,30 @@ int main(int argc, char **argv) {
     memset(&so, 0xEE, sizeof so);
     CHECK(rr_dr60_stop_recording(a, &so, ev, cap) == RR_DR60_STATUS_OK, "stop_recording");
     stored += so.flush.stored;
-    CHECK(so.kept && so.number == 1 && so.length_samples == stored && stored >= 6000,
-          "kept number %u, length %llu, stored %zu", so.number, (unsigned long long)so.length_samples, stored);
+    /* Spec 008 FR-013: a whole number of frames; the kept samples run to the last frame's
+     * look-ahead (length + 60); the frame count and the silence fed are the Rust path's. */
+    CHECK(so.kept && so.number == 1 && so.length_samples % 120 == 0 &&
+              so.length_samples == so.flush.frames_total * 120 && stored == so.length_samples + 60,
+          "kept number %u, length %llu, frames %llu, stored %zu", so.number, (unsigned long long)so.length_samples,
+          (unsigned long long)so.flush.frames_total, stored);
+    CHECK(so.flush.frames_total == RR_DR60_SMOKE_FRAMES && so.silence_fed_samples == RR_DR60_SMOKE_SILENCE_FED,
+          "frames %llu, silence fed %llu (Rust: %d, %d)", (unsigned long long)so.flush.frames_total,
+          (unsigned long long)so.silence_fed_samples, RR_DR60_SMOKE_FRAMES, RR_DR60_SMOKE_SILENCE_FED);
     CHECK(nevents == 0, "a continuous tone has no VAS events (%zu)", nevents);
     free(ev);
     CHECK(rr_dr60_get_state(a, &st) == RR_DR60_STATUS_OK && st.state == RR_DR60_STATE_IDLE && !st.speaker_muted,
           "idle after stop");
-    CHECK(rr_dr60_memory_status(a, &ms) == RR_DR60_STATUS_OK && ms.count == 1 && ms.used_samples == stored,
+    CHECK(rr_dr60_memory_status(a, &ms) == RR_DR60_STATUS_OK && ms.count == 1 && ms.used_samples == so.length_samples,
           "memory count 1, used %llu", (unsigned long long)ms.used_samples);
     uint64_t len_samples = 0;
-    CHECK(rr_dr60_recording_length(a, 1, &len_samples) == RR_DR60_STATUS_OK && len_samples == stored, "recording_length");
+    CHECK(rr_dr60_recording_length(a, 1, &len_samples) == RR_DR60_STATUS_OK && len_samples == so.length_samples,
+          "recording_length");
+    uint32_t enc = 0;
+    CHECK(rr_dr60_get_encoding(a, &enc) == RR_DR60_STATUS_OK && enc == RR_DR60_ENCODING_FRAMES, "encoding %u", enc);
     size_t len = 0, written = 0;
-    /* TODO(008 T044): form version 2 with the codec on is 52 + 10 * frames (spec 008 FR-010); this
-     * check and the 20 ms latency check fail until Phase 5 rewrites the smoke loop. */
-    CHECK(rr_dr60_export_len(a, 1, &len) == RR_DR60_STATUS_OK && len == 36 + 4 * stored, "export_len %zu", len);
+    /* Form version 2 (spec 008 FR-010): 52 + 10 bytes per frame. */
+    CHECK(rr_dr60_export_len(a, 1, &len) == RR_DR60_STATUS_OK && len == 52 + 10 * (size_t)so.flush.frames_total,
+          "export_len %zu", len);
     uint8_t small[10];
     memset(small, 0xAA, sizeof small);
     CHECK(rr_dr60_export(a, 1, small, sizeof small, &written) == RR_DR60_STATUS_BUFFER_TOO_SMALL && written == len,
@@ -431,6 +469,33 @@ int main(int argc, char **argv) {
     CHECK(bytes != NULL, "malloc");
     CHECK(rr_dr60_export(a, 1, bytes, len, &written) == RR_DR60_STATUS_OK && written == len, "export");
     CHECK(memcmp(bytes, "RRDR60RC", 8) == 0, "magic");
+    CHECK(bytes[8] == 2 && bytes[9] == 0 && bytes[22] == 1 && bytes[23] == 0, "form version 2, encoding frames");
+    /* The frame bytes (the form's units, 10 per frame) hash to the Rust path's (US4 scenario 1). */
+    {
+      uint64_t fh = 0xcbf29ce484222325ULL;
+      for (size_t i = 48; i < len - 4; i++) {
+        fh ^= bytes[i];
+        fh *= 0x00000100000001b3ULL;
+      }
+      CHECK(fh == RR_DR60_SMOKE_FRAMES_HASH, "frame bytes hash %016llx differs from the Rust path's %016llx",
+            (unsigned long long)fh, (unsigned long long)RR_DR60_SMOKE_FRAMES_HASH);
+    }
+    /* A bypassed-codec handle (the samples encoding, not a device configuration) refuses the
+     * frames with ENCODING_DIFFERS (spec 008 FR-012). */
+    {
+      RrDr60Settings byp = d;
+      byp.speech_codec_enabled = false;
+      RrDr60Pipeline *bp = NULL;
+      uint32_t n = 0, benc = 0;
+      CHECK(rr_dr60_create(&byp, &bp) == RR_DR60_STATUS_OK && bp != NULL, "create bypassed handle");
+      CHECK(rr_dr60_get_encoding(bp, &benc) == RR_DR60_STATUS_OK && benc == RR_DR60_ENCODING_SAMPLES, "bypassed encoding %u", benc);
+      CHECK(rr_dr60_import(bp, bytes, len, &n) == RR_DR60_STATUS_ENCODING_DIFFERS, "frames into a bypassed handle: 21");
+      size_t bf = 0, af = 0;
+      CHECK(rr_dr60_footprint_bytes(bp, &bf) == RR_DR60_STATUS_OK && rr_dr60_footprint_bytes(a, &af) == RR_DR60_STATUS_OK &&
+                af == 1801600 && bf == 86401600,
+            "footprints %zu (codec on) / %zu (bypassed)", af, bf);
+      rr_dr60_destroy(bp);
+    }
 
     RrDr60Pipeline *b = NULL;
     CHECK(rr_dr60_create(&d, &b) == RR_DR60_STATUS_OK && b != NULL, "create second handle");
@@ -452,17 +517,24 @@ int main(int argc, char **argv) {
       CHECK(rr_dr60_get_state(handles[h], &st) == RR_DR60_STATUS_OK && st.state == RR_DR60_STATE_PLAYING &&
                 st.current_recording == 1 && !st.speaker_muted,
             "playing state %d", h);
+      uint64_t decoded = 0, last_index = 0;
       for (;;) {
         RrDr60PlayInfo pi;
         CHECK(*counts[h] + 480 <= 8 * (size_t)FS, "playback longer than expected");
         CHECK(rr_dr60_play(handles[h], outs[h] + *counts[h], 480, &pi) == RR_DR60_STATUS_OK, "play %d", h);
         *counts[h] += pi.produced;
+        decoded += pi.frames;
+        last_index = pi.frame_index;
         if (pi.finished) break;
       }
+      CHECK(decoded == RR_DR60_SMOKE_FRAMES && last_index == RR_DR60_SMOKE_FRAMES - 1,
+            "playback %d decoded %llu frames, last index %llu (008 FR-008)", h, (unsigned long long)decoded,
+            (unsigned long long)last_index);
       CHECK(rr_dr60_get_state(handles[h], &st) == RR_DR60_STATUS_OK && st.state == RR_DR60_STATE_IDLE,
             "idle after finished %d", h);
     }
     CHECK(na == nb && memcmp(pa, pb, na * sizeof(float)) == 0, "imported playback differs (%zu vs %zu samples)", na, nb);
+    CHECK(na == RR_DR60_SMOKE_PLAYBACK_SAMPLES, "playback %zu samples (Rust: %d)", na, RR_DR60_SMOKE_PLAYBACK_SAMPLES);
     uint64_t hash = 0xcbf29ce484222325ULL;
     for (size_t i = 0; i < na; i++) {
       uint8_t le[4];
@@ -483,8 +555,9 @@ int main(int argc, char **argv) {
     uint32_t rl = 0, pl = 0, dr = 0;
     CHECK(rr_dr60_record_latency_samples(a, &rl) == RR_DR60_STATUS_OK &&
               rr_dr60_playback_latency_samples(a, &pl) == RR_DR60_STATUS_OK &&
-              rr_dr60_drain_samples(a, &dr) == RR_DR60_STATUS_OK && rl + pl >= latency - 1 && rl + pl <= latency + 1,
-          "latencies %u + %u vs one-pass %u, drain %u (006 FR-016)", rl, pl, latency, dr);
+              rr_dr60_drain_samples(a, &dr) == RR_DR60_STATUS_OK && rl + pl >= latency_default - 1 &&
+              rl + pl <= latency_default + 1,
+          "latencies %u + %u vs one-pass %u, drain %u (006 FR-016; 008 FR-004)", rl, pl, latency_default, dr);
     CHECK(rr_dr60_erase_all(a) == RR_DR60_STATUS_OK && rr_dr60_memory_status(a, &ms) == RR_DR60_STATUS_OK &&
               ms.count == 0 && ms.used_samples == 0,
           "erase_all -> count 0");
@@ -511,7 +584,12 @@ int main(int argc, char **argv) {
         }
       }
     }
-    CHECK(full && total == 6000, "memory-full stop at %zu samples (must be 6000)", total);
+    /* Spec 008 FR-013: the 50th frame is appended when the kept count reaches 6000 + the 60-sample
+     * look-ahead; the recording's length is the 50 frames. */
+    CHECK(full && total == 6060, "memory-full stop at %zu kept samples (must be 6060)", total);
+    uint64_t full_len = 0;
+    CHECK(rr_dr60_recording_length(c, 1, &full_len) == RR_DR60_STATUS_OK && full_len == 6000,
+          "memory-full recording length %llu (must be 6000)", (unsigned long long)full_len);
     CHECK(rr_dr60_stop_recording(c, &so, NULL, 0) == RR_DR60_STATUS_NOT_RECORDING, "stop after a memory-full stop");
     CHECK(rr_dr60_start_recording(c) == RR_DR60_STATUS_MEMORY_FULL, "start when full");
     CHECK(rr_dr60_record(c, sq, 480, NULL, NULL, 0) == RR_DR60_STATUS_NOT_RECORDING, "record while idle");
@@ -557,10 +635,24 @@ int main(int argc, char **argv) {
     }
   }
 
+  /* Spec 008 FR-003 (contracts/c-api.md): the codec's constants, handle-less. */
+  RrDr60SpeechCodecInfo ci;
+  memset(&ci, 0xEE, sizeof ci);
+  CHECK(rr_dr60_speech_codec_info(NULL) == RR_DR60_STATUS_NULL_POINTER, "speech_codec_info(NULL)");
+  CHECK(rr_dr60_speech_codec_info(&ci) == RR_DR60_STATUS_OK && ci.frame_samples == 120 && ci.frame_ms == 20 &&
+            ci.bits_per_frame == 80 && ci.delay_samples == 180 && ci.model_version[0] == 0 &&
+            ci.model_version[1] == 8 && ci.model_version[2] == 0 && ci.reserved == 0,
+        "speech_codec_info: %u samples, %u ms, %u bits, delay %u, model %u.%u.%u", ci.frame_samples, ci.frame_ms,
+        ci.bits_per_frame, ci.delay_samples, ci.model_version[0], ci.model_version[1], ci.model_version[2]);
+  CHECK(sizeof ci == 24, "RrDr60SpeechCodecInfo is %zu bytes (must be 24)", sizeof ci);
+  printf("speech codec: %u samples/frame (%u ms), %u bits/frame, delay %u samples, model %u.%u.%u\n", ci.frame_samples,
+         ci.frame_ms, ci.bits_per_frame, ci.delay_samples, ci.model_version[0], ci.model_version[1], ci.model_version[2]);
+
   if (failures) {
     fprintf(stderr, "smoke: %d failure(s)\n", failures);
     return 1;
   }
-  printf("smoke: OK (rr_dr60 %s, latency %u samples at %d Hz)\n", rr_dr60_version_string(), latency, FS);
+  printf("smoke: OK (rr_dr60 %s, latency %u samples at %d Hz, %u frames/s)\n", rr_dr60_version_string(), latency_default,
+         FS, FS6 / ci.frame_samples);
   return 0;
 }
