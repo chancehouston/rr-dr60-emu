@@ -2,8 +2,9 @@
 //! R-01: the limiter runs at the host rate, before the rate conversion; spec 006 research R-01:
 //! the one-pass is a record path feeding a playback path).
 
+use crate::codec::{self, SpeechDecoder, SpeechEncoder};
 use crate::error::Error;
-use crate::memory::Memory;
+use crate::memory::{Encoding, Memory};
 use crate::paths::{self, PlaybackPath, RecordPath};
 use crate::rate::RatePlan;
 use crate::settings::{DEVICE_RATE_HZ, Route, Settings, Tap};
@@ -59,9 +60,9 @@ use crate::validate::validate;
 /// [`start_playback`](Self::start_playback), [`play`](Self::play) per block until
 /// `finished` (the playback drains to settled). Record-then-play is bit-identical to the
 /// one-pass processing of the same input (FR-007), and the one-pass calls stay available
-/// while the engine is idle. The stored form is the engine's device-rate 32-bit samples in
-/// this version (it will become encoded frames when the codec is modeled, A-004); the host
-/// never parses it, it exports and imports it as opaque bytes.
+/// while the engine is idle. The stored unit is the speech codec's 10-byte frame (spec 008;
+/// the engine's device-rate 32-bit samples with the codec bypassed, [`encoding`](Self::encoding));
+/// the host never parses the exported form, it exports and imports it as opaque bytes.
 ///
 /// # Real-time use
 ///
@@ -136,6 +137,12 @@ pub struct Pipeline {
     pub(crate) route: Route,
     /// The rate plan's `(l, m)`: `m / l` host samples per device sample.
     pub(crate) plan_l_m: (u64, u64),
+    /// The recorder's speech encoder (stage 7; spec 008 research R-06), `None` when the codec
+    /// is bypassed; reset at every `start_recording`.
+    pub(crate) encoder: Option<SpeechEncoder>,
+    /// The player's speech decoder (stage 9), `None` when bypassed; reset at every
+    /// `start_playback`.
+    pub(crate) decoder: Option<SpeechDecoder>,
 }
 
 // Contract (contracts/rust-api.md): `Pipeline` is Send + Sync. Fails to compile if a future
@@ -160,6 +167,9 @@ pub struct BlockInfo {
     pub events: usize,
     /// The VAS is paused at the end of the block.
     pub paused: bool,
+    /// Speech-codec frames encoded in this block (spec 008 FR-008); 0 with the codec bypassed
+    /// or at a tap before it.
+    pub frames: usize,
 }
 
 /// A VAS splice (drop mode) or muted region (mute mode) (spec 003 FR-005).
@@ -180,12 +190,85 @@ pub struct VasEvent {
     pub input_length: u64,
 }
 
+/// The speech codec in the one-pass stream (spec 008 research R-06): the encoder, the decoder
+/// and a delay line that makes the codec's delay exactly 180 kept samples (`DELAY_SAMPLES`), a
+/// whole number of host samples at every rate, so record-then-play stays bit-identical to the
+/// one-pass (FR-009). A frame's 120 decoded samples enter the line when the encoder emits it
+/// (on kept sample 120(k+1) + 59); one sample leaves per kept sample, 0.0 for the first 180.
+#[derive(Clone, Debug)]
+struct OnePassCodec {
+    enc: SpeechEncoder,
+    dec: SpeechDecoder,
+    /// The ring: at most 121 samples wait at any time (research R-06), so 180 slots suffice.
+    ring: [f32; CODEC_RING],
+    read: usize,
+    write: usize,
+    len: usize,
+    /// Kept samples seen while the line fills (0 … 180).
+    filling: u32,
+    /// The decoder's output buffer.
+    decoded: [f32; codec::FRAME_SAMPLES as usize],
+}
+
+/// The delay line's length: the codec's delay.
+const CODEC_RING: usize = codec::DELAY_SAMPLES as usize;
+
+impl OnePassCodec {
+    fn new() -> Self {
+        Self {
+            enc: SpeechEncoder::new(),
+            dec: SpeechDecoder::new(),
+            ring: [0.0; CODEC_RING],
+            read: 0,
+            write: 0,
+            len: 0,
+            filling: 0,
+            decoded: [0.0; codec::FRAME_SAMPLES as usize],
+        }
+    }
+
+    fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    /// One kept post-VAS sample in, the delayed decoded sample out; counts the frame it
+    /// completes in `frames`.
+    #[inline]
+    fn step(&mut self, kept: f32, frames: &mut usize) -> f32 {
+        if let Some(frame) = self.enc.push(kept) {
+            *frames += 1;
+            self.dec.decode(&frame, &mut self.decoded);
+            for &v in &self.decoded {
+                debug_assert!(self.len < CODEC_RING, "the delay line holds at most 121");
+                self.ring[self.write] = v;
+                self.write = (self.write + 1) % CODEC_RING;
+                self.len += 1;
+            }
+        }
+        if self.filling < codec::DELAY_SAMPLES {
+            self.filling += 1;
+            return 0.0;
+        }
+        debug_assert!(
+            self.len > 0,
+            "a sample is due at every kept sample after the delay"
+        );
+        let v = self.ring[self.read];
+        self.read = (self.read + 1) % CODEC_RING;
+        self.len = self.len.saturating_sub(1);
+        v
+    }
+}
+
 /// The one-pass stream: a record path feeding a playback path sample by sample (spec 006
 /// research R-01). Both honour the tap; the counters live in the record path.
 #[derive(Clone, Debug)]
 pub(crate) struct OnePass {
     pub(crate) rec: RecordPath,
     pub(crate) play: PlaybackPath,
+    /// The speech codec between the two paths (spec 008 FR-002, FR-015): present when it is on
+    /// and the tap is at the decoder or after it.
+    codec: Option<OnePassCodec>,
     /// The output is the limiter's, at the host rate: nothing after it runs (spec 005 FR-001).
     tap_after_agc: bool,
     /// Test-only: `false` runs the pre-0.6 un-narrowed route, so `narrowing_delta` can measure
@@ -196,8 +279,10 @@ pub(crate) struct OnePass {
 
 impl OnePass {
     fn new(settings: &Settings, plan: &RatePlan) -> Self {
+        let rec = RecordPath::new(settings, plan, true, false);
         Self {
-            rec: RecordPath::new(settings, plan, true, false),
+            codec: rec.codec_runs().then(OnePassCodec::new),
+            rec,
             play: PlaybackPath::new(settings, plan, true),
             tap_after_agc: settings.tap == Tap::AfterAgc,
             #[cfg(any(test, feature = "__test-hooks"))]
@@ -206,10 +291,11 @@ impl OnePass {
     }
 
     /// One host sample through the engine (data-model.md steps 1–3; spec 005 data-model.md ›
-    /// Pipeline order and taps). Returns the host sample emitted at this step, if any (spec 003
-    /// research R-05).
+    /// Pipeline order and taps; spec 008 research R-06: the codec between the two paths).
+    /// Returns the host sample emitted at this step, if any (spec 003 research R-05), and
+    /// counts a completed speech frame in `frames`.
     #[inline]
-    fn tick(&mut self, x: f32) -> Option<f32> {
+    fn tick(&mut self, x: f32, frames: &mut usize) -> Option<f32> {
         if self.tap_after_agc {
             // The limiter's output sample for sample: no conversion, no chain, no events
             // (spec 005 FR-001).
@@ -224,7 +310,11 @@ impl OnePass {
         }
         // No let-chains: MSRV 1.85 (001 R-01).
         if let Some(kept) = self.rec.push(x) {
-            self.play.push_device(kept);
+            let d = match &mut self.codec {
+                Some(c) => c.step(kept, frames),
+                None => kept,
+            };
+            self.play.push_device(d);
         }
         self.play.try_next_host()
     }
@@ -232,6 +322,9 @@ impl OnePass {
     fn reset(&mut self) {
         self.rec.reset();
         self.play.reset();
+        if let Some(c) = &mut self.codec {
+            c.reset();
+        }
     }
 }
 
@@ -249,7 +342,8 @@ impl Pipeline {
     pub fn new(settings: Settings) -> Result<Self, Error> {
         validate(&settings)?;
         let plan = RatePlan::for_host(settings.host_rate_hz)?;
-        let memory = Memory::new(&settings.memory)?;
+        // Spec 008 FR-012: the codec setting fixes the memory's encoding.
+        let memory = Memory::new(&settings.memory, Encoding::for_settings(&settings))?;
         Ok(Self::with_memory(settings, &plan, memory, Route::default()))
     }
 
@@ -269,6 +363,8 @@ impl Pipeline {
             transport: Transport::default(),
             route,
             plan_l_m: paths::l_m(plan),
+            encoder: settings.speech_codec_enabled.then(SpeechEncoder::new),
+            decoder: settings.speech_codec_enabled.then(SpeechDecoder::new),
         }
     }
 
@@ -354,6 +450,7 @@ impl Pipeline {
             produced: 0,
             events: 0,
             paused: self.one_pass.rec.paused(),
+            frames: 0,
         }
     }
 
@@ -376,13 +473,13 @@ impl Pipeline {
         out: &mut [f32],
         events: &mut [VasEvent],
     ) -> BlockInfo {
-        let (mut produced, mut count) = (0, 0);
+        let (mut produced, mut count, mut frames) = (0, 0, 0);
         for i in 0..out.len() {
             let x = match input {
                 Some(input) => input[i],
                 None => out[i],
             };
-            if let Some(y) = self.one_pass.tick(x) {
+            if let Some(y) = self.one_pass.tick(x, &mut frames) {
                 out[produced] = y;
                 produced += 1;
             }
@@ -397,16 +494,31 @@ impl Pipeline {
             produced,
             events: count,
             paused: self.one_pass.rec.paused(),
+            frames,
         }
     }
 
     /// Fixed latency of the current configuration, in host-rate samples (FR-012).
     ///
     /// This is the rate conversion's delay plus the voice-band stages' group delay at 1 kHz,
-    /// rounded to the nearest sample (research.md R-10). The limiter adds none, and at the
-    /// "after AGC" tap the latency is 0 (spec 005 FR-001).
+    /// rounded to the nearest sample (research.md R-10), plus the speech codec's delay of 180
+    /// device samples when it runs (spec 008 FR-004: 1440 host samples at 48 kHz, so 1923 in
+    /// all). The limiter adds none, and at the "after AGC" tap the latency is 0 (spec 005
+    /// FR-001).
     pub fn latency_samples(&self) -> u32 {
         self.latency
+    }
+
+    /// The memory's encoding (spec 008 FR-012): speech-codec frames with the codec on,
+    /// device-rate samples with it bypassed. Real-time safe.
+    pub fn encoding(&self) -> Encoding {
+        self.memory.encoding()
+    }
+
+    /// The speech codec's constants (spec 008 FR-003): the same as
+    /// [`speech_codec::info`](crate::speech_codec::info). Real-time safe.
+    pub fn speech_codec_info(&self) -> codec::SpeechCodecInfo {
+        codec::info()
     }
 
     /// Returns the pipeline to idle and to its freshly created path state, without allocating
@@ -438,21 +550,26 @@ impl Pipeline {
     /// idle; [`Error::UnsupportedHostRate`] if `settings.host_rate_hz` is not supported;
     /// [`Error::InvalidSetting`] if an AGC, VAS or memory setting is invalid (spec 002 FR-011,
     /// spec 003 FR-012, spec 006 FR-010); [`Error::StoredExceedsCapacity`] when the stored
-    /// recordings or their count would not fit the new capacity; [`Error::AllocationFailed`]
-    /// when a new store cannot be reserved.
+    /// recordings do not fit the new configuration: their time or count exceeds the new
+    /// capacity, or the speech-codec setting changes while recordings are present (one memory
+    /// holds one encoding, spec 008 FR-012; erase first); [`Error::AllocationFailed`] when a new
+    /// store cannot be reserved.
     pub fn reconfigure(&mut self, settings: Settings) -> Result<(), Error> {
         self.refuse_if_active()?;
         validate(&settings)?;
-        if !self.memory.fits(&settings.memory) {
+        // Spec 008 FR-012: a change of the codec setting with recordings present does not fit
+        // (one memory holds one encoding); with an empty memory the store is re-reserved.
+        let encoding = Encoding::for_settings(&settings);
+        if !self.memory.fits(&settings.memory, encoding) {
             return Err(Error::StoredExceedsCapacity);
         }
         let plan = RatePlan::for_host(settings.host_rate_hz)?;
-        let memory = if self.memory.same_capacity(&settings.memory) {
+        let memory = if self.memory.same_capacity(&settings.memory, encoding) {
             // Kept by move (research R-03): no second reservation and no copy. Nothing below
             // can fail, so the pipeline is never left without its store.
             core::mem::replace(&mut self.memory, Memory::empty())
         } else {
-            self.memory.copied_to(&settings.memory)?
+            self.memory.copied_to(&settings.memory, encoding)?
         };
         *self = Self::with_memory(settings, &plan, memory, self.route);
         Ok(())
@@ -525,6 +642,36 @@ impl Pipeline {
         p.one_pass.narrow = enabled;
         Ok(p)
     }
+
+    /// The one-pass codec delay line's fill, or `None` with the codec bypassed (spec 008
+    /// research R-06).
+    pub(crate) fn codec_fifo_fill(&self) -> Option<usize> {
+        self.one_pass.codec.as_ref().map(|c| c.len)
+    }
+
+    /// The stored frame bytes of recording `number` (spec 008 SC-008; an empty slice for a
+    /// samples memory or a bad number).
+    pub(crate) fn stored_frames(&self, number: u32) -> &[u8] {
+        match (self.memory.encoding(), self.memory.span(number)) {
+            (Encoding::Frames, Some(span)) => self.memory.frames(span),
+            _ => &[],
+        }
+    }
+
+    /// Flips one bit of a stored frame of recording `number` (byte `byte` of the recording's
+    /// frame bytes, bit `bit`); returns whether it did.
+    pub(crate) fn flip_stored_frame_bit(&mut self, number: u32, byte: usize, bit: u8) -> bool {
+        let Some(span) = self.memory.span(number) else {
+            return false;
+        };
+        match self.memory.frames_mut(span).get_mut(byte) {
+            Some(b) => {
+                *b ^= 1u8 << (bit & 7);
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 /// 001 R-10: round(D_down + D_up + (τ_rec + τ_play) · host / DEVICE_RATE_HZ), rounded once. A
@@ -540,7 +687,14 @@ fn latency_samples(plan: &RatePlan, settings: &Settings, one_pass: &OnePass) -> 
         one_pass.rec.half.group_delay_1k_samples() + one_pass.play.half.group_delay_1k_samples();
     let total = 2.0 * f64::from(plan.delay_host_samples())
         + stages * f64::from(settings.host_rate_hz) / f64::from(DEVICE_RATE_HZ);
-    (total + 0.5) as u32
+    // Spec 008 FR-004: the codec's delay is a whole number of host samples, added after the
+    // single rounding of the rest.
+    let codec_delay = if one_pass.rec.codec_runs() {
+        paths::codec_delay_host_samples(settings.host_rate_hz)
+    } else {
+        0
+    };
+    ((total + 0.5) as u32).saturating_add(codec_delay)
 }
 
 #[cfg(test)]
@@ -549,6 +703,14 @@ mod validation_tests {
     use super::*;
     use crate::error::Setting;
     use std::vec::Vec;
+
+    /// The spec 006 configuration: the defaults with the speech codec bypassed (spec 008 FR-021:
+    /// the earlier specs' rules are checked with the codec off; the codec has its own tests).
+    fn settings_006(rate: u32) -> Settings {
+        let mut s = Settings::new(rate);
+        s.speech_codec_enabled = false;
+        s
+    }
 
     /// 002 T014, restated by 005 T007 (spec 005 FR-001): with the tap after the AGC, the
     /// band-limit stages, the clamp and the VAS do not run, whatever their settings, and the
@@ -711,7 +873,7 @@ mod validation_tests {
             y
         };
         for rate in crate::SUPPORTED_HOST_RATES {
-            let mut tap_vas = Settings::new(rate);
+            let mut tap_vas = settings_006(rate); // the codec runs at the default tap only (008 FR-015)
             tap_vas.vas.enabled = false; // isolate the tap logic from the VAS stage
             tap_vas.tap = Tap::AfterVas;
             let mut no_playback = tap_vas;
@@ -736,6 +898,14 @@ mod limiter_tests {
     use crate::stages::limiter::Limiter;
     use rr_dr60_detmath::{PI, TAU, exp, ln, sin};
     use std::vec::Vec;
+
+    /// The spec 006 configuration: the defaults with the speech codec bypassed (spec 008 FR-021:
+    /// the earlier specs' rules are checked with the codec off; the codec has its own tests).
+    fn settings_006(rate: u32) -> Settings {
+        let mut s = Settings::new(rate);
+        s.speech_codec_enabled = false;
+        s
+    }
 
     /// A 1 kHz tone at `dbfs` for `secs`, starting at the host-grid peak phase (005 R-08).
     fn tone(dbfs: f64, secs: f64, fs: f64) -> Vec<f32> {
@@ -789,7 +959,8 @@ mod limiter_tests {
                 BlockInfo {
                     produced: x.len(),
                     events: 0,
-                    paused: false
+                    paused: false,
+                    frames: 0,
                 },
                 "{rate} Hz"
             );
@@ -843,7 +1014,7 @@ mod limiter_tests {
     #[test]
     fn clamp_applies_after_the_record_stage() {
         let x = tone(11.0, 0.5, 6000.0);
-        let mut s = Settings::new(6000);
+        let mut s = settings_006(6000); // the chain without the codec (008 FR-021)
         s.agc.enabled = false;
         s.vas.enabled = false;
         s.playback_stage_enabled = false;
@@ -873,7 +1044,7 @@ mod limiter_tests {
             .cycle()
             .take(600)
             .collect();
-        let mut s = Settings::new(6000);
+        let mut s = settings_006(6000); // the chain without the codec (008 FR-021)
         s.agc.enabled = false;
         s.vas.enabled = false;
         s.record_stage_enabled = false;
@@ -895,7 +1066,7 @@ mod limiter_tests {
     #[test]
     fn device_chain_order_is_record_clamp_vas_playback() {
         let x = tone(11.0, 0.5, 6000.0);
-        let mut s = Settings::new(6000);
+        let mut s = settings_006(6000); // the chain without the codec (008 FR-021)
         s.agc.enabled = false;
         s.vas.enabled = false;
         s.tap = Tap::AfterRecord;
@@ -1201,6 +1372,14 @@ mod narrowing_tests {
     use rr_dr60_detmath::{TAU, exp, ln, sin};
     use std::vec::Vec;
 
+    /// The spec 006 configuration: the defaults with the speech codec bypassed (spec 008 FR-021:
+    /// the earlier specs' rules are checked with the codec off; the codec has its own tests).
+    fn settings_006(rate: u32) -> Settings {
+        let mut s = Settings::new(rate);
+        s.speech_codec_enabled = false;
+        s
+    }
+
     /// A 1 kHz tone at `dbfs` for `secs` at the 6 kHz device rate, phase 0 (no sample-peak
     /// detector is read here, so no aligned phase is needed).
     fn tone(dbfs: f64, secs: f64) -> Vec<f32> {
@@ -1227,7 +1406,7 @@ mod narrowing_tests {
     /// the rounding sits after the VAS and before stage 10.
     #[test]
     fn narrowing_point_is_after_the_vas() {
-        let s = Settings::new(6000); // the limiter, stage 4, the clamp, the VAS and stage 10 on
+        let s = settings_006(6000); // the limiter, stage 4, the clamp, the VAS and stage 10 on; the codec off (008 FR-021)
         let x = tone(-20.0, 0.5);
         let (wide, _, _) = run(&mut Pipeline::with_device_narrowing(s, false).unwrap(), &x);
         let (narrow, _, _) = run(&mut Pipeline::with_device_narrowing(s, true).unwrap(), &x);
@@ -1266,7 +1445,7 @@ mod narrowing_tests {
             .cycle()
             .take(600)
             .collect();
-        let mut s = Settings::new(6000);
+        let mut s = settings_006(6000);
         s.agc.enabled = false;
         s.vas.enabled = false;
         s.record_stage_enabled = false;
@@ -1314,7 +1493,7 @@ mod narrowing_tests {
     /// with the narrowing on or off (the VAS decides before the narrowing).
     #[test]
     fn mute_mode_muted_samples_narrow_to_positive_zero() {
-        let mut s = Settings::new(6000);
+        let mut s = settings_006(6000);
         s.agc.enabled = false;
         s.record_stage_enabled = false;
         s.playback_stage_enabled = false;
@@ -1425,5 +1604,158 @@ mod op_count_tests {
                 "{rate} Hz: work depends on block size"
             );
         }
+    }
+}
+
+/// 008 T015 (spec 008 FR-004, FR-008, FR-009, FR-015; research R-06): the one-pass codec's
+/// delay line, the frame counts per block, the decoder tap and reset.
+#[cfg(test)]
+mod codec_tests {
+    extern crate std;
+    use super::*;
+    use rr_dr60_detmath::{TAU, exp, ln, sin};
+    use std::vec::Vec;
+
+    fn tone(dbfs: f64, secs: f64, fs: f64) -> Vec<f32> {
+        let amp = exp(dbfs * ln(10.0) / 20.0);
+        let w = TAU * 1000.0 / fs;
+        (0..(secs * fs) as usize)
+            .map(|n| (amp * sin(w * n as f64)) as f32)
+            .collect()
+    }
+
+    /// The codec alone at the decoder tap (the harness's `codec_only`).
+    fn codec_only(rate: u32) -> Settings {
+        let mut s = Settings::new(rate);
+        s.agc.enabled = false;
+        s.record_stage_enabled = false;
+        s.playback_stage_enabled = false;
+        s.adc_clamp_enabled = false;
+        s.vas.enabled = false;
+        s.speech_codec_enabled = true;
+        s.tap = Tap::AfterDecoder;
+        s
+    }
+
+    fn run(s: Settings, x: &[f32], block: usize) -> (Vec<f32>, Vec<usize>) {
+        let mut p = Pipeline::new(s).unwrap();
+        let mut out = Vec::new();
+        let mut frames = Vec::new();
+        for chunk in x.chunks(block.max(1)) {
+            let mut y = std::vec![0.0f32; chunk.len()];
+            let info = p.process(chunk, &mut y).unwrap();
+            assert_eq!(
+                info.produced,
+                chunk.len(),
+                "one in, one out without the VAS"
+            );
+            out.extend_from_slice(&y);
+            frames.push(info.frames);
+        }
+        (out, frames)
+    }
+
+    /// R-06: at 6 kHz the first 180 outputs of the codec-only one-pass are exactly 0.0 (the
+    /// delay line filling), the 181st is the decoded first sample, and the line never holds
+    /// more than 121 samples.
+    #[test]
+    fn one_pass_fifo_first_180_outputs_are_zero() {
+        let mut x = tone(-12.0, 0.1, 6000.0);
+        x[0] = 0.9; // an impulse on top
+        let mut p = Pipeline::new(codec_only(6000)).unwrap();
+        assert_eq!(p.codec_fifo_fill(), Some(0));
+        let mut y = std::vec![0.0f32; x.len()];
+        let mut worst = 0;
+        for (i, &v) in x.iter().enumerate() {
+            let info = p.process(&[v], &mut y[i..=i]).unwrap();
+            assert_eq!(info.produced, 1);
+            worst = worst.max(p.codec_fifo_fill().unwrap());
+        }
+        assert!(y[..180].iter().all(|&v| v == 0.0), "the first 180 outputs");
+        assert!(
+            y[180..].iter().any(|&v| v != 0.0),
+            "then the decoded stream"
+        );
+        assert!(worst <= 121, "the line held {worst}");
+        assert_eq!(
+            p.latency_samples(),
+            180,
+            "the delay alone: nothing else runs at 6 kHz"
+        );
+        // With the codec bypassed there is no line.
+        let mut off = codec_only(6000);
+        off.speech_codec_enabled = false;
+        assert_eq!(Pipeline::new(off).unwrap().codec_fifo_fill(), None);
+    }
+
+    /// FR-008: `BlockInfo.frames` counts the frames completed in the block (pushes 179, 299,
+    /// 419 … at 6 kHz), 0 with the codec bypassed and at a tap before it, and the count does not
+    /// depend on the block size.
+    #[test]
+    fn one_pass_frames_per_block() {
+        let x = tone(-20.0, 0.2, 6000.0); // 1200 samples: frames at 179, 299, …, 1139 → 9 frames
+        let (_, frames) = run(codec_only(6000), &x, 100);
+        assert_eq!(frames, [0, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1]);
+        let (_, frames) = run(codec_only(6000), &x, 1);
+        assert_eq!(frames.iter().sum::<usize>(), 9);
+        let (_, frames) = run(codec_only(6000), &x, 1200);
+        assert_eq!(frames, [9]);
+        let mut off = codec_only(6000);
+        off.speech_codec_enabled = false;
+        assert_eq!(run(off, &x, 100).1.iter().sum::<usize>(), 0);
+        let mut before = codec_only(6000);
+        before.tap = Tap::AfterVas;
+        let (y, frames) = run(before, &x, 100);
+        assert_eq!(frames.iter().sum::<usize>(), 0);
+        assert_eq!(
+            y, x,
+            "the after-VAS tap is before the codec: the identity here"
+        );
+        let p = Pipeline::new(before).unwrap();
+        assert_eq!(p.latency_samples(), 0);
+        assert_eq!(p.codec_fifo_fill(), None);
+    }
+
+    /// FR-015: the decoder tap equals the default tap with stage 10 bypassed, bit for bit, and
+    /// the codec's output is the same whatever the block partition.
+    #[test]
+    fn decoder_tap_equals_playback_tap_without_stage_10() {
+        for rate in [6000u32, 48_000] {
+            let x = tone(-20.0, 0.3, f64::from(rate));
+            let dec = codec_only(rate);
+            let mut play = dec;
+            play.tap = Tap::AfterPlayback;
+            let (a, _) = run(dec, &x, 997);
+            let (b, _) = run(play, &x, 64);
+            assert_eq!(a, b, "{rate} Hz");
+            assert!(a.iter().any(|&v| v != 0.0));
+            let mut on = play;
+            on.playback_stage_enabled = true;
+            let (c, _) = run(on, &x, 1000);
+            assert_ne!(c, a, "{rate} Hz: stage 10 changes the output");
+        }
+    }
+
+    /// FR-018: `reset` resets the one-pass codec pair: a burst, a reset and silence give the
+    /// same output as a fresh pipeline; without the reset they differ.
+    #[test]
+    fn reset_resets_the_one_pass_codec() {
+        let burst = tone(-12.0, 0.2, 6000.0);
+        let silence = std::vec![0.0f32; 1200];
+        let s = codec_only(6000);
+        let mut p = Pipeline::new(s).unwrap();
+        let mut y = burst.clone();
+        let _ = p.process_in_place(&mut y);
+        p.reset();
+        let mut after = silence.clone();
+        let _ = p.process_in_place(&mut after);
+        let (fresh, _) = run(s, &silence, 1200);
+        assert_eq!(after, fresh);
+        let mut q = Pipeline::new(s).unwrap();
+        let mut y = burst;
+        let _ = q.process_in_place(&mut y);
+        let mut without = silence;
+        let _ = q.process_in_place(&mut without);
+        assert_ne!(without, fresh);
     }
 }

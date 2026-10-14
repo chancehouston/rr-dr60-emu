@@ -65,8 +65,8 @@ fn header_figures() {
     assert_eq!(h.stage_count, 15);
     assert_eq!(h.device_rate_hz, 6000); // A-026
     assert_eq!(h.library_version, rr_dr60::VERSION);
-    assert_eq!(h.counts.not_modeled, 10);
-    assert_eq!(h.counts.assumed, 5);
+    assert_eq!(h.counts.not_modeled, 8); // spec 008 US3 scenario 1
+    assert_eq!(h.counts.assumed, 7);
     assert_eq!(h.counts.sourced, 0);
     assert_eq!(h.counts.checked, 0);
     assert_eq!(
@@ -84,15 +84,81 @@ fn header_figures() {
 
 #[test]
 fn literal_statuses() {
-    // The register-free reading of US1 scenario 5 (007 FR-004): stages 3, 4, 5, 8 and 10 are
-    // modeled on open assumptions, every other stage is not modeled.
+    // The register-free reading of US1 scenario 5 (007 FR-004): stages 3, 4, 5, 7, 8, 9 and 10
+    // are modeled on open assumptions (7 and 9 since spec 008), every other stage is not modeled.
     for e in manifest().stages() {
         let want = match e.number {
-            3 | 4 | 5 | 8 | 10 => StageStatus::Assumed,
+            3 | 4 | 5 | 7 | 8 | 9 | 10 => StageStatus::Assumed,
             _ => StageStatus::NotModeled,
         };
         assert_eq!(e.status, want, "stage {} status", e.number);
     }
+}
+
+/// Spec 008 US3 scenario 1 (FR-020): stages 7 and 9 read assumed / low / 0.8.0, their coverage
+/// notes name the device's unidentified frame length, look-ahead and codebooks, their controls
+/// notes name the bypass control, the decoder tap and the frame-count report fields; stage 8
+/// sits at 0.8.0 and its coverage note no longer says the store holds the engine's samples.
+#[test]
+fn codec_stages_us3_scenario_1() {
+    let m = manifest();
+    for n in [7u32, 9] {
+        let e = m.stage(n).unwrap();
+        assert_eq!(e.status, StageStatus::Assumed, "stage {n}");
+        assert_eq!(e.confidence, Confidence::Low, "stage {n}");
+        assert_eq!(e.model_version, "0.8.0", "stage {n}");
+        assert!(
+            !e.coverage.is_empty() && !e.controls.is_empty(),
+            "stage {n}"
+        );
+        assert!(e.controls.contains("speech_codec_enabled"), "stage {n}");
+        assert!(e.assumptions.contains(&"A-004"), "stage {n}");
+        assert!(e.assumptions.contains(&"A-040"), "stage {n}");
+        assert!(e.assumptions.contains(&"A-041"), "stage {n}");
+    }
+    // Both coverage notes name the three unknowns (US3 string review, T039).
+    for n in [7u32, 9] {
+        let e = m.stage(n).unwrap();
+        for word in ["frame length", "look-ahead", "codebooks"] {
+            assert!(
+                e.coverage.contains(word),
+                "stage {n} coverage lacks {word:?}"
+            );
+        }
+    }
+    let enc = m.stage(7).unwrap();
+    for item in [
+        "RecordInfo.frames",
+        "RecordInfo.frames_total",
+        "BlockInfo.frames",
+    ] {
+        assert!(
+            enc.controls.contains(item),
+            "stage 7 controls lack {item:?}"
+        );
+    }
+    let dec = m.stage(9).unwrap();
+    for item in [
+        "Tap::AfterDecoder",
+        "PlayInfo.frames",
+        "PlayInfo.frame_index",
+    ] {
+        assert!(
+            dec.controls.contains(item),
+            "stage 9 controls lack {item:?}"
+        );
+    }
+    let mem = m.stage(8).unwrap();
+    assert_eq!(mem.model_version, "0.8.0");
+    assert!(
+        !mem.coverage.contains("samples"),
+        "stage 8's coverage note still speaks of the engine's samples"
+    );
+    let c = m.header().counts;
+    assert_eq!(
+        (c.not_modeled, c.assumed, c.sourced, c.checked),
+        (8, 7, 0, 0)
+    );
 }
 
 #[test]

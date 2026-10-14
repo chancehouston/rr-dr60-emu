@@ -1182,7 +1182,7 @@ mod tests {
         assert_eq!(m.len(), 9);
         assert!(m[0].is_default() && m[1..].iter().all(|c| !c.is_default()));
         for c in &m {
-            let mut s = rr_dr60::Settings::new(48_000);
+            let mut s = crate::configs::settings_007(48_000);
             s.agc = c.agc;
             assert_eq!(s.validate(), Ok(()), "{}", c.label);
         }

@@ -1,7 +1,7 @@
 //! Spec Edge Cases, one test each (001 tasks.md T051; restated for the 6 kHz device rate by
 //! spec 004 FR-010 and its Edge Cases, 004 tasks.md T025).
 
-use rr_dr60::{Error, Pipeline, Settings};
+use rr_dr60::{Error, Pipeline};
 use rr_dr60_harness::{analysis, configs, stimulus};
 
 fn run(p: &mut Pipeline, x: &[f32]) -> Vec<f32> {
@@ -170,7 +170,7 @@ fn reset_equals_new() {
 fn unsupported_rate_error_names_supported_rates() {
     // Spec 004 FR-002: the seven rates, 6 kHz included, are named in the error text.
     for requested in [7000, 22_050] {
-        let e = Pipeline::new(Settings::new(requested)).unwrap_err();
+        let e = Pipeline::new(rr_dr60_harness::configs::settings_007(requested)).unwrap_err();
         assert_eq!(e, Error::UnsupportedHostRate { requested });
         let text = e.to_string();
         assert_eq!(rr_dr60::SUPPORTED_HOST_RATES.len(), 7);

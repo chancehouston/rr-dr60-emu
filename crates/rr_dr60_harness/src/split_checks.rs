@@ -329,10 +329,12 @@ pub fn live_stimuli(rate: u32) -> Vec<(String, Vec<f32>)> {
 /// (4801 / 997 and 1 / 1). The two partitions agree with each other too (FR-018).
 pub fn live_equivalence(rate: u32) -> Vec<MeasurementResult> {
     let mut rows = Vec::new();
-    let mut mute = Settings::new(rate);
+    let mut mute = crate::configs::settings_007(rate);
     mute.vas.mode = VasMode::Mute;
-    let configs: [(&'static str, Settings); 2] =
-        [("default_vas", Settings::new(rate)), ("default_mute", mute)];
+    let configs: [(&'static str, Settings); 2] = [
+        ("default_vas", crate::configs::settings_007(rate)),
+        ("default_mute", mute),
+    ];
     for (name, x) in live_stimuli(rate) {
         for (config, settings) in configs {
             let probe = Pipeline::new(settings).expect("supported settings");
@@ -399,7 +401,7 @@ pub fn length_rule(rate: u32) -> Vec<MeasurementResult> {
         assert_eq!(record_one(&mut p, &x), k);
         assert_eq!(p.recording_length(k), Ok(u64::from(k)));
     }
-    p.reconfigure(Settings::new(rate))
+    p.reconfigure(crate::configs::settings_007(rate))
         .expect("reconfigure keeps the memory");
     let drain = u64::from(p.drain_samples());
     (1..=50u32)
@@ -423,7 +425,7 @@ pub fn length_rule(rate: u32) -> Vec<MeasurementResult> {
 /// FR-015: the same recording played on each route is bit-identical, and the route is
 /// reported.
 pub fn route_identity(rate: u32) -> Vec<MeasurementResult> {
-    let mut p = Pipeline::new(Settings::new(rate)).expect("supported settings");
+    let mut p = Pipeline::new(crate::configs::settings_007(rate)).expect("supported settings");
     let x = golden::stimulus("sweep_log", rate);
     let n = record_one(&mut p, &x);
     p.set_route(Route::Speaker);
@@ -462,7 +464,7 @@ pub fn route_identity(rate: u32) -> Vec<MeasurementResult> {
 /// reset at the start, so no limiter charge carries over).
 pub fn two_items(rate: u32) -> Vec<MeasurementResult> {
     let fs = f64::from(rate);
-    let settings = Settings::new(rate);
+    let settings = crate::configs::settings_007(rate);
     let mut p = Pipeline::new(settings).expect("supported settings");
     let phase = stimulus::peak_phase(1000.0, rate);
     let loud = stimulus::tone_at_phase(1000.0, 9.0, phase, fs, rate as usize);
@@ -642,7 +644,7 @@ pub fn drain_level(rate: u32) -> Vec<MeasurementResult> {
 /// not the figure the engine reports (spec Clarifications, implementation session).
 pub fn latency_sum(rate: u32) -> Vec<MeasurementResult> {
     let mut rows = Vec::new();
-    let p = Pipeline::new(Settings::new(rate)).expect("rate");
+    let p = Pipeline::new(crate::configs::settings_007(rate)).expect("rate");
     let sum = f64::from(p.record_latency_samples()) + f64::from(p.playback_latency_samples());
     rows.push(row(
         "006/FR-016",
@@ -666,7 +668,7 @@ pub fn latency_sum(rate: u32) -> Vec<MeasurementResult> {
     }
     assert_eq!(record_one(&mut p, &[1.0]), 3);
     for stage10 in [true, false] {
-        let mut s = Settings::new(rate);
+        let mut s = crate::configs::settings_007(rate);
         s.playback_stage_enabled = stage10;
         p.reconfigure(s).expect("reconfigure keeps the memory");
         let reported = f64::from(p.playback_latency_samples());
@@ -724,7 +726,7 @@ pub fn latency_sum(rate: u32) -> Vec<MeasurementResult> {
 /// playing.
 pub fn state_table(rate: u32) -> Vec<MeasurementResult> {
     let mut rows = Vec::new();
-    let mut p = Pipeline::new(Settings::new(rate)).expect("rate");
+    let mut p = Pipeline::new(crate::configs::settings_007(rate)).expect("rate");
     let x = golden::stimulus("tone_1k_m20", rate);
     let mut y = vec![0.0f32; x.len()];
     let check = |rows: &mut Vec<MeasurementResult>, what: &'static str, ok: bool| {
@@ -803,7 +805,7 @@ pub fn state_table(rate: u32) -> Vec<MeasurementResult> {
     check(
         &mut rows,
         "recording: reconfigure -> RecordingInProgress",
-        p.reconfigure(Settings::new(rate)) == Err(Error::RecordingInProgress),
+        p.reconfigure(crate::configs::settings_007(rate)) == Err(Error::RecordingInProgress),
     );
     check(
         &mut rows,
@@ -853,7 +855,7 @@ pub fn state_table(rate: u32) -> Vec<MeasurementResult> {
     check(
         &mut rows,
         "playing: reconfigure -> PlaybackInProgress",
-        p.reconfigure(Settings::new(rate)) == Err(Error::PlaybackInProgress),
+        p.reconfigure(crate::configs::settings_007(rate)) == Err(Error::PlaybackInProgress),
     );
     check(
         &mut rows,
@@ -1564,7 +1566,7 @@ pub fn expanded_capacity_past_device() -> Vec<MeasurementResult> {
 pub fn footprint() -> Vec<MeasurementResult> {
     let rate = 48_000;
     let fs = f64::from(rate);
-    let p = Pipeline::new(Settings::new(rate)).expect("default");
+    let p = Pipeline::new(crate::configs::settings_007(rate)).expect("default");
     let (store, spans) = __test_hooks::memory_capacities(&p);
     let st = p.memory_status();
     let mut rows = vec![
@@ -1804,12 +1806,13 @@ pub mod mutants {
     }
 
     /// Drops the first stored sample and re-forms the sequence (K − 1, a valid CRC), so the
-    /// import succeeds with a shorter, shifted recording.
+    /// import succeeds with a shorter, shifted recording (form version 2: K at 40, the units
+    /// at 48; spec 008 contracts/recording-form.md).
     pub fn drop_first_sample(bytes: &[u8]) -> Vec<u8> {
-        let k = u64::from_le_bytes(bytes[24..32].try_into().expect("header"));
-        let mut b = bytes[..32].to_vec();
-        b[24..32].copy_from_slice(&(k - 1).to_le_bytes());
-        b.extend_from_slice(&bytes[36..bytes.len() - 4]);
+        let k = u64::from_le_bytes(bytes[40..48].try_into().expect("header"));
+        let mut b = bytes[..48].to_vec();
+        b[40..48].copy_from_slice(&(k - 1).to_le_bytes());
+        b.extend_from_slice(&bytes[52..bytes.len() - 4]);
         let crc = super::crc32(&b);
         b.extend_from_slice(&crc.to_le_bytes());
         b
@@ -1843,7 +1846,9 @@ fn reformed(mut bytes: Vec<u8>) -> Vec<u8> {
 
 /// US3 scenarios 3 and 4 (FR-014, SC-004): every sequence of the corruption set is refused
 /// with the stated reason and leaves the memory's figures unchanged; afterwards the untouched
-/// bytes still import.
+/// bytes still import. The form is version 2 since spec 008 (a 48-byte header; the samples
+/// encoding here, the codec bypassed); the version 1 sequence of 0.6/0.7 is refused as
+/// "unsupported form version" (spec 008 FR-011).
 pub fn corruption_set(rate: u32) -> Vec<MeasurementResult> {
     let (_, good) = recorded_form(rate);
     let n = good.len();
@@ -1869,8 +1874,9 @@ pub fn corruption_set(rate: u32) -> Vec<MeasurementResult> {
         Error::Damaged,
     ));
     // A single-byte flip at 64 evenly spaced positions (the first and last bytes included),
-    // plus one in every header field (version, flags, rate, library version, reserved, the
-    // low and high bytes of K) and one inside the CRC.
+    // plus one in every header field (version, flags, rate, library version, encoding, model
+    // version, reserved, frame samples, bits, reserved, the low and high bytes of K) and one
+    // inside the CRC. In the samples encoding a model version is damage (spec 008 FR-010).
     let flip = |pos: usize| {
         let mut b = good.clone();
         b[pos] ^= 0x40;
@@ -1879,7 +1885,7 @@ pub fn corruption_set(rate: u32) -> Vec<MeasurementResult> {
             8..10 => Error::UnsupportedFormVersion {
                 version: u16::from_le_bytes([b[8], b[9]]),
             },
-            10..12 => Error::UnsupportedFormVersion { version: 1 },
+            10..12 => Error::UnsupportedFormVersion { version: 2 },
             _ => Error::Damaged,
         };
         (format!("byte {pos} flipped"), b, want)
@@ -1887,7 +1893,7 @@ pub fn corruption_set(rate: u32) -> Vec<MeasurementResult> {
     for i in 0..FLIP_POSITIONS {
         cases.push(flip(i * (n - 1) / (FLIP_POSITIONS - 1)));
     }
-    for pos in [8, 10, 12, 16, 22, 24, 31, n - 3] {
+    for pos in [8, 10, 12, 16, 22, 24, 30, 32, 34, 36, 40, 47, n - 3] {
         cases.push(flip(pos));
     }
     // Foreign bytes behind a valid magic (seeded, so the expected reason is fixed).
@@ -1896,25 +1902,31 @@ pub fn corruption_set(rate: u32) -> Vec<MeasurementResult> {
     foreign.extend((0..1000).map(|_| rng.below(256) as u8));
     let version = u16::from_le_bytes([foreign[8], foreign[9]]);
     let flags = u16::from_le_bytes([foreign[10], foreign[11]]);
-    let want = if version != 1 || flags != 0 {
+    let want = if version != 2 || flags != 0 {
         Error::UnsupportedFormVersion { version }
     } else {
         Error::Damaged
     };
     cases.push(("foreign bytes with a valid magic".into(), foreign, want));
-    let mut v2 = good.clone();
-    v2[8] = 2;
+    // Spec 008 FR-011: the never-shipped version 1 of 0.6/0.7 is refused with its version.
     cases.push((
-        "version 2".into(),
-        v2,
-        Error::UnsupportedFormVersion { version: 2 },
+        "version 1 (spec 006's samples form)".into(),
+        crate::codec_checks::version_1_of(&good),
+        Error::UnsupportedFormVersion { version: 1 },
+    ));
+    let mut v3 = good.clone();
+    v3[8] = 3;
+    cases.push((
+        "version 3".into(),
+        v3,
+        Error::UnsupportedFormVersion { version: 3 },
     ));
     let mut flags = good.clone();
     flags[10] = 1;
     cases.push((
         "flags 1".into(),
         flags,
-        Error::UnsupportedFormVersion { version: 1 },
+        Error::UnsupportedFormVersion { version: 2 },
     ));
     cases.push((
         "the 20-byte header".into(),
@@ -1922,24 +1934,24 @@ pub fn corruption_set(rate: u32) -> Vec<MeasurementResult> {
         Error::Damaged,
     ));
     let mut huge = good.clone();
-    huge[24..32].copy_from_slice(&(1u64 << 62).to_le_bytes());
+    huge[40..48].copy_from_slice(&(1u64 << 62).to_le_bytes());
     cases.push(("K = 2^62".into(), reformed(huge), Error::Damaged));
     let mut nan = good.clone();
-    nan[32..36].copy_from_slice(&f32::NAN.to_le_bytes());
+    nan[48..52].copy_from_slice(&f32::NAN.to_le_bytes());
     cases.push((
         "NaN sample, valid CRC".into(),
         reformed(nan),
         Error::Damaged,
     ));
     let mut sub = good.clone();
-    sub[32..36].copy_from_slice(&1.0e-40f32.to_le_bytes());
+    sub[48..52].copy_from_slice(&1.0e-40f32.to_le_bytes());
     cases.push((
         "subnormal sample, valid CRC".into(),
         reformed(sub),
         Error::Damaged,
     ));
-    let mut zero = good[..32].to_vec();
-    zero[24..32].copy_from_slice(&0u64.to_le_bytes());
+    let mut zero = good[..48].to_vec();
+    zero[40..48].copy_from_slice(&0u64.to_le_bytes());
     zero.extend_from_slice(&[0; 4]);
     cases.push(("K = 0".into(), reformed(zero), Error::Damaged));
     cases.push(("empty sequence".into(), Vec::new(), Error::UnknownForm));

@@ -19,7 +19,7 @@ use rr_dr60_harness::stimulus;
 /// FR-018, spec 003 FR-020) and, since spec 005, the ADC clamp on except in `bypass_all`
 /// (spec 005 research R-06).
 fn config(name: &str, host: u32) -> Settings {
-    let mut s = Settings::new(host);
+    let mut s = rr_dr60_harness::configs::settings_007(host);
     s.agc.enabled = false;
     s.vas.enabled = false;
     match name {
@@ -263,7 +263,7 @@ fn failed_reconfigure_changes_nothing() {
     first.truncate(produced);
     let before = (*p.settings(), p.latency_samples());
     assert_eq!(
-        p.reconfigure(Settings::new(22_050)),
+        p.reconfigure(rr_dr60_harness::configs::settings_007(22_050)),
         Err(Error::UnsupportedHostRate { requested: 22_050 })
     );
     assert_eq!((*p.settings(), p.latency_samples()), before);

@@ -41,3 +41,8 @@ lcov.info
 __pycache__/
 *.pyc
 .venv/
+
+# Spec 008 calibration (tools/celp-calibrate/README.md): the user-downloaded ITU-T G.723.1 reference
+# software and the generated stimuli and decoded references never enter the repository.
+tools/celp-calibrate/ref/
+tools/celp-calibrate/out/

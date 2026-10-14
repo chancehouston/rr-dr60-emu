@@ -159,6 +159,9 @@ fn processing_never_touches_the_heap() {
 
         // Spec 006 FR-017: the record and playback paths' calls and the reads.
         transport_cases(rate, vas_sizes);
+
+        // Spec 008 FR-016 (T022): the speech codec in the one-pass and in the paths.
+        codec_cases(rate, vas_sizes);
     }
 
     // Spec 007 FR-016, FR-017, SC-004: the manifest reads, Rust and C.
@@ -280,6 +283,68 @@ fn transport_cases(rate: u32, sizes: &[usize]) {
             after, before,
             "{rate} Hz {config}: heap activity [allocs, deallocs, reallocs] in the transport"
         );
+    }
+}
+
+/// Spec 008 FR-016, FR-017 (T022): no heap activity in the one-pass with the speech codec (the
+/// three codec configurations, with events), nor in `start_recording`, `record`,
+/// `stop_recording` (the frame-boundary padding included), `start_playback`, `play`,
+/// `stop_playback` and the frame read-outs with the codec on; and `speech_codec::info()` and
+/// `speech_codec_info()` allocate nothing. The byte form of a frames memory (export, import)
+/// arrives with US2 and is covered there.
+fn codec_cases(rate: u32, sizes: &[usize]) {
+    let input = vas_input(rate);
+    let mut output = vec![0.0f32; 1024];
+    for config in configs::CODEC_CONFIGS {
+        let settings = configs::memory_capacity(configs::settings(config, rate), 300, 3);
+        let mut p = Pipeline::new(settings).unwrap();
+        let mut events = vec![VasEvent::default(); p.max_events(1024) + 8];
+        let before = counts();
+        let mut frames = 0;
+        for &n in sizes {
+            let info = p
+                .process_with_events(&input[..n], &mut output[..n], &mut events)
+                .unwrap();
+            frames += info.frames;
+        }
+        p.reset();
+        for round in 0..2 {
+            p.start_recording().unwrap();
+            for &n in sizes {
+                let info = p.record(&input[..n], &mut events).unwrap();
+                frames += info.frames;
+                assert!(
+                    info.stopped.is_none(),
+                    "{rate} Hz {config}: filled a 300 s memory"
+                );
+            }
+            let out = p.stop_recording(&mut events).unwrap();
+            assert!(matches!(out.result, rr_dr60::StopResult::Kept { .. }));
+            frames += out.flush.frames;
+            let number = round + 1;
+            p.start_playback(number).unwrap();
+            let _ = p.play(&mut output[..512]).unwrap();
+            p.stop_playback().unwrap();
+            p.start_playback(number).unwrap();
+            loop {
+                let n = sizes[(round as usize + 1) % sizes.len()].max(1);
+                let info = p.play(&mut output[..n]).unwrap();
+                frames += info.frames;
+                if info.finished {
+                    break;
+                }
+            }
+            let _ = (p.recording_length(number).unwrap(), p.encoding());
+            let _ = (p.speech_codec_info(), rr_dr60::speech_codec::info());
+        }
+        p.erase_all().unwrap();
+        p.reset();
+        let after = counts();
+        assert_eq!(
+            after, before,
+            "{rate} Hz {config}: heap activity [allocs, deallocs, reallocs] with the codec"
+        );
+        assert!(frames > 0, "{rate} Hz {config}: no frames");
     }
 }
 

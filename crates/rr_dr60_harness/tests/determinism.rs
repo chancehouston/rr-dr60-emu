@@ -298,6 +298,119 @@ fn record_then_play_partitions() {
     }
 }
 
+/// Spec 008 FR-016 (T022): the speech codec is block-partition invariant. One-pass: 100 seeded
+/// partitions (sizes 0 and 1 included) of the voiced stimulus through `codec_only` at 48 kHz
+/// and at the 6 kHz identity rate; 10 at the other rates and for `default_codec`.
+/// Record-then-play: the playback, the events, the stored length **and the stored frame bytes**
+/// identical over 100 partitions at 48 kHz and 10 at the other rates (`default_codec` with the
+/// VAS burst-gap stimulus). Under coverage instrumentation 10 and 2.
+#[test]
+fn codec_partitions() {
+    let mut rng = Pcg32::new(0x0D60, 7);
+    let (many, few) = if cfg!(coverage) { (10, 2) } else { (100, 10) };
+    for rate in configs::all_rates() {
+        let x = rr_dr60_harness::stimulus::voiced(f64::from(rate), 3.0, -20.0, 0x0D60);
+        for config in configs::CODEC_CONFIGS {
+            let s = configs::settings(config, rate);
+            let partitions = if config == "codec_only" && (rate == 6000 || rate == 48_000) {
+                many
+            } else {
+                few
+            };
+            let want = one_block_events(s, &x);
+            for i in 0..partitions {
+                assert_eq!(
+                    partitioned_events(s, &x, &mut rng),
+                    want,
+                    "{rate} Hz {config}, partition {i}"
+                );
+            }
+        }
+        // Record-then-play with the frames compared byte for byte.
+        let s = configs::settings("default_codec", rate);
+        let partitions = if rate == 48_000 { many } else { few };
+        for stim in ["vas_burst_gap", "tone_1k_m20"] {
+            let x = golden::stimulus(stim, rate);
+            let want = record_play_one_block_frames(s, &x);
+            assert!(want.3.len() >= 10, "{rate} Hz {stim}: no frames");
+            assert_eq!(want.3.len() % 10, 0);
+            for i in 0..partitions {
+                assert_eq!(
+                    record_play_partitioned_frames(s, &x, &mut rng),
+                    want,
+                    "{rate} Hz {stim}, partition {i}"
+                );
+            }
+        }
+    }
+}
+
+/// `record_play_one_block` plus the stored frame bytes (spec 008 SC-008).
+fn record_play_one_block_frames(
+    s: rr_dr60::Settings,
+    x: &[f32],
+) -> (Vec<f32>, Vec<VasEvent>, u64, Vec<u8>) {
+    let mut p = Pipeline::new(configs::memory_capacity(s, 60, 3)).unwrap();
+    let mut ev = vec![VasEvent::default(); p.max_record_events(x.len()) + 8];
+    p.start_recording().unwrap();
+    let info = p.record(x, &mut ev).unwrap();
+    let mut events = ev[..info.events].to_vec();
+    let out = p.stop_recording(&mut ev).unwrap();
+    events.extend_from_slice(&ev[..out.flush.events]);
+    let n = match out.result {
+        StopResult::Kept { number, .. } => number,
+        other => panic!("{other:?}"),
+    };
+    let length = p.recording_length(n).unwrap();
+    let frames = rr_dr60::__test_hooks::stored_frames(&p, n).to_vec();
+    let play = rr_dr60_harness::split_checks::play_to_end(&mut p, n, 1 << 20);
+    (play, events, length, frames)
+}
+
+/// `record_play_partitioned` plus the stored frame bytes (spec 008 SC-008).
+fn record_play_partitioned_frames(
+    s: rr_dr60::Settings,
+    x: &[f32],
+    rng: &mut Pcg32,
+) -> (Vec<f32>, Vec<VasEvent>, u64, Vec<u8>) {
+    let mut p = Pipeline::new(configs::memory_capacity(s, 60, 3)).unwrap();
+    let mut ev = vec![VasEvent::default(); p.max_record_events(8192) + 8];
+    let mut events = Vec::new();
+    p.start_recording().unwrap();
+    let mut pos = 0;
+    let mut first = true;
+    while pos < x.len() {
+        let n = if first { 0 } else { rng.below(8193) as usize }.min(x.len() - pos);
+        let n = if pos == 0 && !first { 1 } else { n };
+        first = false;
+        let info = p.record(&x[pos..pos + n], &mut ev).unwrap();
+        events.extend_from_slice(&ev[..info.events]);
+        pos += n;
+    }
+    let out = p.stop_recording(&mut ev).unwrap();
+    events.extend_from_slice(&ev[..out.flush.events]);
+    let n = match out.result {
+        StopResult::Kept { number, .. } => number,
+        other => panic!("{other:?}"),
+    };
+    let length = p.recording_length(n).unwrap();
+    let frames = rr_dr60::__test_hooks::stored_frames(&p, n).to_vec();
+    p.start_playback(n).unwrap();
+    let mut play = Vec::new();
+    let mut first = true;
+    loop {
+        let n = if first { 0 } else { rng.below(8193) as usize };
+        first = false;
+        let mut buf = vec![0.0f32; n];
+        let info = p.play(&mut buf).unwrap();
+        play.extend_from_slice(&buf[..info.produced]);
+        if info.finished {
+            break;
+        }
+    }
+    (play, events, length, frames)
+}
+
 #[test]
 fn manifest_canonical_text_is_identical_on_every_target() {
     // Spec 007 SC-004 (research R-09): the manifest's canonical text equals the committed golden
@@ -309,7 +422,7 @@ fn manifest_canonical_text_is_identical_on_every_target() {
         rr_dr60_harness::manifest_checks::render(rr_dr60::manifest()),
         want
     );
-    let mut p = rr_dr60::Pipeline::new(rr_dr60::Settings::new(48_000)).unwrap();
+    let mut p = rr_dr60::Pipeline::new(rr_dr60_harness::configs::settings_007(48_000)).unwrap();
     let mut buf = vec![0.25f32; 4800];
     let _ = p.process_in_place(&mut buf);
     assert_eq!(

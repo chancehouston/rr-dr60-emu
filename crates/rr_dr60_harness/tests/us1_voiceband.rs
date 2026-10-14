@@ -5,7 +5,7 @@
 //! without the measurement matrix (Constitution VII). The "default" configuration here is
 //! spec 001's: both band-limit stages on, AGC and VAS bypassed (002 FR-018, 003 FR-020).
 
-use rr_dr60::{Error, Pipeline, SUPPORTED_HOST_RATES, Settings};
+use rr_dr60::{Error, Pipeline, SUPPORTED_HOST_RATES};
 use rr_dr60_ffi::{
     RrDr60Pipeline, RrDr60Settings, RrDr60Status, rr_dr60_create, rr_dr60_destroy,
     rr_dr60_latency_samples, rr_dr60_process, rr_dr60_reset, rr_dr60_settings_default,
@@ -105,7 +105,7 @@ fn as4_silence_in_gives_exact_silence_out() {
 #[test]
 fn unsupported_rate_is_rejected() {
     // 004 FR-002: 7 kHz is rejected and the error names all seven supported rates.
-    let Err(err) = Pipeline::new(Settings::new(7000)) else {
+    let Err(err) = Pipeline::new(rr_dr60_harness::configs::settings_007(7000)) else {
         panic!("7 kHz must be rejected");
     };
     assert_eq!(err, Error::UnsupportedHostRate { requested: 7000 });

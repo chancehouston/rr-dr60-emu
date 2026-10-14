@@ -34,19 +34,40 @@
 //! fills and keeps the partial recording (A-039). Record-then-play is bit-identical to the
 //! one-pass processing, which stays for hosts that only want the sound and is refused while a
 //! path is active. A recording leaves and enters the memory as an opaque, versioned byte
-//! sequence ([`Pipeline::export`], [`Pipeline::import`]): version 1 is the record path's
-//! 32-bit device-rate output, to become encoded frames when the codec is modeled (A-004).
+//! sequence ([`Pipeline::export`], [`Pipeline::import`]).
+//!
+//! Since spec 008 the **speech codec** (stages 7 and 9) sits between them, on by default
+//! ([`Settings::speech_codec_enabled`]): the record path encodes the post-VAS stream into
+//! 4 kbit/s frames (20 ms, 80 bits, 10 bytes each; [`speech_codec`]) and stores the frames
+//! (about 1.8 MB reserved at the default capacity), the playback path decodes them, and the
+//! one-pass processing runs both with an exact delay line, so it stays bit-identical to
+//! record-then-play. The codec adds 180 device samples (30 ms: one frame plus the look-ahead)
+//! to the record path's latency and none to the playback path's; a recording is a whole number
+//! of frames, so the stop feeds silence to complete the last one and reports how much
+//! ([`StopOutcome::silence_fed_samples`]). The exported form is **version 2**: it declares the
+//! encoding (frames, or device-rate samples with the codec bypassed, [`Encoding`]) and the
+//! codec model version that wrote the frames; a memory holds one encoding at a time, so
+//! changing the codec control needs an empty memory and an import of the other encoding is
+//! refused ([`Error::EncodingDiffers`]). The coder is **modeled on a 4 kbit/s CELP-class
+//! coder of the period** (an algebraic CELP of the G.729 / G.723.1 family adapted to the
+//! 6 kHz clock; S-008 – S-011 for the class), not on the device's own coder, whose algorithm
+//! is unidentified (A-004 adopted; A-040, A-041, low confidence); its frames and output are
+//! bit-identical on every target because the codec is fixed-point integer arithmetic. The
+//! codec's output can be tapped before stage 10 ([`Tap::AfterDecoder`]); a bypassed engine is
+//! not a device configuration.
 //!
 //! Stages 4 and 10 are modeled on the OKI MSM7702 voice-band codec at the device's internal
 //! rate of 6 kHz (A-026, verified from the service manual, S-002). They follow the codec
 //! family's datasheet templates scaled to that clock (A-027, medium confidence): the record
 //! stage is a band-pass (about 225 to 2550 Hz) and the playback stage a low-pass that passes
 //! DC. The limiter is modeled on the circuit, not measured against a unit: its dead time,
-//! release and knee carry low confidence. None of these values has yet been measured against a
-//! real unit. See `docs/hardware/assumptions.md`.
+//! release and knee carry low confidence. The speech codec is a class match, not the device's
+//! coder. None of these values has yet been measured against a real unit. See
+//! `docs/hardware/assumptions.md`.
 //!
 //! The crate describes signal processing only: gain control, band-limiting,
-//! voice-activated pausing, latency and level. It makes no claims about what recorded audio contains.
+//! voice-activated pausing, speech coding, latency and level. It makes no claims about what
+//! recorded audio contains.
 //!
 //! **What the engine says about itself** (spec 007): the [`manifest()`] is constant data
 //! describing the fifteen signal-chain stages, one [`StageEntry`] per stage under a
@@ -94,6 +115,19 @@
 
 extern crate alloc;
 
+/// The speech codec's constants and info (signal-chain stages 7 and 9; spec 008).
+///
+/// The encoder and decoder themselves are internal: hosts reach them through the engine's
+/// record, playback and one-pass calls and the `speech_codec_enabled` setting.
+pub mod speech_codec {
+    pub use crate::codec::{
+        BITS_PER_FRAME, DELAY_SAMPLES, DEVICE_RATE_HZ, FRAME_BYTES, FRAME_MS, FRAME_SAMPLES,
+        FRAMES_PER_SECOND, Frame, LOOKAHEAD_SAMPLES, LPC_ORDER, MAX_LAG, MIN_LAG, MODEL_VERSION,
+        SUBFRAME_SAMPLES, SpeechCodecInfo, info,
+    };
+}
+
+mod codec;
 mod error;
 mod form;
 pub mod manifest;
@@ -114,7 +148,7 @@ pub use error::{Error, Setting};
 pub use manifest::{
     Confidence, Header, Manifest, StageEntry, StagePath, StageStatus, StatusCounts, manifest,
 };
-pub use memory::MemoryStatus;
+pub use memory::{Encoding, MemoryStatus};
 pub use pipeline::{BlockInfo, Pipeline, VasEvent};
 pub use settings::{
     AgcSettings, DEVICE_RATE_HZ, MemorySettings, Route, SUPPORTED_HOST_RATES, Settings, Tap,
@@ -157,6 +191,31 @@ pub mod __test_hooks {
     /// (spec 006 FR-008; research R-06; contracts/rust-api.md › Test hooks).
     pub fn n10() -> usize {
         crate::paths::N10
+    }
+
+    /// The one-pass speech codec's delay line: the decoded samples waiting to be emitted, or
+    /// `None` with the codec bypassed (spec 008 research R-06; contracts/rust-api.md › Test
+    /// hooks: `OnePass::__codec_fifo_fill`).
+    pub fn codec_fifo_fill(pipeline: &crate::Pipeline) -> Option<usize> {
+        pipeline.codec_fifo_fill()
+    }
+
+    /// The stored frame bytes of recording `number`, 10 per frame (spec 008 SC-008: the
+    /// determinism and mutation tests compare and alter them before the byte form of US2
+    /// exists); empty for a samples memory or a bad number.
+    pub fn stored_frames(pipeline: &crate::Pipeline, number: u32) -> &[u8] {
+        pipeline.stored_frames(number)
+    }
+
+    /// Flips one bit of recording `number`'s stored frames (spec 008 SC-008: a one-bit change
+    /// must change the playback). Returns whether a byte was there to flip.
+    pub fn flip_stored_frame_bit(
+        pipeline: &mut crate::Pipeline,
+        number: u32,
+        byte: usize,
+        bit: u8,
+    ) -> bool {
+        pipeline.flip_stored_frame_bit(number, byte, bit)
     }
 
     /// The settling length of a biquad cascade: the first index after which |h| stays below

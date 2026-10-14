@@ -400,25 +400,31 @@ stage_table! {
     {
         number: 7, identifier: "encoder", name: "Speech encoder (CELP, 4 kbit/s)",
         description: "Compresses the voice-band stream into 4 kbit/s CELP frames for storage.",
-        status: NotModeled, path: Record, confidence: NotApplicable,
-        sources: ["S-002", "S-004"], assumptions: ["A-004"],
-        coverage: "", controls: "", model_version: "",
+        status: Assumed, path: Record, confidence: Low,
+        sources: ["S-002", "S-008", "S-009", "S-010", "S-011"],
+        assumptions: ["A-004", "A-040", "A-041"],
+        coverage: "the device's own coder (frame length, look-ahead, codebooks and bit allocation unidentified); 8-bit µ-law input (A-003)",
+        controls: "speech_codec_enabled; RecordInfo.frames, RecordInfo.frames_total, BlockInfo.frames",
+        model_version: "0.8.0",
     },
     {
         number: 8, identifier: "memory", name: "Flash memory",
         description: "Stores up to 99 recordings and 60 minutes in total; a new recording cannot start once either limit is reached.",
         status: Assumed, path: Both, confidence: Low,
         sources: ["S-001", "S-002"], assumptions: ["A-037", "A-038", "A-039"],
-        coverage: "encoded CELP frames as the stored form (the engine keeps its own samples); item locking (F.LOCK)",
+        coverage: "item locking (F.LOCK)",
         controls: "memory.capacity_s, memory.max_recordings; memory_status, recording_length, erase, erase_all, export, import",
-        model_version: "0.6.0",
+        model_version: "0.8.0",
     },
     {
         number: 9, identifier: "decoder", name: "Speech decoder (CELP)",
-        description: "Rebuilds the voice-band stream from the stored CELP frames.",
-        status: NotModeled, path: Playback, confidence: NotApplicable,
-        sources: ["S-002"], assumptions: ["A-004"],
-        coverage: "", controls: "", model_version: "",
+        description: "Rebuilds the voice-band stream from the stored CELP frames for playback.",
+        status: Assumed, path: Playback, confidence: Low,
+        sources: ["S-002", "S-008", "S-009", "S-010", "S-011"],
+        assumptions: ["A-004", "A-040", "A-041"],
+        coverage: "the device's own decoder (frame length, look-ahead, codebooks and its postfilter unidentified; A-040, A-041)",
+        controls: "speech_codec_enabled; Tap::AfterDecoder; PlayInfo.frames, PlayInfo.frame_index",
+        model_version: "0.8.0",
     },
     {
         number: 10, identifier: "codec_output", name: "Codec output: DAC and reconstruction filter",
@@ -779,6 +785,7 @@ mod tests {
             agc,
             vas,
             memory,
+            speech_codec_enabled,
         } = Settings::new(6000);
         let AgcSettings {
             enabled: agc_enabled,
@@ -803,7 +810,9 @@ mod tests {
             (4, record_stage_enabled),
             (4, adc_clamp_enabled),
             (5, vas_enabled),
+            (7, speech_codec_enabled), // spec 008 FR-002: one control for the pair (A-004)
             (8, capacity_s > 0),
+            (9, speech_codec_enabled),
             (10, playback_stage_enabled),
         ];
         let m = manifest();
@@ -828,6 +837,7 @@ mod tests {
                 Tap::AfterRecord => 4,
                 Tap::AfterVas => 5,
                 Tap::AfterPlayback => 10,
+                Tap::AfterDecoder => 9, // spec 008 FR-015
             };
             assert_ne!(
                 m.stage(n).unwrap().status,
@@ -920,7 +930,7 @@ mod tests {
         let c = count_statuses(&s);
         assert_eq!(
             (c.not_modeled, c.assumed, c.sourced, c.checked),
-            (8, 5, 1, 1)
+            (6, 7, 1, 1) // 8 / 7 / 0 / 0 today (spec 008), two not-modeled stages flipped here
         );
     }
 

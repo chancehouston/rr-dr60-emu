@@ -186,7 +186,7 @@ fn validate(s: &RrDr60Settings) -> (RrDr60Status, RrDr60SettingField) {
 /// processing; a 72-byte (0.4-layout) struct is rejected as `STRUCT_SIZE`.
 #[test]
 fn c_api_005_layout_defaults_and_reserved_fields() {
-    assert_eq!(size_of::<RrDr60Settings>(), 88); // spec 006 contracts/c-api.md
+    assert_eq!(size_of::<RrDr60Settings>(), 96); // spec 008 contracts/c-api.md (88 in 0.6/0.7)
     assert_eq!(std::mem::offset_of!(RrDr60Settings, agc_knee_dbfs), 28);
     assert_eq!(std::mem::offset_of!(RrDr60Settings, reserved_agc_1), 32);
     assert_eq!(std::mem::offset_of!(RrDr60Settings, reserved_agc_2), 36);
@@ -199,7 +199,7 @@ fn c_api_005_layout_defaults_and_reserved_fields() {
         80
     ); // 006
     let d = rr_dr60_settings_default(48_000);
-    assert_eq!(d.struct_size, 88); // spec 006
+    assert_eq!(d.struct_size, 96); // spec 008
     assert_eq!(d.agc_knee_dbfs, -1.0); // A-028
     assert_eq!(d.agc_attack_ms, 3.0); // A-034
     assert_eq!(d.agc_release_ms, 1370.0); // A-035
@@ -576,6 +576,7 @@ fn rust_blocks(s: rr_dr60::Settings, x: &[f32], block: usize) -> (Vec<f32>, Vec<
                 produced: info.produced,
                 events: info.events,
                 paused: info.paused,
+                frames: info.frames,
             },
             ev[..info.events].iter().copied().map(c_event).collect(),
         ));
@@ -753,6 +754,7 @@ fn c_api_out_info_on_early_returns_and_old_struct_size() {
         produced: 77,
         events: 77,
         paused: false,
+        frames: 77,
     };
     let mut info = stale;
     // SAFETY (all below): p is live; buffers are valid for their stated lengths.
@@ -768,6 +770,7 @@ fn c_api_out_info_on_early_returns_and_old_struct_size() {
             produced: 0,
             events: 0,
             paused: true,
+            frames: 0,
         };
         // frames == 0.
         let status = rr_dr60_process(p, std::ptr::null(), std::ptr::null_mut(), 0, &mut info);
@@ -928,6 +931,7 @@ mod panics {
             produced: 9,
             events: 9,
             paused: true,
+            frames: 9,
         };
         // SAFETY: live (poisoned) handle; valid buffers.
         assert_eq!(
@@ -1076,7 +1080,63 @@ fn c_rec_info(i: rr_dr60::RecordInfo) -> RrDr60RecordInfo {
             Some(StopReason::MemoryFull) => RrDr60StopReason::MemoryFull as u32,
             _ => RrDr60StopReason::None as u32,
         },
+        frames: i.frames,
+        frames_total: i.frames_total,
     }
+}
+
+fn c_play_info(i: rr_dr60::PlayInfo) -> RrDr60PlayInfo {
+    RrDr60PlayInfo {
+        produced: i.produced,
+        finished: i.finished,
+        frames: i.frames,
+        frame_index: i.frame_index,
+    }
+}
+
+/// The playback half through C with every block's `PlayInfo`.
+fn c_play_infos(
+    p: *mut RrDr60Pipeline,
+    number: u32,
+    block: usize,
+) -> (Vec<f32>, Vec<RrDr60PlayInfo>) {
+    // SAFETY: live handle.
+    assert_eq!(
+        unsafe { rr_dr60_start_playback(p, number) },
+        RrDr60Status::Ok
+    );
+    let (mut out, mut infos) = (Vec::new(), Vec::new());
+    let mut buf = vec![0.0f32; block];
+    loop {
+        let mut info = RrDr60PlayInfo::default();
+        // SAFETY: live handle; valid buffer.
+        assert_eq!(
+            unsafe { rr_dr60_play(p, buf.as_mut_ptr(), buf.len(), &mut info) },
+            RrDr60Status::Ok
+        );
+        out.extend_from_slice(&buf[..info.produced]);
+        infos.push(info);
+        if info.finished {
+            break;
+        }
+    }
+    (out, infos)
+}
+
+/// The playback half through Rust with every block's `PlayInfo`, in the C form.
+fn rust_play_infos(p: &mut Pipeline, number: u32, block: usize) -> (Vec<f32>, Vec<RrDr60PlayInfo>) {
+    p.start_playback(number).unwrap();
+    let (mut out, mut infos) = (Vec::new(), Vec::new());
+    let mut buf = vec![0.0f32; block];
+    loop {
+        let info = p.play(&mut buf).unwrap();
+        out.extend_from_slice(&buf[..info.produced]);
+        infos.push(c_play_info(info));
+        if info.finished {
+            break;
+        }
+    }
+    (out, infos)
 }
 
 fn c_state(p: *mut RrDr60Pipeline) -> RrDr60EngineState {
@@ -1162,6 +1222,7 @@ fn c_api_record_play_loop_matches_rust_at_all_rates() {
             kept,
             number,
             length_samples: length,
+            silence_fed_samples: out.silence_fed_samples,
         };
         states.push(rust_state(&rust));
         let want_memory = rust_memory(&rust);
@@ -1263,6 +1324,114 @@ fn c_api_record_play_loop_matches_rust_at_all_rates() {
             assert_eq!(c_memory(q), rust_memory(&Pipeline::new(s).unwrap()));
             rr_dr60_destroy(p);
             rr_dr60_destroy(q);
+        }
+    }
+}
+
+/// Spec 008 US4 scenario 1 (FR-019; T041): the loop with the speech codec at the seven rates
+/// through C against Rust: per-block `RecordInfo` with the frame counts, the stop outcome with
+/// `silence_fed_samples`, the exported frames form, both playbacks with every block's
+/// `PlayInfo` (frames decoded, frame index), bit-identical or equal; then the one-pass with
+/// `RR_DR60_TAP_AFTER_DECODER` (the codec-only configurations) equal to Rust's.
+#[test]
+fn c_api_codec_loop_and_decoder_tap_match_rust_at_all_rates() {
+    for rate in configs::all_rates() {
+        let s = configs::memory_capacity(configs::settings("default_codec", rate), 10, 3);
+        let x = stimulus::voiced(f64::from(rate), 1.5, -20.0, 0x0D60);
+        let block = 480;
+        // Rust.
+        let mut rust = Pipeline::new(s).unwrap();
+        let mut slots = vec![VasEvent::default(); rust.max_record_events(block) + 8];
+        rust.start_recording().unwrap();
+        let mut want_infos = Vec::new();
+        for chunk in x.chunks(block) {
+            want_infos.push(c_rec_info(rust.record(chunk, &mut slots).unwrap()));
+        }
+        let out = rust.stop_recording(&mut slots).unwrap();
+        let StopResult::Kept { number, length } = out.result else {
+            panic!("{rate} Hz: empty")
+        };
+        assert_eq!(length % 120, 0);
+        let want_outcome = RrDr60StopOutcome {
+            flush: c_rec_info(out.flush),
+            kept: true,
+            number,
+            length_samples: length,
+            silence_fed_samples: out.silence_fed_samples,
+        };
+        assert!(want_outcome.flush.frames_total * 120 == length);
+        let want_bytes = split_checks::export_bytes(&rust, number);
+        assert_eq!(u16::from_le_bytes([want_bytes[22], want_bytes[23]]), 1);
+        let (want_play, want_play_infos) = rust_play_infos(&mut rust, number, 997);
+        // C.
+        let p = create(&configs::c_settings(&s));
+        let r = c_record(p, &x, block);
+        assert_eq!(
+            r.infos, want_infos,
+            "{rate} Hz: per-block RecordInfo with frames"
+        );
+        assert_eq!(
+            r.outcome, want_outcome,
+            "{rate} Hz: stop outcome with silence fed"
+        );
+        let mut len = 0usize;
+        let mut encoding = 0u32;
+        // SAFETY: live handle; valid out pointers.
+        unsafe {
+            assert_eq!(rr_dr60_export_len(p, number, &mut len), RrDr60Status::Ok);
+            assert_eq!(rr_dr60_get_encoding(p, &mut encoding), RrDr60Status::Ok);
+        }
+        assert_eq!(encoding, RrDr60Encoding::Frames as u32);
+        assert_eq!(len, want_bytes.len());
+        assert_eq!(len, 52 + 10 * (length / 120) as usize);
+        let mut bytes = vec![0u8; len];
+        let mut written = 0usize;
+        // SAFETY: live handle; valid buffer.
+        assert_eq!(
+            unsafe { rr_dr60_export(p, number, bytes.as_mut_ptr(), len, &mut written) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(bytes, want_bytes, "{rate} Hz: the frames form");
+        let q = create(&configs::c_settings(&s));
+        let mut imported = 0u32;
+        // SAFETY: live handle; valid buffer and out pointer.
+        assert_eq!(
+            unsafe { rr_dr60_import(q, bytes.as_ptr(), len, &mut imported) },
+            RrDr60Status::Ok
+        );
+        let (c_out, c_infos) = c_play_infos(p, number, 997);
+        assert_eq!(c_out, want_play, "{rate} Hz: C playback through the codec");
+        assert_eq!(c_infos, want_play_infos, "{rate} Hz: per-block PlayInfo");
+        let (q_out, q_infos) = c_play_infos(q, 1, 997);
+        assert_eq!(q_out, want_play, "{rate} Hz: imported playback");
+        assert_eq!(q_infos, want_play_infos);
+        // A bypassed handle refuses the frames with 21.
+        let mut off = s;
+        off.speech_codec_enabled = false;
+        let o = create(&configs::c_settings(&off));
+        // SAFETY: live handles; valid buffer.
+        unsafe {
+            assert_eq!(
+                rr_dr60_import(o, bytes.as_ptr(), len, &mut imported),
+                RrDr60Status::EncodingDiffers
+            );
+            rr_dr60_destroy(p);
+            rr_dr60_destroy(q);
+            rr_dr60_destroy(o);
+        }
+        // The one-pass at the decoder tap.
+        for config in ["codec_only", "codec_only_vas", "default_codec"] {
+            let s = configs::settings(config, rate);
+            let (want, want_records) = rust_blocks(s, &x, 997);
+            let (got, got_records) = c_blocks(&configs::c_settings(&s), &x, 997);
+            assert_eq!(got.len(), want.len(), "{rate} Hz {config}");
+            assert!(
+                got.iter()
+                    .zip(&want)
+                    .all(|(a, b)| a.to_bits() == b.to_bits()),
+                "{rate} Hz {config}: one-pass output"
+            );
+            assert_eq!(got_records, want_records, "{rate} Hz {config}: block info");
         }
     }
 }
@@ -1424,10 +1593,10 @@ fn c_api_state_table_refusals() {
             rr_dr60_import(q, bytes.as_ptr(), 4, &mut number),
             RrDr60Status::UnknownForm
         );
-        let mut v2 = bytes.clone();
-        v2[8] = 2;
+        let mut v3 = bytes.clone();
+        v3[8] = 3; // a later form version (version 2 is this release's, spec 008 FR-011)
         assert_eq!(
-            rr_dr60_import(q, v2.as_ptr(), v2.len(), &mut number),
+            rr_dr60_import(q, v3.as_ptr(), v3.len(), &mut number),
             RrDr60Status::UnsupportedFormVersion
         );
         let mut flipped = bytes.clone();
@@ -1526,9 +1695,20 @@ fn c_api_buffer_too_small_leaves_the_buffer_untouched() {
 /// program compares its playback with the Rust path's bit for bit.
 #[test]
 fn smoke_reference_hash_is_pinned() {
-    let (hash, samples) = smoke_reference::rust_playback_hash();
-    println!("smoke reference: {samples} samples, FNV-1a 64 {hash:#018x}");
-    assert_eq!(hash, smoke_reference::SMOKE_REFERENCE_HASH);
+    let r = smoke_reference::rust_reference();
+    println!(
+        "smoke reference (0.8 default): playback {} samples, FNV-1a 64 {:#018x}; frames {} (hash {:#018x}); silence fed {}",
+        r.playback_samples, r.playback_hash, r.frames, r.frames_hash, r.silence_fed
+    );
+    assert_eq!(r.playback_hash, smoke_reference::SMOKE_REFERENCE_HASH);
+    assert_eq!(r.playback_samples, smoke_reference::SMOKE_PLAYBACK_SAMPLES);
+    assert_eq!(r.frames_hash, smoke_reference::SMOKE_FRAMES_HASH);
+    assert_eq!(r.frames, smoke_reference::SMOKE_FRAMES);
+    assert_eq!(r.silence_fed, smoke_reference::SMOKE_SILENCE_FED);
+    assert_eq!(
+        smoke_reference::rust_playback_hash(),
+        (r.playback_hash, r.playback_samples)
+    );
 }
 
 // ---- Spec 007 User Story 3: the manifest through the C API equals the Rust manifest ----

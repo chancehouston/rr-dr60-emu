@@ -13,6 +13,13 @@
 //! at phase 0, 003 R-08), `agc_only` is the host-rate "after AGC" tap and `default_vas` runs
 //! the limiter and the clamp. `golden-v1.json` is unchanged (the 001 configurations have the
 //! limiter bypassed and no 001 stimulus reaches full scale, R-06).
+//!
+//! Spec 008 (the speech codec; specs/008-celp-codec/contracts/golden-format.md, research R-09):
+//! every pre-008 configuration runs with the codec bypassed, so the three files above are
+//! byte-identical (FR-021). The codec has its own file, `golden-codec-v1.json`: 4 stimuli × 3
+//! configurations × 7 rates, each entry the one-pass output as before plus the record-then-play
+//! recording's frame count and frame-byte digest ([`generate_codec`]); blessed once with
+//! `RR_DR60_BLESS=codec cargo test -p rr_dr60_harness --test golden_codec`.
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -45,6 +52,20 @@ pub const VAS_STIMULI: [&str; 3] = ["vas_burst_gap", "vas_noise_gaps", "vas_shor
 
 /// Spec 003 VAS golden configurations, in sorted order.
 pub const VAS_CONFIGS: [&str; 3] = ["default_vas", "vas_mute", "vas_only"];
+
+/// Spec 008 codec golden stimuli, in sorted order (specs/008-celp-codec/contracts/golden-format.md):
+/// the two speech-like stimuli at −20 dBFS (2 s each, seed 0x0D60) and two of spec 001's.
+pub const CODEC_STIMULI: [&str; 4] = [
+    "noise_seed_0d60",
+    "tone_1k_m20",
+    "unvoiced_voiced_m20",
+    "voiced_m20",
+];
+
+/// Spec 008 codec golden configurations: `configs::CODEC_CONFIGS` in the golden file's sorted
+/// order (a unit test asserts the two are the same set): the codec alone at the decoder tap,
+/// the codec with the VAS on (drop mode), and the real 0.8 default (every stage on).
+pub const CODEC_CONFIGS: [&str; 3] = ["codec_only", "codec_only_vas", "default_codec"];
 
 /// One golden entry record-then-play must reproduce (spec 006 SC-002; contracts/golden-format.md
 /// › The SC-002 reproduction rule), with the settings the split paths use for it.
@@ -161,6 +182,15 @@ pub struct GoldenEntry {
     /// not serialized) in the spec 001 and 002 files, which therefore read unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vas: Option<VasGolden>,
+    /// Spec 008 (contracts/golden-format.md): the frames of the record-then-play recording of
+    /// the same stimulus. Present in codec-file entries only; absent (and not serialized) in
+    /// the three earlier files, which therefore read unchanged (FR-021).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frames: Option<u64>,
+    /// Spec 008: SHA-256 of the recording's concatenated 10-byte frames (hex). Present with
+    /// `frames`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frames_sha256: Option<String>,
 }
 
 /// The VAS part of a golden entry (specs/003-vas/contracts/golden-format.md).
@@ -185,6 +215,11 @@ pub fn stimulus(name: &str, fs: u32) -> Vec<f32> {
         "tone_1k_m20" => stimulus::tone(1000.0, 0.1, f, secs(0.5)),
         "sweep_log" => stimulus::log_sweep(20.0, 0.45 * f, 0.25, f, secs(1.0)),
         "noise_seed_0d60" => stimulus::noise(0x0D60, secs(0.5)),
+        // Spec 008 (contracts/golden-format.md): the harness's synthetic speech-like stimuli at
+        // −20 dBFS, 2 s, seed 0x0D60 (engineering target, 008 R-09; `us1_codec` measures the
+        // 6 s versions).
+        "voiced_m20" => stimulus::voiced(f, 2.0, -20.0, 0x0D60),
+        "unvoiced_voiced_m20" => stimulus::unvoiced_voiced(f, 2.0, -20.0, 0x0D60),
         // Spec 005 (contracts/golden-format.md; research R-10): 1 kHz level steps at the
         // host-grid peak phase (R-08; the coach's MVP review: a phase-0 tone on the 6 kHz grid
         // reads 1.25 dB low). Levels are absolute (engineering target, 005 FR-016): +11 dBFS is
@@ -279,7 +314,19 @@ pub fn entry(stimulus: &str, config: &str, host_rate_hz: u32, output: &[f32]) ->
         head,
         rms_dbfs,
         vas: None,
+        frames: None,
+        frames_sha256: None,
     }
+}
+
+/// Hex SHA-256 of `bytes`.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .fold(String::new(), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
 }
 
 /// [`entry`] plus the VAS events and final state (spec 003 contracts/golden-format.md).
@@ -331,6 +378,91 @@ pub fn generate_vas(make: Make<'_>) -> GoldenFile {
                 y.truncate(info.produced);
                 events.truncate(info.events);
                 entries.push(entry_vas(s, c, rate, &y, &events, info.paused));
+            }
+        }
+    }
+    GoldenFile {
+        format: "rr_dr60-golden".into(),
+        version: 1,
+        library_version: rr_dr60::VERSION.into(),
+        entries,
+    }
+}
+
+/// Generates every spec 008 codec entry (4 stimuli × 3 configurations × 7 rates;
+/// contracts/golden-format.md): the one-pass output in one block (with the VAS events for
+/// `codec_only_vas`), then the record-then-play recording of the same stimulus (spec 006's
+/// block sizes) for its frame count and frame-byte digest. The recording's playback is
+/// checked against the one-pass output under FR-009's rule (the stop's silence appended to
+/// the one-pass input, the output skipped by the codec delay), so a golden run that passes
+/// also proves the two paths agree.
+///
+/// # Panics
+///
+/// If record-then-play and the one-pass disagree (FR-009).
+pub fn generate_codec(make: Make<'_>) -> GoldenFile {
+    use crate::split_checks::{self, PLAY_BLOCK, RECORD_BLOCK};
+    let mut entries = Vec::new();
+    for &s in &CODEC_STIMULI {
+        for &c in &CODEC_CONFIGS {
+            for rate in configs::all_rates() {
+                let x = stimulus(s, rate);
+                let settings = configs::settings(c, rate);
+                let mut p = make(settings);
+                let mut y = vec![0.0; x.len()];
+                let mut events = vec![rr_dr60::VasEvent::default(); p.max_events(x.len())];
+                let info = p
+                    .process_with_events(&x, &mut y, &mut events)
+                    .expect("equal lengths");
+                y.truncate(info.produced);
+                events.truncate(info.events);
+                let mut e = if c == "codec_only_vas" {
+                    entry_vas(s, c, rate, &y, &events, info.paused)
+                } else {
+                    entry(s, c, rate, &y)
+                };
+
+                // Record-then-play of the same stimulus: the frames and their digest.
+                let mut p = make(settings);
+                let run = split_checks::record_then_play(&mut p, &x, RECORD_BLOCK, PLAY_BLOCK);
+                let frames = rr_dr60::__test_hooks::stored_frames(&p, run.number);
+                let frame_bytes = rr_dr60::speech_codec::FRAME_BYTES as usize;
+                assert_eq!(frames.len() % frame_bytes, 0);
+                e.frames = Some((frames.len() / frame_bytes) as u64);
+                e.frames_sha256 = Some(sha256_hex(frames));
+
+                // FR-009: the playback equals the one-pass output of the input followed by
+                // the record latency's silence, the stop's silence, the delay line's 120
+                // device samples and one device sample of slack (008 research R-06; the rule
+                // of `codec_checks::one_pass_equivalence`).
+                let d = (rr_dr60::speech_codec::DELAY_SAMPLES * rate / 6000) as usize;
+                let per_device = split_checks::host_per_device(rate);
+                let pre_encoder = p.record_latency_samples() as usize - d;
+                // FR-009: the delay less the look-ahead (one frame) drains the last frame.
+                let drain = (rr_dr60::speech_codec::DELAY_SAMPLES
+                    - rr_dr60::speech_codec::LOOKAHEAD_SAMPLES)
+                    as usize;
+                let tail =
+                    pre_encoder + (run.stop.silence_fed_samples as usize + drain + 1) * per_device;
+                let mut padded = x.clone();
+                padded.extend(core::iter::repeat_n(0.0f32, tail));
+                let mut q = make(settings);
+                let mut want = vec![0.0; padded.len()];
+                let produced = q
+                    .process(&padded, &mut want)
+                    .expect("equal lengths")
+                    .produced;
+                want.truncate(produced);
+                let got = &run.pre_drain;
+                assert!(
+                    want.len() >= d + got.len()
+                        && got
+                            .iter()
+                            .zip(&want[d..d + got.len()])
+                            .all(|(a, b)| a.to_bits() == b.to_bits()),
+                    "{s}/{c}/{rate} Hz: record-then-play differs from the one-pass (008 FR-009)"
+                );
+                entries.push(e);
             }
         }
     }
@@ -397,6 +529,19 @@ pub fn compare(expected: &GoldenFile, actual: &GoldenFile) -> Result<(), String>
                     want.stimulus, want.config, want.host_rate_hz, want.vas, got.vas
                 ));
             }
+            // Spec 008: the recording's frame count and frame-byte digest are compared too.
+            Some(got) if (got.frames, &got.frames_sha256) != (want.frames, &want.frames_sha256) => {
+                problems.push(format!(
+                    "{}/{}/{} Hz: frames differ: {:?} -> {:?} frames, digest {:?} -> {:?}",
+                    want.stimulus,
+                    want.config,
+                    want.host_rate_hz,
+                    want.frames,
+                    got.frames,
+                    want.frames_sha256,
+                    got.frames_sha256
+                ));
+            }
             Some(_) => {}
         }
     }
@@ -459,6 +604,23 @@ pub fn committed_vas() -> GoldenFile {
 /// `RR_DR60_BLESS=vas cargo test -p rr_dr60_harness --test golden_vas`, with a CHANGELOG entry.
 pub fn path_vas() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-vas-v1.json")
+}
+
+/// The committed spec 008 codec golden file, embedded at compile time like [`committed`].
+///
+/// # Panics
+///
+/// If the embedded file is not valid golden JSON.
+pub fn committed_codec() -> GoldenFile {
+    serde_json::from_str(include_str!("../golden/golden-codec-v1.json"))
+        .expect("valid embedded codec golden file")
+}
+
+/// Path of the spec 008 codec golden file. Bless it only with
+/// `RR_DR60_BLESS=codec cargo test -p rr_dr60_harness --test golden_codec`, with a CHANGELOG
+/// entry (008 FR-021: a later change to the frame bytes is a model change).
+pub fn path_codec() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-codec-v1.json")
 }
 
 /// Loads a golden file.
@@ -544,6 +706,10 @@ mod tests {
         assert_eq!(stimulus("vas_burst_gap", 6000).len(), 51_600);
         assert_eq!(stimulus("vas_noise_gaps", 6000).len(), 48_000);
         assert_eq!(stimulus("vas_short_bursts", 6000).len(), 49_440);
+        // Spec 008: 2 s each (contracts/golden-format.md).
+        assert_eq!(stimulus("voiced_m20", 6000).len(), 12_000);
+        assert_eq!(stimulus("unvoiced_voiced_m20", 6000).len(), 12_000);
+        assert_eq!(stimulus("voiced_m20", 48_000).len(), 96_000);
         assert_eq!(stimulus("impulse", 48_000).len(), 12_000);
         assert_eq!(stimulus("tone_1k_m20", 48_000).len(), 24_000);
         assert_eq!(stimulus("sweep_log", 44_100).len(), 44_100);
@@ -594,6 +760,41 @@ mod tests {
         // Older entries have no `vas` field and serialize without one.
         let old = entry("impulse", "default", 8000, &[1.0]);
         assert!(!serde_json::to_string(&old).unwrap().contains("vas"));
+    }
+
+    #[test]
+    fn codec_entries_compare_frames_and_round_trip() {
+        // Spec 008 (contracts/golden-format.md): the frame count and digest are compared, and
+        // the older files serialize without the two fields (FR-021).
+        let mut a = entry("voiced_m20", "codec_only", 8000, &[1.0, 0.0]);
+        a.frames = Some(100);
+        a.frames_sha256 = Some(sha256_hex(&[0u8; 10]));
+        let mut b = a.clone();
+        b.frames_sha256 = Some(sha256_hex(&[1u8; 10]));
+        let file = |entries: Vec<GoldenEntry>| GoldenFile {
+            format: "rr_dr60-golden".into(),
+            version: 1,
+            library_version: "0".into(),
+            entries,
+        };
+        assert!(compare(&file(vec![a.clone()]), &file(vec![a.clone()])).is_ok());
+        let err = compare(&file(vec![a.clone()]), &file(vec![b])).unwrap_err();
+        assert!(err.contains("frames differ"), "{err}");
+        let json = serde_json::to_string(&a).unwrap();
+        assert!(json.contains("\"frames\":100"));
+        assert_eq!(serde_json::from_str::<GoldenEntry>(&json).unwrap(), a);
+        let old = entry("impulse", "default", 8000, &[1.0]);
+        assert!(!serde_json::to_string(&old).unwrap().contains("frames"));
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(CODEC_STIMULI.len() * CODEC_CONFIGS.len() * 7, 84);
+        // The golden file's sorted order of `configs::CODEC_CONFIGS` (the same set).
+        let mut sorted = configs::CODEC_CONFIGS;
+        sorted.sort_unstable();
+        assert_eq!(sorted, CODEC_CONFIGS);
+        assert!(CODEC_STIMULI.windows(2).all(|w| w[0] < w[1]));
     }
 
     #[test]

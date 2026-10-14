@@ -27,6 +27,21 @@ pub const AGC_CONFIGS: [&str; 2] = ["agc_only", "default_agc"];
 /// Foundational: US1 and US2 tests use them with plain assertions (plan › Story boundaries).
 pub const VAS_CONFIGS: [&str; 3] = ["default_vas", "vas_mute", "vas_only"];
 
+/// The spec 008 speech-codec configurations (008 contracts/golden-format.md): the real 0.8
+/// default (everything on, the codec included), the codec alone at the decoder tap, and the
+/// codec with the VAS on (drop mode) and everything else off.
+pub const CODEC_CONFIGS: [&str; 3] = ["default_codec", "codec_only", "codec_only_vas"];
+
+/// The 0.7 default: [`Settings::new`] with the speech codec **bypassed** (spec 008 FR-021). Every
+/// pre-008 check, golden file and harness scenario uses this instead of `Settings::new`, so the
+/// earlier specs' checks and the three golden files stay exactly what they were (the pattern of
+/// specs 002 and 003, whose stages the earlier checks bypass too).
+pub fn settings_007(host_rate_hz: u32) -> Settings {
+    let mut s = Settings::new(host_rate_hz);
+    s.speech_codec_enabled = false; // 008 FR-021
+    s
+}
+
 /// Settings for a named configuration at `host_rate_hz` (spec 005 data-model.md › Named
 /// harness configurations).
 ///
@@ -42,7 +57,9 @@ pub const VAS_CONFIGS: [&str; 3] = ["default_vas", "vas_mute", "vas_only"];
 ///
 /// On an unknown configuration name.
 pub fn settings(name: &str, host_rate_hz: u32) -> Settings {
-    let mut s = Settings::new(host_rate_hz);
+    // Spec 008 FR-021: every pre-008 configuration runs with the speech codec bypassed; the
+    // codec names below turn it back on.
+    let mut s = settings_007(host_rate_hz);
     let no_agc = |s: &mut Settings| s.agc.enabled = false; // spec 002 FR-018
     let no_vas = |s: &mut Settings| s.vas.enabled = false; // spec 003 FR-020
     let no_stages = |s: &mut Settings| {
@@ -107,6 +124,18 @@ pub fn settings(name: &str, host_rate_hz: u32) -> Settings {
             }
         }
         "default_vas" => {}
+        // Spec 008 (contracts/golden-format.md): the codec configurations.
+        "default_codec" => s.speech_codec_enabled = true,
+        "codec_only" | "codec_only_vas" => {
+            no_agc(&mut s);
+            no_stages(&mut s);
+            s.adc_clamp_enabled = false;
+            s.speech_codec_enabled = true;
+            s.tap = Tap::AfterDecoder;
+            if name == "codec_only" {
+                no_vas(&mut s);
+            }
+        }
         other => panic!("unknown configuration {other:?}"),
     }
     s
@@ -134,6 +163,7 @@ pub fn c_settings(s: &Settings) -> RrDr60Settings {
         Tap::AfterPlayback => RrDr60Tap::AfterPlayback,
         Tap::AfterAgc => RrDr60Tap::AfterAgc,
         Tap::AfterVas => RrDr60Tap::AfterVas,
+        Tap::AfterDecoder => RrDr60Tap::AfterDecoder,
         other => panic!("configs::c_settings: unmapped tap {other:?}"),
     };
     let vas_mode = match s.vas.mode {
@@ -161,6 +191,8 @@ pub fn c_settings(s: &Settings) -> RrDr60Settings {
         adc_clamp_enabled: s.adc_clamp_enabled,
         memory_capacity_s: s.memory.capacity_s,
         memory_max_recordings: s.memory.max_recordings,
+        reserved_008: 0,
+        speech_codec_enabled: s.speech_codec_enabled,
         ..rr_dr60_settings_default(s.host_rate_hz)
     }
 }
@@ -171,6 +203,7 @@ pub fn c_default_001(host_rate_hz: u32) -> RrDr60Settings {
     RrDr60Settings {
         agc_enabled: false,
         vas_enabled: false,
+        speech_codec_enabled: false, // 008 FR-021
         ..rr_dr60_settings_default(host_rate_hz)
     }
 }
@@ -180,6 +213,7 @@ pub fn c_default_001(host_rate_hz: u32) -> RrDr60Settings {
 pub fn c_default_005(host_rate_hz: u32) -> RrDr60Settings {
     RrDr60Settings {
         vas_enabled: false,
+        speech_codec_enabled: false, // 008 FR-021
         ..rr_dr60_settings_default(host_rate_hz)
     }
 }
@@ -247,7 +281,31 @@ mod tests {
         assert_eq!(row("default_vas"), (on, on, on, on, on, Tap::AfterPlayback));
         assert_eq!(settings("vas_only", 48_000).vas.mode, VasMode::Drop);
         assert_eq!(settings("vas_mute", 48_000).vas.mode, VasMode::Mute);
-        assert_eq!(settings("default_vas", 48_000), Settings::new(48_000));
+        assert_eq!(settings("default_vas", 48_000), settings_007(48_000)); // 008 FR-021
+        // Spec 008: the codec names; the real 0.8 default is `default_codec`.
+        assert_eq!(settings("default_codec", 48_000), Settings::new(48_000));
+        assert!(settings("default_codec", 48_000).speech_codec_enabled);
+        assert_eq!(
+            row("codec_only"),
+            (off, off, off, off, off, Tap::AfterDecoder)
+        );
+        assert_eq!(
+            row("codec_only_vas"),
+            (off, off, off, on, off, Tap::AfterDecoder)
+        );
+        assert!(settings("codec_only", 48_000).speech_codec_enabled);
+        for name in CONFIGS.iter().chain(&AGC_CONFIGS).chain(&VAS_CONFIGS) {
+            assert!(
+                !settings(name, 6000).speech_codec_enabled,
+                "{name}: codec bypassed (008 FR-021)"
+            );
+        }
+        assert_eq!(
+            c_settings(&settings("codec_only", 6000)).tap,
+            RrDr60Tap::AfterDecoder as u32
+        );
+        assert!(!c_default_001(48_000).speech_codec_enabled);
+        assert!(!c_default_005(48_000).speech_codec_enabled);
         assert_eq!(
             rr_dr60::Pipeline::new(settings("agc_only", 48_000))
                 .unwrap()
@@ -271,6 +329,7 @@ mod tests {
             assert_eq!((c.reserved_agc_1, c.reserved_agc_2), (0.0, 0.0), "{name}");
             assert_eq!(c.memory_capacity_s, s.memory.capacity_s, "{name}");
             assert_eq!(c.memory_max_recordings, s.memory.max_recordings, "{name}");
+            assert_eq!(c.speech_codec_enabled, s.speech_codec_enabled, "{name}");
         }
         // Spec 006 FR-010: the small-capacity helper.
         let small = memory_capacity(settings("default", 48_000), 10, 3);

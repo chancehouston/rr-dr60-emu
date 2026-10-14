@@ -21,7 +21,7 @@ Apps in the paranormal-investigation audio category on the App Store and Google 
 
 ## The gap this project occupies
 
-A per-stage model of the whole signal chain, built from the service manual and datasheets, with a public sources and assumptions register, an open-source engine, and a measurement harness. The app can show, stage by stage, what is documented, what is assumed and what is verified. No competitor does this.
+A per-stage model of the whole signal chain, built from the service manual and datasheets, with a public sources and assumptions register, an open-source engine, and a measurement harness. The app can show, stage by stage, what is documented, what is assumed and what is checked against a real unit. No competitor does this.
 
 ## Second-hand market
 

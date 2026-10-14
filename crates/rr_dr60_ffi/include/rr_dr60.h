@@ -23,6 +23,7 @@
  *   rr_dr60_set_route, rr_dr60_get_route, rr_dr60_get_state, rr_dr60_memory_status,
  *   rr_dr60_recording_length, rr_dr60_export_len, rr_dr60_record_latency_samples,
  *   rr_dr60_playback_latency_samples, rr_dr60_drain_samples, rr_dr60_footprint_bytes,
+ *   rr_dr60_get_encoding, rr_dr60_speech_codec_info (constants; no handle; spec 008),
  *   and the stage manifest reads rr_dr60_manifest_stage_count, rr_dr60_manifest_header,
  *   rr_dr60_manifest_stage, rr_dr60_manifest_stage_source, rr_dr60_manifest_stage_assumption
  *   (spec 007; they need no handle and their strings are static for the life of the process).
@@ -45,7 +46,7 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 7
+#define RR_DR60_VERSION_MINOR 8
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
@@ -92,7 +93,9 @@ enum RrDr60Status
   RR_DR60_STATUS_UNSUPPORTED_FORM_VERSION = 15,
   // The bytes are truncated, altered or inconsistent (spec 006 FR-014).
   RR_DR60_STATUS_DAMAGED = 16,
-  // `rr_dr60_reconfigure` with a capacity below what is stored; unchanged (spec 006 FR-019).
+  // `rr_dr60_reconfigure` to a configuration the stored recordings do not fit: a capacity
+  // below what is stored (spec 006 FR-019), or the other `speech_codec_enabled` while
+  // recordings are present (one memory holds one encoding, spec 008 FR-012); unchanged.
   RR_DR60_STATUS_STORED_EXCEEDS_CAPACITY = 17,
   // The recording store could not be reserved (spec 006 FR-017).
   RR_DR60_STATUS_ALLOCATION_FAILED = 18,
@@ -101,6 +104,12 @@ enum RrDr60Status
   RR_DR60_STATUS_BUFFER_TOO_SMALL = 19,
   // A stage manifest number that is 0 or above the stage count (spec 007 FR-017).
   RR_DR60_STATUS_NO_SUCH_STAGE = 20,
+  // An import whose encoding (frames or samples) differs from the engine's configuration
+  // (spec 008 FR-012).
+  RR_DR60_STATUS_ENCODING_DIFFERS = 21,
+  // The bytes carry speech-codec frames of a model version this release cannot decode
+  // (spec 008 FR-010, FR-011).
+  RR_DR60_STATUS_UNSUPPORTED_CODEC_MODEL_VERSION = 22,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -170,6 +179,9 @@ enum RrDr60Tap
   RR_DR60_TAP_AFTER_AGC = 2,
   // After signal-chain stage 5 (VAS). Stage 10 is not run (spec 003 FR-003).
   RR_DR60_TAP_AFTER_VAS = 3,
+  // After signal-chain stage 9 (the speech decoder), before stage 10 (spec 008 FR-015).
+  // Appended in 0.8.
+  RR_DR60_TAP_AFTER_DECODER = 4,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -330,6 +342,26 @@ typedef uint32_t RrDr60Confidence;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
+// How the memory stores recordings, from `rr_dr60_get_encoding` (spec 008 FR-010, FR-012),
+// passed as `uint32_t`; the values are the exported form's encoding field.
+enum RrDr60Encoding
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+  // Speech-codec frames (the codec on, the default).
+  RR_DR60_ENCODING_FRAMES = 1,
+  // Device-rate samples (the codec bypassed: not a device configuration).
+  RR_DR60_ENCODING_SAMPLES = 2,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum RrDr60Encoding RrDr60Encoding;
+#else
+typedef uint32_t RrDr60Encoding;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
 // Opaque pipeline handle.
 typedef struct RrDr60Pipeline RrDr60Pipeline;
 
@@ -341,8 +373,8 @@ typedef struct RrDr60Pipeline RrDr60Pipeline;
 // the two reserved slots at 32 and 36, `adc_clamp_enabled` at 72) and the two memory fields
 // are appended at 76 and 80 (spec 006 contracts/c-api.md).
 typedef struct RrDr60Settings {
-  // Must be `sizeof(RrDr60Settings)`: 88 since 0.6 (80 in 0.5, 72 in 0.3 and 0.4, rejected
-  // as `STRUCT_SIZE`). Lets the struct grow in later versions.
+  // Must be `sizeof(RrDr60Settings)`: 96 since 0.8 (88 in 0.6 and 0.7, 80 in 0.5, 72 in 0.3
+  // and 0.4, rejected as `STRUCT_SIZE`). Lets the struct grow in later versions.
   uint32_t struct_size;
   // Host sample rate in Hz: 6000, 8000, 16000, 44100, 48000, 88200 or 96000 (spec 004
   // FR-002; 6000 is the device rate, A-026, and needs no rate conversion).
@@ -399,6 +431,14 @@ typedef struct RrDr60Settings {
   // The most recordings the memory holds. Default 99 (S-001). Range 1 to 9 999. Appended in
   // 0.6 at offset 80 (spec 006 FR-010).
   uint32_t memory_max_recordings;
+  // Ignored; reserved since 0.8 (it fills the 0.7 layout's tail padding so that the next field
+  // sits at offset 88). Write 0.
+  uint32_t reserved_008;
+  // Signal-chain stages 7 and 9, the speech codec (encoder and decoder together), on (true,
+  // default; the device has no bypass, A-004) or bypassed. Also fixes the memory's encoding:
+  // frames when on, device-rate samples when bypassed (spec 008 FR-002, FR-012). Appended in
+  // 0.8 at offset 88.
+  bool speech_codec_enabled;
 } RrDr60Settings;
 
 // The result of one `rr_dr60_process` call (spec 003 FR-004, FR-005).
@@ -410,6 +450,9 @@ typedef struct RrDr60BlockInfo {
   uintptr_t events;
   // The VAS is paused at the end of the block.
   bool paused;
+  // Speech-codec frames encoded in this block (spec 008 FR-008); 0 with the codec bypassed.
+  // Appended in 0.8 (24 → 32 bytes on 64-bit targets).
+  uintptr_t frames;
 } RrDr60BlockInfo;
 
 // A VAS splice (drop mode) or muted region (mute mode), from `rr_dr60_process_with_events`
@@ -436,9 +479,15 @@ typedef struct RrDr60RecordInfo {
   bool stopped;
   // An `RrDr60StopReason` value; `NONE` unless `stopped`.
   uint32_t stop_reason;
+  // Speech-codec frames appended to the recording in this call (spec 008 FR-008); 0 with the
+  // codec bypassed. Appended in 0.8.
+  uintptr_t frames;
+  // Speech-codec frames in the recording so far, this call's included (spec 008 FR-008).
+  // Appended in 0.8 (the struct grows 24 → 40 bytes on 64-bit targets).
+  uint64_t frames_total;
 } RrDr60RecordInfo;
 
-// The result of `rr_dr60_stop_recording` (spec 006 FR-005, FR-012).
+// The result of `rr_dr60_stop_recording` (spec 006 FR-005, FR-012; spec 008 FR-013).
 typedef struct RrDr60StopOutcome {
   // The stop flush's report (all zeros when the flush was skipped).
   struct RrDr60RecordInfo flush;
@@ -447,16 +496,29 @@ typedef struct RrDr60StopOutcome {
   bool kept;
   // Its number (1 to the count) when kept, else 0.
   uint32_t number;
-  // Its length in device samples (÷ 6000 for seconds, A-026) when kept, else 0.
+  // Its length in device samples (÷ 6000 for seconds, A-026) when kept, else 0; a whole
+  // number of frames with the speech codec on (spec 008 FR-013).
   uint64_t length_samples;
+  // Post-VAS device samples of silence produced after the last represented input sample
+  // (spec 008 FR-013): the padding to the frame boundary plus the 60-sample look-ahead; 0
+  // with the codec bypassed or when the recording was discarded. Appended in 0.8 (the struct
+  // grows 40 → 64 bytes on 64-bit targets, `flush` included).
+  uint64_t silence_fed_samples;
 } RrDr60StopOutcome;
 
-// The report of one `rr_dr60_play` call (spec 006 FR-006, FR-008).
+// The report of one `rr_dr60_play` call (spec 006 FR-006, FR-008; spec 008 FR-008).
 typedef struct RrDr60PlayInfo {
   // Host samples written to `output[0 .. produced)`.
   uintptr_t produced;
   // The recording and its drain ended in this call; the engine is idle.
   bool finished;
+  // Speech-codec frames decoded in this call (spec 008 FR-008); 0 with the codec bypassed.
+  // Appended in 0.8.
+  uintptr_t frames;
+  // The index (0-based) of the frame whose decoded samples are entering the playback path at
+  // the end of the call, held at the last frame during the drain; 0 with the codec bypassed
+  // (spec 008 FR-008). Appended in 0.8 (the struct grows 16 → 32 bytes on 64-bit targets).
+  uint64_t frame_index;
 } RrDr60PlayInfo;
 
 // The engine's readable state, from `rr_dr60_get_state` (spec 006 FR-003, FR-015).
@@ -488,6 +550,25 @@ typedef struct RrDr60MemoryStatus {
   // `max_recordings − count`.
   uint32_t slots_remaining;
 } RrDr60MemoryStatus;
+
+// The speech codec's constants, from `rr_dr60_speech_codec_info` (spec 008 FR-003, FR-008):
+// the same layout as the Rust `SpeechCodecInfo` (24 bytes).
+typedef struct RrDr60SpeechCodecInfo {
+  // Device samples per frame: 120 (20 ms; A-040).
+  uint32_t frame_samples;
+  // Frame length in milliseconds: 20.
+  uint32_t frame_ms;
+  // Bits per frame: 80 (50 frames/s × 80 = 4000 bit/s, S-002).
+  uint32_t bits_per_frame;
+  // The codec's delay in device samples: 180 (30 ms), carried by the record path and the
+  // one-pass processing (spec 008 FR-004).
+  uint32_t delay_samples;
+  // The codec model version (major, minor, patch) the exported form carries (spec 008
+  // FR-010, FR-011).
+  uint16_t model_version[3];
+  // Reserved; 0.
+  uint16_t reserved;
+} RrDr60SpeechCodecInfo;
 
 // The stage manifest's header (spec 007 FR-003), filled by `rr_dr60_manifest_header`.
 //
@@ -692,6 +773,12 @@ RrDr60Status rr_dr60_start_recording(struct RrDr60Pipeline *pipeline);
 // error). `events` may be NULL only when `events_capacity` is 0; `input` may be NULL only when
 // `frames` is 0. Real-time safe.
 //
+// With the speech codec on, `out_info.frames` and `frames_total` count the frames completed
+// (spec 008 FR-008), and a VAS event reported in the block that fills the memory may name a
+// position up to the look-ahead (60 device samples) past the stored length: the recording
+// closes on the push that completes the frame filling the memory, and the look-ahead samples
+// kept after that frame are not represented (spec 008 FR-014).
+//
 // Statuses: `NOT_RECORDING`.
 //
 // # Safety
@@ -851,9 +938,10 @@ RrDr60Status rr_dr60_export_len(struct RrDr60Pipeline *pipeline,
 // Writes recording `number` as an opaque byte sequence into `out_bytes` (`capacity` bytes)
 // and the bytes written to `*out_written` (spec 006 FR-014). The host stores or sends the
 // bytes unchanged and never parses them; the same recording exports to the same bytes every
-// time. The form is the engine's (version 1: the record path's device-rate output; it will
-// become encoded frames when the codec is modeled, A-004, told apart by the version field).
-// Allowed in any state. Not real-time safe (a CRC over the recording; no allocation).
+// time. The form is version 2 (spec 008 FR-010): it declares the recording's encoding, the
+// speech codec's frames or device-rate samples when the codec was bypassed, and for frames the
+// codec's model version, so an importer knows which decoder the bytes need. Allowed in any
+// state. Not real-time safe (a CRC over the recording; no allocation).
 //
 // Statuses: `NO_SUCH_RECORDING`; `BUFFER_TOO_SMALL` leaves `out_bytes` untouched and writes
 // the needed length to `*out_written` when not NULL; `NULL_POINTER` for a NULL `out_bytes`
@@ -870,12 +958,19 @@ RrDr60Status rr_dr60_export(struct RrDr60Pipeline *pipeline,
                             uintptr_t *out_written);
 
 // Adds a recording from the `len` bytes of an export (this or another engine of the same
-// version, any host rate) and writes its number to `*out_number` when not NULL (spec 006
-// FR-014). Allowed while idle or playing; refused while recording. Not real-time safe
-// (validates the whole sequence; no allocation).
+// version configured with the same encoding, any host rate) and writes its number to
+// `*out_number` when not NULL (spec 006 FR-014; spec 008 FR-010, FR-012). Allowed while idle
+// or playing; refused while recording. Not real-time safe (validates the whole sequence; no
+// allocation).
 //
-// Statuses: `RECORDING_IN_PROGRESS`, `UNKNOWN_FORM`, `UNSUPPORTED_FORM_VERSION`, `DAMAGED`,
-// `DOES_NOT_FIT` (the remaining time or slots); the memory is unchanged on every error.
+// Statuses, in the form contract's order: `RECORDING_IN_PROGRESS`, `UNKNOWN_FORM`,
+// `UNSUPPORTED_FORM_VERSION` (form version 1, the never-released samples form of 0.6 and 0.7,
+// any later version, or non-zero flags; spec 008 FR-011), `DAMAGED`,
+// `UNSUPPORTED_CODEC_MODEL_VERSION` (frames of a codec model version this release cannot
+// decode; from the 1.0 release every released model version keeps its decoder),
+// `ENCODING_DIFFERS` (frames into a bypassed engine or samples into a codec engine; checked
+// before the fit), `DOES_NOT_FIT` (the remaining time or slots); the memory is unchanged on
+// every error.
 //
 // # Safety
 //
@@ -914,13 +1009,34 @@ RrDr60Status rr_dr60_playback_latency_samples(struct RrDr60Pipeline *pipeline,
 RrDr60Status rr_dr60_drain_samples(struct RrDr60Pipeline *pipeline, uint32_t *out_samples);
 
 // Writes the bytes reserved for the recording store and its span table to `*out_bytes`
-// (spec 006 FR-017, SC-007): about 86 MB at the default capacity, virtual until recordings
-// are written. Real-time safe.
+// (spec 006 FR-017, SC-007; spec 008 SC-007): about 1.8 MB at the default capacity with the
+// speech codec on, about 86 MB with it bypassed, virtual until recordings are written.
+// Real-time safe.
 //
 // # Safety
 //
 // `pipeline` must be a live handle. `out_bytes` must be NULL or writable.
 RrDr60Status rr_dr60_footprint_bytes(struct RrDr60Pipeline *pipeline, uintptr_t *out_bytes);
+
+// Writes the speech codec's constants to `*out` (spec 008 FR-003, FR-008): frame samples 120,
+// frame ms 20, bits per frame 80, delay samples 180, the codec model version. Needs no handle;
+// real-time safe.
+//
+// Statuses: `NULL_POINTER`.
+//
+// # Safety
+//
+// `out` must be NULL or writable.
+RrDr60Status rr_dr60_speech_codec_info(struct RrDr60SpeechCodecInfo *out);
+
+// Writes the memory's encoding to `*out_encoding` (an `RrDr60Encoding` value; spec 008
+// FR-012): frames with the speech codec on, device-rate samples with it bypassed. An import of
+// the other encoding is `ENCODING_DIFFERS`. Real-time safe.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_encoding` must be NULL or writable.
+RrDr60Status rr_dr60_get_encoding(struct RrDr60Pipeline *pipeline, uint32_t *out_encoding);
 
 // The library version as a static NUL-terminated string, e.g. `"0.1.0"`. Never NULL; do not
 // free.

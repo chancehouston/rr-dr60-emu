@@ -8,4 +8,4 @@ Notes kept by the `product-specialist` consulting agent (see `.claude/agents/pro
 - [front-and-inside.md](front-and-inside.md): the app's two views of the recorder (the front and the inside), what the inside may show, the free/Workbench split, and the engine requests it needs.
 - [decisions.md](decisions.md): the product decision log.
 
-Everything here follows the project's claims policy in `CLAUDE.md`: describe what the signal chain does to sound, say "modeled on" until a stage is verified against a real unit, and make no claim about paranormal phenomena either way.
+Everything here follows the project's claims policy in `CLAUDE.md`: describe what the signal chain does to sound, say "modeled on" until a stage is checked against a real unit, and make no claim about paranormal phenomena either way.

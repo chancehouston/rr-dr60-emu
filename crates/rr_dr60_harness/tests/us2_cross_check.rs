@@ -121,10 +121,11 @@ fn doctored_superseded() {
 
 #[test]
 fn doctored_added_assumption() {
-    // Scenario 3: a new current assumption nobody cites → Uncited, A-040.
+    // Scenario 3: a new current assumption nobody cites → Uncited, A-099 (A-040 is registered
+    // and cited since spec 008).
     let r = committed_registers();
     let assumptions = format!(
-        "{}\n| A-040 | Test | A test assumption. | Test. | Low | Test. | assumed |",
+        "{}\n| A-099 | Test | A test assumption. | Test. | Low | Test. | assumed |",
         r.assumptions.trim_end()
     );
     let f = cross_check(
@@ -135,7 +136,88 @@ fn doctored_added_assumption() {
         },
     );
     print(&f);
-    assert!(has(&f, Rule::Uncited, None, Some("A-040")));
+    assert!(has(&f, Rule::Uncited, None, Some("A-099")));
+}
+
+// ---- Spec 008 US3 scenarios 2–3 (FR-020, FR-023) -----------------------------------------------
+
+/// Spec 008 US3 scenario 2: the committed registers carry A-004 as adopted, A-040 and A-041
+/// registered at low confidence, S-008 – S-011 registered and not General, and stages 7 and 9
+/// cite them all; the cross-check passes (`committed_registers_pass`).
+#[test]
+fn codec_rows_registered_and_cited() {
+    let r = committed_registers();
+    let (assumptions, af) = mc::parse_assumptions(r.assumptions);
+    let (sources, sf) = mc::parse_sources(r.sources);
+    assert!(af.is_empty() && sf.is_empty(), "{af:?} {sf:?}");
+    let a004 = assumptions.iter().find(|a| a.id == "A-004").expect("A-004");
+    assert!(a004.adopted_or_revised, "A-004 is adopted by spec 008");
+    assert_eq!(a004.class, StatusClass::Open);
+    for id in ["A-040", "A-041"] {
+        let a = assumptions
+            .iter()
+            .find(|a| a.id == id)
+            .unwrap_or_else(|| panic!("{id}"));
+        assert_eq!(a.headline, Headline::Low, "{id}");
+        assert_eq!(a.class, StatusClass::Open, "{id}");
+    }
+    for id in ["S-008", "S-009", "S-010", "S-011"] {
+        let s = sources
+            .iter()
+            .find(|s| s.id == id)
+            .unwrap_or_else(|| panic!("{id}"));
+        assert!(!s.general, "{id} bears on stages 7 and 9");
+    }
+    let m = manifest();
+    for n in [7u32, 9] {
+        let e = m.stage(n).unwrap();
+        for id in ["A-004", "A-040", "A-041"] {
+            assert!(e.assumptions.contains(&id), "stage {n} cites {id}");
+        }
+        for id in ["S-002", "S-008", "S-009", "S-010", "S-011"] {
+            assert!(e.sources.contains(&id), "stage {n} cites {id}");
+        }
+    }
+    // The signal-chain rows 7 and 9 carry the marker.
+    let (chain, cf) = mc::parse_signal_chain(r.signal_chain);
+    assert!(cf.is_empty(), "{cf:?}");
+    for n in [7usize, 9] {
+        assert!(chain[n - 1].modeled, "row {n} says Modeled by");
+    }
+}
+
+/// Spec 008 US3 scenario 3 (FR-023): the README's codec section and the CHANGELOG's 0.8.0
+/// entry pass the manifest's denylist.
+#[test]
+fn readme_codec_section_and_changelog_entry_pass_the_denylist() {
+    let text = readme();
+    let section =
+        mc::readme_region(&text, "codec-section").expect("README has the codec-section markers");
+    assert!(section.len() > 500, "the codec section is written");
+    assert_eq!(mc::denylist_hit(section), None, "README codec section");
+    let changelog = std::fs::read_to_string(mc::repo_root().join("CHANGELOG.md")).unwrap();
+    // The entry is split by change type (Added, Changed, Documentation), each part between
+    // its own `0.8.0` markers (T045); every part is scanned.
+    let mut rest = changelog.as_str();
+    let mut parts = 0;
+    while let Some(entry) = mc::readme_region(rest, "0.8.0") {
+        assert!(
+            entry.contains("0.8.0") || entry.contains("Spec 008"),
+            "{entry}"
+        );
+        assert_eq!(
+            mc::denylist_hit(entry),
+            None,
+            "CHANGELOG 0.8.0 entry: {entry}"
+        );
+        parts += 1;
+        let end = rest.find("<!-- 0.8.0:end -->").unwrap() + "<!-- 0.8.0:end -->".len();
+        rest = &rest[end..];
+    }
+    assert_eq!(
+        parts, 3,
+        "the 0.8.0 entry has an Added, a Changed and a Documentation part"
+    );
 }
 
 #[test]
@@ -202,11 +284,11 @@ fn doctored_row_count() {
 
 #[test]
 fn doctored_marker() {
-    // Scenario 6: row 7 gains the marker while the manifest says not modeled →
-    // StatusDerivation, stage 7.
+    // Scenario 6: row 6 gains the marker while the manifest says not modeled →
+    // StatusDerivation, stage 6 (row 7 is modeled since spec 008).
     let r = committed_registers();
     // Cells after the edge cells are dropped: 0 #, 1 Stage, 2 Identifier, 3 Known, ...
-    let chain = with_cell_appended(r.signal_chain, "| 7 |", 3, " **Modeled by** test");
+    let chain = with_cell_appended(r.signal_chain, "| 6 |", 3, " **Modeled by** test");
     let f = cross_check(
         manifest(),
         &Registers {
@@ -215,7 +297,7 @@ fn doctored_marker() {
         },
     );
     print(&f);
-    assert!(has(&f, Rule::StatusDerivation, Some(7), None));
+    assert!(has(&f, Rule::StatusDerivation, Some(6), None));
 }
 
 #[test]

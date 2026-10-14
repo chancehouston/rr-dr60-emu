@@ -17,6 +17,7 @@
 #[cfg(any(test, feature = "__test-hooks"))]
 use alloc::vec::Vec;
 
+use crate::codec;
 use crate::pipeline::VasEvent;
 use crate::rate::RatePlan;
 use crate::resample::{self, PolyphaseDown, PolyphaseUp};
@@ -82,6 +83,18 @@ fn host_latency(plan: &RatePlan, tau_device: f64, host_rate_hz: u32) -> u32 {
         + 0.5) as u32
 }
 
+/// The speech codec's delay in host samples at `host_rate_hz`: 180 · host / 6000, an integer at
+/// every supported rate (spec 008 FR-004; research R-06).
+pub(crate) fn codec_delay_host_samples(host_rate_hz: u32) -> u32 {
+    let delay = u64::from(codec::DELAY_SAMPLES) * u64::from(host_rate_hz);
+    debug_assert_eq!(
+        delay % u64::from(DEVICE_RATE_HZ),
+        0,
+        "a whole number of host samples"
+    );
+    u32::try_from(delay / u64::from(DEVICE_RATE_HZ)).unwrap_or(u32::MAX)
+}
+
 /// `(l, m)` of a plan: `m / l` host samples per device sample (`1 / 1` at the identity rate).
 pub(crate) fn l_m(plan: &RatePlan) -> (u64, u64) {
     match *plan {
@@ -124,6 +137,12 @@ pub(crate) struct RecordHalf {
     run_vas: bool,
     /// Stage 5 mutes paused audio instead of dropping it (spec 003 FR-004; research R-09).
     mute: bool,
+    /// The stop feed holds the gate open (spec 008 FR-013; research R-06): a VAS decision to
+    /// drop keeps the sample instead, the first such sample after a dropped stretch as a
+    /// resume, so its splice event is recorded. Drop mode only; the VAS state still updates.
+    forced: bool,
+    /// The previous device sample was dropped (so a forced keep is a resume).
+    after_drop: bool,
 }
 
 impl RecordHalf {
@@ -137,8 +156,14 @@ impl RecordHalf {
             clamp: ClampStage::new(settings.adc_clamp_enabled),
             vas: VasStage::new(&settings.vas),
             run_vas: settings.vas.enabled
-                && (!honour_tap || matches!(settings.tap, Tap::AfterVas | Tap::AfterPlayback)),
+                && (!honour_tap
+                    || matches!(
+                        settings.tap,
+                        Tap::AfterVas | Tap::AfterDecoder | Tap::AfterPlayback
+                    )),
             mute: settings.vas.mode == VasMode::Mute,
+            forced: false,
+            after_drop: false,
         }
     }
 
@@ -146,7 +171,9 @@ impl RecordHalf {
     /// arithmetic (001 FR-007). The clamp sees stage 4's output, so the VAS and every tap from
     /// "after record" on see clamped samples (spec 005 FR-008); a dropped sample goes no
     /// further, and a muted sample becomes +0.0 (spec 003 Edge Cases). The kept value is the
-    /// 64-bit post-VAS sample; the path narrows it to `f32` (spec 006 FR-009).
+    /// 64-bit post-VAS sample; the path narrows it to `f32` (spec 006 FR-009). With the gate
+    /// held open (spec 008 FR-013) a drop becomes a keep, the first one after a dropped stretch
+    /// a resume.
     #[inline]
     pub(crate) fn process(&mut self, mut d: f64) -> RecordOut {
         if self.run_record {
@@ -158,12 +185,24 @@ impl RecordHalf {
         } else {
             VasDecision::Keep
         };
-        match decision {
-            VasDecision::Drop if !self.mute => RecordOut::Drop,
-            VasDecision::Drop => RecordOut::Mute,
+        let out = match decision {
+            VasDecision::Drop if self.mute => RecordOut::Mute,
+            VasDecision::Drop if self.forced && self.after_drop => RecordOut::Resume(d),
+            VasDecision::Drop if self.forced => RecordOut::Keep(d),
+            VasDecision::Drop => RecordOut::Drop,
+            VasDecision::Resume if self.forced && !self.after_drop => RecordOut::Keep(d),
             VasDecision::Resume => RecordOut::Resume(d),
             VasDecision::Keep => RecordOut::Keep(d),
-        }
+        };
+        self.after_drop = matches!(out, RecordOut::Drop);
+        out
+    }
+
+    /// Holds the VAS gate open (`true`) or releases it (spec 008 FR-013: the stop feed in drop
+    /// mode with the speech codec on). In mute mode nothing is dropped, so there is nothing to
+    /// force.
+    pub(crate) fn force_open(&mut self, on: bool) {
+        self.forced = on && !self.mute;
     }
 
     /// The VAS runs and is paused.
@@ -184,6 +223,8 @@ impl RecordHalf {
         self.record.reset();
         self.clamp.reset();
         self.vas.reset();
+        self.forced = false;
+        self.after_drop = false;
     }
 }
 
@@ -345,7 +386,13 @@ pub(crate) struct RecordPath {
     #[cfg_attr(not(any(test, feature = "__test-hooks")), allow(dead_code))]
     host_rate_hz: u32,
     tap_after_agc: bool,
+    /// The latency to the encoder's input (spec 006 FR-016): the conversion and stage 4.
     latency: u32,
+    /// The speech codec runs after this path (spec 008 FR-015).
+    codec_runs: bool,
+    /// The speech codec's delay in host samples when it runs after this path (spec 008 FR-004:
+    /// 180 device samples, a whole number of host samples at every rate); 0 when it does not.
+    codec_delay: u32,
 }
 
 impl RecordPath {
@@ -368,6 +415,15 @@ impl RecordPath {
         } else {
             host_latency(plan, half.group_delay_1k_samples(), settings.host_rate_hz)
         };
+        // Spec 008 FR-004, FR-015: the codec runs after the recorder whenever it is on, and
+        // after the one-pass record path at the taps from the decoder's on.
+        let codec_runs = settings.speech_codec_enabled
+            && (!honour_tap || matches!(settings.tap, Tap::AfterDecoder | Tap::AfterPlayback));
+        let codec_delay = if codec_runs {
+            codec_delay_host_samples(settings.host_rate_hz)
+        } else {
+            0
+        };
         Self {
             limiter: Limiter::new(&settings.agc, settings.host_rate_hz),
             run_limiter: settings.agc.enabled,
@@ -388,6 +444,8 @@ impl RecordPath {
             host_rate_hz: settings.host_rate_hz,
             tap_after_agc,
             latency,
+            codec_runs,
+            codec_delay,
         }
     }
 
@@ -479,11 +537,27 @@ impl RecordPath {
         usize::try_from(device / spacing + 2).unwrap_or(usize::MAX)
     }
 
-    /// The path's latency in host samples: round(D + τ_rec · host / 6000), or 0 at the honoured
-    /// "after AGC" tap (spec 006 FR-016).
-    #[allow(dead_code)] // read by the transport (006 US1, T023)
+    /// The path's latency in host samples: round(D + τ_rec · host / 6000) plus the speech
+    /// codec's delay when it runs (spec 008 FR-004), or 0 at the honoured "after AGC" tap
+    /// (spec 006 FR-016).
     pub(crate) fn latency_host_samples(&self) -> u32 {
+        self.latency.saturating_add(self.codec_delay)
+    }
+
+    /// The latency to the speech encoder's input: the spec 006 figure without the codec's delay
+    /// (spec 008 FR-013: the stop flush that brings every input sample to the encoder).
+    pub(crate) fn latency_host_samples_pre_encoder(&self) -> u32 {
         self.latency
+    }
+
+    /// The speech codec runs after this path (spec 008 FR-015).
+    pub(crate) fn codec_runs(&self) -> bool {
+        self.codec_runs
+    }
+
+    /// Holds the VAS gate open or releases it (spec 008 FR-013; `RecordHalf::force_open`).
+    pub(crate) fn force_open(&mut self, on: bool) {
+        self.half.force_open(on);
     }
 
     /// Back to the freshly created state (the limiter discharged, the decimator and the half
@@ -651,6 +725,11 @@ pub(crate) mod figures {
     pub(crate) const PLAYBACK_LATENCY: [u32; 7] = [0, 40, 81, 221, 241, 442, 481];
     /// The one-pass latency table (001 R-10; the committed `latency` test prints it).
     pub(crate) const ONE_PASS_LATENCY: [u32; 7] = [1, 81, 162, 444, 483, 887, 966];
+    /// The speech codec's delay in host samples: 180 · rate / 6000 (spec 008 FR-004; research
+    /// R-06; data-model.md › Per-rate figures).
+    pub(crate) const CODEC_DELAY: [u32; 7] = [180, 240, 480, 1323, 1440, 2646, 2880];
+    /// The one-pass latency with the codec on (spec 008 data-model.md): 006's plus the delay.
+    pub(crate) const ONE_PASS_LATENCY_008: [u32; 7] = [181, 321, 642, 1767, 1923, 3533, 3846];
     /// Playback drain, host samples: ⌈N₁₀ · m / l⌉ + 2D (006 FR-008).
     pub(crate) const DRAIN: [u32; 7] = [121, 242, 483, 1328, 1444, 2653, 2888];
     /// Stage 10's settling length at −100 dB relative to its own impulse-response peak, in
@@ -757,10 +836,12 @@ mod tests {
         for rate in [6000, 48_000] {
             let x = stream(f64::from(rate));
             let mut drop = Settings::new(rate);
+            drop.speech_codec_enabled = false; // the paths alone, no codec (008 FR-021)
             drop.vas.hang_ms = 500.0; // a pause inside the 2.5 s gap
             let mut mute = drop;
             mute.vas.mode = VasMode::Mute;
             let mut bypass = Settings::new(rate);
+            bypass.speech_codec_enabled = false; // the paths alone, no codec (008 FR-021)
             bypass.agc.enabled = false;
             bypass.vas.enabled = false;
             bypass.record_stage_enabled = false;
@@ -917,7 +998,8 @@ mod tests {
     #[test]
     fn record_and_playback_latency_table() {
         for (i, rate) in RATES.iter().copied().enumerate() {
-            let s = Settings::new(rate);
+            let mut s = Settings::new(rate);
+            s.speech_codec_enabled = false; // the 006 figures (008 FR-021); the codec's row below
             let rec = RecordPath::new(&s, &plan(rate), false, true);
             let play = PlaybackPath::new(&s, &plan(rate), false);
             assert_eq!(
@@ -944,6 +1026,46 @@ mod tests {
             let play = PlaybackPath::new(&off, &plan(rate), false);
             assert_eq!(rec.latency_host_samples(), D[i], "{rate} Hz: stage 4 off");
             assert_eq!(play.latency_host_samples(), D[i], "{rate} Hz: stage 10 off");
+            // Spec 008 FR-004 (research R-06): with the codec on the record path and the
+            // one-pass grow by exactly the codec's delay, the playback path not at all, and the
+            // sum rule keeps 006's margin.
+            let on = Settings::new(rate);
+            assert!(on.speech_codec_enabled);
+            assert_eq!(codec_delay_host_samples(rate), CODEC_DELAY[i], "{rate} Hz");
+            let rec = RecordPath::new(&on, &plan(rate), false, true);
+            let play = PlaybackPath::new(&on, &plan(rate), false);
+            assert!(rec.codec_runs());
+            assert_eq!(
+                rec.latency_host_samples(),
+                RECORD_LATENCY[i] + CODEC_DELAY[i],
+                "{rate} Hz record with the codec"
+            );
+            assert_eq!(rec.latency_host_samples_pre_encoder(), RECORD_LATENCY[i]);
+            assert_eq!(play.latency_host_samples(), PLAYBACK_LATENCY[i]);
+            let one_pass = Pipeline::new(on).unwrap().latency_samples();
+            assert_eq!(
+                one_pass, ONE_PASS_LATENCY_008[i],
+                "{rate} Hz one-pass with the codec"
+            );
+            assert_eq!(
+                rec.latency_host_samples() + play.latency_host_samples(),
+                one_pass
+            );
+            // At the taps before the decoder the one-pass codec does not run.
+            for tap in [Tap::AfterRecord, Tap::AfterVas] {
+                let mut before = on;
+                before.tap = tap;
+                let rec = RecordPath::new(&before, &plan(rate), true, false);
+                assert!(!rec.codec_runs(), "{rate} Hz {tap:?}");
+                assert_eq!(rec.latency_host_samples(), RECORD_LATENCY[i]);
+            }
+            let mut dec = on;
+            dec.tap = Tap::AfterDecoder;
+            assert_eq!(
+                Pipeline::new(dec).unwrap().latency_samples(),
+                RECORD_LATENCY[i] + CODEC_DELAY[i] + D[i],
+                "{rate} Hz at the decoder tap: the record path, the delay, the conversion"
+            );
         }
     }
 

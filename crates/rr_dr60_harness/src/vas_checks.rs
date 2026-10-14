@@ -741,7 +741,7 @@ pub fn check_fr011_latency(rate: u32) -> Vec<MeasurementResult> {
     ]
     .into_iter()
     .map(|tap| {
-        let mut on = Settings::new(rate);
+        let mut on = crate::configs::settings_007(rate);
         on.tap = tap;
         let mut off = on;
         off.vas.enabled = false;
@@ -914,7 +914,7 @@ mod tests {
         assert_eq!(hang_s(&d), 1.0);
         assert_eq!(onset_s(&d), 0.02);
         // 005 FR-012: input-referred == configured below the knee (restated from −58 / −30).
-        let s = Settings::new(48_000);
+        let s = crate::configs::settings_007(48_000);
         assert!((input_referred_threshold_dbfs(&s) + 40.0).abs() < 1e-9);
         let mut s1 = s;
         s1.vas.sensitivity = 1;

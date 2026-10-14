@@ -257,6 +257,261 @@ pub fn from_db(db: f64) -> f64 {
     10f64.powf(db / 20.0)
 }
 
+/// `x` at `fs_in` resampled to `fs_out` by a windowed-sinc interpolator (a Hamming window over
+/// 64 zero crossings at the lower of the two rates, cut-off at 0.45 of the lower rate): the
+/// codec checks measure the spectral figures at the calibration's 8 kHz whatever the host rate
+/// (spec 008 research R-09). Measurement only (not bit-critical; `f64` with `std` math).
+pub fn resample_to<T: Copy + Into<f64>>(x: &[T], fs_in: f64, fs_out: f64) -> Vec<f64> {
+    if (fs_in - fs_out).abs() < 1e-9 {
+        return x.iter().map(|&v| v.into()).collect();
+    }
+    let lower = fs_in.min(fs_out);
+    let cutoff = 0.45 * lower / fs_in; // cycles per input sample
+    let half_span = (32.0 * fs_in / lower).ceil() as i64; // 32 zero crossings each side
+    let out_len = (x.len() as f64 * fs_out / fs_in).floor() as usize;
+    let mut out = Vec::with_capacity(out_len);
+    let xs: Vec<f64> = x.iter().map(|&v| v.into()).collect();
+    for m in 0..out_len {
+        let centre = m as f64 * fs_in / fs_out;
+        let c0 = centre.floor() as i64;
+        let mut acc = 0.0;
+        for n in (c0 - half_span)..=(c0 + half_span + 1) {
+            if n < 0 || n >= xs.len() as i64 {
+                continue;
+            }
+            let t = n as f64 - centre;
+            let sinc = if t.abs() < 1e-12 {
+                1.0
+            } else {
+                (TAU * cutoff * t).sin() / (TAU * cutoff * t)
+            };
+            let w = 0.54 + 0.46 * (std::f64::consts::PI * t / (half_span as f64 + 1.0)).cos();
+            acc += xs[n as usize] * sinc * w;
+        }
+        out.push(acc * 2.0 * cutoff);
+    }
+    out
+}
+
+/// RMS level in dBFS of `x` (0 dBFS = a full-scale sine, RMS 1/√2).
+pub fn rms_dbfs<T: Copy + Into<f64>>(x: &[T]) -> f64 {
+    let ms = x.iter().map(|&v| v.into() * v.into()).sum::<f64>() / x.len().max(1) as f64;
+    10.0 * (ms * 2.0).max(1e-30).log10()
+}
+
+/// The ten third-octave band centres used by the codec checks (spec 008 FR-005): 315 … 2500 Hz.
+pub const THIRD_OCTAVE_CENTRES_HZ: [f64; 10] = [
+    315.0, 400.0, 500.0, 630.0, 800.0, 1000.0, 1250.0, 1600.0, 2000.0, 2500.0,
+];
+
+/// Long-term third-octave band levels (dB, arbitrary reference) of `x` at `fs`: the power of
+/// the FFT bins between each band's edges (centre × 2^(±1/6)), over the whole signal in one
+/// FFT of the next power of two (spec 008 FR-005; research R-09). Differences between two
+/// signals' levels are what the checks use, so the reference cancels.
+pub fn third_octave_levels<T: Copy + Into<f64>>(x: &[T], fs: f64) -> [f64; 10] {
+    let n = x.len().next_power_of_two().max(16);
+    let spectrum = Spectrum::from_impulse_response(x, fs, n);
+    let mut out = [0.0; 10];
+    for (i, &fc) in THIRD_OCTAVE_CENTRES_HZ.iter().enumerate() {
+        let (lo, hi) = (fc / 2f64.powf(1.0 / 6.0), fc * 2f64.powf(1.0 / 6.0));
+        let p: f64 = spectrum
+            .range(lo, hi.min(fs / 2.0 - spectrum.resolution()))
+            .map(|k| spectrum.bins[k].norm_sqr())
+            .sum();
+        out[i] = 10.0 * (p / n as f64).max(1e-30).log10();
+    }
+    out
+}
+
+/// Autocorrelation-method LPC envelope of one frame: returns the predictor coefficients
+/// a[1..=order] of A(z) = 1 − Σ a_k z^−k (Levinson–Durbin in f64, with a tiny white-noise
+/// floor), or `None` when the frame is silent.
+fn lpc_frame(frame: &[f64], order: usize) -> Option<Vec<f64>> {
+    let mut r = vec![0.0; order + 1];
+    for k in 0..=order {
+        r[k] = frame[k..]
+            .iter()
+            .zip(frame.iter())
+            .map(|(a, b)| a * b)
+            .sum();
+    }
+    if r[0] <= 1e-12 {
+        return None;
+    }
+    r[0] *= 1.0001;
+    let mut a = vec![0.0; order + 1];
+    let mut e = r[0];
+    for i in 1..=order {
+        let mut acc = r[i];
+        for j in 1..i {
+            acc -= a[j] * r[i - j];
+        }
+        let k = acc / e;
+        let prev = a.clone();
+        a[i] = k;
+        for j in 1..i {
+            a[j] = prev[j] - k * prev[i - j];
+        }
+        e *= 1.0 - k * k;
+        if e <= 0.0 {
+            return None;
+        }
+    }
+    Some(a)
+}
+
+/// Mean **log-spectral distance** (dB) between the order-8 LPC envelopes of `x` and `y`, per
+/// 20 ms frame (Hamming-windowed), evaluated at 64 frequencies spread evenly over 225 – 2550 Hz,
+/// averaged over the frames where both are above −50 dBFS (spec 008 FR-005; research R-09).
+pub fn lpc_lsd<T: Copy + Into<f64>, U: Copy + Into<f64>>(x: &[T], y: &[U], fs: f64) -> f64 {
+    let frame = (fs * 0.02) as usize;
+    let order = 8;
+    let window: Vec<f64> = (0..frame)
+        .map(|n| 0.54 - 0.46 * (TAU * n as f64 / (frame - 1) as f64).cos())
+        .collect();
+    let freqs: Vec<f64> = (0..64)
+        .map(|i| 225.0 + (2550.0 - 225.0) * i as f64 / 63.0)
+        .collect();
+    let envelope = |a: &[f64], f: f64| -> f64 {
+        let w = TAU * f / fs;
+        let mut re = 1.0;
+        let mut im = 0.0;
+        for (k, &ak) in a.iter().enumerate().skip(1) {
+            re -= ak * (w * k as f64).cos();
+            im += ak * (w * k as f64).sin();
+        }
+        -10.0 * (re * re + im * im).max(1e-30).log10()
+    };
+    let mut total = 0.0;
+    let mut count = 0usize;
+    let frames = x.len().min(y.len()) / frame;
+    for f in 0..frames {
+        let xs: Vec<f64> = x[f * frame..(f + 1) * frame]
+            .iter()
+            .zip(&window)
+            .map(|(&v, w)| v.into() * w)
+            .collect();
+        let ys: Vec<f64> = y[f * frame..(f + 1) * frame]
+            .iter()
+            .zip(&window)
+            .map(|(&v, w)| v.into() * w)
+            .collect();
+        if rms_dbfs(&x[f * frame..(f + 1) * frame]) < -50.0 {
+            continue;
+        }
+        let (Some(ax), Some(ay)) = (lpc_frame(&xs, order), lpc_frame(&ys, order)) else {
+            continue;
+        };
+        let d: f64 = freqs
+            .iter()
+            .map(|&fr| {
+                let diff = envelope(&ax, fr) - envelope(&ay, fr);
+                diff * diff
+            })
+            .sum::<f64>()
+            / freqs.len() as f64;
+        total += d.sqrt();
+        count += 1;
+    }
+    if count == 0 {
+        0.0
+    } else {
+        total / count as f64
+    }
+}
+
+/// Gated **segmental SNR** (dB) of `y` against the reference `x`, `y` delayed by `delay`
+/// samples relative to `x` (y[n + delay] ≈ x[n]): 20 ms segments, each clamped to −10 … +35 dB,
+/// segments whose reference level is below −50 dBFS excluded, mean over the rest (spec 008
+/// FR-006; research R-09; plan review D3).
+pub fn segmental_snr<T: Copy + Into<f64>, U: Copy + Into<f64>>(
+    x: &[T],
+    y: &[U],
+    fs: f64,
+    delay: usize,
+) -> f64 {
+    let seg = (fs * 0.02) as usize;
+    let usable = x.len().min(y.len().saturating_sub(delay)) / seg;
+    let mut total = 0.0;
+    let mut count = 0usize;
+    for s in 0..usable {
+        let xs = &x[s * seg..(s + 1) * seg];
+        if rms_dbfs(xs) < -50.0 {
+            continue;
+        }
+        let (mut sig, mut err) = (0.0, 0.0);
+        for (i, &xv) in xs.iter().enumerate() {
+            let xv: f64 = xv.into();
+            let yv: f64 = y[s * seg + i + delay].into();
+            sig += xv * xv;
+            err += (xv - yv) * (xv - yv);
+        }
+        let snr = 10.0 * (sig / err.max(1e-30)).log10();
+        total += snr.clamp(-10.0, 35.0);
+        count += 1;
+    }
+    if count == 0 {
+        0.0
+    } else {
+        total / count as f64
+    }
+}
+
+/// The lag (in samples, `−max_lag ..= max_lag`) that maximizes the normalized cross-correlation
+/// of `y` against `x` (positive when `y` lags `x`), over the overlapping steady part (spec 008
+/// FR-004; research R-09). Ties resolve to the smaller lag.
+pub fn xcorr_lag<T: Copy + Into<f64>, U: Copy + Into<f64>>(
+    x: &[T],
+    y: &[U],
+    max_lag: usize,
+) -> i64 {
+    let n = x.len().min(y.len());
+    let mut best = (f64::MIN, 0i64);
+    for lag in -(max_lag as i64)..=(max_lag as i64) {
+        let (mut xy, mut xx, mut yy) = (0.0, 0.0, 0.0);
+        for (i, &xi) in x.iter().enumerate().take(n) {
+            let j = i as i64 + lag;
+            if j < 0 || j >= n as i64 {
+                continue;
+            }
+            let xv: f64 = xi.into();
+            let yv: f64 = y[j as usize].into();
+            xy += xv * yv;
+            xx += xv * xv;
+            yy += yv * yv;
+        }
+        let c = xy / (xx * yy).sqrt().max(1e-30);
+        if c > best.0 {
+            best = (c, lag);
+        }
+    }
+    best.1
+}
+
+/// The largest absolute difference (dB) between the 100 ms RMS levels of `x` and of `y`
+/// (`y` delayed by `delay`), over windows where `x` is above −50 dBFS (spec 008 FR-006: no
+/// pumping or dropouts).
+pub fn level_track<T: Copy + Into<f64>, U: Copy + Into<f64>>(
+    x: &[T],
+    y: &[U],
+    fs: f64,
+    delay: usize,
+) -> f64 {
+    let win = (fs * 0.1) as usize;
+    let usable = x.len().min(y.len().saturating_sub(delay)) / win;
+    let mut worst = 0.0f64;
+    for w in 0..usable {
+        let xs = &x[w * win..(w + 1) * win];
+        let lx = rms_dbfs(xs);
+        if lx < -50.0 {
+            continue;
+        }
+        let ly = rms_dbfs(&y[w * win + delay..(w + 1) * win + delay]);
+        worst = worst.max((lx - ly).abs());
+    }
+    worst
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -617,5 +872,34 @@ mod spectrum_tests {
         }
         let r = residual_power_db(&x, &y, 1000.0, 48_000.0, 0);
         assert!((r + 80.0).abs() < 0.1, "residual {r:.2} dB");
+    }
+
+    /// Spec 008 (T005): the codec metrics on synthetic pairs.
+    #[test]
+    fn codec_metrics_on_synthetic_pairs() {
+        let fs = 6000.0;
+        let x = crate::stimulus::voiced(fs, 1.0, -20.0, 3);
+        // A delayed copy: lag found exactly, segmental SNR at the clamp, LSD ≈ 0.
+        let delay = 17usize;
+        let mut y = vec![0.0f32; delay];
+        y.extend_from_slice(&x);
+        assert_eq!(xcorr_lag(&x, &y, 100), delay as i64);
+        assert!((segmental_snr(&x, &y, fs, delay) - 35.0).abs() < 1e-9);
+        assert!(lpc_lsd(&x, &y[delay..], fs) < 1e-6);
+        assert!(level_track(&x, &y, fs, delay) < 1e-9);
+        // A 6 dB gain: every band and the level track read 6 dB; the lag is unchanged.
+        let g: Vec<f32> = y.iter().map(|&v| v * 2.0).collect();
+        let bx = third_octave_levels(&x, fs);
+        let bg = third_octave_levels(&g[delay..], fs);
+        for (a, b) in bx.iter().zip(&bg) {
+            assert!((b - a - 6.0206).abs() < 0.05, "{a} {b}");
+        }
+        assert!((level_track(&x, &g, fs, delay) - 6.0206).abs() < 0.01);
+        assert!((rms_dbfs(&x) + 20.0).abs() < 0.1);
+        assert_eq!(xcorr_lag(&x, &g, 100), delay as i64);
+        // Noise against the signal: a low segmental SNR, clamped at −10 from below.
+        let noise = crate::stimulus::noise(9, x.len());
+        assert!(segmental_snr(&x, &noise, fs, 0) < 0.0);
+        assert!(segmental_snr(&x, &noise, fs, 0) >= -10.0);
     }
 }

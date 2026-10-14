@@ -303,3 +303,111 @@ mod split {
         assert_eq!(p.import(&bytes), Ok(2));
     }
 }
+
+/// Spec 008 SC-008 (T022): a one-bit change in a stored frame changes the playback output; an
+/// input change after frame k's look-ahead leaves frame k's bytes unchanged (and one inside it
+/// changes them); and a wrong codec delay would fail the one-pass equivalence: the comparison
+/// shifted by one device sample's worth fails where the right skip passes.
+mod codec {
+    use rr_dr60::{__test_hooks, Pipeline, StopResult};
+    use rr_dr60_harness::stimulus::voiced;
+    use rr_dr60_harness::{codec_checks, configs, split_checks};
+
+    fn record(p: &mut Pipeline, x: &[f32]) -> u32 {
+        p.start_recording().unwrap();
+        let _ = p.record(x, &mut []).unwrap();
+        match p.stop_recording(&mut []).unwrap().result {
+            StopResult::Kept { number, .. } => number,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn one_bit_change_in_a_stored_frame_changes_the_playback() {
+        let s = configs::memory_capacity(configs::settings("codec_only", 6000), 10, 2);
+        let x = voiced(6000.0, 1.0, -20.0, 0x0D60);
+        let mut healthy = Pipeline::new(s).unwrap();
+        let n = record(&mut healthy, &x);
+        let want = split_checks::play_to_end(&mut healthy, n, 997);
+        let mut mutant = healthy.clone();
+        // Byte 23, bit 5: inside frame 2's lag code.
+        assert!(__test_hooks::flip_stored_frame_bit(&mut mutant, n, 23, 5));
+        assert_ne!(
+            __test_hooks::stored_frames(&mutant, n),
+            __test_hooks::stored_frames(&healthy, n)
+        );
+        let got = split_checks::play_to_end(&mut mutant, n, 997);
+        assert_eq!(got.len(), want.len());
+        assert_ne!(got, want, "a flipped frame bit must change the sound");
+        // Frames before the flipped one play the same (the decoder is causal).
+        assert_eq!(got[..240], want[..240]);
+    }
+
+    #[test]
+    fn input_change_after_the_lookahead_leaves_the_frame_bytes_unchanged() {
+        let s = configs::memory_capacity(configs::settings("codec_only", 6000), 10, 2);
+        let x = voiced(6000.0, 1.0, -20.0, 0x0D60);
+        let k = 3usize;
+        let bytes_of = |y: &[f32]| {
+            let mut p = Pipeline::new(s).unwrap();
+            let n = record(&mut p, y);
+            __test_hooks::stored_frames(&p, n).to_vec()
+        };
+        let base = bytes_of(&x);
+        // Offsets 60 and beyond leave frame k unchanged (asserted); a step from the frame's
+        // own first sample changes it (asserted); a step at the look-ahead's last sample is
+        // reported only: the analysis window's weight there is small and a one-sample change
+        // often flips no 3-bit index (spec 008 plan review P5).
+        for (offset, expect) in [
+            (60usize, Some(true)),
+            (120, Some(true)),
+            (0, Some(false)),
+            (59, None),
+            (30, None),
+        ] {
+            let mut y = x.clone();
+            for v in y.iter_mut().skip(120 * (k + 1) + offset) {
+                *v = 0.9;
+            }
+            let got = bytes_of(&y);
+            let frame = 10 * k..10 * (k + 1);
+            assert_eq!(
+                got[..10 * k],
+                base[..10 * k],
+                "frames before {k} at offset {offset}"
+            );
+            let same = got[frame.clone()] == base[frame];
+            match expect {
+                Some(want) => assert_eq!(same, want, "frame {k} at offset {offset}"),
+                None => println!(
+                    "frame {k}: a full-scale step at look-ahead offset {offset} {} its bytes",
+                    if same { "leaves" } else { "changes" }
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn a_wrong_delay_would_fail_the_one_pass_equivalence() {
+        let rate = 48_000;
+        let s = configs::settings("codec_only", rate);
+        let x = voiced(f64::from(rate), 1.0, -20.0, 0x0D60);
+        let mut p = Pipeline::new(s).unwrap();
+        let run = split_checks::record_then_play(&mut p, &x, 4801, 997);
+        let d = codec_checks::delay_host(rate);
+        let per_device = split_checks::host_per_device(rate);
+        // Two device samples' worth of extra tail, so the shifted comparisons stay in range.
+        let tail = p.record_latency_samples() as usize - d
+            + (run.stop.silence_fed_samples as usize + 120 + 2) * per_device;
+        let mut y = x.clone();
+        y.extend(std::iter::repeat_n(0.0f32, tail));
+        let mut one = Pipeline::new(s).unwrap();
+        let mut out = vec![0.0f32; y.len()];
+        let _ = one.process(&y, &mut out).unwrap();
+        let n = run.pre_drain.len();
+        let same = |skip: usize| out[skip..skip + n] == run.pre_drain[..];
+        assert!(same(d), "the right skip passes");
+        assert!(!same(d + per_device), "one device sample too late fails");
+        assert!(!same(d - per_device), "one device sample too early fails");
+    }
+}
