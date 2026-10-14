@@ -21,9 +21,9 @@
  * on), pinned by the harness's `ffi_parity::smoke_reference_hash_is_pinned` (spec 006 and 008 US4
  * scenario 1; `smoke_reference.rs`): FNV-1a 64 of the playback (50404 samples) and of the
  * recording's frame bytes (51 frames), the frame count and the stop's silence fed. */
-#define RR_DR60_SMOKE_REFERENCE_HASH 0xb4a975be33bc9c3fULL
+#define RR_DR60_SMOKE_REFERENCE_HASH 0x971c70e3428c23c7ULL
 #define RR_DR60_SMOKE_PLAYBACK_SAMPLES 50404
-#define RR_DR60_SMOKE_FRAMES_HASH 0xdce56fb1d5fba901ULL
+#define RR_DR60_SMOKE_FRAMES_HASH 0x54035d54bd48af25ULL
 #define RR_DR60_SMOKE_FRAMES 51
 #define RR_DR60_SMOKE_SILENCE_FED 149
 

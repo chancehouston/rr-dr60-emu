@@ -137,8 +137,9 @@ pub(crate) const FIXED_GAIN_CORR_DB: [i16; 8] = [
     -12, -8, -4, 0, 4, 8, 12, 16,
 ];
 /// Fixed-gain predictor mean (dB of the pulse amplitude in Q15 units) and clamp (dB), derived from
-/// the level anchor A-029 (−10 … −40 dBFS) with ≥ 6 dB margin at both ends.
-pub(crate) const FIXED_GAIN_MEAN_DB: i32 = 60;
+/// the level anchor A-029 (−10 … −40 dBFS): ≥ 6 dB of margin at the bottom; the top is bounded by
+/// Q15 pulse saturation (hardware review T053 B1: mean 60 → 54 dB).
+pub(crate) const FIXED_GAIN_MEAN_DB: i32 = 54;
 pub(crate) const FIXED_GAIN_CLAMP_DB: i32 = 22;
 /// Moving-average predictor coefficients, Q15: G.729's (S-009 §3.9), borrowed.
 #[rustfmt::skip]

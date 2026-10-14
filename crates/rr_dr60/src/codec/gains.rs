@@ -82,7 +82,7 @@ impl GainPredictor {
         }
         let ma = round_shr(acc, 15);
         let clamp = i64::from(FIXED_GAIN_CLAMP_DB).saturating_mul(i64::from(DB_Q8));
-        // range-proven: the mean is 60 dB (15 360 in Q8) and the clamp ±22 dB.
+        // range-proven: the mean is 54 dB (13 824 in Q8) and the clamp ±22 dB.
         (i64::from(FIXED_GAIN_MEAN_DB)
             .saturating_mul(i64::from(DB_Q8))
             .saturating_add(ma.clamp(clamp.saturating_neg(), clamp))) as i32
@@ -219,7 +219,7 @@ mod tests {
             assert_eq!(correction_q8(i), (-12 + 4 * i32::from(i)) * 256);
         }
         assert_eq!(correction_q8(NEUTRAL_CORRECTION), 0);
-        assert_eq!(FIXED_GAIN_MEAN_DB, 60);
+        assert_eq!(FIXED_GAIN_MEAN_DB, 54); // T053 B1: 60 → 54
         assert_eq!(FIXED_GAIN_CLAMP_DB, 22);
         assert_eq!(PRED_COEF, [22282, 19005, 11141, 6226]); // 0.68, 0.58, 0.34, 0.19 (S-009)
     }
@@ -255,22 +255,22 @@ mod tests {
     #[test]
     fn predictor_follows_and_clamps() {
         let mut p = GainPredictor::default();
-        assert_eq!(p.predicted_q8(), 60 * 256);
+        assert_eq!(p.predicted_q8(), 54 * 256);
         p.update(16 * 256);
         assert_eq!(
             p.predicted_q8(),
-            60 * 256 + ((16 * 256 * 22282 + 16384) >> 15)
+            54 * 256 + ((16 * 256 * 22282 + 16384) >> 15)
         );
         for _ in 0..8 {
             p.update(16 * 256);
         }
-        assert_eq!(p.predicted_q8(), (60 + 22) * 256, "clamped at +22 dB");
+        assert_eq!(p.predicted_q8(), (54 + 22) * 256, "clamped at +22 dB");
         for _ in 0..8 {
             p.update(-12 * 256);
         }
         // −12 dB × (0.68 + 0.58 + 0.34 + 0.19) = −21.5 dB: inside the clamp.
         let ma = (-12i64 * 256 * (22282 + 19005 + 11141 + 6226) + 16384) >> 15;
-        assert_eq!(p.predicted_q8(), 60 * 256 + ma as i32);
+        assert_eq!(p.predicted_q8(), 54 * 256 + ma as i32);
         assert!(ma > -22 * 256 && ma < -21 * 256, "{ma}");
         p.reset();
         assert_eq!(p, GainPredictor::default());
@@ -279,55 +279,71 @@ mod tests {
         for _ in 0..8 {
             q.update(-40 * 256);
         }
-        assert_eq!(q.predicted_q8(), (60 - 22) * 256);
+        assert_eq!(q.predicted_q8(), (54 - 22) * 256);
     }
 
-    /// A-029 (the tool's anchor, `fixed_gain_design` in `tools/celp-design/design_celp.py`):
-    /// a −10 dBFS noise-like frame (prediction gain ≈ 3 dB) is not gain-limited: with the
-    /// predictor converged the chosen correction index is strictly inside 0 … 7 (the unit test
-    /// contracts/codec-design.md asks for). The −40 dBFS voiced end (prediction gain ≈ 30 dB)
-    /// is **reported**: it is reachable, but only with the lowest correction held, because the
-    /// moving average sustains an offset of 1.79 × the correction, not the clamp the tool's
-    /// margin arithmetic assumed; and the tool reads "−N dBFS" as an amplitude of
-    /// 32768 · 10^(−N/20), 3 dB above the project's AES17 convention. Both are noted for the
-    /// post-implementation hardware review (T053); the harness measures the −40 dBFS level.
+    /// A-029 (the tool's anchor, `fixed_gain_design` in `tools/celp-design/design_celp.py`;
+    /// hardware review T053 B1): neither end of the level anchor pins the correction index at
+    /// an end of its range (the first design held index 0 at −40 dBFS). The sustainable range is the mean plus the moving
+    /// average's reach (Σcoef × the extreme correction, −21.5 / +22 dB with the clamp binding
+    /// at the top) plus the correction itself: with the mean at 54 dB, 20.5 … 92 dB, the top
+    /// bounded by Q15 pulse saturation at 90.3 dB. "−N dBFS" is a sine of peak amplitude
+    /// 10^(−N/20) full scale (RMS 1/√2 of it, AES17). The −40 dBFS voiced end (prediction gain
+    /// ≈ 30 dB) needs 29.1 dB, 8.6 dB above the bottom; the −10 dBFS noise end (≈ 3 dB) needs
+    /// 86.1 dB, 4.2 dB below saturation (reported; the figures the tool prints).
     #[test]
-    fn level_anchor_top_end_inside_the_range_and_bottom_end_reported() {
+    fn level_anchor_both_ends_inside_the_range() {
         let pulse_factor = 20.0 * (60.0f64 / 4.0).sqrt().log10(); // ≈ 11.76 dB
         let required = |level_dbfs: f64, prediction_gain_db: f64| -> f64 {
             // AES17: a full-scale sine is 0 dBFS, RMS 1/√2.
             let rms = 32768.0 * 10f64.powf(level_dbfs / 20.0) / 2f64.sqrt();
             20.0 * rms.log10() - prediction_gain_db + pulse_factor
         };
-        let converge = |need: f64| -> (u8, f64) {
+        // A toy closed loop (the real quantizer picks by weighted error): the indices chosen
+        // over the last four of twelve updates. "Inside the range" means the loop is not
+        // pinned at an end (all 0 or all 7); it may oscillate between neighbours.
+        let converge = |need: f64| -> [u8; 4] {
             let mut p = GainPredictor::default();
-            let mut idx = 0u8;
-            for _ in 0..12 {
+            let mut last = [0u8; 4];
+            for n in 0..12 {
                 let pred = f64::from(p.predicted_q8()) / 256.0;
-                idx = ((need - pred + 12.0) / 4.0).round().clamp(0.0, 7.0) as u8;
+                let idx = ((need - pred + 12.0) / 4.0).round().clamp(0.0, 7.0) as u8;
                 p.update(correction_q8(idx));
+                last[n % 4] = idx;
             }
-            (idx, f64::from(p.predicted_q8()) / 256.0)
+            last
         };
-        let (lo, hi) = (60.0 - 22.0 - 12.0, 60.0 + 22.0 + 16.0);
-        // The top end: −10 dBFS noise, strictly inside with margin.
-        let need = required(-10.0, 3.0);
-        assert!(hi - need >= 6.0, "−10 dBFS needs {need} dB of {hi}");
-        let (idx, _) = converge(need);
-        assert!((1..=6).contains(&idx), "−10 dBFS: index {idx}");
-        // The bottom end: −40 dBFS strongly voiced, reachable, index 0 held (reported).
-        let need = required(-40.0, 30.0);
-        assert!(need >= lo, "−40 dBFS needs {need} dB, below {lo}");
-        let (idx, pred) = converge(need);
-        assert!(idx <= 1, "−40 dBFS: index {idx}");
+        let coef_sum = f64::from(22282 + 19005 + 11141 + 6226) / 32768.0; // 1.79
+        let mean = f64::from(FIXED_GAIN_MEAN_DB);
+        let lo = mean + (-12.0 * coef_sum).max(-22.0) - 12.0; // 20.5
+        let hi = (mean + (16.0 * coef_sum).min(22.0) + 16.0).min(20.0 * 32767f64.log10()); // 90.3
         assert!(
-            pred - 12.0 <= need + 2.0,
-            "the lowest reachable level {} vs {need}",
-            pred - 12.0
+            (lo - 20.5).abs() < 0.1 && (hi - 90.3).abs() < 0.1,
+            "{lo} {hi}"
+        );
+        // The top end: −10 dBFS noise, strictly inside; the margin to saturation reported.
+        let need_hi = required(-10.0, 3.0);
+        assert!(hi - need_hi > 0.0, "−10 dBFS needs {need_hi} dB of {hi}");
+        let idx_hi = converge(need_hi);
+        assert!(
+            idx_hi.iter().any(|&i| i < 7) && idx_hi.iter().all(|&i| i > 0),
+            "−10 dBFS: {idx_hi:?}"
+        );
+        // The bottom end: −40 dBFS strongly voiced, strictly inside with ≥ 6 dB (T053 B1).
+        let need_lo = required(-40.0, 30.0);
+        assert!(
+            need_lo - lo >= 6.0,
+            "−40 dBFS needs {need_lo} dB, bottom {lo}"
+        );
+        let idx_lo = converge(need_lo);
+        assert!(
+            idx_lo.iter().any(|&i| i > 0) && idx_lo.iter().all(|&i| i < 7),
+            "−40 dBFS: {idx_lo:?}"
         );
         std::println!(
-            "gain range: −10 dBFS noise needs {:.1} dB (top {hi}); −40 dBFS voiced needs {need:.1} dB (bottom {lo}; converged index {idx})",
-            required(-10.0, 3.0)
+            "gain range: −10 dBFS noise needs {need_hi:.1} dB (top {hi:.1}, margin {:.1}; indices {idx_hi:?}); −40 dBFS voiced needs {need_lo:.1} dB (bottom {lo:.1}, margin {:.1}; indices {idx_lo:?})",
+            hi - need_hi,
+            need_lo - lo
         );
     }
 
@@ -341,7 +357,7 @@ mod tests {
             y[n] = ((n as i32 * 2731) % 8001) - 4000;
             z[n] = if n % 7 == 0 { 4096 } else { 0 } - if n % 11 == 0 { 2048 } else { 0 };
         }
-        // x = 0.8 y + g_c z / 4096 with g_c = 1000 (60 dB: the predictor's mean, correction 0).
+        // x = 0.8 y + g_c z / 4096 with g_c = 1000 (60 dB of pulse amplitude in Q15 units).
         let (ga, gc) = (13107i64, 1000i64);
         let mut x = [0i32; 60];
         for n in 0..60 {

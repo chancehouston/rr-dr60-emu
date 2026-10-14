@@ -20,9 +20,9 @@ pub const SMOKE_BLOCK: usize = 480; // engineering target (006 US4)
 /// FNV-1a 64 of the Rust playback (pre-drain and drain) of the smoke stimulus with the default
 /// settings at 48 kHz, the speech codec on; `smoke.c` embeds the same value. Re-pin it only with
 /// an intended output change (the golden procedure, spec 006 R-09).
-pub const SMOKE_REFERENCE_HASH: u64 = 0xb4a9_75be_33bc_9c3f; // measured 2026-10-14 (50404 samples, the ±0.125 stimulus, the codec on); pinned by `ffi_parity::smoke_reference_hash_is_pinned`
+pub const SMOKE_REFERENCE_HASH: u64 = 0x971c_70e3_428c_23c7; // measured 2026-10-14 (50404 samples, the ±0.125 stimulus, the codec on; re-pinned once with the fixed-gain mean 54 dB, T053 B1); pinned by `ffi_parity::smoke_reference_hash_is_pinned`
 /// FNV-1a 64 of the recording's frame bytes (the exported form's units, 10 bytes per frame).
-pub const SMOKE_FRAMES_HASH: u64 = 0xdce5_6fb1_d5fb_a901; // measured 2026-10-14 (51 frames, 510 bytes); 008 T042
+pub const SMOKE_FRAMES_HASH: u64 = 0x5403_5d54_bd48_af25; // measured 2026-10-14 (51 frames, 510 bytes; re-pinned once with the fixed-gain mean 54 dB, T053 B1); 008 T042
 /// The recording's frame count with the default settings.
 pub const SMOKE_FRAMES: u64 = 51; // 6031 represented samples → ⌈6031 / 120⌉ frames (008 FR-013)
 /// The stop's `silence_fed_samples` with the default settings.

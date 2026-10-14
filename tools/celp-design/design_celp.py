@@ -186,17 +186,29 @@ def fixed_gain_design() -> dict:
     ±CLAMP. The excitation RMS needed is the residual RMS of the input; the pulse amplitude is
     that RMS × sqrt(N / Σc²) = RMS × sqrt(60 / 4). Required range: a −10 dBFS noise-like frame
     (prediction gain ≈ 3 dB) at the top, a −40 dBFS strongly voiced frame (prediction gain up to
-    30 dB) at the bottom, each with ANCHOR_MARGIN_DB of margin."""
+    30 dB) at the bottom.
+
+    The *sustainable* range (hardware review T053 B1): the moving average holds at most
+    Σcoef × the extreme correction (±12·1.79 = −21.5 / +28.6 dB, the clamp binding only at the
+    top), so the bottom is MEAN − 21.5 − 12 and the top MEAN + 22 + 16, further bounded by Q15
+    pulse saturation at 90.3 dB. "−N dBFS" is a sine of peak amplitude 10^(−N/20) full scale,
+    so its RMS is 1/√2 of that (AES17; the first draft read it as an amplitude, 3 dB high,
+    assumed the clamp and the −12 dB step stack and claimed 6.1 / 8.9 dB; the true margins
+    at mean 60 were 2.5 / 4.2). The rule: ≥ ANCHOR_MARGIN_DB at the bottom; the top is bounded
+    by saturation and its margin is reported."""
     full_scale = 32768.0
     pulse_factor = 20 * math.log10(math.sqrt(SUBFRAME_SAMPLES / PULSES_PER_SUBFRAME_ENERGY))
-    hi_rms = full_scale * 10 ** (LEVEL_ANCHOR_DBFS[0] / 20)  # −10 dBFS RMS
-    lo_rms = full_scale * 10 ** (LEVEL_ANCHOR_DBFS[1] / 20)  # −40 dBFS RMS
+    hi_rms = full_scale * 10 ** (LEVEL_ANCHOR_DBFS[0] / 20) / math.sqrt(2)  # −10 dBFS, AES17 RMS
+    lo_rms = full_scale * 10 ** (LEVEL_ANCHOR_DBFS[1] / 20) / math.sqrt(2)  # −40 dBFS, AES17 RMS
     required_hi = 20 * math.log10(hi_rms) - 3.0 + pulse_factor  # noise: ~3 dB prediction gain
     required_lo = 20 * math.log10(lo_rms) - 30.0 + pulse_factor  # voiced: up to 30 dB
-    mean_db = 60
+    mean_db = 54  # T053 B1: 60 → 54 for ≥ 6 dB at the bottom of the anchor
     clamp_db = 22
-    available = (mean_db - clamp_db + FIXED_GAIN_CORR_DB[0], mean_db + clamp_db + FIXED_GAIN_CORR_DB[-1])
+    coef_sum = sum(PRED_COEF)  # 1.79
     sat_db = 20 * math.log10(32767.0)  # a single pulse saturates Q15 above this
+    bottom = mean_db + max(-clamp_db, FIXED_GAIN_CORR_DB[0] * coef_sum) + FIXED_GAIN_CORR_DB[0]
+    top = min(mean_db + min(clamp_db, FIXED_GAIN_CORR_DB[-1] * coef_sum) + FIXED_GAIN_CORR_DB[-1], sat_db)
+    available = (bottom, top)
     return dict(mean_db=mean_db, clamp_db=clamp_db, available=available,
                 required=(required_lo, required_hi), pulse_factor_db=pulse_factor,
                 margin_lo=required_lo - available[0], margin_hi=available[1] - required_hi,
@@ -263,7 +275,7 @@ def print_design(lsp_mode: str) -> None:
     print(f"fixed gain: corrections {FIXED_GAIN_CORR_DB} dB; predictor {PRED_COEF} (G.729, borrowed); "
           f"mean {g['mean_db']} dB, clamp ±{g['clamp_db']} dB → available [{g['available'][0]}, {g['available'][1]}] dB of 20log10(pulse amplitude)")
     print(f"  required: −40 dBFS voiced (30 dB prediction gain) {g['required'][0]:.1f} dB, −10 dBFS noise (3 dB) {g['required'][1]:.1f} dB; "
-          f"margins {g['margin_lo']:.1f} / {g['margin_hi']:.1f} dB (≥ {ANCHOR_MARGIN_DB} required); Q15 saturates a pulse above {g['saturation_db']:.1f} dB")
+          f"margins {g['margin_lo']:.1f} dB at the bottom (≥ {ANCHOR_MARGIN_DB} required) / {g['margin_hi']:.1f} dB at the top (bounded by Q15 pulse saturation at {g['saturation_db']:.1f} dB; reported)")
     print(f"  silence floor (lowest step, one pulse per 60): about {g['silence_floor_dbfs']:.0f} dBFS (spec bound −60)")
     steps = lsp_steps()
     print(f"\nLSP quantizer ({lsp_mode}): mean vector i·π/9 = {[round(float(v), 4) for v in lsp_mean()]}; prediction {LSP_PRED}; min gap {LSP_MIN_GAP_RAD} rad")
@@ -284,7 +296,7 @@ def check() -> int:
     print("bit order (MSB of byte 0 first):", " | ".join(f"{n}:{b}" for n, b in ALLOCATION))
     assert FRAME_SAMPLES % 12 == 0 and DELAY_SAMPLES % 20 == 0 and BITS_PER_FRAME * (DEVICE_RATE_HZ // FRAME_SAMPLES) == 4000
     g = fixed_gain_design()
-    assert g["margin_lo"] >= ANCHOR_MARGIN_DB and g["margin_hi"] >= ANCHOR_MARGIN_DB, g
+    assert g["margin_lo"] >= ANCHOR_MARGIN_DB and g["margin_hi"] > 0, g  # T053 B1
     return 0 if ok else 1
 
 
@@ -334,7 +346,7 @@ def tables_rs() -> str:
     out.append(f"/// Minimum LSP spacing (0.04 rad) as Q15 of ω/π (A-041; S-009 uses 0.0391 rad).\npub(crate) const LSP_MIN_GAP: i32 = {q15(LSP_MIN_GAP_RAD / np.pi)};\n")
     out.append("/// Adaptive-codebook gain levels, Q14 (A-041, design constant).\n" + rs_array("ADAPT_GAIN", "i16", [q14(v) for v in ADAPT_GAIN_LEVELS]))
     out.append("/// Fixed-gain corrections in dB per 3-bit index (A-041, design constant).\n" + rs_array("FIXED_GAIN_CORR_DB", "i16", FIXED_GAIN_CORR_DB))
-    out.append(f"/// Fixed-gain predictor mean (dB of the pulse amplitude in Q15 units) and clamp (dB), derived from\n/// the level anchor A-029 (−10 … −40 dBFS) with ≥ 6 dB margin at both ends.\npub(crate) const FIXED_GAIN_MEAN_DB: i32 = {g['mean_db']};\npub(crate) const FIXED_GAIN_CLAMP_DB: i32 = {g['clamp_db']};\n")
+    out.append(f"/// Fixed-gain predictor mean (dB of the pulse amplitude in Q15 units) and clamp (dB), derived from\n/// the level anchor A-029 (−10 … −40 dBFS): ≥ 6 dB of margin at the bottom; the top is bounded by\n/// Q15 pulse saturation (hardware review T053 B1: mean 60 → 54 dB).\npub(crate) const FIXED_GAIN_MEAN_DB: i32 = {g['mean_db']};\npub(crate) const FIXED_GAIN_CLAMP_DB: i32 = {g['clamp_db']};\n")
     out.append("/// Moving-average predictor coefficients, Q15: G.729's (S-009 §3.9), borrowed.\n" + rs_array("PRED_COEF", "i16", [q15(v) for v in PRED_COEF]))
     out.append(f"/// log2(10)/20 in Q15: dB → log2 (A-041).\npub(crate) const DB_TO_LOG2: i32 = {q15(db_to_log2())};\n")
     out.append("/// 2^(k/32), k = 0..=32, as Q14 mantissas (1.0 … 2.0; A-041).\n" + rs_array("POW2_FRAC", "i16", [q14(v) for v in pow2_frac_table()]))

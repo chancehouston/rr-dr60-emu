@@ -5,7 +5,7 @@
 //! smoothed as `p = 0.75 p + 0.25 k₁`, and `μ = 0.5 p` (the reference's `PreCoef` is −0.25·2;
 //! the design tool's `TILT_FACTOR` 0.25 is the smoother's weight and half the coefficient), and
 //! gain scaling to the subframe energy before the postfilter, smoothed per sample with a
-//! one-pole smoother of 0.9 (S-008 §3.7). No pitch postfilter in this model version (A-041).
+//! one-pole smoother of 0.9 (S-008 §3.7; the reference code's 15/16, rounded). No pitch postfilter in this model version (A-041).
 //! Design constants of the model, not device figures. (The first implementation took k₁ from
 //! the filter's own response with the 0.25 factor; the US1 transparency check read 2 – 3 dB low
 //! above 1.2 kHz, which this form recovers.)
