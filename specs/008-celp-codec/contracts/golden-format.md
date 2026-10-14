@@ -10,8 +10,8 @@ Format `rr_dr60-golden`, version 1, with two fields added to every entry:
 
 | Field | Meaning |
 |---|---|
-| `stimulus` | `voiced_m20`, `unvoiced_voiced_m20`, `tone_1k_m20`, `noise_seed_0d60` |
-| `config` | `default` (every stage on, tap after playback), `codec_only` (limiter, stages 4 and 10, clamp and VAS bypassed; tap after the decoder), `codec_only_vas` (as codec_only with the VAS on, drop mode) |
+| `stimulus` | `voiced_m20`, `unvoiced_voiced_m20` (the synthetic speech-like stimuli at −20 dBFS, 2 s each, seed 0x0D60), `tone_1k_m20`, `noise_seed_0d60` (spec 001's, 0.5 s) |
+| `config` | `default_codec` (every stage on, tap after playback; the harness's `default` name stays the codec-bypassed 0.7 default of the three earlier files), `codec_only` (limiter, stages 4 and 10, clamp and VAS bypassed; tap after the decoder), `codec_only_vas` (as codec_only with the VAS on, drop mode) |
 | `host_rate_hz` | the seven rates |
 | `n_samples`, `sha256`, `head`, `rms_dbfs` | the one-pass output as today |
 | `frames: u64` | frames of the record-then-play recording of the same stimulus |

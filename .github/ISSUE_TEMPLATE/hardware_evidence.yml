@@ -32,6 +32,10 @@ body:
         - **Recording past the 60-minute limit:** whether the last item exists, its length and what the display shows (the emulator stops at the limit and keeps the partial item, A-039).
         - **Quiet room, 60 s, at each MIC SENS level:** noise floor, and whether the VAS pauses.
         - **Pink noise at a low level:** how the speech codec renders non-speech sound.
+        - **A sustained vowel, or a click train at 2–5 clicks per second, played back by the unit** (speech codec, A-040, A-041): the coder's frame period shows as a recurring excitation pattern in the played-back waveform, and the click train shows whether the coder's pitch and fixed codebooks reproduce isolated clicks or smear them.
+        - **The shortest item the unit keeps** (press record and stop as fast as possible, several times) **and the exact time shown at FULL:** the frame length and the capacity in whole frames (A-040; the emulator rounds a capacity down to whole 20 ms frames).
+        - **White noise, a 1 kHz tone and a slow pitch glide (100 → 300 Hz) through the speaker and through the earphone output:** the coder's spectral envelope, its tonal rendering and its pitch tracking (A-041); the two outputs separate the coder's character from the amplifier's and the speaker's.
+        - **Speech with 1 s pauses, with and without VAS:** whether the device's pause is frame-granular (the item's length a whole number of frames with the pause's remainder kept or dropped) or sample-granular ahead of the coder, A-041's registered alternative.
         - **Normal speech.**
 
         Please describe how you captured it (earphone jack vs. microphone at the speaker, interface, sample rate).

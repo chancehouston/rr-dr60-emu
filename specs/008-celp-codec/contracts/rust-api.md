@@ -12,7 +12,7 @@ All items are in `rr_dr60`; every public item has rustdoc citing its FR and S-/A
 
 ## Constants and info (`rr_dr60::speech_codec`)
 
-`FRAME_SAMPLES: u32 = 120`, `FRAME_MS: u32 = 20`, `SUBFRAME_SAMPLES = 60`, `BITS_PER_FRAME = 80`, `FRAME_BYTES = 10`, `LOOKAHEAD_SAMPLES = 60`, `DELAY_SAMPLES = 180`, `LPC_ORDER = 8`, `MIN_LAG = 15`, `MAX_LAG = 120`, `FRAMES_PER_SECOND = 50`, `MODEL_VERSION: [u16; 3] = [0, 8, 0]`; `pub fn info() -> SpeechCodecInfo` (`repr(C)`, `Copy`, 24 bytes: `frame_samples, frame_ms, bits_per_frame, delay_samples: u32; model_version: [u16; 3]; reserved: u16`). The encoder and decoder types stay `pub(crate)`.
+`DEVICE_RATE_HZ = 6000`, `FRAME_SAMPLES: u32 = 120`, `FRAME_MS: u32 = 20`, `SUBFRAME_SAMPLES = 60`, `BITS_PER_FRAME = 80`, `FRAME_BYTES = 10`, `LOOKAHEAD_SAMPLES = 60`, `DELAY_SAMPLES = 180`, `LPC_ORDER = 8`, `MIN_LAG = 15`, `MAX_LAG = 120`, `FRAMES_PER_SECOND = 50`, `MODEL_VERSION: [u16; 3] = [0, 8, 0]`; `pub fn info() -> SpeechCodecInfo` (`repr(C)`, `Copy`, 24 bytes: `frame_samples, frame_ms, bits_per_frame, delay_samples: u32; model_version: [u16; 3]; reserved: u16`). The encoder and decoder types stay `pub(crate)`.
 
 ## Reports
 

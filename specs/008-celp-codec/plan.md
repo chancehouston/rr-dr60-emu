@@ -36,7 +36,7 @@ Technical approach:
 
 **Project Type**: library: a Rust crate plus a C ABI; two offline Python tools.
 
-**Performance Goals**: ≤ 8 µs of codec work per device sample (≈ 2 µs expected on the CI runner; 0.8 – 2.5 µs on a 2018-class phone core), ≤ 1000 ns per 48 kHz host sample for the one-pass with the codec, the worst 64-sample block at 48 kHz well under 1.33 ms (≈ 0.1 ms expected), record-plus-play within 25 % of the one-pass (SC-006).
+**Performance Goals**: ≤ 8 µs of codec work per device sample (≈ 2 µs expected on the CI runner; 0.8 – 2.5 µs on a 2018-class phone core; measured at T049 on a laptop: 0.78 µs at 6 kHz, 1.23 µs at 48 kHz, the worst 64-sample block 144 µs of 1333, record + play 1.023× the one-pass), ≤ 1000 ns per 48 kHz host sample for the one-pass with the codec, the worst 64-sample block at 48 kHz well under 1.33 ms (≈ 0.1 ms expected), record-plus-play within 25 % of the one-pass (SC-006).
 
 **Constraints**:
 - Bit-identity (FR-009, FR-016) at every rate, block partition and platform: integer arithmetic only in the codec; the same `SpeechEncoder`/`SpeechDecoder` code in the one-pass and the paths; the FIFO delay exact.
@@ -132,7 +132,7 @@ crates/rr_dr60_harness/
 ├── src/configs.rs              # codec_only(rate), codec_only_vas(rate), default_codec(rate); codec bypass on every earlier config
 ├── src/golden.rs               # CODEC_STIMULI, CODEC_CONFIGS, frames + frames_sha256 fields, generate_codec, committed_codec
 ├── golden/golden-codec-v1.json # NEW, blessed once (84 entries)
-├── golden/manifest-v1.txt      # re-blessed once (rows 7, 8, 9; counts)
+├── golden/manifest-v1.txt      # re-blessed with the strings (twice on the branch: rows 7, 8, 9 and counts; the US3 string review)
 ├── examples/codec_stimuli.rs   # NEW: writes raw f32le stimuli at a given rate for the calibration tool
 ├── tests/us1_codec.rs          # NEW (US1)
 ├── tests/us2_frames_memory.rs  # NEW (US2)

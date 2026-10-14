@@ -60,9 +60,9 @@ use crate::validate::validate;
 /// [`start_playback`](Self::start_playback), [`play`](Self::play) per block until
 /// `finished` (the playback drains to settled). Record-then-play is bit-identical to the
 /// one-pass processing of the same input (FR-007), and the one-pass calls stay available
-/// while the engine is idle. The stored form is the engine's device-rate 32-bit samples in
-/// this version (it will become encoded frames when the codec is modeled, A-004); the host
-/// never parses it, it exports and imports it as opaque bytes.
+/// while the engine is idle. The stored unit is the speech codec's 10-byte frame (spec 008;
+/// the engine's device-rate 32-bit samples with the codec bypassed, [`encoding`](Self::encoding));
+/// the host never parses the exported form, it exports and imports it as opaque bytes.
 ///
 /// # Real-time use
 ///
