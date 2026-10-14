@@ -15,8 +15,6 @@ use super::tables::{
 
 /// Past excitation kept: the longest lag plus the interpolator's six-sample reach, with slack.
 pub(crate) const PAST_EXC: usize = 132;
-/// The excitation buffer: the past and the current subframe.
-pub(crate) const EXC_LEN: usize = PAST_EXC + SUBFRAME_SAMPLES;
 /// The interpolator's taps (positions −5.5 … +5.5 around the half-sample point).
 const INTERP_TAPS: usize = 12;
 /// The periodic extension's reach: the subframe plus the interpolator's upper half.
@@ -102,22 +100,21 @@ pub(crate) fn delta_window(lag1_half: u32) -> (u32, u32) {
     (lo, hi)
 }
 
-/// The past excitation and the current subframe (S-009 §3.7.1), Q15.
+/// The past excitation (S-009 §3.7.1), Q15: the most recent `PAST_EXC` samples, latest last.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Excitation {
-    /// `buf[..PAST_EXC]` is the past, most recent last; `buf[PAST_EXC..]` the current subframe.
-    buf: [i32; EXC_LEN],
+    buf: [i32; PAST_EXC],
 }
 
 impl Default for Excitation {
     fn default() -> Self {
-        Self { buf: [0; EXC_LEN] }
+        Self { buf: [0; PAST_EXC] }
     }
 }
 
 impl Excitation {
     pub(crate) fn reset(&mut self) {
-        self.buf = [0; EXC_LEN];
+        self.buf = [0; PAST_EXC];
     }
 
     /// The adaptive-codebook vector for a lag of `half` half-samples: `v[n] = e[n − T]` for an
@@ -130,7 +127,7 @@ impl Excitation {
         let fractional = half & 1 == 1;
         // The periodic extension: ext[PAST_EXC + k] = ext[PAST_EXC + k − T].
         let mut ext = [0i32; PAST_EXC + EXTENSION];
-        ext[..PAST_EXC].copy_from_slice(&self.buf[..PAST_EXC]);
+        ext[..PAST_EXC].copy_from_slice(&self.buf);
         for k in 0..EXTENSION {
             let i = PAST_EXC.wrapping_add(k);
             ext[i] = ext[i.wrapping_sub(t)];
@@ -152,11 +149,11 @@ impl Excitation {
         }
     }
 
-    /// Appends the subframe's excitation: the past moves down by 60 and `u` becomes the most
-    /// recent past.
+    /// Appends the subframe's excitation: the past moves down by 60 and `u` becomes its most
+    /// recent 60 samples.
     pub(crate) fn push_subframe(&mut self, u: &[i32; SUBFRAME_SAMPLES]) {
         self.buf.copy_within(SUBFRAME_SAMPLES.., 0);
-        self.buf[PAST_EXC..].copy_from_slice(u);
+        self.buf[PAST_EXC.wrapping_sub(SUBFRAME_SAMPLES)..].copy_from_slice(u);
     }
 }
 
@@ -386,7 +383,7 @@ mod tests {
         assert!(INTERP_HALF.iter().all(|&t| t.abs() <= 20603));
         // A constant past interpolates to the constant (unit sum).
         let e = Excitation {
-            buf: [1000; EXC_LEN],
+            buf: [1000; PAST_EXC],
         };
         let mut v = [0i32; 60];
         e.adaptive_vector(2 * 100 + 1, &mut v);
@@ -415,12 +412,15 @@ mod tests {
         for n in 0..40 {
             assert_eq!(v[n], v[n + 20], "n = {n}");
         }
-        // push_subframe shifts the past by 60.
+        // push_subframe shifts the past by 60 and appends the subframe as the latest past.
         let before = e.buf;
         let u = [123i32; 60];
         e.push_subframe(&u);
-        assert_eq!(&e.buf[..PAST_EXC], &before[60..]);
-        assert_eq!(&e.buf[PAST_EXC..], &u);
+        assert_eq!(&e.buf[..PAST_EXC - 60], &before[60..]);
+        assert_eq!(&e.buf[PAST_EXC - 60..], &u);
+        let mut v = [0i32; 60];
+        e.adaptive_vector(2 * 60, &mut v);
+        assert_eq!(v, u, "lag 60 reads the subframe just pushed");
         e.reset();
         assert_eq!(e, Excitation::default());
     }

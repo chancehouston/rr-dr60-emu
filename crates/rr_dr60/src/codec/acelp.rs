@@ -80,6 +80,24 @@ pub(crate) fn build_vector(code: u32, out: &mut [i32; SUBFRAME_SAMPLES]) {
     }
 }
 
+/// The codebook vector through the impulse response, **in h's own units** (no rescaling):
+/// `z[n] = Σ_{k ≤ n} c[k] h[n − k]`, so a pulse amplitude of 1 maps to 4096 (the gain
+/// quantizer divides by 2¹² where it weighs the fixed gain, `gains::Terms`).
+pub(crate) fn filter_pulses(
+    c: &[i32; SUBFRAME_SAMPLES],
+    h: &[i32; SUBFRAME_SAMPLES],
+    out: &mut [i32; SUBFRAME_SAMPLES],
+) {
+    for (n, o) in out.iter_mut().enumerate() {
+        let mut acc = 0i64;
+        for (&ck, &hk) in c[..=n].iter().zip(h[..=n].iter().rev()) {
+            acc = mac(acc, ck, hk);
+        }
+        // range-proven: at most four pulses of ±1 times |h| < 2¹⁵.
+        *o = acc.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+    }
+}
+
 /// The backward-filtered target `d[n] = Σ_{i ≥ n} x2[i] h[i − n]` (Q15 × Q12 held in `i64`).
 pub(crate) fn backward_filter(
     x2: &[i32; SUBFRAME_SAMPLES],
