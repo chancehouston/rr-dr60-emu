@@ -29,8 +29,11 @@ Two things the option is not: it is not a limiter (no gain control, no time cons
 - Q: A manifest row, a count or a string? → A: **No row, no count change, no entry string change.** The manifest describes the device's fifteen stages, and its "not modeled here" notes name device gaps, which an engine option is not. The canonical text's header carries the library version, so the bump to 0.10.0 moves it: **one recorded re-bless for the header's version only** (coach C2).
 - Q: Which golden file? → A: **A new golden file for the option on**, at the seven host rates with the stimuli below, blessed once; the five existing files and their SHA guards are unmoved by rule.
 - Q: Is a new assumption ID needed for "not a device behavior"? → A: **No** (coach C12). The bound's value is A-042's full scale and the code cites A-042; the default (off) traces to this spec's Clarifications; A-042's status line gains "amended by spec 010 (2026-10-15): the output clamp". A new ID would register an assumption with no hardware content and no verification method.
-- Q (coach C8, proposed default for the clarify step): what does the README tell 16-bit hosts? → A (proposed): **scale by 32767** (so +1.0 maps to 32767), with "32768 and saturate +1.0 to 32767" as the stated alternative; a ×32768 conversion of +1.0 overflows a 16-bit sample, so the bound alone does not make that conversion safe.
-- Q (coach C17, proposed default for the clarify step): does the engine report bounded samples (a count or a flag per block)? → A (proposed): **No**; out of scope, queued as a clip indicator if the app needs one.
+
+### Session 2026-10-15 (clarify: two questions, both at the recommended answer)
+
+- Q: What should the README tell 16-bit hosts about converting the clamped output? → A: **Scale by 32767**, so +1.0 maps to 32767 exactly, with "32768 and saturate +1.0 to 32767" stated as the alternative (coach C8). A ×32768 conversion of +1.0 overflows a 16-bit sample, so the bound alone does not make that conversion safe; the README says so. Rejected: an asymmetric bound at 32767/32768 (a special case in A-042's "exactly full scale" and in the identity oracle), and saying nothing (US1's promise would need weakening).
+- Q: Should the engine report when the clamp bounded samples (a count or a flag per block)? → A: **No, out of scope** (coach C17). The clamp stays a pure sample operation with no report; a clip indicator is queued as a later feature if the app needs one, beside the controls discussion the user queued. Rejected: a per-block count or a flag, each a compile-visible growth of the Rust and C block reports without an app request yet.
 
 ## User Scenarios & Testing *(mandatory)*
 
