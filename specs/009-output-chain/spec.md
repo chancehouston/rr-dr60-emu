@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-14
 
-**Status**: Draft
+**Status**: Implemented, merged to `main` (PR #22, 2026-10-15; merge commit fe571ab)
 
 **Input**: User description (abridged; the full text is in the specify session's transcript): "Output chain: model signal-chain stages 11, 12 and 13 of the RR-DR60 playback path, behind the speaker/earphone route that spec 006 reserved as a label. Stage 11 is the volume control and power amplifier (50 kΩ volume control, NJM2113 bridge-tied-load amplifier, muted while recording; S-002, S-006, A-031). Stage 12 is the 2.8 cm 8 Ω speaker in its tiny enclosure, whose acoustic response is unsourced and must be a registered low-confidence assumption with its own bypass (A-010), so every published figure of this feature is quoted on the earphone route. Stage 13 is the earphone output, an emitter follower that bypasses the power amplifier, two first-order high-pass corners (A-032). A volume setting as the device's own control; each stage bypassable with a tap after each; the earlier specs' checks run with stages 11–13 bypassed; the speaker route is the device's default output and the earphone route the measurement reference. Two questions the spec must settle: the output reference level once the signal has left the codec's full scale, and whether the one-pass processing runs through the selected route."
 
