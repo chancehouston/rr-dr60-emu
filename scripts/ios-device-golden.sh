@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Release gate (tasks.md T064; FR-014, SC-003): runs the golden-file (001, AGC, VAS and codec) and
+# Release gate (tasks.md T064; FR-014, SC-003): runs the golden-file (001, AGC, VAS, codec, output and
+# output clamp; spec 010 added the last two, 009 having omitted golden_output here) and
 # determinism tests on a physical iOS device, using cargo-dinghy.
 #
 # Prerequisites:
@@ -34,7 +35,7 @@ model="$(xcrun devicectl device info details --device "$device" 2>/dev/null | se
 os="$(xcrun devicectl device info details --device "$device" 2>/dev/null | sed -n 's/.*osVersionNumber: *//p' | head -1)"
 
 # The golden file is embedded in the test binary, so nothing needs copying to the device.
-if cargo dinghy -d "$device" test -p rr_dr60_harness --test golden --test golden_agc --test golden_vas --test golden_codec --test determinism; then
+if cargo dinghy -d "$device" test -p rr_dr60_harness --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test determinism; then
   echo "ios-device-golden: PASS on ${model:-$device} (iOS ${os:-unknown}), rr_dr60 $(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1), $(git rev-parse --short HEAD)"
 else
   echo "ios-device-golden: FAIL on ${model:-$device} (iOS ${os:-unknown})" >&2
