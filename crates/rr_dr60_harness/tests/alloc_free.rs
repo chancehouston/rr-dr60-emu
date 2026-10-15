@@ -1,5 +1,8 @@
 //! No heap activity while processing (001 FR-015, FR-022, SC-004; 001 tasks.md T053), at all
 //! seven host rates including the 6 kHz identity rate (spec 004 FR-016; 004 tasks.md T028).
+//!
+//! Under coverage instrumentation (`cfg(coverage)`) the audio-heavy loops here run at three
+//! rates, not seven: see `configs::measurement_rates`.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -81,7 +84,7 @@ fn processing_never_touches_the_heap() {
     let mut rng = Pcg32::new(0x0D60, 3);
     let sizes: Vec<usize> = (0..1000).map(|_| rng.below(1025) as usize).collect();
 
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         // Spec 001 configurations (limiter bypassed), the spec 005 AGC configurations, the
         // limiter at the extremes of every setting (knee −40 / +3 dBFS, attack 1 / 50 ms,
         // release 200 / 10 000 ms; 005 FR-010) and the clamp off (005 SC-005).

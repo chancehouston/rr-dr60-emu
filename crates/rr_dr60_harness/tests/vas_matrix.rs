@@ -12,6 +12,9 @@
 //! run (`defaults_all_rates`, 228 checks, plus `settings_matrix_6k_48k`, 554 checks) takes
 //! about 7 s; the ignored full matrix (1896 checks) about 55 s in release mode, most of it in
 //! the 10 s-hang cases (R-12 budget: 60 s).
+//!
+//! Under coverage instrumentation (`cfg(coverage)`) the audio-heavy loops here run at three
+//! rates, not seven: see `configs::measurement_rates`.
 
 use rr_dr60::DEVICE_RATE_HZ;
 use rr_dr60_harness::checks::{MeasurementResult, assert_all, standard};
@@ -39,7 +42,7 @@ fn defaults_all_rates() {
     let defaults = vas_checks::matrix()[0];
     assert!(defaults.is_default());
     let mut r = Vec::new();
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         r.extend(per_case(rate, &defaults));
         r.extend(vas_checks::check_fr007_sensitivity(
             rate, &defaults, &standard,

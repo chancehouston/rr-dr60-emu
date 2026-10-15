@@ -3,6 +3,9 @@
 //! capacity.
 //!
 //! `cargo test -p rr_dr60_harness --test us1_record_play -- --nocapture` prints the report.
+//!
+//! Under coverage instrumentation (`cfg(coverage)`) the audio-heavy loops here run at three
+//! rates, not seven: see `configs::measurement_rates`.
 
 use rr_dr60_harness::checks::assert_all;
 use rr_dr60_harness::{configs, golden, report, split_checks};
@@ -34,7 +37,7 @@ fn golden_entries_are_reproduced_by_record_then_play() {
 #[test]
 fn live_equivalence_at_all_rates() {
     let mut results = Vec::new();
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         results.extend(split_checks::live_equivalence(rate));
     }
     report::print(&results);
@@ -45,11 +48,11 @@ fn live_equivalence_at_all_rates() {
 #[test]
 fn length_rule_at_all_rates() {
     let mut results = Vec::new();
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         results.extend(split_checks::length_rule(rate));
     }
     report::print(&results);
-    assert_eq!(results.len(), 7 * 50);
+    assert_eq!(results.len(), configs::measurement_rates().len() * 50);
     assert_all(&results);
 }
 
@@ -58,7 +61,7 @@ fn length_rule_at_all_rates() {
 #[test]
 fn route_identity_and_two_items() {
     let mut results = Vec::new();
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         results.extend(split_checks::route_identity(rate));
         results.extend(split_checks::two_items(rate));
     }
@@ -79,7 +82,7 @@ fn cross_rate_tone_48k_to_44k1() {
 #[test]
 fn drain_level_at_all_rates() {
     let mut results = Vec::new();
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         results.extend(split_checks::drain_level(rate));
     }
     report::print(&results);

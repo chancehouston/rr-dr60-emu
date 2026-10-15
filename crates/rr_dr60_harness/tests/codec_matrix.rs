@@ -6,6 +6,9 @@
 //! calibration's inputs (T008).
 //!
 //! `cargo test -p rr_dr60_harness --test codec_matrix -- --nocapture`
+//!
+//! Under coverage instrumentation (`cfg(coverage)`) the audio-heavy loops here run at three
+//! rates, not seven: see `configs::measurement_rates`.
 
 use rr_dr60_harness::checks::{MeasurementResult, assert_all};
 use rr_dr60_harness::stimulus::{unvoiced_voiced, voiced};
@@ -46,7 +49,7 @@ fn codec_matrix() {
     let mut counts = Vec::new();
     for (name, check) in CHECKS {
         let before = results.len();
-        for rate in configs::all_rates() {
+        for &rate in configs::measurement_rates() {
             results.extend(check(rate));
         }
         counts.push((*name, results.len() - before));
@@ -59,7 +62,7 @@ fn codec_matrix() {
         ("noise_floor", codec_checks::noise_floor),
     ] {
         let before = results.len();
-        for rate in configs::all_rates() {
+        for &rate in configs::measurement_rates() {
             for level in codec_checks::LEVELS_DBFS {
                 results.extend(check(rate, level));
             }
@@ -73,7 +76,11 @@ fn codec_matrix() {
     for (name, n) in &counts {
         println!("{name:>32}: {n} rows");
     }
-    println!("codec matrix: {} rows at seven rates", results.len());
+    println!(
+        "codec matrix: {} rows at {} rates",
+        results.len(),
+        configs::measurement_rates().len()
+    );
     assert_all(&results);
 }
 

@@ -1,6 +1,9 @@
 //! Determinism: block-partition invariance, in-place equivalence, seed independence
 //! (001 FR-009, FR-014, SC-003; 001 tasks.md T052), at all seven host rates including the
 //! 6 kHz identity rate (spec 004 FR-016; 004 tasks.md T028).
+//!
+//! Under coverage instrumentation (`cfg(coverage)`) the audio-heavy loops here run at three
+//! rates, not seven: see `configs::measurement_rates`.
 
 use rr_dr60::{Pipeline, StopResult, VasEvent};
 use rr_dr60_harness::stimulus::Pcg32;
@@ -49,7 +52,7 @@ fn hundred_partitions_of_each_golden_stimulus_at_48k() {
 #[test]
 fn ten_partitions_for_every_other_config_and_rate() {
     let mut rng = Pcg32::new(0x0D60, 2);
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         for config in configs::CONFIGS {
             if rate == 48_000 && config == "default" {
                 continue;
@@ -72,7 +75,7 @@ fn ten_partitions_for_every_other_config_and_rate() {
 
 #[test]
 fn in_place_equals_copy() {
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         let x = golden::stimulus("sweep_log", rate);
         let mut p = Pipeline::new(configs::settings("default", rate)).unwrap();
         let mut buf = x.clone();
@@ -186,7 +189,7 @@ fn partitioned_events(
 fn vas_partitions() {
     let mut rng = Pcg32::new(0x0D60, 5);
     let (many, few) = if cfg!(coverage) { (10, 2) } else { (100, 10) };
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         for config in configs::VAS_CONFIGS {
             let partitions = if config == "vas_only" && (rate == 6000 || rate == 48_000) {
                 many
@@ -280,7 +283,7 @@ fn record_play_partitioned(
 fn record_then_play_partitions() {
     let mut rng = Pcg32::new(0x0D60, 6);
     let (many, few) = if cfg!(coverage) { (10, 2) } else { (100, 10) };
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         let partitions = if rate == 48_000 { many } else { few };
         let s = configs::settings("default_vas", rate);
         for stim in golden::VAS_STIMULI {
@@ -308,7 +311,7 @@ fn record_then_play_partitions() {
 fn codec_partitions() {
     let mut rng = Pcg32::new(0x0D60, 7);
     let (many, few) = if cfg!(coverage) { (10, 2) } else { (100, 10) };
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         let x = rr_dr60_harness::stimulus::voiced(f64::from(rate), 3.0, -20.0, 0x0D60);
         for config in configs::CODEC_CONFIGS {
             let s = configs::settings(config, rate);

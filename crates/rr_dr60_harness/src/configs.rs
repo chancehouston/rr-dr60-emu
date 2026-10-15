@@ -223,9 +223,44 @@ pub fn all_rates() -> [u32; 7] {
     SUPPORTED_HOST_RATES
 }
 
+/// The host rates the audio-heavy measurement loops run at: all seven in a normal build; under
+/// coverage instrumentation (`cfg(coverage)`, set by cargo-llvm-cov) three, one per conversion
+/// class: 6 kHz (the identity rate), 44.1 kHz (a non-integer ratio, 147:20) and 48 kHz (an
+/// integer ratio, 8:1).
+///
+/// Instrumentation slows the fixed-point codec and the metrics about thirty times (a 22 s story
+/// test took 722 s; PR #20's coverage job took 97 min, the two codec binaries 39 of them).
+/// Coverage counts lines, and no line depends on the host rate beyond those three classes; the
+/// per-rate figures (latencies, lengths) stay checked at all seven rates by the cheap loops that
+/// keep `all_rates`, and every plain `cargo test` run measures all seven. This is a measurement
+/// budget, not a statement about the other four rates.
+pub fn measurement_rates() -> &'static [u32] {
+    if cfg!(coverage) {
+        &[6000, 44_100, 48_000]
+    } else {
+        &SUPPORTED_HOST_RATES
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `measurement_rates` is a subset of the seven, in order, and always holds the identity
+    /// rate, a non-integer ratio and an integer ratio; outside coverage it is the seven.
+    #[test]
+    fn measurement_rates_are_a_subset_with_the_three_classes() {
+        let m = measurement_rates();
+        let all = all_rates();
+        assert!(m.iter().all(|r| all.contains(r)));
+        assert!(m.windows(2).all(|w| w[0] < w[1]));
+        for required in [6000, 44_100, 48_000] {
+            assert!(m.contains(&required), "{required} Hz missing");
+        }
+        if !cfg!(coverage) {
+            assert_eq!(m, &all[..]);
+        }
+    }
 
     /// Spec 005 data-model.md › Named harness configurations: (limiter, record stage, ADC clamp,
     /// VAS, playback stage, tap) per name.

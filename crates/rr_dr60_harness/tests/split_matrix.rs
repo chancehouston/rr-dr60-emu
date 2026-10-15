@@ -5,6 +5,9 @@
 //! job only (`--ignored`); the default-capacity case lives in `us2_memory` (`--ignored`).
 //!
 //! `cargo test -p rr_dr60_harness --test split_matrix -- --nocapture`
+//!
+//! Under coverage instrumentation (`cfg(coverage)`) the audio-heavy loops here run at three
+//! rates, not seven: see `configs::measurement_rates`.
 
 use rr_dr60_harness::checks::{MeasurementResult, assert_all};
 use rr_dr60_harness::{configs, report, split_checks};
@@ -39,7 +42,7 @@ fn split_matrix() {
     let mut counts = Vec::new();
     for (name, check) in CHECKS {
         let before = results.len();
-        for rate in configs::all_rates() {
+        for &rate in configs::measurement_rates() {
             results.extend(check(rate));
         }
         counts.push((*name, results.len() - before));
