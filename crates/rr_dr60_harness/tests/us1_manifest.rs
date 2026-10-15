@@ -65,8 +65,8 @@ fn header_figures() {
     assert_eq!(h.stage_count, 15);
     assert_eq!(h.device_rate_hz, 6000); // A-026
     assert_eq!(h.library_version, rr_dr60::VERSION);
-    assert_eq!(h.counts.not_modeled, 8); // spec 008 US3 scenario 1
-    assert_eq!(h.counts.assumed, 7);
+    assert_eq!(h.counts.not_modeled, 5); // spec 009 US3 scenario 1
+    assert_eq!(h.counts.assumed, 10);
     assert_eq!(h.counts.sourced, 0);
     assert_eq!(h.counts.checked, 0);
     assert_eq!(
@@ -84,11 +84,12 @@ fn header_figures() {
 
 #[test]
 fn literal_statuses() {
-    // The register-free reading of US1 scenario 5 (007 FR-004): stages 3, 4, 5, 7, 8, 9 and 10
-    // are modeled on open assumptions (7 and 9 since spec 008), every other stage is not modeled.
+    // The register-free reading of US1 scenario 5 (007 FR-004): stages 3, 4, 5, 7, 8, 9, 10, 11,
+    // 12 and 13 are modeled on open assumptions (7 and 9 since spec 008; 11 – 13 since spec
+    // 009), every other stage is not modeled.
     for e in manifest().stages() {
         let want = match e.number {
-            3 | 4 | 5 | 7 | 8 | 9 | 10 => StageStatus::Assumed,
+            3 | 4 | 5 | 7..=13 => StageStatus::Assumed,
             _ => StageStatus::NotModeled,
         };
         assert_eq!(e.status, want, "stage {} status", e.number);
@@ -157,7 +158,7 @@ fn codec_stages_us3_scenario_1() {
     let c = m.header().counts;
     assert_eq!(
         (c.not_modeled, c.assumed, c.sourced, c.checked),
-        (8, 7, 0, 0)
+        (5, 10, 0, 0) // spec 009 US3: stages 11 – 13 modeled
     );
 }
 
@@ -272,4 +273,120 @@ fn id_lists_ascending_and_well_formed() {
             e.number
         );
     }
+}
+
+/// Spec 009 US3 scenario 1 (FR-015): stages 11, 12 and 13 read assumed with medium / low / low
+/// confidence and model version 0.9.0, their coverage notes name what each leaves out, their
+/// controls notes name the route, the volume control, the bypass settings and the taps, and
+/// the header counts read 5 not modeled / 10 assumed.
+#[test]
+fn output_stages_us3_scenario_1() {
+    let m = manifest();
+    for (n, confidence) in [
+        (11u32, Confidence::Medium),
+        (12, Confidence::Low),
+        (13, Confidence::Low),
+    ] {
+        let e = m.stage(n).unwrap();
+        assert_eq!(e.status, StageStatus::Assumed, "stage {n}");
+        assert_eq!(e.confidence, confidence, "stage {n}");
+        assert_eq!(e.model_version, "0.9.0", "stage {n}");
+        assert!(
+            !e.coverage.is_empty() && !e.controls.is_empty(),
+            "stage {n}"
+        );
+        assert!(
+            e.sources.contains(&"S-002"),
+            "stage {n} cites the schematic"
+        );
+    }
+    let amp = m.stage(11).unwrap();
+    for id in ["A-031", "A-043", "A-044"] {
+        assert!(amp.assumptions.contains(&id), "stage 11 cites {id}");
+    }
+    assert!(
+        amp.sources.contains(&"S-006"),
+        "stage 11 cites the datasheet"
+    );
+    for word in ["knob", "battery", "beep"] {
+        assert!(
+            amp.coverage.contains(word),
+            "stage 11 coverage lacks {word:?}"
+        );
+    }
+    for item in [
+        "output.volume_amp_enabled",
+        "set_volume",
+        "set_route",
+        "Tap::AfterVolumeAmp",
+        "EngineState.speaker_muted",
+    ] {
+        assert!(
+            amp.controls.contains(item),
+            "stage 11 controls lack {item:?}"
+        );
+    }
+    let spk = m.stage(12).unwrap();
+    for id in ["A-010", "A-042"] {
+        assert!(spk.assumptions.contains(&id), "stage 12 cites {id}");
+    }
+    // The description states the device (spec 007's convention); the "not modeled here" note
+    // says the model is a template and not a capture (009 T028, product review).
+    assert!(
+        spk.description.contains("2.8 cm"),
+        "stage 12 describes the device's speaker"
+    );
+    assert!(
+        !spk.description.contains("template"),
+        "the template belongs in the coverage note"
+    );
+    for word in [
+        "template",
+        "not a capture",
+        "nonlinearity",
+        "enclosure",
+        "room",
+    ] {
+        assert!(
+            spk.coverage.contains(word),
+            "stage 12 coverage lacks {word:?}"
+        );
+    }
+    for item in [
+        "output.speaker_enabled",
+        "Route::Speaker",
+        "Tap::AfterSpeaker",
+        "Tap::RouteOutput",
+    ] {
+        assert!(
+            spk.controls.contains(item),
+            "stage 12 controls lack {item:?}"
+        );
+    }
+    let ear = m.stage(13).unwrap();
+    for id in ["A-012", "A-032", "A-042"] {
+        assert!(ear.assumptions.contains(&id), "stage 13 cites {id}");
+    }
+    for word in ["cut-off", "transistor's gain", "loads"] {
+        assert!(
+            ear.coverage.contains(word),
+            "stage 13 coverage lacks {word:?}"
+        );
+    }
+    for item in [
+        "output.earphone_enabled",
+        "Route::Earphone",
+        "Tap::AfterEarphone",
+        "Tap::RouteOutput",
+    ] {
+        assert!(
+            ear.controls.contains(item),
+            "stage 13 controls lack {item:?}"
+        );
+    }
+    let c = m.header().counts;
+    assert_eq!(
+        (c.not_modeled, c.assumed, c.sourced, c.checked),
+        (5, 10, 0, 0)
+    );
 }

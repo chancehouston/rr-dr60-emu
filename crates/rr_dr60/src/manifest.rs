@@ -438,24 +438,30 @@ stage_table! {
     },
     {
         number: 11, identifier: "volume_amp", name: "Volume control and power amplifier",
-        description: "Sets the playback level and drives the speaker through a power amplifier that is muted while recording.",
-        status: NotModeled, path: Playback, confidence: NotApplicable,
-        sources: ["S-001", "S-002", "S-006"], assumptions: ["A-031"],
-        coverage: "", controls: "set_route, route; EngineState.speaker_muted", model_version: "",
+        description: "Sets the playback level with the volume control and drives the speaker through a power amplifier that clips near its battery rail; muted while recording.",
+        status: Assumed, path: Playback, confidence: Medium,
+        sources: ["S-001", "S-002", "S-006"], assumptions: ["A-031", "A-043", "A-044"],
+        coverage: "the 159 Hz corner's shift with the knob; the clip level's change with the battery and the transistor; the beep tones",
+        controls: "output.volume_amp_enabled; set_volume, volume; set_route, route; Tap::AfterVolumeAmp; EngineState.speaker_muted",
+        model_version: "0.9.0",
     },
     {
         number: 12, identifier: "speaker", name: "Speaker",
-        description: "Turns the amplified signal into sound through a 2.8 cm, 8 Ω speaker.",
-        status: NotModeled, path: Playback, confidence: NotApplicable,
-        sources: ["S-001", "S-002"], assumptions: ["A-010"],
-        coverage: "", controls: "Route::Speaker", model_version: "",
+        description: "A 2.8 cm, 8 Ω dynamic speaker in the case, driven by the power amplifier; silent while recording.",
+        status: Assumed, path: Playback, confidence: Low,
+        sources: ["S-001", "S-002"], assumptions: ["A-010", "A-042"],
+        coverage: "this driver's own response (the model is a generic small-speaker template, not a capture); nonlinearity, enclosure, room",
+        controls: "output.speaker_enabled; Route::Speaker; Tap::AfterSpeaker, Tap::RouteOutput",
+        model_version: "0.9.0",
     },
     {
         number: 13, identifier: "earphone", name: "Earphone output",
-        description: "Feeds the volume-controlled signal to the 2.5 mm earphone jack, bypassing the power amplifier.",
-        status: NotModeled, path: Playback, confidence: NotApplicable,
-        sources: ["S-001", "S-002"], assumptions: ["A-012", "A-032"],
-        coverage: "", controls: "Route::Earphone", model_version: "",
+        description: "Feeds the volume-controlled signal to the 2.5 mm earphone jack through an emitter follower, bypassing the power amplifier.",
+        status: Assumed, path: Playback, confidence: Low,
+        sources: ["S-001", "S-002"], assumptions: ["A-012", "A-032", "A-042"],
+        coverage: "the follower's clipping cut-off on loud material; its corners' spread with the transistor's gain; loads other than 16 Ω",
+        controls: "output.earphone_enabled; Route::Earphone; Tap::AfterEarphone, Tap::RouteOutput",
+        model_version: "0.9.0",
     },
     {
         number: 14, identifier: "clock", name: "Clock",
@@ -832,19 +838,17 @@ mod tests {
             );
         }
         // Spec 009 FR-002, FR-011: the output chain's three controls and four taps map to
-        // stages 11, 12 and 13. 009 T026 flips this: until the manifest rows land, the stages
-        // read "not modeled" and the controls are asserted pending, not anchored.
-        let pending: &[(u32, bool)] = &[
+        // stages 11, 12 and 13 (anchored since 009 T026).
+        for (n, on) in [
             (11, volume_amp_enabled),
             (12, speaker_enabled),
             (13, earphone_enabled),
-        ];
-        for (n, on) in pending {
+        ] {
             assert!(on, "stage {n}'s control is off in the device defaults");
-            assert_eq!(
-                m.stage(*n).unwrap().status,
+            assert_ne!(
+                m.stage(n).unwrap().status,
                 StageStatus::NotModeled,
-                "stage {n}: 009 T026 moves this control into `controls`"
+                "stage {n} has a control in the API but the manifest says not modeled"
             );
         }
         let stage_of = |t: Tap| match t {
@@ -880,10 +884,10 @@ mod tests {
             Tap::AfterEarphone,
         ] {
             let n = stage_of(t);
-            assert_eq!(
+            assert_ne!(
                 m.stage(n).unwrap().status,
                 StageStatus::NotModeled,
-                "tap {t:?}: 009 T026 moves this tap into the anchored list"
+                "tap {t:?} exposes stage {n} but the manifest says not modeled"
             );
         }
     }
@@ -971,7 +975,7 @@ mod tests {
         let c = count_statuses(&s);
         assert_eq!(
             (c.not_modeled, c.assumed, c.sourced, c.checked),
-            (6, 7, 1, 1) // 8 / 7 / 0 / 0 today (spec 008), two not-modeled stages flipped here
+            (3, 10, 1, 1) // 5 / 10 / 0 / 0 today (spec 009), two not-modeled stages flipped here
         );
     }
 

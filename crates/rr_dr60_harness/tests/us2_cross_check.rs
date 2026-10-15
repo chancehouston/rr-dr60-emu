@@ -572,3 +572,119 @@ fn repo_root_is_the_workspace() {
             .exists()
     );
 }
+
+// ---- Spec 009 US3 scenarios 2–3 (FR-015, FR-017, FR-018) -----------------------------------------
+
+/// Spec 009 US3 scenario 2: the committed registers carry A-031 and A-032 as adopted, A-010 as
+/// revised, A-042 – A-044 registered (A-043's headline medium, from the cell's stated order),
+/// stages 11 – 13 cite them, S-006 is cited, and the signal-chain rows 11 – 13 carry the marker;
+/// the cross-check passes (`committed_registers_pass`).
+#[test]
+fn output_rows_registered_and_cited() {
+    let r = committed_registers();
+    let (assumptions, af) = mc::parse_assumptions(r.assumptions);
+    let (sources, sf) = mc::parse_sources(r.sources);
+    assert!(af.is_empty() && sf.is_empty(), "{af:?} {sf:?}");
+    let find = |id: &str| {
+        assumptions
+            .iter()
+            .find(|a| a.id == id)
+            .unwrap_or_else(|| panic!("{id}"))
+    };
+    for id in ["A-031", "A-032", "A-010"] {
+        let a = find(id);
+        assert!(
+            a.adopted_or_revised,
+            "{id} is adopted or revised by spec 009"
+        );
+        assert_eq!(a.class, StatusClass::Open, "{id}");
+    }
+    assert_eq!(
+        find("A-031").headline,
+        Headline::High,
+        "A-031's first level word (the topology)"
+    );
+    assert_eq!(
+        find("A-043").headline,
+        Headline::Medium,
+        "A-043 reads engine convention first"
+    );
+    assert_eq!(find("A-044").headline, Headline::Medium);
+    assert_eq!(find("A-042").headline, Headline::Medium);
+    for id in ["A-042", "A-043", "A-044"] {
+        assert_eq!(find(id).class, StatusClass::Open, "{id}");
+    }
+    assert!(
+        sources.iter().any(|s| s.id == "S-006" && !s.general),
+        "S-006"
+    );
+    let m = manifest();
+    for (n, ids) in [
+        (11u32, &["A-031", "A-043", "A-044"][..]),
+        (12, &["A-010", "A-042"][..]),
+        (13, &["A-012", "A-032", "A-042"][..]),
+    ] {
+        let e = m.stage(n).unwrap();
+        for id in ids {
+            assert!(e.assumptions.contains(id), "stage {n} cites {id}");
+        }
+        assert!(e.sources.contains(&"S-002"), "stage {n} cites S-002");
+    }
+    assert!(m.stage(11).unwrap().sources.contains(&"S-006"));
+    let (chain, cf) = mc::parse_signal_chain(r.signal_chain);
+    assert!(cf.is_empty(), "{cf:?}");
+    for n in [11usize, 12, 13] {
+        assert!(chain[n - 1].modeled, "row {n} says Modeled by");
+    }
+}
+
+/// Spec 009 US3 scenario 3 (FR-017, FR-018): the README's output-chain section states what
+/// FR-017 lists and passes the denylist, and so does the CHANGELOG's 0.9.0 entry.
+#[test]
+fn readme_output_section_and_changelog_entry_pass_the_denylist() {
+    let text = readme();
+    let section =
+        mc::readme_region(&text, "output-section").expect("README has the output-section markers");
+    assert_eq!(mc::denylist_hit(section), None, "README output section");
+    for phrase in [
+        "modeled on the circuit",
+        "template of a small speaker",
+        "clip ceiling",
+        "full swing",
+        "reference position",
+        "clip on full-scale material",
+        "225 Hz",
+        "group delay",
+        "44.1 kHz and above",
+        "not a device configuration",
+        "headroom",
+        "AfterPlayback",
+        "field-measurement",
+    ] {
+        assert!(
+            section.contains(phrase),
+            "README output section lacks {phrase:?}"
+        );
+    }
+    let changelog = std::fs::read_to_string(mc::repo_root().join("CHANGELOG.md")).unwrap();
+    let mut rest = changelog.as_str();
+    let mut parts = 0;
+    while let Some(entry) = mc::readme_region(rest, "0.9.0") {
+        assert!(
+            entry.contains("0.9.0") || entry.contains("Spec 009"),
+            "{entry}"
+        );
+        assert_eq!(
+            mc::denylist_hit(entry),
+            None,
+            "CHANGELOG 0.9.0 entry: {entry}"
+        );
+        parts += 1;
+        let end = rest.find("<!-- 0.9.0:end -->").unwrap() + "<!-- 0.9.0:end -->".len();
+        rest = &rest[end..];
+    }
+    assert!(
+        parts >= 3,
+        "the 0.9.0 entry has an Added, a Changed and a Documentation part"
+    );
+}

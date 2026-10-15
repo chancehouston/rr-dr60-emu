@@ -1320,4 +1320,65 @@ mod tests {
         assert_eq!(rules(&f), vec![Rule::Parse]);
         assert_eq!(f[0].id.as_deref(), Some("A-900"));
     }
+    /// Spec 009 T022 (FR-015): a copy of the register with A-042 removed fails the cross-check
+    /// naming stages 12 and 13 (both cite it), and a copy with A-043's confidence cell reordered
+    /// to read "Low" first fails naming stage 11 (the headline rule: a row's confidence may not
+    /// exceed the lowest headline of what it cites).
+    #[test]
+    fn doctored_output_registers() {
+        let r = committed_registers();
+        let m = manifest();
+        let without: String = r
+            .assumptions
+            .lines()
+            .filter(|l| !l.starts_with("| A-042 "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let f = cross_check(
+            m,
+            &Registers {
+                assumptions: &without,
+                ..r
+            },
+        );
+        for n in [12u8, 13] {
+            assert!(
+                f.iter().any(|x| x.rule == Rule::UnknownId
+                    && x.stage == Some(n)
+                    && x.id.as_deref() == Some("A-042")),
+                "stage {n}: {f:?}"
+            );
+        }
+        let reordered: String = r
+            .assumptions
+            .lines()
+            .map(|l| {
+                if l.starts_with("| A-043 ") {
+                    l.replace(
+                        "Medium (engine convention) / Low (as a typical setting)",
+                        "Low (as a typical setting) / Medium (engine convention)",
+                    )
+                } else {
+                    l.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_ne!(
+            reordered, r.assumptions,
+            "A-043's cell carries the stated order"
+        );
+        let f = cross_check(
+            m,
+            &Registers {
+                assumptions: &reordered,
+                ..r
+            },
+        );
+        assert!(
+            f.iter()
+                .any(|x| x.rule == Rule::ConfidenceBound && x.stage == Some(11)),
+            "{f:?}"
+        );
+    }
 }
