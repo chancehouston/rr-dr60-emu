@@ -19,14 +19,14 @@ Rules of spec 001's contract apply (opaque handle, status codes, caller buffers,
 
 - `RrDr60Tap`: `RR_DR60_TAP_ROUTE_OUTPUT = 5` (the new default), `RR_DR60_TAP_AFTER_VOLUME_AMP = 6`, `RR_DR60_TAP_AFTER_SPEAKER = 7`, `RR_DR60_TAP_AFTER_EARPHONE = 8` (appended; `RR_DR60_TAP_AFTER_PLAYBACK = 1` keeps its 0.8 meaning, and the header defines `RR_DR60_TAP_AFTER_STAGE_10` as an alias for it; the CHANGELOG's migration line: to keep 0.8's output, set `tap = RR_DR60_TAP_AFTER_PLAYBACK` explicitly).
 - `RrDr60Status`: `RR_DR60_STATUS_INVALID_VOLUME = 23`, `RR_DR60_STATUS_TAP_NOT_ON_ROUTE = 24` (appended).
-- `RR_DR60_VOLUME_REFERENCE` (`float`, ≈ 0.1335f): the default volume position (A-043); `rr_dr60_speaker_gain_db(float position)` and `rr_dr60_earphone_gain_db(float position)` return the loaded law's figures for a host's volume display (handle-less, real-time safe).
+- `RR_DR60_VOLUME_REFERENCE` (a define, ≈ 0.13345174, a C double literal whose nearest `float` is the engine's default bit for bit; cast it: `(float)RR_DR60_VOLUME_REFERENCE`): the default volume position (A-043); `rr_dr60_speaker_gain_db(float position)` and `rr_dr60_earphone_gain_db(float position)` return the loaded law's figures for a host's volume display (handle-less, real-time safe).
 
 ## Functions
 
 | Function | Contract |
 |---|---|
 | `RrDr60Status rr_dr60_set_volume(RrDr60Pipeline*, float position)` | `INVALID_VOLUME` for a non-finite or out-of-range position (unchanged); real-time safe; any state, during playback too |
-| `RrDr60Status rr_dr60_get_volume(const RrDr60Pipeline*, float* out_position)` | writes the position; `INVALID_ARGUMENT` for a NULL out pointer; real-time safe |
+| `RrDr60Status rr_dr60_get_volume(RrDr60Pipeline*, float* out_position)` | writes the position; `NULL_POINTER` for a NULL out pointer (the convention of every `rr_dr60_get_*`; amended at implementation); real-time safe |
 | `rr_dr60_process*` | return `TAP_NOT_ON_ROUTE` (nothing processed, `produced` 0) when the tap is a named route tap of the other route |
 
 Both functions join the real-time-safe list in `cbindgen.toml`'s header comment.

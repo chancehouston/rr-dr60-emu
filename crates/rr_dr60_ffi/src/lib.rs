@@ -933,6 +933,14 @@ unsafe fn process_block(
         State::Playing => return early(RrDr60Status::PlaybackInProgress),
         _ => {}
     }
+    // Spec 009 FR-011: a named route tap with the other route selected is refused before
+    // anything runs (the in-place core call has no error channel, so the check is here).
+    if matches!(
+        (p.inner.settings().tap, p.inner.route()),
+        (Tap::AfterSpeaker, Route::Earphone) | (Tap::AfterEarphone, Route::Speaker)
+    ) {
+        return early(RrDr60Status::TapNotOnRoute);
+    }
     if input.is_null() || output.is_null() || (events.is_null() && events_capacity > 0) {
         return early(RrDr60Status::NullPointer);
     }
@@ -973,8 +981,8 @@ unsafe fn process_block(
                     std::slice::from_raw_parts_mut(output, frames),
                 )
             };
-            // Lengths are equal by construction and the transport is idle (checked above),
-            // so this cannot fail.
+            // Lengths are equal by construction, the transport is idle and the tap is on the
+            // route (all checked above), so this cannot fail.
             p.inner.process_with_events(x, y, slots).unwrap_or_default()
         }
     }));
@@ -1556,6 +1564,80 @@ pub unsafe extern "C" fn rr_dr60_get_route(
     // SAFETY: out_route is non-null and writable (caller contract).
     unsafe { *out_route = route_to_c(p.inner.route()) };
     RrDr60Status::Ok
+}
+
+/// The volume control's default position (spec 009 FR-003; A-043): the reference position at
+/// which a full-scale codec output just reaches the amplifier's clip ceiling under the loaded
+/// law, about 0.1335. Equal to the Rust `output::VOLUME_REFERENCE`. In the C header it is a
+/// double literal: cast it to `float` (`(float)RR_DR60_VOLUME_REFERENCE`), whose nearest value
+/// is the engine's default bit for bit.
+pub const RR_DR60_VOLUME_REFERENCE: f32 = 0.133_451_74; // A-043: equal to `rr_dr60::output::VOLUME_REFERENCE` bit for bit (a literal so cbindgen emits the define; the unit test pins it)
+
+/// Sets the volume position (spec 009 FR-003; A-043, A-044): the control's wiper fraction,
+/// 0 (silence) to 1 (maximum), at any time including during playback; it takes effect at the
+/// next processing call or `rr_dr60_play` block and survives `rr_dr60_reset` and
+/// `rr_dr60_reconfigure`. Default `RR_DR60_VOLUME_REFERENCE`; positions above it clip
+/// full-scale material on the speaker route. Real-time safe.
+///
+/// Returns `RR_DR60_STATUS_INVALID_VOLUME` for a non-finite position or one outside 0 … 1; the
+/// position is then unchanged.
+///
+/// # Safety
+///
+/// `pipeline` must be NULL or a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_set_volume(
+    pipeline: *mut RrDr60Pipeline,
+    position: f32,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    match p.inner.set_volume(position) {
+        Ok(()) => RrDr60Status::Ok,
+        Err(e) => status_from_error(e),
+    }
+}
+
+/// Writes the volume position to `*out_position` (spec 009 FR-003). Real-time safe.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_position` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_get_volume(
+    pipeline: *mut RrDr60Pipeline,
+    out_position: *mut f32,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out_position.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: out_position is non-null and writable (caller contract).
+    unsafe { *out_position = p.inner.volume() };
+    RrDr60Status::Ok
+}
+
+/// The speaker route's gain in dB at a volume position under the circuit's loaded law (spec
+/// 009 FR-003; A-044): 22.7 dB at 1, about 9.6 dB at 0.5, −∞ at 0; in volts of amplifier output
+/// per volt of codec output, for a host's volume display. Needs no handle; real-time safe.
+#[unsafe(no_mangle)]
+pub extern "C" fn rr_dr60_speaker_gain_db(position: f32) -> f32 {
+    rr_dr60::output::speaker_gain_db(position)
+}
+
+/// The earphone route's gain in dB at a volume position under the loaded law (spec 009 FR-003;
+/// A-044): 0 dB at 1, about −8.2 dB at 0.5, about −18.6 dB at `RR_DR60_VOLUME_REFERENCE`, −∞ at
+/// 0. Needs no handle; real-time safe.
+#[unsafe(no_mangle)]
+pub extern "C" fn rr_dr60_earphone_gain_db(position: f32) -> f32 {
+    rr_dr60::output::earphone_gain_db(position)
 }
 
 /// Writes the engine's state (idle, recording or playing), the route, the current recording's
@@ -2448,6 +2530,94 @@ mod tests {
                 RrDr60SettingField::StructSize
             ))
         );
+    }
+
+    /// 009 T029 (spec 009 FR-014; contracts/c-api.md): the volume functions and the constant.
+    /// `RR_DR60_VOLUME_REFERENCE` is the Rust constant bit for bit; the gain functions equal the
+    /// Rust ones at six positions; `rr_dr60_set_volume` refuses 1.5, −1, NaN and ∞ with
+    /// `INVALID_VOLUME` and leaves the position; a NULL out pointer is `NULL_POINTER` (the
+    /// convention of every `rr_dr60_get_*`); `rr_dr60_process` with the speaker tap on the
+    /// earphone route is `TAP_NOT_ON_ROUTE` with `produced` 0.
+    #[test]
+    fn volume_functions_and_route_tap_refusal() {
+        assert_eq!(
+            RR_DR60_VOLUME_REFERENCE.to_bits(),
+            rr_dr60::output::VOLUME_REFERENCE.to_bits()
+        );
+        for p in [1.0f32, 0.5, 0.25, RR_DR60_VOLUME_REFERENCE, 0.1, 0.01] {
+            assert_eq!(
+                rr_dr60_speaker_gain_db(p).to_bits(),
+                rr_dr60::output::speaker_gain_db(p).to_bits()
+            );
+            assert_eq!(
+                rr_dr60_earphone_gain_db(p).to_bits(),
+                rr_dr60::output::earphone_gain_db(p).to_bits()
+            );
+        }
+        let s = rr_dr60_settings_default(48_000);
+        let mut p: *mut RrDr60Pipeline = std::ptr::null_mut();
+        // SAFETY: valid pointers.
+        assert_eq!(unsafe { rr_dr60_create(&s, &mut p) }, RrDr60Status::Ok);
+        let mut v = -1.0f32;
+        // SAFETY: live handle; valid out pointer.
+        assert_eq!(unsafe { rr_dr60_get_volume(p, &mut v) }, RrDr60Status::Ok);
+        assert_eq!(v, RR_DR60_VOLUME_REFERENCE);
+        for bad in [1.5f32, -1.0, f32::NAN, f32::INFINITY] {
+            // SAFETY: live handle.
+            assert_eq!(
+                unsafe { rr_dr60_set_volume(p, bad) },
+                RrDr60Status::InvalidVolume,
+                "{bad}"
+            );
+            // SAFETY: live handle; valid out pointer.
+            assert_eq!(unsafe { rr_dr60_get_volume(p, &mut v) }, RrDr60Status::Ok);
+            assert_eq!(v, RR_DR60_VOLUME_REFERENCE, "unchanged after {bad}");
+        }
+        // SAFETY: live handle.
+        assert_eq!(unsafe { rr_dr60_set_volume(p, 0.5) }, RrDr60Status::Ok);
+        // SAFETY: live handle; valid out pointer.
+        assert_eq!(unsafe { rr_dr60_get_volume(p, &mut v) }, RrDr60Status::Ok);
+        assert_eq!(v, 0.5);
+        // SAFETY: live handle; a NULL out pointer must be refused.
+        assert_eq!(
+            unsafe { rr_dr60_get_volume(p, std::ptr::null_mut()) },
+            RrDr60Status::NullPointer
+        );
+        // SAFETY: NULL handle.
+        assert_eq!(
+            unsafe { rr_dr60_set_volume(std::ptr::null_mut(), 0.5) },
+            RrDr60Status::NullPointer
+        );
+        // SAFETY: live handle.
+        unsafe { rr_dr60_destroy(p) };
+        // The route-tap refusal through the processing call.
+        let mut s = rr_dr60_settings_default(48_000);
+        s.tap = RrDr60Tap::AfterSpeaker as u32;
+        let mut p: *mut RrDr60Pipeline = std::ptr::null_mut();
+        // SAFETY: valid pointers.
+        assert_eq!(unsafe { rr_dr60_create(&s, &mut p) }, RrDr60Status::Ok);
+        // SAFETY: live handle.
+        assert_eq!(
+            unsafe { rr_dr60_set_route(p, RrDr60Route::Earphone as u32) },
+            RrDr60Status::Ok
+        );
+        let x = [0.1f32; 64];
+        let mut y = [0.0f32; 64];
+        let mut info = RrDr60BlockInfo::default();
+        // SAFETY: live handle; valid buffers.
+        let status = unsafe { rr_dr60_process(p, x.as_ptr(), y.as_mut_ptr(), 64, &mut info) };
+        assert_eq!(status, RrDr60Status::TapNotOnRoute);
+        assert_eq!(info.produced, 0);
+        // SAFETY: live handle.
+        assert_eq!(
+            unsafe { rr_dr60_set_route(p, RrDr60Route::Speaker as u32) },
+            RrDr60Status::Ok
+        );
+        // SAFETY: live handle; valid buffers.
+        let status = unsafe { rr_dr60_process(p, x.as_ptr(), y.as_mut_ptr(), 64, &mut info) };
+        assert_eq!(status, RrDr60Status::Ok);
+        // SAFETY: live handle.
+        unsafe { rr_dr60_destroy(p) };
     }
 
     /// 009 T006 (spec 009 contracts/c-api.md): taps 0 – 8 convert both ways, 9 is refused, the

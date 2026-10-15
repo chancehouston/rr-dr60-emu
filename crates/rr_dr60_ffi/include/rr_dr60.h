@@ -20,7 +20,9 @@
  *   rr_dr60_reset, rr_dr60_latency_samples, rr_dr60_settings_validate,
  *   rr_dr60_start_recording, rr_dr60_record, rr_dr60_max_record_events,
  *   rr_dr60_stop_recording, rr_dr60_start_playback, rr_dr60_play, rr_dr60_stop_playback,
- *   rr_dr60_set_route, rr_dr60_get_route, rr_dr60_get_state, rr_dr60_memory_status,
+ *   rr_dr60_set_route, rr_dr60_get_route, rr_dr60_set_volume, rr_dr60_get_volume,
+ *   rr_dr60_speaker_gain_db, rr_dr60_earphone_gain_db (no handle; spec 009),
+ *   rr_dr60_get_state, rr_dr60_memory_status,
  *   rr_dr60_recording_length, rr_dr60_export_len, rr_dr60_record_latency_samples,
  *   rr_dr60_playback_latency_samples, rr_dr60_drain_samples, rr_dr60_footprint_bytes,
  *   rr_dr60_get_encoding, rr_dr60_speech_codec_info (constants; no handle; spec 008),
@@ -50,6 +52,13 @@
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
+
+// The volume control's default position (spec 009 FR-003; A-043): the reference position at
+// which a full-scale codec output just reaches the amplifier's clip ceiling under the loaded
+// law, about 0.1335. Equal to the Rust `output::VOLUME_REFERENCE`. In the C header it is a
+// double literal: cast it to `float` (`(float)RR_DR60_VOLUME_REFERENCE`), whose nearest value
+// is the engine's default bit for bit.
+#define RR_DR60_VOLUME_REFERENCE 0.13345174
 
 // Result of every fallible C API call.
 enum RrDr60Status
@@ -911,6 +920,37 @@ RrDr60Status rr_dr60_set_route(struct RrDr60Pipeline *pipeline, uint32_t route);
 //
 // `pipeline` must be a live handle. `out_route` must be NULL or writable.
 RrDr60Status rr_dr60_get_route(struct RrDr60Pipeline *pipeline, uint32_t *out_route);
+
+// Sets the volume position (spec 009 FR-003; A-043, A-044): the control's wiper fraction,
+// 0 (silence) to 1 (maximum), at any time including during playback; it takes effect at the
+// next processing call or `rr_dr60_play` block and survives `rr_dr60_reset` and
+// `rr_dr60_reconfigure`. Default `RR_DR60_VOLUME_REFERENCE`; positions above it clip
+// full-scale material on the speaker route. Real-time safe.
+//
+// Returns `RR_DR60_STATUS_INVALID_VOLUME` for a non-finite position or one outside 0 … 1; the
+// position is then unchanged.
+//
+// # Safety
+//
+// `pipeline` must be NULL or a live handle.
+RrDr60Status rr_dr60_set_volume(struct RrDr60Pipeline *pipeline, float position);
+
+// Writes the volume position to `*out_position` (spec 009 FR-003). Real-time safe.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_position` must be NULL or writable.
+RrDr60Status rr_dr60_get_volume(struct RrDr60Pipeline *pipeline, float *out_position);
+
+// The speaker route's gain in dB at a volume position under the circuit's loaded law (spec
+// 009 FR-003; A-044): 22.7 dB at 1, about 9.6 dB at 0.5, −∞ at 0; in volts of amplifier output
+// per volt of codec output, for a host's volume display. Needs no handle; real-time safe.
+float rr_dr60_speaker_gain_db(float position);
+
+// The earphone route's gain in dB at a volume position under the loaded law (spec 009 FR-003;
+// A-044): 0 dB at 1, about −8.2 dB at 0.5, about −18.6 dB at `RR_DR60_VOLUME_REFERENCE`, −∞ at
+// 0. Needs no handle; real-time safe.
+float rr_dr60_earphone_gain_db(float position);
 
 // Writes the engine's state (idle, recording or playing), the route, the current recording's
 // number and whether the speaker is muted to `*out_state` (spec 006 FR-003). Real-time safe.
