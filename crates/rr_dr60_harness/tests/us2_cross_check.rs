@@ -688,3 +688,117 @@ fn readme_output_section_and_changelog_entry_pass_the_denylist() {
         "the 0.9.0 entry has an Added, a Changed and a Documentation part"
     );
 }
+
+/// Spec 010 US3 (FR-004, FR-009; SC-007; tasks.md T019; research R-07): the README's output
+/// section states the output clamp as FR-009 lists it, A-042 carries the amendment, neither
+/// nor the CHANGELOG's 0.10.0 regions contain the claims-policy words the manifest denylist
+/// does not catch, and all pass that denylist; the manifest's counts, strings and header
+/// version are as FR-004 and FR-009 require.
+#[test]
+fn readme_output_clamp_statements() {
+    let text = readme();
+    let section =
+        mc::readme_region(&text, "output-section").expect("README has the output-section markers");
+    assert_eq!(mc::denylist_hit(section), None, "README output section");
+    for phrase in [
+        "output clamp",
+        "off by default",
+        "route output",
+        "emulator convenience, not a device behavior",
+        "32767",
+        "32768",
+        "AfterSpeaker",
+        "clamp_enabled",
+        "output_clamp_enabled",
+        "0.42",
+    ] {
+        assert!(
+            section.contains(phrase),
+            "README output section lacks {phrase:?}"
+        );
+    }
+    let forbidden = [
+        "accurate",
+        "protect",
+        "safe for",
+        "hearing",
+        "loudness limit",
+        "the device clips here",
+        "prevents clipping",
+    ];
+    let lower = section.to_lowercase();
+    for word in forbidden {
+        assert!(
+            !lower.contains(word),
+            "README output section contains {word:?}"
+        );
+    }
+    let changelog = std::fs::read_to_string(mc::repo_root().join("CHANGELOG.md")).unwrap();
+    let mut rest = changelog.as_str();
+    let mut parts = 0;
+    while let Some(entry) = mc::readme_region(rest, "0.10.0") {
+        assert!(
+            entry.contains("0.10.0") || entry.contains("Spec 010"),
+            "{entry}"
+        );
+        assert_eq!(
+            mc::denylist_hit(entry),
+            None,
+            "CHANGELOG 0.10.0 entry: {entry}"
+        );
+        let lower = entry.to_lowercase();
+        for word in forbidden {
+            assert!(
+                !lower.contains(word),
+                "CHANGELOG 0.10.0 entry contains {word:?}"
+            );
+        }
+        assert!(
+            entry.len() > 200,
+            "the 0.10.0 region is filled, not a skeleton: {entry}"
+        );
+        parts += 1;
+        let end = rest.find("<!-- 0.10.0:end -->").unwrap() + "<!-- 0.10.0:end -->".len();
+        rest = &rest[end..];
+    }
+    assert_eq!(
+        parts, 3,
+        "the 0.10.0 entry has an Added, a Changed and a Documentation part"
+    );
+    // A-042's row.
+    let assumptions =
+        std::fs::read_to_string(mc::repo_root().join("docs/hardware/assumptions.md")).unwrap();
+    let row = assumptions
+        .lines()
+        .find(|l| l.starts_with("| A-042 "))
+        .expect("A-042's row");
+    for phrase in [
+        "output clamp",
+        "amended by spec 010",
+        "a real driver's cone overshoots too",
+        "coupling corners",
+        "L1",
+    ] {
+        assert!(row.contains(phrase), "A-042 lacks {phrase:?}");
+    }
+    let lower = row.to_lowercase();
+    for word in forbidden {
+        assert!(!lower.contains(word), "A-042 contains {word:?}");
+    }
+    assert_eq!(mc::denylist_hit(row), None, "A-042");
+    // The manifest: the counts and the entry strings unchanged; the header's version moved.
+    let canonical = std::fs::read_to_string(
+        mc::repo_root().join("crates/rr_dr60_harness/golden/manifest-v1.txt"),
+    )
+    .unwrap();
+    assert!(canonical.contains("counts: not_modeled=5 assumed=10 sourced=0 checked=0"));
+    assert!(canonical.contains(&format!("library_version: {}", rr_dr60::VERSION)));
+    // Stage 4's controls note carries `adc_clamp_enabled`, the codec's clamp (A-030), so the
+    // search is for the option's own names (research R-05).
+    assert!(
+        !canonical.contains("output clamp")
+            && !canonical.contains("output.clamp_enabled")
+            && !canonical.contains("output_clamp"),
+        "the option is named in no stage's strings (010 FR-004)"
+    );
+}
