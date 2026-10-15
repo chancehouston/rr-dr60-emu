@@ -3,29 +3,32 @@
 //! corruption set, and the two mutants that prove the checks have teeth.
 //!
 //! `cargo test -p rr_dr60_harness --test us3_export_import -- --nocapture` prints the report.
+//!
+//! Under coverage instrumentation (`cfg(coverage)`) the audio-heavy loops here run at three
+//! rates, not seven: see `configs::measurement_rates`.
 
 use rr_dr60_harness::checks::{MeasurementResult, assert_all};
 use rr_dr60_harness::{configs, report, split_checks};
 
-fn at_all_rates(check: fn(u32) -> Vec<MeasurementResult>) -> Vec<MeasurementResult> {
+fn at_measurement_rates(check: fn(u32) -> Vec<MeasurementResult>) -> Vec<MeasurementResult> {
     let mut results = Vec::new();
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         results.extend(check(rate));
     }
     report::print(&results);
     results
 }
 
-/// US3 scenarios 1 and 2 (SC-004): the round trip at 7 × 7 rates.
+/// US3 scenarios 1 and 2 (SC-004): the round trip at 7 × 7 rates (3 × 7 under coverage).
 #[test]
 fn round_trip() {
-    let results = at_all_rates(split_checks::round_trip);
+    let results = at_measurement_rates(split_checks::round_trip);
     assert_eq!(
         results
             .iter()
             .filter(|r| r.property == "imported playback bit-identical to the original's")
             .count(),
-        49
+        configs::measurement_rates().len() * configs::all_rates().len()
     );
     assert_all(&results);
 }
@@ -33,7 +36,7 @@ fn round_trip() {
 /// US3 scenarios 3 and 4 (SC-004): the corruption set.
 #[test]
 fn corruption_set() {
-    let results = at_all_rates(split_checks::corruption_set);
+    let results = at_measurement_rates(split_checks::corruption_set);
     assert_all(&results);
 }
 

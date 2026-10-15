@@ -3,6 +3,9 @@
 //! configuration only: no form bytes, no registers, no C (Principle VII).
 //!
 //! `cargo test -p rr_dr60_harness --test us1_codec -- --nocapture` prints every figure.
+//!
+//! Under coverage instrumentation (`cfg(coverage)`) the audio-heavy loops here run at three
+//! rates, not seven: see `configs::measurement_rates`.
 
 use rr_dr60_harness::checks::assert_all;
 use rr_dr60_harness::{codec_checks, configs, report};
@@ -11,7 +14,7 @@ use rr_dr60_harness::{codec_checks, configs, report};
 #[test]
 fn bit_rate_at_all_rates() {
     let mut results = Vec::new();
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         results.extend(codec_checks::bit_rate(rate));
     }
     report::print(&results);
@@ -22,7 +25,7 @@ fn bit_rate_at_all_rates() {
 #[test]
 fn delay_lag_at_all_rates() {
     let mut results = Vec::new();
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         results.extend(codec_checks::delay_lag(rate));
     }
     report::print(&results);
@@ -42,7 +45,7 @@ fn frame_causality_and_lookahead_probe() {
 #[test]
 fn transparency_at_all_rates_and_levels() {
     let mut results = Vec::new();
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         for level in codec_checks::LEVELS_DBFS {
             results.extend(codec_checks::transparency(rate, level));
         }
@@ -56,7 +59,7 @@ fn transparency_at_all_rates_and_levels() {
 #[test]
 fn noise_floor_at_all_rates_and_levels() {
     let mut results = Vec::new();
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         for level in codec_checks::LEVELS_DBFS {
             results.extend(codec_checks::noise_floor(rate, level));
         }
@@ -70,7 +73,7 @@ fn noise_floor_at_all_rates_and_levels() {
 #[test]
 fn one_pass_equivalence_at_all_rates() {
     let mut results = Vec::new();
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         results.extend(codec_checks::one_pass_equivalence(rate));
     }
     report::print(&results);
@@ -81,7 +84,7 @@ fn one_pass_equivalence_at_all_rates() {
 #[test]
 fn vas_unchanged_by_the_codec_at_all_rates() {
     let mut results = Vec::new();
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         results.extend(codec_checks::after_vas_tap_unchanged(rate));
         results.extend(codec_checks::vas_events_unchanged(rate));
     }
@@ -104,7 +107,7 @@ fn latency_bound_at_all_rates() {
 #[test]
 fn frame_reports_at_all_rates() {
     let mut results = Vec::new();
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         results.extend(codec_checks::frame_reports(rate));
     }
     report::print(&results);
@@ -115,7 +118,7 @@ fn frame_reports_at_all_rates() {
 #[test]
 fn bypassed_equals_006_at_all_rates() {
     let mut results = Vec::new();
-    for rate in configs::all_rates() {
+    for &rate in configs::measurement_rates() {
         results.extend(codec_checks::bypassed_equals_006(rate));
     }
     report::print(&results);
