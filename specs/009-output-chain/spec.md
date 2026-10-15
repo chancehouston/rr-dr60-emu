@@ -51,6 +51,16 @@ The user's standing choice is the recommended option; both reviews were applied 
 - Q (C11): The clip's peak wording. → A: The speaker route's stage 11 output **never exceeds 1.0**; a sine 6 dB over the ceiling peaks at **≥ −0.1 dB**; the knee compresses a sine exactly at the ceiling by **at most 1 dB** (a bound on the shape the plan picks); FR-004's default-position reading follows from it.
 - Applied without a question: US1 says "modeled as thin and resonant (A-010, low)" (C13); the S-006 register row's misreading, A-031's clip sentence and gain, A-032's confidence and the signal-chain rows' figures are listed for correction in FR-015 (D10); the checklist re-validated (C14). The hardware reviewer's "verify first on a real unit" list (earphone level against knob angle; a 20 Hz – 3 kHz sweep for the two low corners, where 40 against 160 Hz is a clean fourfold discriminator even through a phone input; the speaker terminals' peak where distortion passes 10 %) goes into the field-measurement note's table and the new assumptions' verification columns.
 
+### Session 2026-10-14 (clarify: the five expected questions, taken at the defaults)
+
+The user chose the recommended default for every question without running an interactive session; recorded here so the plan has them.
+
+- Q: Which clip ceiling constant, and which supply rail? → A: **1.33 V peak differential**, the 10 % distortion figure from the rated power at the 3 V battery rail (A-031); the rail question stays open in the register, and if the plan's re-read of sheet 3.1 shows the amplifier on the 3.3 V converter rail, the plan moves the constant and re-derives the reference position before any golden file is blessed.
+- Q: The volume control's default position? → A: **The reference position** (A-043), about 0.24 from the constants above; maximum stays one setting away and the README says positions above the reference clip on full-scale material.
+- Q: The speaker template's exact figures? → A: **The plan picks them inside A-010's registered ranges and records them** (resonance 600–900 Hz, Q 1.2–2.5, shelf +3 … +6 dB, flat above 2.5 kHz, peak gain 1.0); the clarify session does not pre-pick, and the hardware review of the plan checks the choice.
+- Q: Model the loaded knob-angle law? → A: **No** (A-044): the position is the full-swing fraction; a later feature may add the loaded law if the field loop measures the knob.
+- Q: What if the schematic sheet cannot be re-read for the earphone's upper corner and the resistor placements? → A: The plan tries the re-read first (the service-manual PDF, S-002, sheet 3.1); if it cannot be settled, the plan registers the **series reading (≈ 40 Hz)** for the earphone corner, which the S-002 summary's wording suggests, and the **15 dB** gain, both at low confidence, with the alternatives recorded for the field loop to discriminate.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Hear the speaker and the earphone differ (Priority: P1)
