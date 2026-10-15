@@ -1,0 +1,141 @@
+# Research: Output Chain (feature 009)
+
+Decisions for the plan; each cites the spec's FR/SC and the register IDs. Figures marked "script" are computed by `tools/output-chain/design_output_chain.py` and pinned by a core unit test; the figures quoted here are the plan session's own arithmetic (analog prototypes), close enough to size the design.
+
+## R-01 Where the chain sits and how it integrates (FR-001, FR-009, FR-010; spec 006 research R-01)
+
+**Decision**: one new stage module, `stages/output.rs`, holding an `OutputChain` that runs **at the host rate on the resampler's `f64` output, before the narrowing to `f32`**, inside `PlaybackPath` (both instances: the one-pass's `play` and the split engine's `player`), i.e. in `try_next_host` between the interpolator's output and `narrow_out`. The chain holds the three stages' filters and the clipper, a `Route`, a volume position and the three bypass flags. **Controls are applied at block boundaries**: `Pipeline` keeps `route` and `volume` as today's `route` is kept (engine-level, not settings, kept through reset and reconfigure), and `process*`, `play` and `start_playback` copy them into the path's chain at the start of each call (`OutputChain::set_controls(route, volume)`); a route change resets both branches' filter states (FR-009), a volume change only changes the multiplier.
+
+**Rationale**: the chain is analog, after the DAC and the reconstruction filter, so it belongs after the device→host conversion, like the limiter sits before the host→device conversion (spec 005); running it on the `f64` value before the narrowing keeps the one-pass and the playback path identical by construction (both call the same `try_next_host`), and keeps the narrowing the last operation as spec 006 defines it. Block-boundary controls give FR-009's "takes effect at the next block" exactly and keep the per-sample path free of control reads.
+
+**Alternatives**: a separate `OutputStage` called by the transport and the one-pass after `try_next_host` (two call sites to keep identical; rejected); running the chain at the device rate before the resampler (wrong physics: the resampler's image rejection would then act on the clipper's harmonics; and the clipper's harmonics above 3 kHz are the physics the spec keeps); controls read per sample (a load per sample and a mid-block change the spec forbids).
+
+## R-02 The circuit figures: the sheet 3.1 re-read (FR-003, FR-006, FR-007; A-031, A-032; clarify Q1, Q5)
+
+**Decision**: the plan session re-read S-002's analog sheet from the Internet Archive item's full-resolution JP2 scans (5100 × 5634 px; sharper than the PDF; crops kept in the session's scratch directory, not in the repository), and the readings below replace the draft's and the clarify fallbacks. Every value was legible; connectivity confidence is stated per item.
+
+| Reading (sheet 3.1, scan page 8) | Confidence | Consequence |
+|---|---|---|
+| Codec analog out (1.6 V) → **C14 0.1 µF → VR1 50 kΩ (B) hot end**; cold end to ground; the wiper feeds both branches | high | a **32 Hz** coupling corner at the volume control's input, common to both routes (stage 11) |
+| Wiper → **C8 0.1 µF → R16 10 kΩ → IC9 pin 4 (−IN)**; **R18 68 kΩ is the feedback resistor** from pin 5 (OUT1) to pin 4; no bias return between C8 and R16 | high | gain `2 Rf / Ri = 2 × 68 ÷ 10 = 13.6` (**22.7 dB**), not 2 × 220 ÷ 68; the amplifier path's input coupling corner is C8 into R16 at the virtual ground: **159 Hz** |
+| **R19 220 kΩ + C16 10 pF** run from pin 4 to net "G" → IC4 pin 22 (PA6) | high (connectivity) / medium (purpose) | not the gain network: the microcontroller's **beep injection** into the amplifier (the BUZZER pin has no connection drawn); out of scope, noted in A-031 |
+| IC9 pin 6 VDD = 2.8 V, fed by **Q9 (2SB1295) from the raw battery "3V" line** (upstream of the XC6372 boost); C20 22 µF | high | the **battery rail**: the clip ceiling is S-006's 3 V figure, ≈ 1.33 V peak at 10 % THD (a little lower at 2.8 V); the rail question is closed |
+| IC9 pin 1 (shutdown) 2.1 V via R87 10 kΩ, driven through R91 56 kΩ from net "F" → IC4 pin 21 (PA5) | high | the mute while recording and the speaker/earphone exclusivity are firmware-controlled through the shutdown pin |
+| Earphone: **the pin-4 node → C60 0.1 µF → R65 10 kΩ (series) → Q14 base**; R64 33 kΩ from the 3.2 V analog rail to the base; emitter → **C61 10 µF (4 V) → L102 → JK1 tip**; **R66 470 Ω is the emitter's DC return to JK1 pin 1**, a contact the plug grounds (R67 390 kΩ pulls it to 3.3 V → net "A" → IC4 AN0: plug detect) | high (connectivity) / medium (the plug grounds pin 1: inferred from the 3.1 V emitter above the 2.5 V base in record mode, the follower cut off with no plug) | the earphone branch is fed **through the amplifier's input network** (C8, R16, then C60, R65: two 10 kΩ in series) and carries signal only while the amplifier is shut down (the inverting input is a virtual ground otherwise); **R66 is not a series resistor**, so the draft's "30 dB series attenuation" and "33 Hz corner" were wrong; the earlier "160 Hz" corner was the wrong topology too |
+| R69 680 Ω | high | the 8 MHz crystal's series resistor on the digital sheet; not in this path |
+| Parts list: `VR1 EVUT2KA20B54 VR,VOL`, "50K(B)"; `RAS3P13-U SPEAKER`; JK1 "16 ohm (φ2.5)" | high | the linear taper and the load figures stand |
+
+**Derived figures** (the design script takes these as inputs; the hardware review of the plan checks them):
+
+| Constant | Value | Basis | Confidence |
+|---|---|---|---|
+| Clip ceiling `V_CLIP` | 1.327 V peak differential (0.938 V RMS: 55 mW into 16 Ω at 10 % THD at 3 V, S-006; S-002's 110 mW into 8 Ω agrees) | S-002, S-006; A-031 | medium (the VDD measured 2.8 V in record mode; the ceiling then sits a little lower) |
+| Amplifier gain `G` | 13.6 (22.67 dB) | S-002 R16, R18; S-006 formula | high (topology read) / medium (the pot's wiper resistance adds to Ri, A-044) |
+| Codec full scale | 1.0 V peak at the codec output | A-030 | medium |
+| Reference position `P_REF` | `V_CLIP ÷ (G × 1.0 V)` = **0.0976** (−20.2 dB) | A-043 | follows the above |
+| Speaker-route stage-11 gain `K_SPK` | `G ÷ V_CLIP` = **10.25** (unity at `P_REF`) | A-042 | follows the above |
+| Volume-control input corner `F_VOL` | **32 Hz** (0.1 µF into 50 kΩ), both routes | S-002; A-031 | high |
+| Amplifier input corner `F_AMP` | **159 Hz** (0.1 µF into 10 kΩ), speaker route | S-002; A-031 | high (ideal; the wiper resistance lowers it to 70 – 110 Hz at mid positions, A-044) |
+| Earphone input corner `F_EAR_IN` | **110 Hz nominal, 70 – 145 Hz** (C8 + C60 in series, 0.05 µF, into R16 + R65 + the follower's loaded input impedance, which depends on the transistor's current gain) | S-002; A-032 | low (β of the 2SD1819A unknown) |
+| Earphone output corner `F_EAR_OUT` | **190 Hz nominal, 110 – 300 Hz** (C61 10 µF into the 16 Ω load plus the follower's output resistance, ≈ 40 – 130 Ω from the ≈ 12 kΩ source impedance divided by β) | S-002; A-032 | low (β-dependent) |
+| Earphone drive into 16 Ω | −10 … −19 dB below the follower's input (β-dependent) | S-002; A-032 | low; a loudness constant outside the model (A-042) |
+
+**Rationale**: the re-read is the primary source; every figure above traces to a component the scan shows and a formula the datasheet or basic circuit analysis gives; the two earphone corners depend on an unknown transistor parameter, so they are registered as ranges with nominal values the hardware review of the plan can move before implementation. Two of the draft review's inferences (D3: R16 adding to a 68 kΩ Ri; D5: the 40 Hz earphone corner) are superseded by the read topology; the draft review's method (read the sheet) was right.
+
+**Alternatives**: keeping the clarify fallbacks (superseded by evidence); modeling the loaded gain and corner against the wiper position (A-044 keeps the ideal law; the field loop can measure the knob law later).
+
+**Consequences for the spec** (recorded in its Clarifications, plan session): the gain figure 15 → 22.7 dB; the reference position 0.24 → 0.098 and the earphone's default-position level −12.5 → −20 dB; the amplifier path's corners 32 Hz (common) and 159 Hz; the earphone's corners 110 and 190 Hz nominal with ranges, confidence low; the "DC blockers on device-made recordings" note softened: the 159 Hz corner trims the band's bottom by about 1 dB at 300 Hz and the earphone's two corners sit at the band's bottom edge, so stage 13 is audible on device-made recordings after all; the beep injection noted as out of scope.
+
+## R-03 Filters: per-rate coefficients from a design script (FR-005 – FR-008; spec 004 research R-04; 008 Complexity Tracking)
+
+**Decision**: the chain's filters are minimum-phase recursive sections in `f64` designed by the **bilinear transform with corner prewarping** at each of the seven host rates, their coefficients emitted as exact bit patterns into a generated file `stages/output_coeffs.rs` by `tools/output-chain/design_output_chain.py` (the 004 pattern; `--check` verifies every FR-005 – FR-008 bound analytically; `--write` regenerates the file byte-identically):
+
+- **First-order high-pass** (the volume control's input coupling, the amplifier's input coupling, the earphone's two corners): `H(z) = g · (1 − z⁻¹) / (1 − a z⁻¹)` with `a` from the prewarped corner, `g` normalizing the gain to exactly 1 at the Nyquist frequency so the passband sits at 0 dB; implemented as a `Biquad` with `b2 = a2 = 0`? **No**: a dedicated `FirstOrder` struct (three multiplies, one state, the same flush rule as `Biquad`), because the chain runs up to three of them per sample and the 004 biquad's five multiplies would double the cost for nothing.
+- **Speaker resonance**: a second-order high-pass with `f0 = 750 Hz`, `Q = 1.8` (inside A-010's registered ranges; peak +5.4 dB over its passband), as one `Biquad` (bilinear, prewarped at `f0`).
+- **Speaker shelf**: a first-order high shelf of +4.5 dB (zero 1120 Hz, pole 1880 Hz; the transition centred near 1.45 kHz, the geometric mean of 700 Hz and 3 kHz) as a `FirstOrder` with a non-zero zero coefficient (the struct takes `b0, b1, a1`).
+- **Peak normalization**: the script evaluates the speaker template's magnitude on a fine grid at each rate and scales the biquad's numerator so the **peak gain is exactly 1.0 at that rate** (the peak sits near 830 Hz; the 1 kHz reading is then about −0.7 dB and 2.5 kHz about −2.6 dB re the peak, both printed and pinned).
+- **Group delay at 1 kHz** (FR-008): the speaker template about 0.27 ms, the first-order corners under 0.1 ms each; the script prints each route's figure at each rate and checks the 0.5 ms bound.
+
+**Rationale**: the chain runs at seven rates, so coefficients per rate are unavoidable; the generated-table pattern keeps the build independent of the script's floating-point environment and makes every constant traceable (004, 008). Bilinear with prewarping lands the −3 dB corners exactly at every rate, so FR-007's ±10 % is spent on the model's own fit, not on rate drift. A dedicated first-order section keeps SC-007's budget (R-09).
+
+**Alternatives**: computing coefficients at construction with `detmath` (`exp`, `sin`, `cos` exist; rejected as 008 rejected it: a second source of truth, and start-up work); matched-z instead of bilinear (the −3 dB point drifts with the rate near Nyquist; irrelevant here at ≤ 160 Hz, but bilinear is the house method); a linear-phase speaker template (breaks FR-008).
+
+## R-04 The clipper (FR-006; A-031; hardware review D8)
+
+**Decision**: a **symmetric parabolic knee** with one parameter, the knee start `k = 0.85` of the ceiling (the ceiling is 1.0 on the speaker route's scale): `|x| ≤ k` passes; `k < |x| < 2 − k` follows `1 − (2 − k − |x|)² ÷ (2 (1 − k))` (continuous with unit slope at `k`, zero slope at `2 − k`); `|x| ≥ 2 − k` gives 1.0; the sign restored. Plain IEEE arithmetic, no platform math function, no state. The plan-time check (verified again by the script and pinned by a unit test at 48 kHz on a 1 kHz sine): a sine at the ceiling is compressed 0.33 dB (≤ 1); 10 % distortion at +2.27 dB over (within +1 … +3); 23.0 % at +6 dB over with the peak exactly 1.0 (15 – 30 %; ≥ −0.1 dB); 0 % at −6 dB under (≤ 1 %); the output never exceeds 1.0.
+
+**Rationale**: a bridge output hits the same pin limit on both half-cycles (D8: symmetric); the datasheet gives distortion at two points, which bracket a knee of about 1 dB of rounding; one parameter keeps the register honest ("the knee's shape is a design choice bracketed by the datasheet's figures", A-031 low). A parabola is the simplest C¹ knee.
+
+**Alternatives**: a hard clip (9 % at +2 dB, no rounding; the 1 % onset the datasheet implies around 1.15 – 1.25 V is lost); `tanh` (needs `exp` from `detmath` per sample and has no hard ceiling, so "never exceeds 1.0" would need a second clamp); a cubic knee (a second parameter for nothing).
+
+## R-05 Output scale, volume and the controls' API (FR-003, FR-004, FR-009; A-042 – A-044; clarify Q2, Q4)
+
+**Decision**: `Pipeline::set_volume(position: f32) -> Result<(), Error>` (refuses non-finite or outside 0 … 1 with `Error::InvalidVolume { position }`) and `Pipeline::volume() -> f32`; the constant `rr_dr60::output::VOLUME_REFERENCE: f32 = P_REF` (script-printed) is the default; `set_route` keeps its signature. The chain computes, per host sample `y` (the resampler's output, `f64`): volume `v = p · y`; speaker route: `clip(K_SPK · hpf_amp(v))` when stage 11 runs (else `y`), then the speaker template when stage 12 runs; earphone route: `v` when stage 11 runs (else `y`), then the two corners when stage 13 runs. Position 0 gives `v = 0.0` exactly (IEEE: `0.0 · y = ±0.0`; the chain writes `+0.0`), so on the earphone route the after-stage-11 tap is exact zeros from the next block; on the speaker route stage 11's coupling corner rings down (the spec's edge case is amended at plan time, see R-11).
+
+**Rationale**: the per-route scale (A-042) and the reference position (A-043) are the spec's; `K_SPK` folds the gain and the ceiling into one constant so that at `P_REF` the speaker route is exactly unity before the clipper; the position as a voltage fraction (A-044) makes the law exactly linear by definition.
+
+**Alternatives**: the volume in `Settings` (rejected in the spec: a reconfigure resets the paths); a dB-valued control (the device's knob is a position; the host can convert).
+
+## R-06 Taps (FR-011; clarify "route output")
+
+**Decision**: `Tap::AfterPlayback` **keeps its meaning** (after stage 10, before the output chain: version 0.8's default output) and its C value 1; four variants are appended: `Tap::RouteOutput` (= 5, **the new default**: the selected route's last stage), `Tap::AfterVolumeAmp` (= 6: after stage 11 on either route), `Tap::AfterSpeaker` (= 7) and `Tap::AfterEarphone` (= 8). A named route tap with the other route selected is refused at the processing call: `process`/`process_with_events`/`play` return `Error::TapNotOnRoute { tap, route }` (C status 23); `process_in_place*` produce 0 (their no-error-channel convention, spec 006 FR-009). The check runs once per call at the block boundary, where the controls are read.
+
+**Rationale**: no existing variant changes meaning (a C caller that set `tap = 1` keeps the 0.8 output); the default changes, which the spec requires and the CHANGELOG records; a route-following default needs no host logic.
+
+**Alternatives**: redefining `AfterPlayback` as the route output (a silent semantic change for existing callers; rejected); refusing the route tap at `set_route` time (a control call that fails because of a setting is backwards; the processing call is where the tap is used).
+
+## R-07 Settings and the C layout (FR-002, FR-014; contracts/c-api.md)
+
+**Decision**: `Settings::output: OutputSettings { volume_amp_enabled, speaker_enabled, earphone_enabled }` (all `true`, `OutputSettings::DEVICE`), the 005/006 sub-struct pattern. C: three `bool`s appended **after** the current size, at offsets 96, 97, 98, so `RrDr60Settings` grows **96 → 104** (alignment 8); the 0.8 tail padding 89 – 95 stays reserved (writing the bools there would let a 0.8 caller's `struct_size = 96` pass with uninitialized bytes read as settings). `struct_size = 96` is refused as `STRUCT_SIZE`.
+
+**Rationale**: the struct-size check is the only protection against a caller's stale layout; fields in old padding defeat it.
+
+## R-08 The drain and the equivalence (FR-010, FR-013; spec 006 FR-008; hardware review D9, coach C8)
+
+**Decision**: the playback drain grows by the chain's **settle length** `N_OUT(rate)` whenever any output stage is enabled: the time for the slowest pole in the chain (the 32 Hz volume-control corner, τ = 5.0 ms) to fall below 2⁻²⁴ of full scale (so the narrowed `f32` output is exactly zero): 83.3 ms, i.e. 500 / 667 / 1 333 / 3 672 / 3 997 / 7 344 / 7 993 host samples at the seven rates (script-printed, pinned). The drain is `⌈N₁₀·m/l⌉ + 2D + N_OUT`; with the chain bypassed it is spec 006's. The equivalence rule (spec 008 FR-009) holds unchanged because the one-pass's skipped prefix (the codec's 180-sample delay) is exact zeros through stage 10 and the resampler, so the chain's state at the skip point is the rest state the playback starts from; a test asserts the prefix is exactly 0.0 at each rate in the default configuration (coach C8). The chain's state also flushes to exactly zero through the sections' flush rule, so "settled" is reachable.
+
+**Rationale**: spec 006 defines the drain as "to settled silence"; the chain's corners ring longer than stage 10 does, so the drain must grow or playback would end on a decaying tail. One figure for both routes keeps the drain a constant of the configuration (the route can change during playback).
+
+**Alternatives**: a per-route drain (changes when the route changes mid-playback; rejected); resetting the chain at the end instead of draining (not the device; rejected).
+
+## R-09 Cost (SC-007; FR-012)
+
+**Decision**: per host sample the chain is at most: one multiply (volume), one first-order section (3 multiplies), one clipper (a compare and at most 3 operations), one biquad (5) and one first-order shelf (3) on the speaker route; two first-order sections on the earphone route. About 15 flops against the one-pass's ≈ 60 ns per 48 kHz sample (0.8, codec bypassed): expected +5 … +10 ns, within SC-007's 25 % (≈ 15 ns). Measured in `timing.rs` (a new release-only case: default configuration with the chain on versus `output` bypassed, both routes, 48 kHz, 4096-sample blocks) and reported.
+
+## R-10 Measurement harness (FR-004 – FR-008, FR-016; SC-001 – SC-006; hardware review D8)
+
+**Decision**: `output_checks.rs` with configurations `output_only_speaker`, `output_only_earphone` (every earlier stage bypassed, tap `RouteOutput`, the route set by the check), `default_output` (= the default) and `default_earphone`:
+
+- **Response**: an impulse at −40 dBFS (below the knee at every volume ≤ 1) through the chain; the DTFT at exact frequencies (`analysis::dtft`, spec 004's lesson) divided by the same path with the chain bypassed, compared with the **template computed in the harness from the registered analog prototypes** (FR-005's parts, FR-006's corner, FR-007's two corners) within ±0.5 dB (composite, 20 Hz – 2.5 kHz for the earphone, 100 Hz – 2.5 kHz for the speaker); the fitted corners (a least-squares fit of the first-order prototype to the measured magnitude) within ±10 %; passband flatness; the peak gain ≤ 1.0 for the speaker; the 1 kHz group delay (`analysis::group_delay_samples`) per route ≤ 0.5 ms.
+- **Clip and distortion** (44.1 kHz and above only, D8): 1 kHz sines at the stated levels relative to the ceiling on the speaker route with the speaker stage bypassed; `analysis::thd_n_db` over whole cycles after the corner's settling; the peak; the 10 % crossing by bisection; at 6 / 8 / 16 kHz the peak ceiling only.
+- **Volume law and scale**: tones at positions 1, 0.5, 0.25, 0.1, 0.01 and 0; the default-position readings of FR-004 on both routes; exact zeros at the after-stage-11 tap on the earphone route; the decay at the route output below −120 dBFS within the amended 100 ms and the state flushing to exactly zero (checked through the drain: a playback of silence after a tone ends on exact zeros).
+- **Chain**: `split_checks` and `codec_checks` equivalence functions re-run with the chain on (both routes, two volumes); the 0.8-equality case at `Tap::AfterPlayback`; route and volume changes at block boundaries (a change in the middle of a 4096-sample input applied at the next 64-sample block); the route-tap refusal; the C smoke loop on both routes.
+- **Golden**: `golden-output-v1.json` (R-12).
+
+Stimuli exist in `stimulus.rs` (`impulse`, `tone`, `log_sweep`, `step`); the only new analysis helper is a first-order corner fit.
+
+**Rationale**: the DTFT at exact frequencies against a harness-computed template separates "the Rust realizes the design" from "the design is the registered template" (the script checks the latter analytically); the impulse keeps the clipper linear; D8 fixes the rates for distortion.
+
+## R-11 Plan-time spec amendments (recorded in the spec's Clarifications)
+
+1. **Volume 0 decay**: the 32 Hz corner's τ is 5.0 ms, so −120 dBFS takes 69 ms; the spec's 50 ms (FR-009, SC-004, Edge Cases) becomes **100 ms**. Exact zeros from the next block at the after-stage-11 tap hold on the **earphone route** only; on the speaker route stage 11 includes the coupling corners, which ring down under the same 100 ms rule.
+2. **The drain**: the playback drain grows by `N_OUT` (R-08); spec 006 FR-008's "to settled" is kept, its constant restated; the earlier specs' length checks run with the chain bypassed (FR-016).
+3. **Taps**: `AfterPlayback` keeps its meaning; `RouteOutput` is the new default (R-06); FR-011's "the tap after the codec output filter MUST be a named tap" is met by the existing variant.
+
+## R-12 Golden file and CI (FR-016; SC-006; contracts/golden-format.md)
+
+**Decision**: `golden-output-v1.json`: 4 stimuli (`log_sweep_m20`, `tone_1k_m10`, `voiced_m20`, `step_over`: a 1 kHz tone 6 dB over the ceiling at the reference position) × 4 configurations (`output_only_speaker`, `output_only_earphone`, `default_output`, `default_earphone`) × 7 rates = 112 entries, each with a `route` and `volume` field (new optional fields, absent in the four earlier files), the one-pass output SHA and, for the default configurations, the record-then-play equivalence asserted by the generator. Blessed once, last, after the post-implementation hardware review. CI: `golden_output` added to the four places that list golden tests; the release timing job prints the chain's cost rows.
+
+## R-13 Manifest, registers, README, CHANGELOG (FR-015, FR-017, FR-018; SC-008, SC-010)
+
+**Decision**: manifest rows 11 (assumed / medium / 0.9.0), 12 (assumed / low / 0.9.0), 13 (assumed / **low** with the 40 Hz fallback, medium if the re-read settles it; the string chosen at implementation), counts 5 / 10; `bypass_control_anchor` arms for the three settings and the four taps; the registers as FR-015 lists (S-006 corrected on the branch already; A-031, A-032 corrected on the branch already and adopted at implementation; A-010 revised; A-042 – A-044 new); the signal-chain rows and diagram; a README section `<!-- output-section:start -->` after the codec's; CHANGELOG 0.9.0 in the three-region pattern; the field-measurement note's row cites A-042 – A-044 and the three first captures.
+
+## R-14 Risks
+
+- **The earphone corners** (R-02): both depend on the 2SD1819A's current gain; registered as ranges (70 – 145 Hz, 110 – 300 Hz) with nominal values; the field loop's earphone return discriminates (a 20 Hz – 3 kHz sweep into a **high-impedance** input bypasses the 16 Ω-load corner and reads the input corner alone; into a 16 Ω load it reads both).
+- **The ceiling at the measured rail**: VDD read 2.8 V, so the ceiling may sit a little below the 3 V datasheet figure; the script takes `V_CLIP` as an input so a change is one constant and a re-bless before the golden is blessed.
+- **The loaded volume law**: the wiper resistance lowers the amplifier's gain by 3 – 7 dB and its corner to 70 – 110 Hz at mid positions (A-044 keeps the ideal law; documented).
+- **The speaker template is a guess** (A-010 low): the figures are inside registered ranges and the manifest says so; the hardware review of the plan checks the choice; nothing downstream depends on the exact values.
+- **Drain growth** (R-08): 80 ms of extra drain lengthens every playback; documented; the 006 checks run with the chain bypassed.
+- **Coverage budget**: the new seven-rate loops use `configs::measurement_rates()` for audio-heavy checks (the coverage chore's rule).
+- **Default output change**: the fifth time the default output moves; the CHANGELOG records it as the adoption of A-031 / A-032 and the revision of A-010; the README's figures and the latency table are unchanged (FR-008).
