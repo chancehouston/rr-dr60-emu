@@ -30,6 +30,10 @@
 #define RR_DR60_SMOKE_EARPHONE_REF_HASH 0xe7a0621c54ea1b7aULL
 #define RR_DR60_SMOKE_EARPHONE_FULL_HASH 0x4a93f66893e304fbULL
 #define RR_DR60_SMOKE_FRAMES_HASH 0x54035d54bd48af25ULL
+/* Spec 010 T031: the two output-clamp cases (a full-scale square, the option on, position 1),
+   pinned from the Rust path (smoke_reference.rs). */
+#define RR_DR60_SMOKE_SPEAKER_CLAMP_HASH 0x5a7f9b91a49f806eULL
+#define RR_DR60_SMOKE_EARPHONE_CLAMP_HASH 0xfbafbb6b11507362ULL
 #define RR_DR60_SMOKE_FRAMES 51
 #define RR_DR60_SMOKE_SILENCE_FED 149
 
@@ -140,7 +144,7 @@ int main(int argc, char **argv) {
 
   RrDr60Settings s = rr_dr60_settings_default(FS);
   CHECK(s.struct_size == sizeof(RrDr60Settings), "struct_size %u", s.struct_size);
-  CHECK(s.struct_size == 104, "struct_size %u (must be 104 since 0.9, spec 009 contracts/c-api.md)", s.struct_size);
+  CHECK(s.struct_size == 112, "struct_size %u (must be 112 since 0.10, spec 010 contracts/c-api.md)", s.struct_size);
   CHECK(s.output_volume_amp_enabled && s.output_speaker_enabled && s.output_earphone_enabled,
         "output chain on by default (spec 009 FR-002; A-031, A-010, A-032)");
   CHECK(s.speech_codec_enabled, "speech codec on by default (spec 008 FR-002, A-004)");
@@ -659,6 +663,88 @@ int main(int argc, char **argv) {
             "process with the speaker tap on the speaker route");
       rr_dr60_destroy(t);
       rr_dr60_destroy(r);
+    }
+
+    /* Spec 010 US4 (FR-008; SC-006): a full-scale +/-1.0 square (exactly representable) recorded
+     * once in the 0.9 default with the output clamp on and played at position 1 on each route:
+     * every sample within [-1, 1] and each playback's hash equals the Rust path's; the same
+     * square through an option-off handle on the speaker route exceeds 1.0 (the option acts);
+     * a 0.9 caller's struct_size = 104 is refused by create and named by validate. */
+    {
+      static float fsq[FS];
+      for (size_t i = 0; i < FS; i++) fsq[i] = (i % 48) < 24 ? 1.0f : -1.0f;
+      RrDr60Settings stale = rr_dr60_settings_default(FS);
+      stale.struct_size = 104; /* the 0.9 layout */
+      RrDr60Pipeline *q2 = (RrDr60Pipeline *)(uintptr_t)0x1;
+      CHECK(rr_dr60_create(&stale, &q2) == RR_DR60_STATUS_INVALID_ARGUMENT, "create(struct_size = 104) refused (010)");
+      RrDr60SettingField sf = RR_DR60_SETTING_FIELD_NONE;
+      CHECK(rr_dr60_settings_validate(&stale, &sf) == RR_DR60_STATUS_INVALID_ARGUMENT &&
+                sf == RR_DR60_SETTING_FIELD_STRUCT_SIZE,
+            "validate(struct_size = 104) names STRUCT_SIZE (010)");
+      RrDr60Settings cl = rr_dr60_settings_default(FS);
+      CHECK(!cl.output_clamp_enabled, "the output clamp is off by default (010 FR-002)");
+      cl.output_clamp_enabled = true;
+      RrDr60Pipeline *handles2[2] = {NULL, NULL};
+      RrDr60Settings cfgs[2] = {cl, rr_dr60_settings_default(FS)};
+      for (int h = 0; h < 2; h++) {
+        CHECK(rr_dr60_create(&cfgs[h], &handles2[h]) == RR_DR60_STATUS_OK && handles2[h] != NULL, "create (010 case %d)", h);
+        CHECK(rr_dr60_start_recording(handles2[h]) == RR_DR60_STATUS_OK, "start_recording (010 case %d)", h);
+        for (size_t at = 0; at < FS; at += 480) {
+          RrDr60RecordInfo ri;
+          CHECK(rr_dr60_record(handles2[h], fsq + at, 480, &ri, NULL, 0) == RR_DR60_STATUS_OK, "record (010) %zu", at / 480);
+        }
+        RrDr60StopOutcome cso;
+        CHECK(rr_dr60_stop_recording(handles2[h], &cso, NULL, 0) == RR_DR60_STATUS_OK && cso.kept && cso.number == 1,
+              "stop_recording (010 case %d)", h);
+      }
+      static const uint32_t croutes[2] = {RR_DR60_ROUTE_SPEAKER, RR_DR60_ROUTE_EARPHONE};
+      const uint64_t cwant[2] = {RR_DR60_SMOKE_SPEAKER_CLAMP_HASH, RR_DR60_SMOKE_EARPHONE_CLAMP_HASH};
+      static float pc[8 * FS];
+      for (int k = 0; k < 2; k++) {
+        CHECK(rr_dr60_set_route(handles2[0], croutes[k]) == RR_DR60_STATUS_OK &&
+                  rr_dr60_set_volume(handles2[0], 1.0f) == RR_DR60_STATUS_OK,
+              "clamp case %d controls", k);
+        CHECK(rr_dr60_start_playback(handles2[0], 1) == RR_DR60_STATUS_OK, "start_playback (clamp case %d)", k);
+        size_t nc = 0;
+        int bounded = 1;
+        for (;;) {
+          RrDr60PlayInfo pi;
+          CHECK(nc + 480 <= 8 * (size_t)FS, "clamp playback longer than expected");
+          CHECK(rr_dr60_play(handles2[0], pc + nc, 480, &pi) == RR_DR60_STATUS_OK, "play (clamp case %d)", k);
+          for (size_t i = 0; i < pi.produced; i++) bounded &= fabsf(pc[nc + i]) <= 1.0f;
+          nc += pi.produced;
+          if (pi.finished) break;
+        }
+        CHECK(bounded, "clamp case %d: every sample within [-1, 1] (010 FR-001)", k);
+        CHECK(nc == RR_DR60_SMOKE_ROUTE_PLAYBACK_SAMPLES, "clamp case %d: %zu samples (Rust: %d)", k, nc,
+              RR_DR60_SMOKE_ROUTE_PLAYBACK_SAMPLES);
+        uint64_t hc = 0xcbf29ce484222325ULL;
+        for (size_t i = 0; i < nc; i++) {
+          uint8_t le[4];
+          memcpy(le, &pc[i], 4);
+          for (int b = 0; b < 4; b++) {
+            hc ^= le[b];
+            hc *= 0x00000100000001b3ULL;
+          }
+        }
+        CHECK(hc == cwant[k], "clamp case %d: playback hash %016llx differs from the Rust path's %016llx (010 US4 scenario 1)", k,
+              (unsigned long long)hc, (unsigned long long)cwant[k]);
+      }
+      /* The option off: the same square on the speaker route at position 1 exceeds the bound. */
+      CHECK(rr_dr60_set_route(handles2[1], RR_DR60_ROUTE_SPEAKER) == RR_DR60_STATUS_OK &&
+                rr_dr60_set_volume(handles2[1], 1.0f) == RR_DR60_STATUS_OK &&
+                rr_dr60_start_playback(handles2[1], 1) == RR_DR60_STATUS_OK,
+            "option-off playback");
+      int exceeded = 0;
+      for (;;) {
+        RrDr60PlayInfo pi;
+        CHECK(rr_dr60_play(handles2[1], pc, 480, &pi) == RR_DR60_STATUS_OK, "play (option off)");
+        for (size_t i = 0; i < pi.produced; i++) exceeded |= fabsf(pc[i]) > 1.0f;
+        if (pi.finished) break;
+      }
+      CHECK(exceeded, "the option-off speaker route exceeds 1.0 on the full-scale square (010 FR-011)");
+      rr_dr60_destroy(handles2[0]);
+      rr_dr60_destroy(handles2[1]);
     }
     CHECK(rr_dr60_erase_all(a) == RR_DR60_STATUS_OK && rr_dr60_memory_status(a, &ms) == RR_DR60_STATUS_OK &&
               ms.count == 0 && ms.used_samples == 0,

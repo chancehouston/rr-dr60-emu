@@ -296,6 +296,7 @@ pub fn c_settings(s: &Settings) -> RrDr60Settings {
         output_volume_amp_enabled: s.output.volume_amp_enabled, // 009 FR-014
         output_speaker_enabled: s.output.speaker_enabled,
         output_earphone_enabled: s.output.earphone_enabled,
+        output_clamp_enabled: s.output.clamp_enabled, // 010 FR-008
         ..rr_dr60_settings_default(s.host_rate_hz)
     }
 }
