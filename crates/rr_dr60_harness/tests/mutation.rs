@@ -435,6 +435,54 @@ mod output {
         move |s| Pipeline::__with_output_mutation(s, &m).unwrap()
     }
 
+    /// Spec 010 FR-007 (tasks.md T016; research R-06): a bound at 0.5, a bound at 1 + 2⁻²³
+    /// and positive-only bounding each fail the identity check on the full-scale square in
+    /// `output_only_speaker_clamp` at 48 kHz; the committed bound passes it.
+    #[test]
+    fn output_clamp_mutants_are_caught_by_the_identity() {
+        use rr_dr60::Route;
+        use rr_dr60_harness::output_clamp_checks::{Expect, identity_at};
+        let rows = |make: &dyn Fn(Settings) -> Pipeline| {
+            identity_at(
+                make,
+                48_000,
+                "output_only_speaker_clamp",
+                Route::Speaker,
+                1.0,
+                "square_1k_fs",
+                1.0,
+                Expect::Exceeds,
+            )
+        };
+        for (name, m) in [
+            (
+                "bound 0.5",
+                OutputMutation {
+                    clamp_bound: 0.5,
+                    ..OutputMutation::default()
+                },
+            ),
+            (
+                "bound 1 + 2^-23",
+                OutputMutation {
+                    clamp_bound: 1.0 + f64::from(f32::EPSILON), // 2⁻²³
+                    ..OutputMutation::default()
+                },
+            ),
+            (
+                "positive only",
+                OutputMutation {
+                    clamp_positive_only: true,
+                    ..OutputMutation::default()
+                },
+            ),
+        ] {
+            let f = failed(&rows(&mutant(m)));
+            assert!(f.iter().any(|p| p.starts_with("identity")), "{name}: {f:?}");
+        }
+        assert!(failed(&rows(&rr_dr60_harness::checks::standard)).is_empty());
+    }
+
     #[test]
     fn speaker_numerator_scale_is_caught_by_the_peak_gain_row() {
         let make = mutant(OutputMutation {

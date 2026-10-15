@@ -12,11 +12,11 @@
 //! reference-position configuration), and the speaker route's peaks must never exceed the
 //! speaker template's impulse-response L1 norm (the provable bound, FR-011).
 
-use rr_dr60::{OutputSettings, Route, Settings, Tap};
+use rr_dr60::{OutputSettings, Pipeline, Route, Settings, Tap};
 
 use crate::analysis::{self, OutputTemplate};
 use crate::checks::{Make, MeasurementResult, Tolerance};
-use crate::{configs, output_checks, stimulus};
+use crate::{configs, output_checks, split_checks, stimulus};
 
 /// Trace: the option (A-042's full scale; an engineering convention).
 const T_CLAMP: &[&str] = &["A-042", "engineering target"];
@@ -396,4 +396,240 @@ pub fn bypassed_with_clamp(rate: u32, on: bool) -> Settings {
     s.output.clamp_enabled = on;
     s.tap = Tap::RouteOutput;
     s
+}
+
+// ---------------------------------------------------------------------------------------------
+// User Story 2: the option through the whole engine (tasks.md T013)
+// ---------------------------------------------------------------------------------------------
+
+fn default_config_for(route: Route) -> &'static str {
+    match route {
+        Route::Speaker => "default_output_clamp",
+        Route::Earphone => "default_earphone_clamp",
+        _ => unreachable!("the two routes of spec 006"),
+    }
+}
+
+fn pass(ok: bool) -> f64 {
+    f64::from(u8::from(ok))
+}
+
+fn count_beyond(y: &[f32]) -> usize {
+    y.iter().filter(|v| v.abs() > 1.0).count()
+}
+
+/// FR-006 (US2 AS1, SC-004): record-then-play equals the one-pass bit for bit under spec 008
+/// FR-009's rule with the option on, in the route's default clamp configuration at `volume`,
+/// on spec 009's voiced −20 dBFS stimulus (which the limiter holds below the bound at every
+/// position: reported) and on the full-scale square, which at position 1 exceeds the bound on
+/// both routes (asserted), so the check engages the bound.
+pub fn equivalence(make: Make<'_>, rate: u32, route: Route, volume: f32) -> Vec<MeasurementResult> {
+    let config = default_config_for(route);
+    let twin = configs::settings(configs::output_clamp_twin(config), rate);
+    let mut rows = output_checks::chain_equivalence_in(rate, config, route, volume, make);
+    let voiced = stimulus::voiced(f64::from(rate), 2.0, -20.0, 0x0D60);
+    let square = stimulus_by_name("square_1k_fs", rate, 2.0);
+    rows.extend(output_checks::chain_equivalence_with(
+        rate,
+        config,
+        route,
+        volume,
+        &square,
+        "square 1 kHz full scale",
+        make,
+    ));
+    for (stim, x, expect) in [
+        ("voiced -20 dBFS", &voiced, Tolerance::Report),
+        (
+            "square 1 kHz full scale",
+            &square,
+            if volume == 1.0 {
+                Tolerance::AtLeast(1.0)
+            } else {
+                Tolerance::Report
+            },
+        ),
+    ] {
+        let beyond = count_beyond(&output_checks::run(make, twin, route, volume, x));
+        rows.push(MeasurementResult::new(
+            "FR-006",
+            "option-off one-pass samples beyond the bound (the square at position 1 engages it)",
+            T_CLAMP,
+            rate,
+            config,
+            format!("{stim}, {route:?}, position {volume}"),
+            beyond as f64,
+            "samples",
+            expect,
+        ));
+    }
+    rows
+}
+
+/// FR-006 (US2 AS2): spec 009's sixteen change points (64-sample blocks of a 4096-sample
+/// full-scale square at position 1), the route and the volume alternating, with the option on:
+/// the output equals the bounded option-off output with the same schedule sample for sample,
+/// and the option-off run exceeds the bound.
+pub fn change_timing(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
+    let x = stimulus::square(1000.0, 1.0, f64::from(rate), 4096);
+    let run = |on: bool| {
+        let mut s = with_clamp("output_only_speaker_clamp", rate, on);
+        s.output.earphone_enabled = true; // both branches, so the route change has a stage
+        let mut p = make(s);
+        p.set_route(Route::Speaker);
+        p.set_volume(1.0).unwrap();
+        let mut k = 0usize;
+        output_checks::in_blocks(&mut p, &x, |p, i| {
+            if output_checks::CHANGE_POINTS.contains(&i) {
+                if k % 2 == 0 {
+                    p.set_route(if (k / 2) % 2 == 0 {
+                        Route::Earphone
+                    } else {
+                        Route::Speaker
+                    });
+                } else {
+                    p.set_volume(if (k / 2) % 2 == 0 { 0.5 } else { 1.0 })
+                        .unwrap();
+                }
+                k += 1;
+            }
+        })
+    };
+    let on = run(true);
+    let off = run(false);
+    let same = on.len() == off.len()
+        && on
+            .iter()
+            .zip(&off)
+            .all(|(a, b)| a.to_bits() == b.clamp(-1.0, 1.0).to_bits());
+    vec![
+        MeasurementResult::new(
+            "FR-006",
+            "change timing: on == clamp(off) through sixteen route and volume changes (1 = yes)",
+            T_CLAMP,
+            rate,
+            "output_only_speaker_clamp (+ earphone)",
+            "square 1 kHz full scale, position 1 / 0.5",
+            pass(same),
+            "",
+            Tolerance::Exact(1.0),
+        ),
+        MeasurementResult::new(
+            "FR-006",
+            "change timing: option-off samples beyond the bound",
+            T_CLAMP,
+            rate,
+            "output_only_speaker_clamp (+ earphone)",
+            "square 1 kHz full scale, position 1 / 0.5",
+            count_beyond(&off) as f64,
+            "samples",
+            Tolerance::AtLeast(1.0),
+        ),
+    ]
+}
+
+/// FR-006 (US2 AS3; spec Edge Cases "Recording": the option has no effect on the record path):
+/// the export bytes of a full-scale square recorded through `default_output_clamp` and through
+/// `default_output` are identical, and an option-off export imported into an option-on engine
+/// plays back as the bounded option-off playback, sample for sample (at position 1 the
+/// playback exceeds the bound on both routes, so the check engages it).
+pub fn stored_form_unchanged(make: Make<'_>, rate: u32, route: Route) -> Vec<MeasurementResult> {
+    let config = default_config_for(route);
+    let x = stimulus_by_name("square_1k_fs", rate, 2.0);
+    let twin_name = configs::output_clamp_twin(config);
+    let record = |name: &str| -> (Pipeline, Vec<u8>) {
+        let mut p = make(configs::settings(name, rate));
+        p.set_route(route);
+        p.set_volume(1.0).unwrap();
+        let run = split_checks::record_then_play(
+            &mut p,
+            &x,
+            split_checks::RECORD_BLOCK,
+            split_checks::PLAY_BLOCK,
+        );
+        let bytes = split_checks::export_bytes(&p, run.number);
+        (p, bytes)
+    };
+    let (_, bytes_on) = record(config);
+    let (mut p_off, bytes_off) = record(twin_name);
+    let label = format!("square 1 kHz full scale, {route:?}, position 1");
+    let mut rows = vec![MeasurementResult::new(
+        "FR-006",
+        "export bytes identical with the option on and off (1 = yes)",
+        T_CLAMP,
+        rate,
+        config,
+        label.clone(),
+        pass(bytes_on == bytes_off),
+        "",
+        Tolerance::Exact(1.0),
+    )];
+    // The option-off export, imported into an option-on engine, plays back bounded.
+    let mut p_on = make(configs::settings(config, rate));
+    let number = p_on.import(&bytes_off).expect("a valid export");
+    p_on.set_route(route);
+    p_on.set_volume(1.0).unwrap();
+    p_off.set_route(route);
+    p_off.set_volume(1.0).unwrap();
+    let y_on = split_checks::play_to_end(&mut p_on, number, split_checks::PLAY_BLOCK);
+    let y_off = split_checks::play_to_end(&mut p_off, 1, split_checks::PLAY_BLOCK);
+    let same = y_on.len() == y_off.len()
+        && y_on
+            .iter()
+            .zip(&y_off)
+            .all(|(a, b)| a.to_bits() == b.clamp(-1.0, 1.0).to_bits());
+    rows.push(MeasurementResult::new(
+        "FR-006",
+        "an option-off export plays back through an option-on engine as clamp(off) (1 = yes)",
+        T_CLAMP,
+        rate,
+        config,
+        label.clone(),
+        pass(same),
+        "",
+        Tolerance::Exact(1.0),
+    ));
+    rows.push(MeasurementResult::new(
+        "FR-006",
+        "option-off playback samples beyond the bound (the square at position 1 exceeds it)",
+        T_CLAMP,
+        rate,
+        config,
+        label,
+        count_beyond(&y_off) as f64,
+        "samples",
+        Tolerance::AtLeast(1.0),
+    ));
+    rows
+}
+
+/// FR-005 (US2 AS5's latency clause): spec 009's latency and drain checks re-run with the
+/// option on; the figures equal the option-off ones.
+pub fn latencies_and_drain_unchanged(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
+    let clamp_make = |s: Settings| {
+        let mut s = s;
+        s.output.clamp_enabled = true;
+        make(s)
+    };
+    let mut rows = output_checks::chain_latencies_unchanged(rate, &clamp_make);
+    rows.extend(output_checks::chain_drain_table(rate, &clamp_make));
+    let on = make(configs::settings("default_output_clamp", rate));
+    let off = make(configs::settings("default_output", rate));
+    rows.push(MeasurementResult::new(
+        "FR-005",
+        "one-pass, record and playback latencies and the drain equal with the option on (1 = yes)",
+        T_CLAMP,
+        rate,
+        "default_output_clamp",
+        "fresh engines",
+        pass(
+            on.latency_samples() == off.latency_samples()
+                && on.record_latency_samples() == off.record_latency_samples()
+                && on.playback_latency_samples() == off.playback_latency_samples()
+                && on.drain_samples() == off.drain_samples(),
+        ),
+        "",
+        Tolerance::Exact(1.0),
+    ));
+    rows
 }

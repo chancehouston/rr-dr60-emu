@@ -87,15 +87,11 @@ pub(crate) fn knee(x: f64, k: f64) -> f64 {
 /// site in the per-sample path once the ends are fields (research R-01).
 #[inline(always)]
 pub(crate) fn bound(y: f64, lo: f64, hi: f64) -> f64 {
-    if y > hi {
-        hi
-    } else if y < lo {
-        lo
-    } else if y.is_nan() {
-        0.0
-    } else {
-        y
-    }
+    // IEEE maxNum / minNum (one instruction each, no branch); they also map ±∞ to the ends
+    // and would return `lo` for a NaN, which the select below turns into 0.0 (a compare and a
+    // conditional move, still no branch; research R-08).
+    let r = y.max(lo).min(hi);
+    if y.is_nan() { 0.0 } else { r }
 }
 
 /// The output chain's state for one playback path (data-model.md › `OutputChain` state).

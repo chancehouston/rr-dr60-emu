@@ -238,3 +238,47 @@ fn bypassed_route_output_equals_after_playback_without_the_option() {
         );
     }
 }
+
+// ---- User Story 2 (tasks.md T014) ----
+
+/// US2 AS1 (FR-006, SC-004): record-then-play equals the one-pass with the option on, both
+/// routes, two positions; engaged at position 1 on the speaker route.
+#[test]
+fn equivalence_both_routes_two_positions() {
+    finish(at(|r| {
+        let mut rows = Vec::new();
+        for (route, volume) in [
+            (Route::Speaker, rr_dr60::output::VOLUME_REFERENCE),
+            (Route::Speaker, 1.0),
+            (Route::Earphone, rr_dr60::output::VOLUME_REFERENCE),
+            (Route::Earphone, 1.0),
+        ] {
+            rows.extend(clamp::equivalence(&standard, r, route, volume));
+        }
+        rows
+    }));
+}
+
+/// US2 AS2 (FR-006): the route and volume changes at spec 009's sixteen change points, the
+/// output equal to the bounded option-off output.
+#[test]
+fn change_timing_identity() {
+    finish(at(|r| clamp::change_timing(&standard, r)));
+}
+
+/// US2 AS3 (FR-006, SC-003): the export bytes identical with the option on or off; an option-off
+/// export plays back bounded through an option-on engine.
+#[test]
+fn stored_form_unchanged() {
+    finish(at(|r| {
+        let mut rows = clamp::stored_form_unchanged(&standard, r, Route::Speaker);
+        rows.extend(clamp::stored_form_unchanged(&standard, r, Route::Earphone));
+        rows
+    }));
+}
+
+/// US2 AS5 (FR-005): the latencies and the drain unchanged with the option on.
+#[test]
+fn latencies_unchanged() {
+    finish(at(|r| clamp::latencies_and_drain_unchanged(&standard, r)));
+}
