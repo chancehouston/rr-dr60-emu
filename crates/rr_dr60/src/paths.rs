@@ -157,10 +157,8 @@ impl RecordHalf {
             vas: VasStage::new(&settings.vas),
             run_vas: settings.vas.enabled
                 && (!honour_tap
-                    || matches!(
-                        settings.tap,
-                        Tap::AfterVas | Tap::AfterDecoder | Tap::AfterPlayback
-                    )),
+                    || matches!(settings.tap, Tap::AfterVas | Tap::AfterDecoder)
+                    || settings.tap.is_after_stage_10()),
             mute: settings.vas.mode == VasMode::Mute,
             forced: false,
             after_drop: false,
@@ -243,8 +241,9 @@ impl PlaybackHalf {
     pub(crate) fn new(settings: &Settings, honour_tap: bool) -> Self {
         Self {
             playback: PlaybackStage::playback(),
+            // Spec 009 FR-011: the output-chain taps run stage 10 too (009 T013 adds the chain).
             run_playback: settings.playback_stage_enabled
-                && (!honour_tap || settings.tap == Tap::AfterPlayback),
+                && (!honour_tap || settings.tap.is_after_stage_10()),
         }
     }
 
@@ -418,7 +417,9 @@ impl RecordPath {
         // Spec 008 FR-004, FR-015: the codec runs after the recorder whenever it is on, and
         // after the one-pass record path at the taps from the decoder's on.
         let codec_runs = settings.speech_codec_enabled
-            && (!honour_tap || matches!(settings.tap, Tap::AfterDecoder | Tap::AfterPlayback));
+            && (!honour_tap
+                || settings.tap == Tap::AfterDecoder
+                || settings.tap.is_after_stage_10());
         let codec_delay = if codec_runs {
             codec_delay_host_samples(settings.host_rate_hz)
         } else {

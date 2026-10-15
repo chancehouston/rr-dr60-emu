@@ -2,7 +2,7 @@
 //! (data-model.md › Named configurations; tasks.md T045; spec 005 data-model.md › Named harness
 //! configurations).
 
-use rr_dr60::{SUPPORTED_HOST_RATES, Settings, Tap, VasMode};
+use rr_dr60::{OutputSettings, SUPPORTED_HOST_RATES, Settings, Tap, VasMode};
 use rr_dr60_ffi::{RrDr60Settings, RrDr60Tap, RrDr60VasMode, rr_dr60_settings_default};
 
 /// The five spec 001 configurations, in 001 data-model.md order. Each one means "the spec 001
@@ -32,12 +32,39 @@ pub const VAS_CONFIGS: [&str; 3] = ["default_vas", "vas_mute", "vas_only"];
 /// codec with the VAS on (drop mode) and everything else off.
 pub const CODEC_CONFIGS: [&str; 3] = ["default_codec", "codec_only", "codec_only_vas"];
 
-/// The 0.7 default: [`Settings::new`] with the speech codec **bypassed** (spec 008 FR-021). Every
-/// pre-008 check, golden file and harness scenario uses this instead of `Settings::new`, so the
-/// earlier specs' checks and the three golden files stay exactly what they were (the pattern of
-/// specs 002 and 003, whose stages the earlier checks bypass too).
-pub fn settings_007(host_rate_hz: u32) -> Settings {
+/// The spec 009 output-chain configurations (009 contracts/golden-format.md; research R-10):
+/// the chain alone on each route (every earlier stage bypassed, the route output tap; the route
+/// is a control the check sets), the amplifier path alone (stage 11 with the speaker template
+/// off, for the clip and corner checks), and the 0.9 default on each route plus the default at
+/// the "6 dB over" volume (`default_loud`; the check sets the position from
+/// `rr_dr60::output::VOLUME_6DB_OVER` once it exists, 009 T013).
+pub const OUTPUT_CONFIGS: [&str; 6] = [
+    "output_only_speaker",
+    "output_only_earphone",
+    "output_only_amp",
+    "default_output",
+    "default_earphone",
+    "default_loud",
+];
+
+/// The 0.8 default: [`Settings::new`] with the output chain **bypassed** and the tap after stage
+/// 10 (spec 009 FR-016). Every pre-009 check, golden file and harness scenario builds on this
+/// instead of `Settings::new`, so the earlier specs' checks and the four golden files stay
+/// exactly what they were (the pattern of specs 002, 003 and 008, whose stages the earlier
+/// checks bypass too).
+pub fn settings_008(host_rate_hz: u32) -> Settings {
     let mut s = Settings::new(host_rate_hz);
+    s.output = OutputSettings::BYPASSED; // 009 FR-016: the earlier checks run with stages 11–13 bypassed
+    s.tap = Tap::AfterPlayback; // 009 FR-011: 0.8's default output
+    s
+}
+
+/// The 0.7 default: [`settings_008`] with the speech codec **bypassed** too (spec 008 FR-021).
+/// Every pre-008 check, golden file and harness scenario uses this instead of `Settings::new`,
+/// so the earlier specs' checks and the three golden files stay exactly what they were (the
+/// pattern of specs 002 and 003, whose stages the earlier checks bypass too).
+pub fn settings_007(host_rate_hz: u32) -> Settings {
+    let mut s = settings_008(host_rate_hz);
     s.speech_codec_enabled = false; // 008 FR-021
     s
 }
@@ -124,7 +151,8 @@ pub fn settings(name: &str, host_rate_hz: u32) -> Settings {
             }
         }
         "default_vas" => {}
-        // Spec 008 (contracts/golden-format.md): the codec configurations.
+        // Spec 008 (contracts/golden-format.md): the codec configurations (the output chain
+        // bypassed, 009 FR-016).
         "default_codec" => s.speech_codec_enabled = true,
         "codec_only" | "codec_only_vas" => {
             no_agc(&mut s);
@@ -136,6 +164,20 @@ pub fn settings(name: &str, host_rate_hz: u32) -> Settings {
                 no_vas(&mut s);
             }
         }
+        // Spec 009 (contracts/golden-format.md; research R-10): the output-chain configurations
+        // are the only ones with any of stages 11–13 on.
+        "output_only_speaker" | "output_only_earphone" | "output_only_amp" => {
+            no_agc(&mut s);
+            no_vas(&mut s);
+            no_stages(&mut s);
+            s.adc_clamp_enabled = false;
+            s.speech_codec_enabled = false;
+            s.tap = Tap::RouteOutput;
+            s.output.volume_amp_enabled = true; // stage 11 (A-031)
+            s.output.speaker_enabled = name == "output_only_speaker"; // stage 12 (A-010)
+            s.output.earphone_enabled = name == "output_only_earphone"; // stage 13 (A-032)
+        }
+        "default_output" | "default_earphone" | "default_loud" => s = Settings::new(host_rate_hz),
         other => panic!("unknown configuration {other:?}"),
     }
     s
@@ -164,6 +206,10 @@ pub fn c_settings(s: &Settings) -> RrDr60Settings {
         Tap::AfterAgc => RrDr60Tap::AfterAgc,
         Tap::AfterVas => RrDr60Tap::AfterVas,
         Tap::AfterDecoder => RrDr60Tap::AfterDecoder,
+        Tap::RouteOutput => RrDr60Tap::RouteOutput,
+        Tap::AfterVolumeAmp => RrDr60Tap::AfterVolumeAmp,
+        Tap::AfterSpeaker => RrDr60Tap::AfterSpeaker,
+        Tap::AfterEarphone => RrDr60Tap::AfterEarphone,
         other => panic!("configs::c_settings: unmapped tap {other:?}"),
     };
     let vas_mode = match s.vas.mode {
@@ -193,7 +239,22 @@ pub fn c_settings(s: &Settings) -> RrDr60Settings {
         memory_max_recordings: s.memory.max_recordings,
         reserved_008: 0,
         speech_codec_enabled: s.speech_codec_enabled,
+        output_volume_amp_enabled: s.output.volume_amp_enabled, // 009 FR-014
+        output_speaker_enabled: s.output.speaker_enabled,
+        output_earphone_enabled: s.output.earphone_enabled,
         ..rr_dr60_settings_default(s.host_rate_hz)
+    }
+}
+
+/// The 0.8 default in the C API: `rr_dr60_settings_default` with the output chain off and the
+/// tap after stage 10 (spec 009 FR-016; the C twin of [`settings_008`]).
+pub fn c_default_008(host_rate_hz: u32) -> RrDr60Settings {
+    RrDr60Settings {
+        output_volume_amp_enabled: false, // 009 FR-016
+        output_speaker_enabled: false,
+        output_earphone_enabled: false,
+        tap: RrDr60Tap::AfterPlayback as u32, // 009 FR-011: 0.8's output
+        ..rr_dr60_settings_default(host_rate_hz)
     }
 }
 
@@ -203,8 +264,8 @@ pub fn c_default_001(host_rate_hz: u32) -> RrDr60Settings {
     RrDr60Settings {
         agc_enabled: false,
         vas_enabled: false,
-        speech_codec_enabled: false, // 008 FR-021
-        ..rr_dr60_settings_default(host_rate_hz)
+        speech_codec_enabled: false,   // 008 FR-021
+        ..c_default_008(host_rate_hz)  // 009 FR-016
     }
 }
 
@@ -213,8 +274,8 @@ pub fn c_default_001(host_rate_hz: u32) -> RrDr60Settings {
 pub fn c_default_005(host_rate_hz: u32) -> RrDr60Settings {
     RrDr60Settings {
         vas_enabled: false,
-        speech_codec_enabled: false, // 008 FR-021
-        ..rr_dr60_settings_default(host_rate_hz)
+        speech_codec_enabled: false,   // 008 FR-021
+        ..c_default_008(host_rate_hz)  // 009 FR-016
     }
 }
 
@@ -317,8 +378,13 @@ mod tests {
         assert_eq!(settings("vas_only", 48_000).vas.mode, VasMode::Drop);
         assert_eq!(settings("vas_mute", 48_000).vas.mode, VasMode::Mute);
         assert_eq!(settings("default_vas", 48_000), settings_007(48_000)); // 008 FR-021
-        // Spec 008: the codec names; the real 0.8 default is `default_codec`.
-        assert_eq!(settings("default_codec", 48_000), Settings::new(48_000));
+        // Spec 008: the codec names; the 0.8 default is `default_codec` (the output chain
+        // bypassed since 009, FR-016).
+        assert_eq!(settings("default_codec", 48_000), settings_008(48_000));
+        assert_eq!(
+            settings("default_codec", 48_000).output,
+            OutputSettings::BYPASSED
+        );
         assert!(settings("default_codec", 48_000).speech_codec_enabled);
         assert_eq!(
             row("codec_only"),
@@ -335,6 +401,59 @@ mod tests {
                 "{name}: codec bypassed (008 FR-021)"
             );
         }
+        // Spec 009 FR-016: every pre-009 name runs with stages 11–13 bypassed at 0.8's tap or
+        // its own earlier tap; only the output names turn the chain on.
+        for name in CONFIGS
+            .iter()
+            .chain(&AGC_CONFIGS)
+            .chain(&VAS_CONFIGS)
+            .chain(&CODEC_CONFIGS)
+            .chain(&["record_only_clamp_off", "record_path_agc"])
+        {
+            let s = settings(name, 6000);
+            assert_eq!(s.output, OutputSettings::BYPASSED, "{name} (009 FR-016)");
+            assert_ne!(
+                s.tap,
+                Tap::RouteOutput,
+                "{name}: no pre-009 name uses the route tap"
+            );
+            let c = c_settings(&s);
+            assert!(
+                !c.output_volume_amp_enabled
+                    && !c.output_speaker_enabled
+                    && !c.output_earphone_enabled,
+                "{name}"
+            );
+        }
+        let out = |n| {
+            let s = settings(n, 48_000);
+            (
+                s.output.volume_amp_enabled,
+                s.output.speaker_enabled,
+                s.output.earphone_enabled,
+                s.tap,
+            )
+        };
+        assert_eq!(out("output_only_speaker"), (on, on, off, Tap::RouteOutput));
+        assert_eq!(out("output_only_earphone"), (on, off, on, Tap::RouteOutput));
+        assert_eq!(out("output_only_amp"), (on, off, off, Tap::RouteOutput));
+        assert_eq!(
+            row("output_only_speaker"),
+            (off, off, off, off, off, Tap::RouteOutput)
+        );
+        assert!(!settings("output_only_earphone", 48_000).speech_codec_enabled);
+        for name in ["default_output", "default_earphone", "default_loud"] {
+            assert_eq!(settings(name, 48_000), Settings::new(48_000), "{name}");
+        }
+        assert_eq!(
+            c_settings(&settings("output_only_earphone", 6000)).tap,
+            RrDr60Tap::RouteOutput as u32
+        );
+        assert!(c_settings(&settings("default_output", 6000)).output_speaker_enabled);
+        assert!(!c_default_008(48_000).output_volume_amp_enabled);
+        assert_eq!(c_default_008(48_000).tap, RrDr60Tap::AfterPlayback as u32);
+        assert!(!c_default_001(48_000).output_earphone_enabled);
+        assert!(!c_default_005(48_000).output_speaker_enabled);
         assert_eq!(
             c_settings(&settings("codec_only", 6000)).tap,
             RrDr60Tap::AfterDecoder as u32

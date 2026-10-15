@@ -151,8 +151,8 @@ pub use manifest::{
 pub use memory::{Encoding, MemoryStatus};
 pub use pipeline::{BlockInfo, Pipeline, VasEvent};
 pub use settings::{
-    AgcSettings, DEVICE_RATE_HZ, MemorySettings, Route, SUPPORTED_HOST_RATES, Settings, Tap,
-    VasMode, VasSettings,
+    AgcSettings, DEVICE_RATE_HZ, MemorySettings, OutputSettings, Route, SUPPORTED_HOST_RATES,
+    Settings, Tap, VasMode, VasSettings,
 };
 pub use transport::{
     EngineState, PlayInfo, RecordInfo, State, StopOutcome, StopReason, StopResult,

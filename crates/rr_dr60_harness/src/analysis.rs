@@ -903,3 +903,199 @@ mod spectrum_tests {
         assert!(segmental_snr(&x, &noise, fs, 0) >= -10.0);
     }
 }
+
+/// The output chain's section sets (spec 009 research R-10): the design's discrete realization,
+/// computed here from the registered figures with the design script's formulas, so that the
+/// harness compares the Rust against an independent realization of the same design.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutputTemplate {
+    /// Stage 11 on the earphone route plus stage 13: the 32 Hz volume-control corner and the
+    /// earphone follower's 120 and 280 Hz corners (A-031, A-032).
+    Earphone,
+    /// Stage 11 on the speaker route with the speaker template off: the 32 Hz and 159 Hz
+    /// corners (A-031).
+    Amplifier,
+    /// Stage 11 and stage 12 on the speaker route: the two corners, the 750 Hz / Q 1.8
+    /// resonance and the +4.5 dB shelf (780 → 1310 Hz), the template peak-normalized to 1.0 on
+    /// a 1 Hz grid at the rate (A-010, revised).
+    Speaker,
+}
+
+/// The registered figures (spec 009 contracts/output-chain-design.md; A-010, A-031, A-032).
+pub mod output_template {
+    /// The volume control's input coupling corner, Hz (C14 0.1 µF into VR1 50 kΩ; A-031).
+    pub const F_VOL_HZ: f64 = 1.0 / (std::f64::consts::TAU * 0.1e-6 * 50e3);
+    /// The amplifier's input coupling corner, Hz (C8 0.1 µF into R16 10 kΩ; A-031).
+    pub const F_AMP_HZ: f64 = 1.0 / (std::f64::consts::TAU * 0.1e-6 * 10e3);
+    /// The earphone follower's input coupling corner, Hz, nominal (A-032).
+    pub const F_EAR_IN_HZ: f64 = 120.0;
+    /// The earphone follower's output coupling corner into 16 Ω, Hz, nominal (A-032).
+    pub const F_EAR_OUT_HZ: f64 = 280.0;
+    /// The speaker template's resonance, Hz, and its Q (A-010).
+    pub const SPK_F0_HZ: f64 = 750.0;
+    /// See [`SPK_F0_HZ`].
+    pub const SPK_Q: f64 = 1.8;
+    /// The speaker template's shelf zero and pole, Hz (+4.5 dB; A-010).
+    pub const SPK_SHELF_ZERO_HZ: f64 = 780.0;
+    /// See [`SPK_SHELF_ZERO_HZ`].
+    pub const SPK_SHELF_POLE_HZ: f64 = 1310.0;
+}
+
+/// A first-order bilinear high-pass `[b0, b1, a1]` at `fc`, prewarped, unity at Nyquist (the
+/// design script's formula).
+fn template_hp(fc: f64, fs: f64) -> [f64; 3] {
+    let t = (std::f64::consts::PI * fc / fs).tan();
+    let a = (1.0 - t) / (1.0 + t);
+    let g = (1.0 + a) / 2.0;
+    [g, -g, -a]
+}
+
+/// The shelf `(1 + s/ωz) / (1 + s/ωp)` by the bilinear transform, not prewarped: `[b0, b1, a1]`.
+fn template_shelf(fs: f64) -> [f64; 3] {
+    let c = 2.0 * fs;
+    let (wz, wp) = (
+        TAU * output_template::SPK_SHELF_ZERO_HZ,
+        TAU * output_template::SPK_SHELF_POLE_HZ,
+    );
+    let (b0, b1) = (1.0 + c / wz, 1.0 - c / wz);
+    let (a0, a1) = (1.0 + c / wp, 1.0 - c / wp);
+    [b0 / a0, b1 / a0, a1 / a0]
+}
+
+/// The resonance `s² / (s² + (ω0/Q) s + ω0²)` by the bilinear transform prewarped at f0, before
+/// normalization: `[b0, b1, b2, a1, a2]`.
+fn template_resonance(fs: f64) -> [f64; 5] {
+    let w0 = 2.0 * fs * (std::f64::consts::PI * output_template::SPK_F0_HZ / fs).tan();
+    let c = 2.0 * fs;
+    // s = c (1 − z⁻¹) / (1 + z⁻¹); multiply numerator and denominator by (1 + z⁻¹)².
+    let (k1, k2) = (w0 / output_template::SPK_Q, w0 * w0);
+    let b = [c * c, -2.0 * c * c, c * c];
+    let a = [
+        c * c + k1 * c + k2,
+        -2.0 * c * c + 2.0 * k2,
+        c * c - k1 * c + k2,
+    ];
+    [
+        b[0] / a[0],
+        b[1] / a[0],
+        b[2] / a[0],
+        a[1] / a[0],
+        a[2] / a[0],
+    ]
+}
+
+fn section_response(sec: &[f64], f_hz: f64, fs: f64) -> Complex64 {
+    let z1 = Complex64::from_polar(1.0, -TAU * f_hz / fs);
+    if sec.len() == 3 {
+        (sec[0] + sec[1] * z1) / (1.0 + sec[2] * z1)
+    } else {
+        (sec[0] + sec[1] * z1 + sec[2] * z1 * z1) / (1.0 + sec[3] * z1 + sec[4] * z1 * z1)
+    }
+}
+
+/// The sections of a template at `fs`, the speaker's resonance scaled so the template's peak
+/// gain on a 1 Hz grid from 20 Hz to Nyquist is exactly 1.0 (spec 009 FR-005).
+fn template_sections(template: OutputTemplate, fs: f64) -> Vec<Vec<f64>> {
+    let vol = template_hp(output_template::F_VOL_HZ, fs).to_vec();
+    match template {
+        OutputTemplate::Earphone => vec![
+            vol,
+            template_hp(output_template::F_EAR_IN_HZ, fs).to_vec(),
+            template_hp(output_template::F_EAR_OUT_HZ, fs).to_vec(),
+        ],
+        OutputTemplate::Amplifier => vec![vol, template_hp(output_template::F_AMP_HZ, fs).to_vec()],
+        OutputTemplate::Speaker => {
+            let mut res = template_resonance(fs);
+            let shelf = template_shelf(fs);
+            let mut peak = 0.0f64;
+            let mut f = 20.0;
+            while f <= fs / 2.0 + 0.5 {
+                let m = (section_response(&res, f, fs) * section_response(&shelf, f, fs)).norm();
+                peak = peak.max(m);
+                f += 1.0;
+            }
+            for b in &mut res[..3] {
+                *b /= peak;
+            }
+            vec![
+                vol,
+                template_hp(output_template::F_AMP_HZ, fs).to_vec(),
+                res.to_vec(),
+                shelf.to_vec(),
+            ]
+        }
+    }
+}
+
+/// The design's discrete realization of an output-chain template at `f_hz` and `fs`, in dB
+/// (spec 009 research R-10; the only new analysis helper of spec 009). The Rust's measured
+/// response is compared against this within ±0.5 dB; the design script separately checks this
+/// realization against the analog prototype.
+pub fn discrete_template_response(template: OutputTemplate, f_hz: f64, fs: f64) -> f64 {
+    let h: Complex64 = template_sections(template, fs)
+        .iter()
+        .map(|s| section_response(s, f_hz, fs))
+        .product();
+    db(h.norm())
+}
+
+/// The template's response without the volume-control corner: the speaker template alone
+/// (stage 12) or the earphone's two corners alone (stage 13), in dB.
+pub fn discrete_stage_response(template: OutputTemplate, f_hz: f64, fs: f64) -> f64 {
+    let sections = template_sections(template, fs);
+    let skip = if template == OutputTemplate::Speaker {
+        2
+    } else {
+        1
+    };
+    let h: Complex64 = sections[skip..]
+        .iter()
+        .map(|s| section_response(s, f_hz, fs))
+        .product();
+    db(h.norm())
+}
+
+#[cfg(test)]
+mod output_template_tests {
+    use super::*;
+
+    /// 009 T007: the helper's earphone 1 kHz reading at 48 kHz is within FR-007's −0.5 … 0 dB,
+    /// the speaker template's peak is 1.0 within 1e-9 at every rate, and each corner's −3 dB
+    /// point from the helper's own coefficients is the registered figure.
+    #[test]
+    fn helper_reproduces_the_design_figures() {
+        let e = discrete_template_response(OutputTemplate::Earphone, 1000.0, 48_000.0);
+        assert!((-0.5..=0.0).contains(&e), "{e}");
+        for fs in rr_dr60::SUPPORTED_HOST_RATES {
+            let fs = f64::from(fs);
+            let mut peak = f64::NEG_INFINITY;
+            let mut f = 20.0;
+            while f <= fs / 2.0 {
+                peak = peak.max(
+                    discrete_template_response(OutputTemplate::Speaker, f, fs)
+                        - discrete_template_response(OutputTemplate::Amplifier, f, fs),
+                );
+                f += 1.0;
+            }
+            assert!(peak.abs() < 1e-8, "{fs}: template peak {peak} dB");
+            for (fc, name) in [
+                (output_template::F_VOL_HZ, "vol"),
+                (output_template::F_AMP_HZ, "amp"),
+                (output_template::F_EAR_IN_HZ, "ear_in"),
+                (output_template::F_EAR_OUT_HZ, "ear_out"),
+            ] {
+                let c = template_hp(fc, fs);
+                let a = -c[2];
+                let got = fs * ((1.0 - a) / (1.0 + a)).atan() / std::f64::consts::PI;
+                assert!((got - fc).abs() < 1e-6 * fc, "{fs} {name}: {got} vs {fc}");
+            }
+        }
+        // The amplifier path above 800 Hz at 48 kHz is flat within 0.2 dB (FR-006).
+        let a800 = discrete_template_response(OutputTemplate::Amplifier, 800.0, 48_000.0);
+        let a2500 = discrete_template_response(OutputTemplate::Amplifier, 2500.0, 48_000.0);
+        assert!((a2500 - a800).abs() <= 0.2, "{a800} {a2500}");
+        // The stage-only reading drops the volume corner.
+        let s = discrete_stage_response(OutputTemplate::Speaker, 1000.0, 48_000.0);
+        assert!(s < 0.0 && s > -1.0, "{s}");
+    }
+}

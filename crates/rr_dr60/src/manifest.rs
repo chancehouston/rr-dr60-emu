@@ -774,7 +774,7 @@ mod tests {
         // is exhaustive, so a new control or tap fails to compile until it is mapped here, and
         // mapping it to a stage the manifest calls "not modeled" fails the assertion. This is
         // the code → manifest half of the guard (constitution Principle V).
-        use crate::{AgcSettings, MemorySettings, Tap, VasSettings};
+        use crate::{AgcSettings, MemorySettings, OutputSettings, Tap, VasSettings};
         let Settings {
             host_rate_hz: _,
             record_stage_enabled,
@@ -786,7 +786,13 @@ mod tests {
             vas,
             memory,
             speech_codec_enabled,
+            output,
         } = Settings::new(6000);
+        let OutputSettings {
+            volume_amp_enabled,
+            speaker_enabled,
+            earphone_enabled,
+        } = output;
         let AgcSettings {
             enabled: agc_enabled,
             knee_dbfs: _,
@@ -825,24 +831,59 @@ mod tests {
                 "stage {n} has a control in the API but the manifest says not modeled"
             );
         }
+        // Spec 009 FR-002, FR-011: the output chain's three controls and four taps map to
+        // stages 11, 12 and 13. 009 T026 flips this: until the manifest rows land, the stages
+        // read "not modeled" and the controls are asserted pending, not anchored.
+        let pending: &[(u32, bool)] = &[
+            (11, volume_amp_enabled),
+            (12, speaker_enabled),
+            (13, earphone_enabled),
+        ];
+        for (n, on) in pending {
+            assert!(on, "stage {n}'s control is off in the device defaults");
+            assert_eq!(
+                m.stage(*n).unwrap().status,
+                StageStatus::NotModeled,
+                "stage {n}: 009 T026 moves this control into `controls`"
+            );
+        }
+        let stage_of = |t: Tap| match t {
+            Tap::AfterAgc => 3,
+            Tap::AfterRecord => 4,
+            Tap::AfterVas => 5,
+            Tap::AfterPlayback => 10,
+            Tap::AfterDecoder => 9,    // spec 008 FR-015
+            Tap::RouteOutput => 11,    // spec 009 FR-011 (the selected route's last stage)
+            Tap::AfterVolumeAmp => 11, // spec 009 FR-011
+            Tap::AfterSpeaker => 12,   // spec 009 FR-011
+            Tap::AfterEarphone => 13,  // spec 009 FR-011
+        };
         for t in [
             Tap::AfterAgc,
             Tap::AfterRecord,
             Tap::AfterVas,
             Tap::AfterPlayback,
-            tap,
+            Tap::AfterDecoder,
         ] {
-            let n = match t {
-                Tap::AfterAgc => 3,
-                Tap::AfterRecord => 4,
-                Tap::AfterVas => 5,
-                Tap::AfterPlayback => 10,
-                Tap::AfterDecoder => 9, // spec 008 FR-015
-            };
+            let n = stage_of(t);
             assert_ne!(
                 m.stage(n).unwrap().status,
                 StageStatus::NotModeled,
                 "tap {t:?} exposes stage {n} but the manifest says not modeled"
+            );
+        }
+        for t in [
+            tap,
+            Tap::RouteOutput,
+            Tap::AfterVolumeAmp,
+            Tap::AfterSpeaker,
+            Tap::AfterEarphone,
+        ] {
+            let n = stage_of(t);
+            assert_eq!(
+                m.stage(n).unwrap().status,
+                StageStatus::NotModeled,
+                "tap {t:?}: 009 T026 moves this tap into the anchored list"
             );
         }
     }

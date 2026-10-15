@@ -77,7 +77,9 @@ pub struct Reference {
 
 /// The Rust path's reference figures.
 pub fn rust_reference() -> Reference {
-    let mut p = Pipeline::new(rr_dr60::Settings::new(SMOKE_RATE)).expect("rate");
+    // Spec 009 FR-016: the 0.8 case keeps 0.8's output (the chain bypassed, the tap after
+    // stage 10); the route cases of 009 T031/T033 have their own constants.
+    let mut p = Pipeline::new(crate::configs::settings_008(SMOKE_RATE)).expect("rate");
     p.start_recording().expect("idle");
     for chunk in stimulus().chunks(SMOKE_BLOCK) {
         let info = p.record(chunk, &mut []).expect("recording");

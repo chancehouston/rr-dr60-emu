@@ -6,7 +6,8 @@ Rules of spec 001's contract apply (opaque handle, status codes, caller buffers,
 
 | Offset | Field | Type | Notes |
 |---|---|---|---|
-| 0 – 88 | as 0.8.0 | | unchanged (`speech_codec_enabled` at 88; 89 – 95 remain tail padding and stay reserved: fields placed there would let a 0.8 caller's `struct_size = 96` pass with uninitialized bytes) |
+| 0 – 88 | as 0.8.0 | | unchanged (`speech_codec_enabled` at 88) |
+| 89 – 95 | `reserved_009` | `uint8_t[7]` | an explicit reserved field (write 0; ignored): `repr(C)` would otherwise pack the three bools into the 0.8 tail padding at 89 – 91 and keep the size at 96, which would let a 0.8 caller's `struct_size = 96` pass with uninitialized bytes read as settings (implementation, T006) |
 | **96** | `output_volume_amp_enabled` | `bool` | default `true` (stage 11) |
 | **97** | `output_speaker_enabled` | `bool` | default `true` (stage 12) |
 | **98** | `output_earphone_enabled` | `bool` | default `true` (stage 13) |

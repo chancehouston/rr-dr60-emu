@@ -186,7 +186,7 @@ fn validate(s: &RrDr60Settings) -> (RrDr60Status, RrDr60SettingField) {
 /// processing; a 72-byte (0.4-layout) struct is rejected as `STRUCT_SIZE`.
 #[test]
 fn c_api_005_layout_defaults_and_reserved_fields() {
-    assert_eq!(size_of::<RrDr60Settings>(), 96); // spec 008 contracts/c-api.md (88 in 0.6/0.7)
+    assert_eq!(size_of::<RrDr60Settings>(), 104); // spec 009 contracts/c-api.md (96 in 0.8)
     assert_eq!(std::mem::offset_of!(RrDr60Settings, agc_knee_dbfs), 28);
     assert_eq!(std::mem::offset_of!(RrDr60Settings, reserved_agc_1), 32);
     assert_eq!(std::mem::offset_of!(RrDr60Settings, reserved_agc_2), 36);
@@ -199,7 +199,7 @@ fn c_api_005_layout_defaults_and_reserved_fields() {
         80
     ); // 006
     let d = rr_dr60_settings_default(48_000);
-    assert_eq!(d.struct_size, 96); // spec 008
+    assert_eq!(d.struct_size, 104); // spec 009
     assert_eq!(d.agc_knee_dbfs, -1.0); // A-028
     assert_eq!(d.agc_attack_ms, 3.0); // A-034
     assert_eq!(d.agc_release_ms, 1370.0); // A-035
@@ -443,7 +443,7 @@ fn error_table() {
         RrDr60Status::UnsupportedHostRate
     );
     assert_eq!(
-        status(RrDr60Settings { tap: 7, ..ok }, &mut out),
+        status(RrDr60Settings { tap: 9, ..ok }, &mut out), // 0 – 8 are taps since 0.9
         RrDr60Status::InvalidArgument
     );
     assert_eq!(

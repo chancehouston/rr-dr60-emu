@@ -134,12 +134,20 @@ int main(int argc, char **argv) {
 
   RrDr60Settings s = rr_dr60_settings_default(FS);
   CHECK(s.struct_size == sizeof(RrDr60Settings), "struct_size %u", s.struct_size);
-  CHECK(s.struct_size == 96, "struct_size %u (must be 96 since 0.8, spec 008 contracts/c-api.md)", s.struct_size);
+  CHECK(s.struct_size == 104, "struct_size %u (must be 104 since 0.9, spec 009 contracts/c-api.md)", s.struct_size);
+  CHECK(s.output_volume_amp_enabled && s.output_speaker_enabled && s.output_earphone_enabled,
+        "output chain on by default (spec 009 FR-002; A-031, A-010, A-032)");
   CHECK(s.speech_codec_enabled, "speech codec on by default (spec 008 FR-002, A-004)");
   CHECK(s.reserved_008 == 0, "reserved_008 must default to 0");
   CHECK(s.memory_capacity_s == 3600, "default memory capacity %u s (S-001: 60 minutes)", s.memory_capacity_s);
   CHECK(s.memory_max_recordings == 99, "default recording count %u (S-001: 99 items)", s.memory_max_recordings);
-  CHECK(s.tap == RR_DR60_TAP_AFTER_PLAYBACK, "default tap");
+  CHECK(s.tap == RR_DR60_TAP_ROUTE_OUTPUT, "default tap (spec 009 FR-010)");
+  /* The 0.8 case below keeps 0.8's output: the output chain bypassed and the tap after stage 10
+     (spec 009 FR-016); 009 T031 adds the route cases. */
+  s.output_volume_amp_enabled = false;
+  s.output_speaker_enabled = false;
+  s.output_earphone_enabled = false;
+  s.tap = RR_DR60_TAP_AFTER_PLAYBACK;
   CHECK(s.agc_enabled, "limiter on by default (spec 005, A-020)");
   CHECK(s.agc_knee_dbfs == -1.0f, "default knee %g dBFS (A-028)", (double)s.agc_knee_dbfs);
   CHECK(s.agc_attack_ms == 3.0f, "default attack %g ms (A-034)", (double)s.agc_attack_ms);
@@ -243,8 +251,8 @@ int main(int argc, char **argv) {
   CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_UNSUPPORTED_HOST_RATE && q == NULL, "7000 Hz");
   q = sentinel;
   bad = rr_dr60_settings_default(FS);
-  bad.tap = 7;
-  CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_INVALID_ARGUMENT && q == sentinel, "tap = 7");
+  bad.tap = 9; /* 0 – 8 are taps since 0.9 (spec 009 contracts/c-api.md) */
+  CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_INVALID_ARGUMENT && q == sentinel, "tap = 9");
   bad = rr_dr60_settings_default(FS);
   bad.struct_size = 4;
   CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_INVALID_ARGUMENT && q == sentinel, "struct_size = 4");
