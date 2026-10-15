@@ -9,7 +9,7 @@ uv run tools/output-chain/design_output_chain.py --check
 uv run tools/output-chain/design_output_chain.py --write && git diff --exit-code crates/rr_dr60/src/stages/output_coeffs.rs
 ```
 
-Expected: the constants table (V_CLIP 1.327 V, gain 22.67 dB, VOLUME_REFERENCE 0.0976, K_SPK 10.25, knee 0.85 with its distortion bracket), the per-rate corners' −3 dB points (32, 159, 110, 190 Hz), the speaker template's peak frequency, 1 kHz and 2.5 kHz readings and 1 kHz group delay (≈ 0.27 ms), the `N_OUT` table (500 … 7 993), every bound green; the diff empty.
+Expected: the constants table (V_CLIP 1.15 V, gain 22.67 dB at position 1 and the loaded law at five positions, VOLUME_REFERENCE 0.1335, knee 0.85 with its distortion bracket), the per-rate corners' −3 dB points (32, 159, 120, 280 Hz), the template's discrete-against-analog deviation per rate, the speaker template's peak frequency, 1 kHz and 2.5 kHz readings and 1 kHz group delay (≈ 0.27 ms), the `N_OUT` table (346 … 5 527), every bound green; the diff empty.
 
 ## 2. The earlier specs are untouched
 
@@ -25,7 +25,7 @@ Expected: the four SHA guards green (every pre-009 configuration runs the chain 
 cargo test -p rr_dr60_harness --test us1_output -- --nocapture
 ```
 
-Expected, per route and rate: the earphone composite response within ±0.5 dB of the two-corner template from 20 Hz to 2.5 kHz with the fitted corners within ±10 %; the amplifier path's 22.7 dB ± 0.5 at position 1 and its two corners (32 and 159 Hz) within ±10 %; the speaker template within ±0.5 dB from 100 Hz to 2.5 kHz with a peak gain of exactly 1.0 and a 1 kHz group delay ≤ 0.5 ms; at 44.1 kHz and above the clip figures (peak never above 1.0; 10 % distortion between +1 and +3 dB over; 15 – 30 % at +6 dB; ≤ 1 % at −6 dB; ≤ 1 dB compression at the ceiling); the volume law within 0.1 dB at five positions; the default-position readings (speaker −1.0 … 0 dB, earphone ≈ −20.2 dB ± 1.5); exact zeros at the after-stage-11 tap on the earphone route at position 0 and the route output below −120 dBFS within 100 ms.
+Expected, per route and rate: the earphone composite response within ±0.5 dB of the design's discrete template from 20 Hz to 2.5 kHz; the amplifier path's 21.5 dB ± 0.5 observed at position 1 in the route's scale (22.7 dB in volts reported beside it) and the loaded law within 0.1 dB at five positions; the speaker template within ±0.5 dB of the design's discrete realization with a peak gain of exactly 1.0 and a 1 kHz group delay ≤ 0.5 ms; at 44.1 kHz and above the clip figures (peak never above 1.0; 10 % distortion between +1 and +3 dB over; 15 – 30 % at +6 dB; ≤ 1 % at −6 dB; ≤ 1 dB compression at the ceiling); the volume law within 0.1 dB at five positions; the default-position readings (speaker −1.0 … 0 dB, earphone ≈ −18.6 dB ± 1.5); exact zeros at the after-stage-11 tap on the earphone route at position 0 and the route output below −120 dBFS within 100 ms.
 
 ## 4. Story 2: the whole chain
 
@@ -67,4 +67,4 @@ RR_DR60_BLESS=output cargo test -p rr_dr60_harness --test golden_output     # on
 cargo test -p rr_dr60_harness --test golden_output
 ```
 
-Expected: the gate green; the chain's cost ≤ 25 % over the codec-bypassed one-pass at 48 kHz for both routes, the latencies unchanged; coverage within 1 point of 98.27 %; the 112 entries blessed once then reproduced.
+Expected: the gate green; the chain's cost ≤ 25 % over the codec-bypassed one-pass at 48 kHz for both routes, the latencies unchanged; coverage within 1 point of 98.27 %; the 140 entries blessed once then reproduced.

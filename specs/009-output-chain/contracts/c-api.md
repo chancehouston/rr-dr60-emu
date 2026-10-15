@@ -16,9 +16,9 @@ Rules of spec 001's contract apply (opaque handle, status codes, caller buffers,
 
 ## Enums, statuses, constant
 
-- `RrDr60Tap`: `RR_DR60_TAP_ROUTE_OUTPUT = 5` (the new default), `RR_DR60_TAP_AFTER_VOLUME_AMP = 6`, `RR_DR60_TAP_AFTER_SPEAKER = 7`, `RR_DR60_TAP_AFTER_EARPHONE = 8` (appended; `RR_DR60_TAP_AFTER_PLAYBACK = 1` keeps its 0.8 meaning).
+- `RrDr60Tap`: `RR_DR60_TAP_ROUTE_OUTPUT = 5` (the new default), `RR_DR60_TAP_AFTER_VOLUME_AMP = 6`, `RR_DR60_TAP_AFTER_SPEAKER = 7`, `RR_DR60_TAP_AFTER_EARPHONE = 8` (appended; `RR_DR60_TAP_AFTER_PLAYBACK = 1` keeps its 0.8 meaning, and the header defines `RR_DR60_TAP_AFTER_STAGE_10` as an alias for it; the CHANGELOG's migration line: to keep 0.8's output, set `tap = RR_DR60_TAP_AFTER_PLAYBACK` explicitly).
 - `RrDr60Status`: `RR_DR60_STATUS_INVALID_VOLUME = 23`, `RR_DR60_STATUS_TAP_NOT_ON_ROUTE = 24` (appended).
-- `RR_DR60_VOLUME_REFERENCE` (`float`, ≈ 0.0976f): the default volume position (A-043).
+- `RR_DR60_VOLUME_REFERENCE` (`float`, ≈ 0.1335f): the default volume position (A-043); `rr_dr60_speaker_gain_db(float position)` and `rr_dr60_earphone_gain_db(float position)` return the loaded law's figures for a host's volume display (handle-less, real-time safe).
 
 ## Functions
 
