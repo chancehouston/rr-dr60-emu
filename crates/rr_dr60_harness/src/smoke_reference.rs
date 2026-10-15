@@ -110,7 +110,7 @@ pub const SMOKE_SPEAKER_REF_HASH: u64 = 0xe414_787b_3395_1ea4; // measured 2026-
 /// See [`SMOKE_SPEAKER_REF_HASH`].
 pub const SMOKE_SPEAKER_FULL_HASH: u64 = 0xbf5f_8794_084b_0d08; // measured 2026-10-15 from the Rust path (53 168 samples; 009 T033)
 /// See [`SMOKE_SPEAKER_REF_HASH`].
-pub const SMOKE_EARPHONE_REF_HASH: u64 = 0x421d_8a00_91c6_ec32; // measured 2026-10-15 from the Rust path (53 168 samples; 009 T033)
+pub const SMOKE_EARPHONE_REF_HASH: u64 = 0xe7a0_621c_54ea_1b7a; // measured 2026-10-15 (Z_EAR 6.4 kΩ, T043 B1) from the Rust path (53 168 samples; 009 T033)
 /// See [`SMOKE_SPEAKER_REF_HASH`].
 pub const SMOKE_EARPHONE_FULL_HASH: u64 = 0x4a93_f668_93e3_04fb; // measured 2026-10-15 from the Rust path (53 168 samples; 009 T033)
 /// The route cases' playback length: the 0.8 length plus the chain's settle at 48 kHz

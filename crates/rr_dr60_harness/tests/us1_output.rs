@@ -73,8 +73,9 @@ fn as4_volume_law_and_position_zero() {
     }));
 }
 
-/// US1 AS5 (FR-007): a full-scale sine at the maximum position on the earphone route peaks
-/// within −0.5 … 0 dB, never above full scale, with THD+N below 0.1 % at 44.1 kHz and above.
+/// US1 AS5 (FR-007, as amended 2026-10-15): a full-scale sine at the maximum position on the
+/// earphone route reads a steady-state amplitude (AES17, after 0.2 s) within −0.5 … 0 dB, no
+/// steady-state sample above full scale, with THD+N below 0.1 % at 44.1 kHz and above.
 #[test]
 fn as5_earphone_at_maximum_volume() {
     finish(at(|r| output_checks::earphone_max_volume(r, &standard)));

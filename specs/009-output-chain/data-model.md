@@ -26,17 +26,17 @@ With every output stage bypassed the chain is the identity and the route is a la
 | `V_CLIP_V` | 1.15 nominal at the 2.8 V rail the schematic marks (S-002) (range 1.0 – 1.4; 1.33 at the datasheet's 3.0 V) | V peak differential | A-031 (S-006 pin swing limits and rated power; S-002 VDD 2.8 V) |
 | `AMP_GAIN` | 13.6 (22.67 dB) at position 1; the loaded law `p · 2 Rf / (Ri + 50 kΩ · p (1 − p))` elsewhere | ratio | A-031, A-044 (S-002 R16 10 kΩ input, R18 68 kΩ feedback, VR1 50 kΩ; S-006 formula 2 Rf / Ri) |
 | `CODEC_FULL_SCALE_V` | 1.0 | V peak | A-030 |
-| `VOLUME_REFERENCE` | 0.1335 (the position at which the loaded law puts a full-scale codec output at the ceiling; script-solved) | position | A-043 |
+| `VOLUME_REFERENCE` | 0.13345174 (the position at which the loaded law puts a full-scale codec output at the ceiling; script-solved, `f32`-rounded) | position | A-043 |
 | `K_SPK(p)`, `K_EAR(p)` | the two routes' per-block scalars from the loaded law over the route's full swing (unity at P_REF and at position 1 respectively; K_SPK(1) = 11.8, 21.5 dB in the route's scale) | ratio | A-042, A-044 |
 | `KNEE_START` | 0.85 of the ceiling | ratio | A-031 (the knee's shape, low) |
 | `F_VOL_HZ` | 32 | Hz | A-031 (C14 0.1 µF into the 50 kΩ control; both routes) |
 | `F_AMP_HZ` | 159 | Hz | A-031 (C8 0.1 µF into R16 10 kΩ at the inverting input) |
 | `F_EAR_IN_HZ` | 120 nominal (65 – 130) | Hz | A-032 (C8 + C60 in series into R16 + R65 + the follower's loaded input impedance; hFE 290 – 460) |
 | `F_EAR_OUT_HZ` | 280 nominal (240 – 320) | Hz | A-032 (C61 10 µF into 16 Ω plus the follower's ≈ 40 Ω output resistance; hFE 290 – 460) |
-| `Z_EAR_OHM` | 24 000 | Ω | A-044 (the earphone branch's low-frequency input impedance that loads the control) |
+| `Z_EAR_OHM` | 6 400 | Ω | A-044 (the earphone branch's in-band input impedance that loads the control; the 24 kΩ low-frequency value applies below the 280 Hz output corner only) |
 | `SPK_F0_HZ`, `SPK_Q` | 750, 1.8 | Hz, ratio | A-010 (template) |
 | `SPK_SHELF_DB`, zero / pole | +4.5; 780 / 1310 Hz (the rise complete to within 0.7 dB by 2.5 kHz) | dB, Hz | A-010 (template) |
-| `N_OUT` per rate | 346 / 461 / 922 / 2 539 / 2 764 / 5 078 / 5 527 (provisional until the script prints them) | host samples (57.6 ms) | research R-08 (the 32 Hz corner's response below −100 dB of its peak, spec 006 FR-008's rule) |
+| `N_OUT` per rate | 346 / 461 / 922 / 2 539 / 2 764 / 5 078 / 5 527 (the script's print, 2026-10-15) | host samples (57.6 ms) | research R-08 (the 32 Hz corner's response below −100 dB of its peak, spec 006 FR-008's rule) |
 
 ## Settings (contracts/rust-api.md)
 
@@ -99,7 +99,7 @@ Both survive `reset` and `reconfigure`; both are copied into the one-pass's and 
 
 | Rate | `N_OUT` | 1 kHz group delay, speaker route (ms) | earphone route (ms) | latency change |
 |---|---|---|---|---|
-| 6 000 … 96 000 | table above | ≈ 0.3 (template 0.27 + the corners) | ≈ 0.1 | 0 at every rate |
+| 6 000 … 96 000 | table above | 0.31 – 0.33 (the template plus the corners; synced to the script 2026-10-15) | 0.065 – 0.072 | 0 at every rate |
 
 ## Reports
 

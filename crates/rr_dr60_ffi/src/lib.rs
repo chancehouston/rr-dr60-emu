@@ -1633,7 +1633,7 @@ pub extern "C" fn rr_dr60_speaker_gain_db(position: f32) -> f32 {
 }
 
 /// The earphone route's gain in dB at a volume position under the loaded law (spec 009 FR-003;
-/// A-044): 0 dB at 1, about −8.2 dB at 0.5, about −18.6 dB at `RR_DR60_VOLUME_REFERENCE`, −∞ at
+/// A-044): 0 dB at 1, about −9.4 dB at 0.5, about −19.2 dB at `RR_DR60_VOLUME_REFERENCE`, −∞ at
 /// 0. Needs no handle; real-time safe.
 #[unsafe(no_mangle)]
 pub extern "C" fn rr_dr60_earphone_gain_db(position: f32) -> f32 {

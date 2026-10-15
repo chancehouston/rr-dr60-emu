@@ -66,9 +66,9 @@ pub(crate) fn k_ear(p: f64) -> f64 {
 /// The amplifier's clipper (research R-04; A-031, low): a symmetric parabolic knee from
 /// `k = KNEE_START` of the ceiling to `2 − k`, C¹ at both joints, a hard ceiling of 1.0 above.
 /// Plain IEEE arithmetic: compares, multiplies, one divide of constants.
-#[inline]
+#[inline(always)]
 pub(crate) fn knee(x: f64, k: f64) -> f64 {
-    let u = if x < 0.0 { -x } else { x };
+    let u = x.abs(); // exact (a sign-bit clear), so bit-identical everywhere
     let y = if u <= k {
         u
     } else if u >= 2.0 - k {
@@ -89,6 +89,8 @@ pub(crate) struct OutputChain {
     run_amp: bool,
     run_speaker: bool,
     run_earphone: bool,
+    /// `run_amp || run_speaker || run_earphone`, precomputed for the per-sample path.
+    active: bool,
     /// The point `process` returns: `RouteOutput` for the player; the configured tap for the
     /// one-pass.
     tap: Tap,
@@ -130,6 +132,7 @@ impl OutputChain {
             run_amp: enabled && volume_amp_enabled, // A-031 (009 FR-002)
             run_speaker: enabled && speaker_enabled, // A-010 (009 FR-002)
             run_earphone: enabled && earphone_enabled, // A-032 (009 FR-002)
+            active: enabled && (volume_amp_enabled || speaker_enabled || earphone_enabled),
             tap: if honour_tap {
                 settings.tap
             } else {
@@ -156,6 +159,10 @@ impl OutputChain {
     pub(crate) fn set_controls(&mut self, route: Route, volume: f32) {
         if route != self.route {
             self.route = route;
+            // Every section, the shared 32 Hz corner included (a simplification: physically that
+            // section, C14 into VR1, is common to both routes and would keep its state; the
+            // record band-pass leaves no low-frequency content for it to hold, hardware review
+            // T043 N3).
             self.reset();
         }
         let p = f64::from(volume);
@@ -189,9 +196,9 @@ impl OutputChain {
     /// One host-rate sample through the chain, returning the sample at the configured tap
     /// (data-model.md › The chain in the playback path). With every stage off (or at a tap
     /// before the chain) the sample passes through with no arithmetic.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn process(&mut self, y: f64) -> f64 {
-        if !self.runs_any() {
+        if !self.active {
             return y;
         }
         // Stage 11, both routes: the volume control's input coupling corner.

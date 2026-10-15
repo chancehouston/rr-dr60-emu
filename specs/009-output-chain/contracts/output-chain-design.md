@@ -15,7 +15,7 @@ The design script `tools/output-chain/design_output_chain.py` takes the circuit 
 | Follower transistor | Q14 is a 2SD1819A**S** (the sheet's rank suffix): hFE **370 nominal, 290 – 460** at a few mA (second-source datasheets, a lead for the sources register) | A-032 |
 | Earphone input coupling | C8 + C60 in series (0.05 µF) into R16 + R65 (20 kΩ) + the follower's loaded input impedance (R64 33 kΩ ∥ hFE × the emitter load, which differs below and above the output corner) | `F_EAR_IN` **120 Hz nominal, 65 – 130 Hz** (115 – 126 Hz over the rank above the output corner; 67 Hz below it) |
 | Earphone output coupling | C61 10 µF into the 16 Ω load plus the follower's output resistance (re ≈ 6 Ω + the ≈ 12 kΩ source impedance ÷ hFE ≈ 40 Ω) | `F_EAR_OUT` **280 Hz nominal, 240 – 320 Hz** over the rank |
-| Earphone branch loading of the volume control | the branch's input impedance `Z_B` ≈ 24 kΩ (low-frequency value, R64 ∥ hFE × 470 Ω) in series with R16 + R65 | the earphone route's loaded law `g_ear(p) = p · (20 kΩ + Z_B) / (20 kΩ + Z_B + R_W(p))` (unity at position 1; −8.2 dB at mid travel against the ideal −6.0; A-044, low) |
+| Earphone branch loading of the volume control | the branch's in-band input impedance `Z_B` ≈ 6.4 kΩ (R64 ∥ hFE × (470 Ω ∥ 16 Ω + re) at hFE 370, the value `F_EAR_IN` is derived from; the 24 kΩ low-frequency value applies below the output corner only; hardware review T043 B1) in series with R16 + R65 | the earphone route's loaded law `g_ear(p) = p · (20 kΩ + Z_B) / (20 kΩ + Z_B + R_W(p))` (unity at position 1; −9.4 dB at mid travel against the ideal −6.0; A-044, low) |
 | Earphone drive into 16 Ω | the load's share of the follower's swing after the input divider: about −15 … −24 dB below the codec output at position 1 (hFE-dependent) | a loudness constant outside the model (A-042) |
 | Earphone cut-off (not modeled) | the follower is class A with ≈ 4 mA of quiescent current, so into 16 Ω it can only sink ≈ 50 – 75 mV of negative swing: a limiter-held recording is half-wave clipped above roughly 0.4 – 0.8 of the travel | registered in A-032 at low confidence and in stage 13's "not modeled here" note; the first real-unit capture (hardware review of the plan, P2) |
 | Speaker template | f0 750 Hz, Q 1.8; shelf zero 780 Hz, pole 1310 Hz (+4.50 dB, so the rise is complete to within 0.65 dB by 2.5 kHz) | A-010 ranges: f0 600 – 900, Q 1.2 – 2.5, shelf +3 … +6 dB |
@@ -25,10 +25,10 @@ The design script `tools/output-chain/design_output_chain.py` takes the circuit 
 
 | Constant | Formula | Value |
 |---|---|---|
-| `VOLUME_REFERENCE` (P_REF) | the position at which `g_spk(p) × 1.0 V = V_CLIP` under the loaded law (solved by the script; 0.165 with the 1.33 V datasheet ceiling) | **0.1335** (−17.5 dB of travel) |
+| `VOLUME_REFERENCE` (P_REF) | the position at which `g_spk(p) × 1.0 V = V_CLIP` under the loaded law (solved by the script; 0.165 with the 1.33 V datasheet ceiling) | **0.13345174** (the `f32`-rounded value; −17.49 dB of travel; K_SPK unity within 3.6e-8) |
 | `K_SPK(p)` | the speaker route's per-block scalar `g_spk(p) / V_CLIP` (unity at P_REF within 1e-7 of the `f32` default; 11.8 = 21.5 dB at position 1 in the route's scale, where the ceiling is 1.0) | per block |
 | `K_EAR(p)` | the earphone route's per-block scalar `g_ear(p)` (unity at position 1) | per block |
-| Earphone level at P_REF | `20 log10 g_ear(P_REF)` | −18.6 dB (the spec's "about −18.5 dB ± 1.5") |
+| Earphone level at P_REF | `20 log10 g_ear(P_REF)` | −19.21 dB (the spec's "about −18.5 dB ± 1.5"; −18.96 dBFS measured at 48 kHz with the corners' residual) |
 | Knee end | `2 − k` | 1.15 |
 
 ## The knee (R-04)
@@ -49,7 +49,7 @@ C¹ at both joints (slope 1 at `k`, 0 at `2 − k`). Verified figures (1 kHz sin
 | 0 dB (at the ceiling) | 0.9625 (−0.33 dB; ≤ 1 dB compression) | 1.5 % |
 | +1 dB | 0.9987 | 4.5 % |
 | +2 dB | 1.0000 | 8.9 % |
-| +2.27 dB | | **10 %** (within +1 … +3) |
+| +2.27 dB | | **10 %** (within +1 … +3; the script's 2.266, the harness's 2.266 at 48 kHz) |
 | +3 dB | 1.0000 | 13.0 % |
 | +6 dB | 1.0000 (≥ −0.1 dB) | 23.0 % (15 – 30 %) |
 
@@ -60,20 +60,20 @@ Bilinear transform with the corner (or f0) prewarped at each rate `fs ∈ {6000,
 - First-order high-pass at `fc`: `H(z) = g (1 − z⁻¹) / (1 − a z⁻¹)`, `a = (1 − t) / (1 + t)`, `t = tan(π fc / fs)`, `g = (1 + a) / 2` (unity at Nyquist). Used for `F_VOL`, `F_AMP`, `F_EAR_IN`, `F_EAR_OUT`.
 - Speaker resonance: second-order high-pass biquad from `H(s) = s² / (s² + (ω0/Q) s + ω0²)`, prewarped at f0.
 - Speaker shelf: `H(s) = (1 + s/ωz) / (1 + s/ωp)` (zero 780 Hz, pole 1310 Hz) as a first-order section with `b0, b1, a1`, **not prewarped** (prewarping the shelf worsens the top of the band at 6 kHz).
-- Peak normalization: the product resonance × shelf is evaluated on a 1 Hz grid from 20 Hz to `fs/2` at each rate and the biquad's numerator scaled so the peak gain is exactly 1.0 at that rate; the script prints the peak frequency (≈ 840 Hz), the 1 kHz reading (≈ −0.66 dB), the 2.5 kHz and 3 kHz readings (≈ −2.74 and −2.77 dB: the shelf's remaining rise above 2.5 kHz is ≤ 0.7 dB) and the 300 Hz reading (≈ −22 dB). Every figure in this file is the plan session's arithmetic and is **provisional until the script prints it**; the Rust pins the script's figures.
+- Peak normalization: the product resonance × shelf is evaluated on a 1 Hz grid from 20 Hz to `fs/2` at each rate and the biquad's numerator scaled so the peak gain is exactly 1.0 at that rate; the script prints the peak frequency (828 – 838 Hz by rate), the 1 kHz reading (−0.90 … −0.66 dB by rate, the low rates' warp), the 2.5 kHz and 3 kHz readings (≈ −2.74 and −2.77 dB: the shelf's remaining rise above 2.5 kHz is ≤ 0.7 dB) and the 300 Hz reading (≈ −22 dB). **Synced to the script's print at implementation (2026-10-15, T045)**: every figure in this file is now the script's; the Rust pins them.
 
 ## Figures the script prints and the Rust pins
 
 | Figure | Bound (spec) | Plan value |
 |---|---|---|
 | −3 dB point of each first-order corner at each rate, computed from its coefficients | within ±10 % of the registered figure (a core unit test; not fitted from a measured response: the corners are too close for a fit, P8) | exact by prewarping |
-| Earphone level at 1 kHz, position 1 | −0.5 … 0 dB | −0.37 dB (32 + 120 + 280 Hz corners; −0.33 dB from the 280 Hz corner alone) |
+| Earphone level at 1 kHz, position 1 | −0.5 … 0 dB | −0.33 … −0.39 dB by rate (32 + 120 + 280 Hz corners; −0.33 dB from the 280 Hz corner alone) |
 | Amplifier passband above 5 × F_AMP (800 Hz) | flat within 0.2 dB | −0.17 dB at 800 Hz, −0.11 dB at 1 kHz |
 | Speaker template peak gain | exactly 1.0 (never above) | 1.0 by normalization |
 | Speaker template, the Rust against the design's discrete realization | ±0.5 dB at every rate (harness) | identical coefficients |
 | Speaker template, the discrete realization against the analog prototype, 100 Hz – 2.5 kHz | ±1.2 dB at 6 and 8 kHz (the bilinear warp near the band's top), ±0.5 dB at 16 kHz and above (script `--check`, reported) | 1.0 / 0.56 / 0.14 dB at 6 / 8 / 16 kHz |
-| Speaker template 1 kHz group delay | ≤ 0.5 ms | 0.28 ms |
-| Earphone 1 kHz group delay | ≤ 0.5 ms | ≈ 0.07 ms (32 + 120 + 280 Hz) |
+| Speaker template 1 kHz group delay | ≤ 0.5 ms | 0.31 – 0.33 ms by rate (the whole speaker route; the template about 0.28) |
+| Earphone 1 kHz group delay | ≤ 0.5 ms | 0.065 – 0.072 ms by rate (32 + 120 + 280 Hz corners) |
 | `N_OUT` (the 32 Hz corner's response below −100 dB of its peak, spec 006 FR-008's rule for N₁₀) | | 57.6 ms: 346 / 461 / 922 / 2 539 / 2 764 / 5 078 / 5 527 |
 | Volume-0 decay at the route output to −120 dBFS | ≤ 100 ms (amended; a loose bound) | 20 – 30 ms (the 32 Hz corner sits before the multiply, so only the 159 / 120 / 280 Hz sections ring) |
 | Knee bracket | the table above | k = 0.85 |

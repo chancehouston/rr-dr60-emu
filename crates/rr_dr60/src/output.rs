@@ -64,7 +64,7 @@ pub fn speaker_gain_db(position: f32) -> f32 {
 }
 
 /// The earphone route's gain in dB at a volume position under the loaded law (A-044): 0 dB at
-/// 1, about −8.2 dB at 0.5, about −18.6 dB at [`VOLUME_REFERENCE`], −∞ at 0. The follower's
+/// 1, about −9.4 dB at 0.5, about −19.2 dB at [`VOLUME_REFERENCE`], −∞ at 0. The follower's
 /// drive into its 16 Ω load and the earphone's sensitivity are loudness constants outside the
 /// model (A-042). Real-time safe.
 pub fn earphone_gain_db(position: f32) -> f32 {
@@ -104,8 +104,8 @@ mod tests {
         assert!((speaker_gain_db(1.0) - AMP_GAIN_DB).abs() < 0.01);
         assert!((speaker_gain_db(0.5) - 9.61).abs() < 0.01); // A-044
         assert!((earphone_gain_db(1.0)).abs() < 1e-6);
-        assert!((earphone_gain_db(0.5) + 8.19).abs() < 0.01);
-        assert!((earphone_gain_db(VOLUME_REFERENCE) + 18.57).abs() < 0.01);
+        assert!((earphone_gain_db(0.5) + 9.39).abs() < 0.01);
+        assert!((earphone_gain_db(VOLUME_REFERENCE) + 19.21).abs() < 0.01);
         assert_eq!(speaker_gain_db(0.0), f32::NEG_INFINITY);
         assert_eq!(earphone_gain_db(0.0), f32::NEG_INFINITY);
         assert_eq!(settle_samples(48_000), Some(2764));

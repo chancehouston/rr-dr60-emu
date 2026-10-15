@@ -161,9 +161,13 @@ fn response_rows(
         let want = analysis::discrete_template_response(template, f, fs);
         worst = worst.max((got - want).abs());
     }
+    // An identity check: the Rust realizes the design's own coefficients, so the residual is
+    // numerical (about 1e-4 dB) and the bound is 0.01 dB, fifty times tighter than the spec's
+    // ±0.5 dB, which bounds the template against its registered figures and is checked by the
+    // design script (hardware review T043, B2: a wrong-rate table would pass ±0.5 dB).
     let rows = vec![MeasurementResult::new(
         requirement,
-        "composite response vs the design's discrete realization, max |dev|",
+        "composite response vs the design's discrete realization, max |dev| (identity)",
         trace,
         rate,
         config,
@@ -173,7 +177,7 @@ fn response_rows(
         ),
         worst,
         "dB",
-        Tolerance::AtMost(0.5),
+        Tolerance::AtMost(0.01),
     )];
     (rows, y, y_ref)
 }
@@ -503,7 +507,7 @@ pub fn volume_zero(rate: u32, route: Route, make: Make<'_>) -> Vec<MeasurementRe
 /// FR-004 (SC-004): a full-scale 1 kHz sine at the reference position peaks within −1.0 … 0 dB
 /// of full scale on the speaker route with the speaker bypassed (just at the ceiling; the
 /// knee's compression), with THD at most 1.5 % at 44.1 kHz and above (US1 scenario 2), and
-/// reads the loaded law's earphone figure (about −18.6 dB) within ±1.5 dB on the earphone
+/// reads the loaded law's earphone figure (about −19.2 dB) within ±1.5 dB on the earphone
 /// route.
 pub fn default_position_level(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
     let x = tone(0.0, 1.0, rate);
@@ -573,9 +577,11 @@ pub fn default_position_level(rate: u32, make: Make<'_>) -> Vec<MeasurementResul
     rows
 }
 
-/// FR-007 (SC-001): a full-scale sine at position 1 on the earphone route peaks within
-/// −0.5 … 0 dB of full scale, no sample above 1.0, and at 44.1 kHz and above THD+N below
-/// 0.1 % (no clipper on the earphone path).
+/// FR-007 (SC-001, as amended 2026-10-15): a full-scale sine at position 1 on the earphone
+/// route reads a steady-state amplitude (AES17, after 0.2 s) within −0.5 … 0 dB of full scale,
+/// no steady-state sample above 1.0 (the whole-signal peak, which carries the resampler's
+/// onset ring, is reported), and at 44.1 kHz and above THD+N below 0.1 % (no clipper on the
+/// earphone path).
 pub fn earphone_max_volume(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
     let x = tone(0.0, 1.0, rate);
     let settings = configs::settings("output_only_earphone", rate);

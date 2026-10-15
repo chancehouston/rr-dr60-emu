@@ -14,108 +14,115 @@
 //! resonance biquad, indexed by `SUPPORTED_HOST_RATES` order; exact bit patterns (001 R-04).
 //!
 //! Figures the script printed (the Rust pins these, never its own output):
-//!   K_SPK(P_REF) unity after f32 rounding               |K − 1| ≤ 1e-7                       3.57e-08
-//!   speaker gain at position 1                          22.67 dB (2·68/10)                   22.67 dB
-//!   earphone level at P_REF                             −20 … −17 dB (spec: ≈ −18.5 ± 1.5)   -18.57 dB
-//!   THD at −6 dB                                        ≤ 1 %                                0.00 %
-//!   compression at the ceiling                          ≤ 1 dB                               0.332 dB
-//!   10 % THD crossing                                   +1 … +3 dB over                      +2.266 dB
-//!   THD at +6 dB                                        15 – 30 %                            22.95 %
-//!   peak at +6 dB                                       ≥ −0.1 dB                            +0.000 dB
-//!   peak never above 1.0                                ≤ 1.0                                1.000000
-//!   knee slope at k                                     1 ± 1e-4                             0.999999
-//!   knee slope at 2 − k                                 0 ± 1e-4                             0.000001
-//!   6000 vol corner                                     31.8 Hz ± 10 %                       31.83 Hz
-//!   6000 amp corner                                     159.2 Hz ± 10 %                      159.15 Hz
-//!   6000 ear_in corner                                  120.0 Hz ± 10 %                      120.00 Hz
-//!   6000 ear_out corner                                 280.0 Hz ± 10 %                      280.00 Hz
-//!   6000 template peak gain                             1.0 (± 1e-9)                         1.000000000000
-//!   6000 template discrete vs analog 100 Hz – 2.5 kHz   ≤ 1.2 dB                             1.038 dB
-//!   6000 speaker route group delay at 1 kHz             ≤ 0.5 ms                             0.332 ms
-//!   6000 earphone route group delay at 1 kHz            ≤ 0.5 ms                             0.072 ms
-//!   6000 earphone level at 1 kHz, position 1            −0.5 … 0 dB                          -0.330 dB
-//!   6000 earphone passband 1 – 2.5 kHz                  flat within 0.4 dB                   0.322 dB
-//!   6000 amplifier passband 800 Hz – 2.5 kHz            flat within 0.2 dB                   0.154 dB
-//!   6000 volume-0 decay to −120 dB                      ≤ 100 ms                             18.3 ms
-//!   6000 shelf rise remaining above 2.5 kHz             ≤ 0.7 dB                             0.002 dB
-//!   8000 vol corner                                     31.8 Hz ± 10 %                       31.83 Hz
-//!   8000 amp corner                                     159.2 Hz ± 10 %                      159.15 Hz
-//!   8000 ear_in corner                                  120.0 Hz ± 10 %                      120.00 Hz
-//!   8000 ear_out corner                                 280.0 Hz ± 10 %                      280.00 Hz
-//!   8000 template peak gain                             1.0 (± 1e-9)                         1.000000000000
-//!   8000 template discrete vs analog 100 Hz – 2.5 kHz   ≤ 1.2 dB                             0.574 dB
-//!   8000 speaker route group delay at 1 kHz             ≤ 0.5 ms                             0.324 ms
-//!   8000 earphone route group delay at 1 kHz            ≤ 0.5 ms                             0.069 ms
-//!   8000 earphone level at 1 kHz, position 1            −0.5 … 0 dB                          -0.358 dB
-//!   8000 earphone passband 1 – 2.5 kHz                  flat within 0.4 dB                   0.330 dB
-//!   8000 amplifier passband 800 Hz – 2.5 kHz            flat within 0.2 dB                   0.157 dB
-//!   8000 volume-0 decay to −120 dB                      ≤ 100 ms                             18.4 ms
-//!   8000 shelf rise remaining above 2.5 kHz             ≤ 0.7 dB                             -0.005 dB
-//!   16000 vol corner                                    31.8 Hz ± 10 %                       31.83 Hz
-//!   16000 amp corner                                    159.2 Hz ± 10 %                      159.15 Hz
-//!   16000 ear_in corner                                 120.0 Hz ± 10 %                      120.00 Hz
-//!   16000 ear_out corner                                280.0 Hz ± 10 %                      280.00 Hz
-//!   16000 template peak gain                            1.0 (± 1e-9)                         1.000000000000
-//!   16000 template discrete vs analog 100 Hz – 2.5 kHz  ≤ 0.5 dB                             0.141 dB
-//!   16000 speaker route group delay at 1 kHz            ≤ 0.5 ms                             0.316 ms
-//!   16000 earphone route group delay at 1 kHz           ≤ 0.5 ms                             0.066 ms
-//!   16000 earphone level at 1 kHz, position 1           −0.5 … 0 dB                          -0.385 dB
-//!   16000 earphone passband 1 – 2.5 kHz                 flat within 0.4 dB                   0.330 dB
-//!   16000 amplifier passband 800 Hz – 2.5 kHz           flat within 0.2 dB                   0.157 dB
-//!   16000 volume-0 decay to −120 dB                     ≤ 100 ms                             18.4 ms
-//!   16000 shelf rise remaining above 2.5 kHz            ≤ 0.7 dB                             -0.026 dB
-//!   44100 vol corner                                    31.8 Hz ± 10 %                       31.83 Hz
-//!   44100 amp corner                                    159.2 Hz ± 10 %                      159.15 Hz
-//!   44100 ear_in corner                                 120.0 Hz ± 10 %                      120.00 Hz
-//!   44100 ear_out corner                                280.0 Hz ± 10 %                      280.00 Hz
-//!   44100 template peak gain                            1.0 (± 1e-9)                         1.000000000000
-//!   44100 template discrete vs analog 100 Hz – 2.5 kHz  ≤ 0.5 dB                             0.019 dB
-//!   44100 speaker route group delay at 1 kHz            ≤ 0.5 ms                             0.314 ms
-//!   44100 earphone route group delay at 1 kHz           ≤ 0.5 ms                             0.065 ms
-//!   44100 earphone level at 1 kHz, position 1           −0.5 … 0 dB                          -0.393 dB
-//!   44100 earphone passband 1 – 2.5 kHz                 flat within 0.4 dB                   0.330 dB
-//!   44100 amplifier passband 800 Hz – 2.5 kHz           flat within 0.2 dB                   0.157 dB
-//!   44100 volume-0 decay to −120 dB                     ≤ 100 ms                             18.3 ms
-//!   44100 shelf rise remaining above 2.5 kHz            ≤ 0.7 dB                             -0.032 dB
-//!   48000 vol corner                                    31.8 Hz ± 10 %                       31.83 Hz
-//!   48000 amp corner                                    159.2 Hz ± 10 %                      159.15 Hz
-//!   48000 ear_in corner                                 120.0 Hz ± 10 %                      120.00 Hz
-//!   48000 ear_out corner                                280.0 Hz ± 10 %                      280.00 Hz
-//!   48000 template peak gain                            1.0 (± 1e-9)                         1.000000000000
-//!   48000 template discrete vs analog 100 Hz – 2.5 kHz  ≤ 0.5 dB                             0.016 dB
-//!   48000 speaker route group delay at 1 kHz            ≤ 0.5 ms                             0.314 ms
-//!   48000 earphone route group delay at 1 kHz           ≤ 0.5 ms                             0.065 ms
-//!   48000 earphone level at 1 kHz, position 1           −0.5 … 0 dB                          -0.393 dB
-//!   48000 earphone passband 1 – 2.5 kHz                 flat within 0.4 dB                   0.330 dB
-//!   48000 amplifier passband 800 Hz – 2.5 kHz           flat within 0.2 dB                   0.157 dB
-//!   48000 volume-0 decay to −120 dB                     ≤ 100 ms                             18.3 ms
-//!   48000 shelf rise remaining above 2.5 kHz            ≤ 0.7 dB                             -0.032 dB
-//!   88200 vol corner                                    31.8 Hz ± 10 %                       31.83 Hz
-//!   88200 amp corner                                    159.2 Hz ± 10 %                      159.15 Hz
-//!   88200 ear_in corner                                 120.0 Hz ± 10 %                      120.00 Hz
-//!   88200 ear_out corner                                280.0 Hz ± 10 %                      280.00 Hz
-//!   88200 template peak gain                            1.0 (± 1e-9)                         1.000000000000
-//!   88200 template discrete vs analog 100 Hz – 2.5 kHz  ≤ 0.5 dB                             0.005 dB
-//!   88200 speaker route group delay at 1 kHz            ≤ 0.5 ms                             0.313 ms
-//!   88200 earphone route group delay at 1 kHz           ≤ 0.5 ms                             0.065 ms
-//!   88200 earphone level at 1 kHz, position 1           −0.5 … 0 dB                          -0.394 dB
-//!   88200 earphone passband 1 – 2.5 kHz                 flat within 0.4 dB                   0.329 dB
-//!   88200 amplifier passband 800 Hz – 2.5 kHz           flat within 0.2 dB                   0.157 dB
-//!   88200 volume-0 decay to −120 dB                     ≤ 100 ms                             18.3 ms
-//!   88200 shelf rise remaining above 2.5 kHz            ≤ 0.7 dB                             -0.033 dB
-//!   96000 vol corner                                    31.8 Hz ± 10 %                       31.83 Hz
-//!   96000 amp corner                                    159.2 Hz ± 10 %                      159.15 Hz
-//!   96000 ear_in corner                                 120.0 Hz ± 10 %                      120.00 Hz
-//!   96000 ear_out corner                                280.0 Hz ± 10 %                      280.00 Hz
-//!   96000 template peak gain                            1.0 (± 1e-9)                         1.000000000000
-//!   96000 template discrete vs analog 100 Hz – 2.5 kHz  ≤ 0.5 dB                             0.004 dB
-//!   96000 speaker route group delay at 1 kHz            ≤ 0.5 ms                             0.313 ms
-//!   96000 earphone route group delay at 1 kHz           ≤ 0.5 ms                             0.065 ms
-//!   96000 earphone level at 1 kHz, position 1           −0.5 … 0 dB                          -0.394 dB
-//!   96000 earphone passband 1 – 2.5 kHz                 flat within 0.4 dB                   0.329 dB
-//!   96000 amplifier passband 800 Hz – 2.5 kHz           flat within 0.2 dB                   0.157 dB
-//!   96000 volume-0 decay to −120 dB                     ≤ 100 ms                             18.3 ms
-//!   96000 shelf rise remaining above 2.5 kHz            ≤ 0.7 dB                             -0.033 dB
+//!   K_SPK(P_REF) unity after f32 rounding                                                                                |K − 1| ≤ 1e-7                       3.57e-08
+//!   speaker gain at position 1                                                                                           22.67 dB (2·68/10)                   22.67 dB
+//!   earphone level at P_REF                                                                                              −20 … −17 dB (spec: ≈ −18.5 ± 1.5)   -19.21 dB
+//!   THD at −6 dB                                                                                                         ≤ 1 %                                0.00 %
+//!   compression at the ceiling                                                                                           ≤ 1 dB                               0.332 dB
+//!   10 % THD crossing                                                                                                    +1 … +3 dB over                      +2.266 dB
+//!   THD at +6 dB                                                                                                         15 – 30 %                            22.95 %
+//!   peak at +6 dB                                                                                                        ≥ −0.1 dB                            +0.000 dB
+//!   peak never above 1.0                                                                                                 ≤ 1.0                                1.000000
+//!   knee slope at k                                                                                                      1 ± 1e-4                             0.999999
+//!   knee slope at 2 − k                                                                                                  0 ± 1e-4                             0.000001
+//!   6000 speaker template impulse-response L1 norm (the worst-case sample peak for a bounded input; A-042's overshoot)   report                               1.748
+//!   6000 vol corner                                                                                                      31.8 Hz ± 10 %                       31.83 Hz
+//!   6000 amp corner                                                                                                      159.2 Hz ± 10 %                      159.15 Hz
+//!   6000 ear_in corner                                                                                                   120.0 Hz ± 10 %                      120.00 Hz
+//!   6000 ear_out corner                                                                                                  280.0 Hz ± 10 %                      280.00 Hz
+//!   6000 template peak gain                                                                                              1.0 (± 1e-9)                         1.000000000000
+//!   6000 template discrete vs analog 100 Hz – 2.5 kHz                                                                    ≤ 1.2 dB                             1.038 dB
+//!   6000 speaker route group delay at 1 kHz                                                                              ≤ 0.5 ms                             0.332 ms
+//!   6000 earphone route group delay at 1 kHz                                                                             ≤ 0.5 ms                             0.072 ms
+//!   6000 earphone level at 1 kHz, position 1                                                                             −0.5 … 0 dB                          -0.330 dB
+//!   6000 earphone passband 1 – 2.5 kHz                                                                                   flat within 0.4 dB                   0.322 dB
+//!   6000 amplifier passband 800 Hz – 2.5 kHz                                                                             flat within 0.2 dB                   0.154 dB
+//!   6000 volume-0 decay to −120 dB                                                                                       ≤ 100 ms                             18.3 ms
+//!   6000 shelf rise remaining above 2.5 kHz (to 0.45 fs)                                                                 ≤ 0.7 dB                             0.001 dB
+//!   8000 speaker template impulse-response L1 norm (the worst-case sample peak for a bounded input; A-042's overshoot)   report                               1.876
+//!   8000 vol corner                                                                                                      31.8 Hz ± 10 %                       31.83 Hz
+//!   8000 amp corner                                                                                                      159.2 Hz ± 10 %                      159.15 Hz
+//!   8000 ear_in corner                                                                                                   120.0 Hz ± 10 %                      120.00 Hz
+//!   8000 ear_out corner                                                                                                  280.0 Hz ± 10 %                      280.00 Hz
+//!   8000 template peak gain                                                                                              1.0 (± 1e-9)                         1.000000000000
+//!   8000 template discrete vs analog 100 Hz – 2.5 kHz                                                                    ≤ 1.2 dB                             0.574 dB
+//!   8000 speaker route group delay at 1 kHz                                                                              ≤ 0.5 ms                             0.324 ms
+//!   8000 earphone route group delay at 1 kHz                                                                             ≤ 0.5 ms                             0.069 ms
+//!   8000 earphone level at 1 kHz, position 1                                                                             −0.5 … 0 dB                          -0.358 dB
+//!   8000 earphone passband 1 – 2.5 kHz                                                                                   flat within 0.4 dB                   0.330 dB
+//!   8000 amplifier passband 800 Hz – 2.5 kHz                                                                             flat within 0.2 dB                   0.157 dB
+//!   8000 volume-0 decay to −120 dB                                                                                       ≤ 100 ms                             18.4 ms
+//!   8000 shelf rise remaining above 2.5 kHz (to 0.45 fs)                                                                 ≤ 0.7 dB                             0.000 dB
+//!   16000 speaker template impulse-response L1 norm (the worst-case sample peak for a bounded input; A-042's overshoot)  report                               2.085
+//!   16000 vol corner                                                                                                     31.8 Hz ± 10 %                       31.83 Hz
+//!   16000 amp corner                                                                                                     159.2 Hz ± 10 %                      159.15 Hz
+//!   16000 ear_in corner                                                                                                  120.0 Hz ± 10 %                      120.00 Hz
+//!   16000 ear_out corner                                                                                                 280.0 Hz ± 10 %                      280.00 Hz
+//!   16000 template peak gain                                                                                             1.0 (± 1e-9)                         1.000000000000
+//!   16000 template discrete vs analog 100 Hz – 2.5 kHz                                                                   ≤ 0.5 dB                             0.141 dB
+//!   16000 speaker route group delay at 1 kHz                                                                             ≤ 0.5 ms                             0.316 ms
+//!   16000 earphone route group delay at 1 kHz                                                                            ≤ 0.5 ms                             0.066 ms
+//!   16000 earphone level at 1 kHz, position 1                                                                            −0.5 … 0 dB                          -0.385 dB
+//!   16000 earphone passband 1 – 2.5 kHz                                                                                  flat within 0.4 dB                   0.330 dB
+//!   16000 amplifier passband 800 Hz – 2.5 kHz                                                                            flat within 0.2 dB                   0.157 dB
+//!   16000 volume-0 decay to −120 dB                                                                                      ≤ 100 ms                             18.4 ms
+//!   16000 shelf rise remaining above 2.5 kHz (to 0.45 fs)                                                                ≤ 0.7 dB                             0.000 dB
+//!   44100 speaker template impulse-response L1 norm (the worst-case sample peak for a bounded input; A-042's overshoot)  report                               2.238
+//!   44100 vol corner                                                                                                     31.8 Hz ± 10 %                       31.83 Hz
+//!   44100 amp corner                                                                                                     159.2 Hz ± 10 %                      159.15 Hz
+//!   44100 ear_in corner                                                                                                  120.0 Hz ± 10 %                      120.00 Hz
+//!   44100 ear_out corner                                                                                                 280.0 Hz ± 10 %                      280.00 Hz
+//!   44100 template peak gain                                                                                             1.0 (± 1e-9)                         1.000000000000
+//!   44100 template discrete vs analog 100 Hz – 2.5 kHz                                                                   ≤ 0.5 dB                             0.019 dB
+//!   44100 speaker route group delay at 1 kHz                                                                             ≤ 0.5 ms                             0.314 ms
+//!   44100 earphone route group delay at 1 kHz                                                                            ≤ 0.5 ms                             0.065 ms
+//!   44100 earphone level at 1 kHz, position 1                                                                            −0.5 … 0 dB                          -0.393 dB
+//!   44100 earphone passband 1 – 2.5 kHz                                                                                  flat within 0.4 dB                   0.330 dB
+//!   44100 amplifier passband 800 Hz – 2.5 kHz                                                                            flat within 0.2 dB                   0.157 dB
+//!   44100 volume-0 decay to −120 dB                                                                                      ≤ 100 ms                             18.3 ms
+//!   44100 shelf rise remaining above 2.5 kHz (to 0.45 fs)                                                                ≤ 0.7 dB                             0.000 dB
+//!   48000 speaker template impulse-response L1 norm (the worst-case sample peak for a bounded input; A-042's overshoot)  report                               2.246
+//!   48000 vol corner                                                                                                     31.8 Hz ± 10 %                       31.83 Hz
+//!   48000 amp corner                                                                                                     159.2 Hz ± 10 %                      159.15 Hz
+//!   48000 ear_in corner                                                                                                  120.0 Hz ± 10 %                      120.00 Hz
+//!   48000 ear_out corner                                                                                                 280.0 Hz ± 10 %                      280.00 Hz
+//!   48000 template peak gain                                                                                             1.0 (± 1e-9)                         1.000000000000
+//!   48000 template discrete vs analog 100 Hz – 2.5 kHz                                                                   ≤ 0.5 dB                             0.016 dB
+//!   48000 speaker route group delay at 1 kHz                                                                             ≤ 0.5 ms                             0.314 ms
+//!   48000 earphone route group delay at 1 kHz                                                                            ≤ 0.5 ms                             0.065 ms
+//!   48000 earphone level at 1 kHz, position 1                                                                            −0.5 … 0 dB                          -0.393 dB
+//!   48000 earphone passband 1 – 2.5 kHz                                                                                  flat within 0.4 dB                   0.330 dB
+//!   48000 amplifier passband 800 Hz – 2.5 kHz                                                                            flat within 0.2 dB                   0.157 dB
+//!   48000 volume-0 decay to −120 dB                                                                                      ≤ 100 ms                             18.3 ms
+//!   48000 shelf rise remaining above 2.5 kHz (to 0.45 fs)                                                                ≤ 0.7 dB                             0.000 dB
+//!   88200 speaker template impulse-response L1 norm (the worst-case sample peak for a bounded input; A-042's overshoot)  report                               2.284
+//!   88200 vol corner                                                                                                     31.8 Hz ± 10 %                       31.83 Hz
+//!   88200 amp corner                                                                                                     159.2 Hz ± 10 %                      159.15 Hz
+//!   88200 ear_in corner                                                                                                  120.0 Hz ± 10 %                      120.00 Hz
+//!   88200 ear_out corner                                                                                                 280.0 Hz ± 10 %                      280.00 Hz
+//!   88200 template peak gain                                                                                             1.0 (± 1e-9)                         1.000000000000
+//!   88200 template discrete vs analog 100 Hz – 2.5 kHz                                                                   ≤ 0.5 dB                             0.005 dB
+//!   88200 speaker route group delay at 1 kHz                                                                             ≤ 0.5 ms                             0.313 ms
+//!   88200 earphone route group delay at 1 kHz                                                                            ≤ 0.5 ms                             0.065 ms
+//!   88200 earphone level at 1 kHz, position 1                                                                            −0.5 … 0 dB                          -0.394 dB
+//!   88200 earphone passband 1 – 2.5 kHz                                                                                  flat within 0.4 dB                   0.329 dB
+//!   88200 amplifier passband 800 Hz – 2.5 kHz                                                                            flat within 0.2 dB                   0.157 dB
+//!   88200 volume-0 decay to −120 dB                                                                                      ≤ 100 ms                             18.3 ms
+//!   88200 shelf rise remaining above 2.5 kHz (to 0.45 fs)                                                                ≤ 0.7 dB                             0.000 dB
+//!   96000 speaker template impulse-response L1 norm (the worst-case sample peak for a bounded input; A-042's overshoot)  report                               2.288
+//!   96000 vol corner                                                                                                     31.8 Hz ± 10 %                       31.83 Hz
+//!   96000 amp corner                                                                                                     159.2 Hz ± 10 %                      159.15 Hz
+//!   96000 ear_in corner                                                                                                  120.0 Hz ± 10 %                      120.00 Hz
+//!   96000 ear_out corner                                                                                                 280.0 Hz ± 10 %                      280.00 Hz
+//!   96000 template peak gain                                                                                             1.0 (± 1e-9)                         1.000000000000
+//!   96000 template discrete vs analog 100 Hz – 2.5 kHz                                                                   ≤ 0.5 dB                             0.004 dB
+//!   96000 speaker route group delay at 1 kHz                                                                             ≤ 0.5 ms                             0.313 ms
+//!   96000 earphone route group delay at 1 kHz                                                                            ≤ 0.5 ms                             0.065 ms
+//!   96000 earphone level at 1 kHz, position 1                                                                            −0.5 … 0 dB                          -0.394 dB
+//!   96000 earphone passband 1 – 2.5 kHz                                                                                  flat within 0.4 dB                   0.329 dB
+//!   96000 amplifier passband 800 Hz – 2.5 kHz                                                                            flat within 0.2 dB                   0.157 dB
+//!   96000 volume-0 decay to −120 dB                                                                                      ≤ 100 ms                             18.3 ms
+//!   96000 shelf rise remaining above 2.5 kHz (to 0.45 fs)                                                                ≤ 0.7 dB                             0.000 dB
 
 /// A-043: the reference position (the `f32` default's value), where codec full scale meets the ceiling under the loaded law.
 pub(crate) const VOLUME_REFERENCE: f64 = f64::from_bits(0x3fc114f260000000); // 0.13345174491405487
@@ -136,7 +143,7 @@ pub(crate) const R_POT_OHM: f64 = f64::from_bits(0x40e86a0000000000); // 50000
 /// S-002: R65, the earphone branch's series resistor.
 pub(crate) const R_EAR_SERIES_OHM: f64 = f64::from_bits(0x40c3880000000000); // 10000
 /// A-044 (low): the earphone branch's low-frequency input impedance that loads the control.
-pub(crate) const Z_EAR_OHM: f64 = f64::from_bits(0x40d7700000000000); // 24000
+pub(crate) const Z_EAR_OHM: f64 = f64::from_bits(0x40b9000000000000); // 6400
 /// A-031 (low): the knee starts at this fraction of the ceiling; `y = 1 − (2 − k − u)² / (4 (1 − k))` up to `2 − k`.
 pub(crate) const KNEE_START: f64 = f64::from_bits(0x3feb333333333333); // 0.84999999999999998
 /// The level re the ceiling at which the knee reaches 10 % THD (1 kHz sine at 48 kHz).
@@ -172,11 +179,11 @@ pub(crate) const KNEE_TABLE: [[f64; 3]; 6] = [
 #[rustfmt::skip]
 pub(crate) const GAIN_LAW_SAMPLES: [[f64; 3]; 6] = [
     [f64::from_bits(0x3ff0000000000000), f64::from_bits(0x402b333333333333), f64::from_bits(0x3ff0000000000000)],
-    [f64::from_bits(0x3fe0000000000000), f64::from_bits(0x40082d82d82d82d8), f64::from_bits(0x3fd8eb9c518eb9c5)],
-    [f64::from_bits(0x3fd0000000000000), f64::from_bits(0x3ffc13d1c13d1c14), f64::from_bits(0x3fca611fc671e938)],
-    [f64::from_bits(0x3fc114f260000000), f64::from_bits(0x3ff26666716dde94), f64::from_bits(0x3fbe321231610465)],
-    [f64::from_bits(0x3fb999999999999a), f64::from_bits(0x3fee0387f1e0387f), f64::from_bits(0x3fb73988b5934417)],
-    [f64::from_bits(0x3f847ae147ae147b), f64::from_bits(0x3fc096421a96808d), f64::from_bits(0x3f84408dc3e05b22)],
+    [f64::from_bits(0x3fe0000000000000), f64::from_bits(0x40082d82d82d82d8), f64::from_bits(0x3fd5b79bf81a52ec)],
+    [f64::from_bits(0x3fd0000000000000), f64::from_bits(0x3ffc13d1c13d1c14), f64::from_bits(0x3fc79d3fdda6e8ec)],
+    [f64::from_bits(0x3fc114f260000000), f64::from_bits(0x3ff26666716dde94), f64::from_bits(0x3fbc0687c825d223)],
+    [f64::from_bits(0x3fb999999999999a), f64::from_bits(0x3fee0387f1e0387f), f64::from_bits(0x3fb5df31362eb9e9)],
+    [f64::from_bits(0x3f847ae147ae147b), f64::from_bits(0x3fc096421a96808d), f64::from_bits(0x3f841a62a173e821)],
 ];
 
 /// A-031: the 32 Hz volume-control corner, per rate.

@@ -27,8 +27,8 @@
 //! with the clamp, and 5) writes into a **memory** of 60 minutes and 99 recordings (S-001;
 //! [`MemorySettings`], counted in stored device time, A-038; the store is reserved when the
 //! pipeline is created, about 86 MB at the defaults, virtual until written), and the
-//! **playback path** (stage 10) plays a recording back toward a speaker or earphone
-//! [`Route`] (a label in this version). The engine is idle, recording or playing, never two at
+//! **playback path** (stage 10, then the output chain since spec 009) plays a recording back
+//! toward a speaker or earphone [`Route`]. The engine is idle, recording or playing, never two at
 //! once ([`State`], [`EngineState`]); each recording and each playback starts from the path's
 //! reset state (A-037); recording stops by itself at the exact sample at which the memory
 //! fills and keeps the partial recording (A-039). Record-then-play is bit-identical to the
@@ -55,6 +55,33 @@
 //! bit-identical on every target because the codec is fixed-point integer arithmetic. The
 //! codec's output can be tapped before stage 10 ([`Tap::AfterDecoder`]); a bypassed engine is
 //! not a device configuration.
+//!
+//! Since spec 009 the playback path and the one-pass processing end at the **output chain**
+//! (stages 11 – 13), on by default ([`OutputSettings`]) and running at the host rate after the
+//! resampler: the volume control (the **volume position**, [`Pipeline::set_volume`], the
+//! control's wiper fraction with the circuit's loaded law, A-044; default
+//! [`output::VOLUME_REFERENCE`], the reference position where a full-scale codec output just
+//! reaches the amplifier's clip ceiling, A-043) with its 32 Hz coupling corner; on the speaker
+//! route the amplifier's 159 Hz corner, its gain over the 1.15 V ceiling and a symmetric knee
+//! (A-031), then **a template of a small speaker** (a 750 Hz resonance and a rising shelf, peak
+//! gain 1.0; A-010, low confidence, its own bypass); on the earphone route the follower's two
+//! corners near 120 and 280 Hz with no clipper (A-032). The [`Route`] selects the branch and
+//! the **output scale** (A-042): a sample of 1.0 is the clip ceiling on the speaker route and
+//! the volume control's full swing on the earphone route, so a full-scale recording reads
+//! about 0 dBFS on the speaker route at the default position and about −18.6 dB on the
+//! earphone route, and positions above the default clip full-scale material. The corners sit
+//! below the codec's 225 Hz record band edge, so they matter little on a recording the device
+//! made. The chain adds no reported latency (its filters are minimum-phase; the 1 kHz group
+//! delay, about 0.3 ms on the speaker route, is not counted) and the playback drain grows by
+//! its settle ([`output::settle_samples`]). A steady tone below the knee never exceeds full
+//! scale on the speaker route, but the template's resonance rings on clipped or transient
+//! material (about 1.9 at 48 kHz) and the earphone route passes the playback filter's
+//! reconstruction overshoot: hosts writing integer buffers leave headroom or clamp. At the
+//! three low host rates a clipped tone's harmonics alias within the host band, so the clipped
+//! speaker route there is band-limited by the host rate. The default tap is the route's output
+//! ([`Tap::RouteOutput`]); [`Tap::AfterPlayback`] is version 0.8's output, before the chain. A
+//! bypassed output chain is a combination the device cannot produce. Every figure is modeled on
+//! the circuit (S-002) and the datasheet (S-006), not measured against a unit.
 //!
 //! Stages 4 and 10 are modeled on the OKI MSM7702 voice-band codec at the device's internal
 //! rate of 6 kHz (A-026, verified from the service manual, S-002). They follow the codec

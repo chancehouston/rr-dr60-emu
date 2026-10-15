@@ -35,7 +35,7 @@ impl FirstOrder {
     }
 
     /// Processes one sample.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn process(&mut self, x: f64) -> f64 {
         let y = self.b0 * x + self.s;
         self.s = flush_state(self.b1 * x - self.a1 * y);

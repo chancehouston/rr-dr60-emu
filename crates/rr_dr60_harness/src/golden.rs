@@ -67,6 +67,40 @@ pub const CODEC_STIMULI: [&str; 4] = [
 /// the codec with the VAS on (drop mode), and the real 0.8 default (every stage on).
 pub const CODEC_CONFIGS: [&str; 3] = ["codec_only", "codec_only_vas", "default_codec"];
 
+/// Spec 009 output-chain golden stimuli, in sorted order (specs/009-output-chain/contracts/
+/// golden-format.md): the log sweep 20 Hz – 3 kHz at −20 dBFS, a 1 kHz tone at 0 dBFS (in the
+/// `default_*` configurations the limiter and the clamp hold it at or below full scale; at
+/// `default_loud`'s position it reaches the clipper about 6 dB over the ceiling), a 1 kHz tone
+/// at −10 dBFS, and the voiced stimulus at −20 dBFS; 2 s each.
+pub const OUTPUT_STIMULI: [&str; 4] = ["log_sweep_m20", "tone_1k_0", "tone_1k_m10", "voiced_m20"];
+
+/// Spec 009 output-chain golden configurations in the file's sorted order (the five of
+/// `configs::OUTPUT_CONFIGS` the golden file holds: `output_only_amp` is a measurement
+/// configuration, not a golden one). Each carries the route and the volume position the generator sets before the
+/// stimulus is processed (`output_route_volume`).
+pub const GOLDEN_OUTPUT_CONFIGS: [&str; 5] = [
+    "default_earphone",
+    "default_loud",
+    "default_output",
+    "output_only_earphone",
+    "output_only_speaker",
+];
+
+/// The route and the volume position of a spec 009 golden configuration
+/// (contracts/golden-format.md): the speaker route at the reference position, the earphone
+/// route at 1.0, and `default_loud` at the "6 dB over" position (the clipper engaged by the
+/// volume, not by an input the limiter and the clamp would hold at full scale).
+pub fn output_route_volume(config: &str) -> (rr_dr60::Route, f32) {
+    use rr_dr60::Route;
+    use rr_dr60::output::{VOLUME_6DB_OVER, VOLUME_REFERENCE};
+    match config {
+        "output_only_speaker" | "default_output" => (Route::Speaker, VOLUME_REFERENCE),
+        "output_only_earphone" | "default_earphone" => (Route::Earphone, 1.0),
+        "default_loud" => (Route::Speaker, VOLUME_6DB_OVER),
+        other => panic!("golden::output_route_volume: not an output configuration {other:?}"),
+    }
+}
+
 /// One golden entry record-then-play must reproduce (spec 006 SC-002; contracts/golden-format.md
 /// › The SC-002 reproduction rule), with the settings the split paths use for it.
 #[derive(Clone, Debug, PartialEq)]
@@ -191,6 +225,15 @@ pub struct GoldenEntry {
     /// `frames`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frames_sha256: Option<String>,
+    /// Spec 009 (contracts/golden-format.md): the route set before the stimulus was processed,
+    /// `"speaker"` or `"earphone"`. Present in output-file entries only; absent (and not
+    /// serialized) in the four earlier files, which therefore read unchanged (FR-016).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<String>,
+    /// Spec 009: the volume position set before the stimulus was processed. Present with
+    /// `route`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume: Option<f32>,
 }
 
 /// The VAS part of a golden entry (specs/003-vas/contracts/golden-format.md).
@@ -219,6 +262,10 @@ pub fn stimulus(name: &str, fs: u32) -> Vec<f32> {
         // −20 dBFS, 2 s, seed 0x0D60 (engineering target, 008 R-09; `us1_codec` measures the
         // 6 s versions).
         "voiced_m20" => stimulus::voiced(f, 2.0, -20.0, 0x0D60),
+        // Spec 009 (contracts/golden-format.md): the output-chain stimuli, 2 s each.
+        "log_sweep_m20" => stimulus::log_sweep(20.0, 3000.0, 0.1, f, secs(2.0)),
+        "tone_1k_m10" => stimulus::tone(1000.0, 0.316_227_77, f, secs(2.0)),
+        "tone_1k_0" => stimulus::tone(1000.0, 1.0, f, secs(2.0)),
         "unvoiced_voiced_m20" => stimulus::unvoiced_voiced(f, 2.0, -20.0, 0x0D60),
         // Spec 005 (contracts/golden-format.md; research R-10): 1 kHz level steps at the
         // host-grid peak phase (R-08; the coach's MVP review: a phase-0 tone on the 6 kHz grid
@@ -316,6 +363,8 @@ pub fn entry(stimulus: &str, config: &str, host_rate_hz: u32, output: &[f32]) ->
         vas: None,
         frames: None,
         frames_sha256: None,
+        route: None,
+        volume: None,
     }
 }
 
@@ -474,6 +523,78 @@ pub fn generate_codec(make: Make<'_>) -> GoldenFile {
     }
 }
 
+/// Spec 009 FR-016 (contracts/golden-format.md; research R-12): 4 stimuli × 5 configurations ×
+/// 7 rates = 140 entries, each with the route and the volume position set before the stimulus
+/// is processed and the one-pass output's SHA; for the three `default_*` configurations the
+/// generator also asserts that record-then-play of the same stimulus at the same route and
+/// position equals the one-pass output under spec 008 FR-009's rule (the equivalence is
+/// asserted, not stored).
+pub fn generate_output(make: Make<'_>) -> GoldenFile {
+    use crate::split_checks::{self, PLAY_BLOCK, RECORD_BLOCK};
+    let mut entries = Vec::new();
+    for &s in &OUTPUT_STIMULI {
+        for &c in &GOLDEN_OUTPUT_CONFIGS {
+            let (route, volume) = output_route_volume(c);
+            for rate in configs::all_rates() {
+                let x = stimulus(s, rate);
+                let settings = configs::settings(c, rate);
+                let one_pass = |x: &[f32]| {
+                    let mut p = make(settings);
+                    p.set_route(route);
+                    p.set_volume(volume).expect("a valid position");
+                    let mut y = vec![0.0; x.len()];
+                    let produced = p.process(x, &mut y).expect("equal lengths").produced;
+                    y.truncate(produced);
+                    y
+                };
+                let y = one_pass(&x);
+                let mut e = entry(s, c, rate, &y);
+                e.route = Some(
+                    match route {
+                        rr_dr60::Route::Earphone => "earphone",
+                        _ => "speaker",
+                    }
+                    .into(),
+                );
+                e.volume = Some(volume);
+                if c.starts_with("default_") {
+                    let mut p = make(settings);
+                    p.set_route(route);
+                    p.set_volume(volume).expect("a valid position");
+                    let run = split_checks::record_then_play(&mut p, &x, RECORD_BLOCK, PLAY_BLOCK);
+                    let d = (rr_dr60::speech_codec::DELAY_SAMPLES * rate / 6000) as usize;
+                    let per_device = split_checks::host_per_device(rate);
+                    let pre_encoder = p.record_latency_samples() as usize - d;
+                    let drain = (rr_dr60::speech_codec::DELAY_SAMPLES
+                        - rr_dr60::speech_codec::LOOKAHEAD_SAMPLES)
+                        as usize;
+                    let tail = pre_encoder
+                        + (run.stop.silence_fed_samples as usize + drain + 1) * per_device;
+                    let mut padded = x.clone();
+                    padded.extend(core::iter::repeat_n(0.0f32, tail));
+                    let want = one_pass(&padded);
+                    let got = &run.pre_drain;
+                    assert!(
+                        want.len() >= d + got.len()
+                            && got
+                                .iter()
+                                .zip(&want[d..d + got.len()])
+                                .all(|(a, b)| a.to_bits() == b.to_bits()),
+                        "{s}/{c}/{rate} Hz: record-then-play differs from the one-pass with the chain on (009 FR-010)"
+                    );
+                }
+                entries.push(e);
+            }
+        }
+    }
+    GoldenFile {
+        format: "rr_dr60-golden".into(),
+        version: 1,
+        library_version: rr_dr60::VERSION.into(),
+        entries,
+    }
+}
+
 fn generate_set(stimuli: &[&str], config_names: &[&str], make: Make<'_>) -> GoldenFile {
     let mut entries = Vec::new();
     for &s in stimuli {
@@ -614,6 +735,23 @@ pub fn path_vas() -> PathBuf {
 pub fn committed_codec() -> GoldenFile {
     serde_json::from_str(include_str!("../golden/golden-codec-v1.json"))
         .expect("valid embedded codec golden file")
+}
+
+/// The committed spec 009 output-chain golden file.
+///
+/// # Panics
+///
+/// If the embedded file is not valid JSON.
+pub fn committed_output() -> GoldenFile {
+    serde_json::from_str(include_str!("../golden/golden-output-v1.json"))
+        .expect("valid embedded output golden file")
+}
+
+/// Path of the spec 009 output-chain golden file. Bless it only with
+/// `RR_DR60_BLESS=output cargo test -p rr_dr60_harness --test golden_output`, with a CHANGELOG
+/// entry (009 FR-016: a later change to the chain's output is a model change).
+pub fn path_output() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-output-v1.json")
 }
 
 /// Path of the spec 008 codec golden file. Bless it only with

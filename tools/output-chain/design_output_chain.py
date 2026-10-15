@@ -62,7 +62,7 @@ R_F = 68e3  # R18, the feedback resistor (pin 5 → pin 4)
 R_IN = 10e3  # R16, the series input resistor into the inverting input
 R_POT = 50e3  # VR1, linear ("B") taper
 R_EAR = 10e3  # R65, the earphone branch's series resistor
-Z_EAR = 24e3  # A-044: the follower's low-frequency input impedance (R64 ∥ hFE·470 Ω), low
+Z_EAR = 6.4e3  # A-044: the follower's in-band input impedance, R64 33 kΩ ∥ hFE·(470 Ω ∥ 16 Ω + re) at hFE 370 (5.2–7.6 kΩ over the rank; the value F_EAR_IN is derived from; the 24 kΩ low-frequency value applies below the 280 Hz output corner only; hardware review T043 B1), low
 F_VOL = 1.0 / (2 * math.pi * 0.1e-6 * R_POT)  # C14 0.1 µF into VR1: 31.8 Hz, both routes
 F_AMP = 1.0 / (2 * math.pi * 0.1e-6 * R_IN)  # C8 0.1 µF into R16 at the virtual ground: 159 Hz
 F_EAR_IN, F_EAR_IN_RANGE = 120.0, (65.0, 130.0)  # A-032: input coupling (C8 + C60 in series)
@@ -257,6 +257,14 @@ class Design:
         # is of the signal's order, so the impulse response's n ≥ 1 samples understate it).
         return decay_samples(self.vol, self.fs, 1e-5)
 
+    def spk_l1_norm(self, n: int = 1 << 16) -> float:
+        """The template's impulse-response L1 norm (hardware review T043, N4)."""
+        x = np.zeros(n)
+        x[0] = 1.0
+        h = signal.lfilter([self.res[0], self.res[1], self.res[2]], [1.0, self.res[3], self.res[4]], x)
+        h = signal.lfilter([self.shelf[0], self.shelf[1]], [1.0, self.shelf[2]], h)
+        return float(np.sum(np.abs(h)))
+
     def volume_zero_decay_ms(self) -> tuple[float, float]:
         spk = max(decay_samples(s, self.fs, 1e-6) for s in [self.amp, self.res, self.shelf])
         ear = max(decay_samples(s, self.fs, 1e-6) for s in [self.ear_in, self.ear_out])
@@ -321,7 +329,8 @@ def report(designs: list[Design]) -> list[tuple[str, str, str, bool]]:
         c = [corner_from_coeffs(s, fs) for s in (d.vol, d.amp, d.ear_in, d.ear_out)]
         dev = d.discrete_vs_analog_db()
         v0s, v0e = d.volume_zero_decay_ms()
-        print(f"    {fs:<6} {c[0]:7.2f} {c[1]:7.2f} {c[2]:7.2f} {c[3]:8.2f}  {d.peak_hz:7.0f} {d.spk_db(1000):7.2f} {d.spk_db(2500):8.2f} {dev:7.2f} {d.gd_spk_ms():9.3f} {d.gd_ear_ms():10.3f} {d.ear_db(1000):9.2f} {d.amp_flatness_db():8.3f} {d.n_out():6d}   {v0s:5.1f}/{v0e:5.1f}")
+        print(f"    {fs:<6} {c[0]:7.2f} {c[1]:7.2f} {c[2]:7.2f} {c[3]:8.2f}  {d.peak_hz:7.0f} {d.spk_db(1000):7.2f} {d.spk_db(2500):8.2f} {dev:7.2f} {d.gd_spk_ms():9.3f} {d.gd_ear_ms():10.3f} {d.ear_db(1000):9.2f} {d.amp_flatness_db():8.3f} {d.n_out():6d}   {v0s:5.1f}/{v0e:5.1f}  L1 {d.spk_l1_norm():.3f}")
+        add(f"{fs} speaker template impulse-response L1 norm (the worst-case sample peak for a bounded input; A-042's overshoot)", "report", f"{d.spk_l1_norm():.3f}", True)
         for name, want, got in zip(("vol", "amp", "ear_in", "ear_out"), (F_VOL, F_AMP, F_EAR_IN, F_EAR_OUT), c):
             add(f"{fs} {name} corner", f"{want:.1f} Hz ± 10 %", f"{got:.2f} Hz", abs(got - want) <= 0.1 * want)
         add(f"{fs} template peak gain", "1.0 (± 1e-9)", f"{d.spk_peak():.12f}", abs(d.spk_peak() - 1.0) <= 1e-9)
@@ -333,7 +342,10 @@ def report(designs: list[Design]) -> list[tuple[str, str, str, bool]]:
         add(f"{fs} earphone passband 1 – 2.5 kHz", "flat within 0.4 dB", f"{d.ear_flatness_db():.3f} dB", d.ear_flatness_db() <= 0.4)  # 0.33 dB at the nominals: the 280 Hz corner alone is 0.28; FR-007 amended 0.3 → 0.4 at implementation
         add(f"{fs} amplifier passband 800 Hz – 2.5 kHz", "flat within 0.2 dB", f"{d.amp_flatness_db():.3f} dB", d.amp_flatness_db() <= 0.2)
         add(f"{fs} volume-0 decay to −120 dB", "≤ 100 ms", f"{max(v0s, v0e):.1f} ms", max(v0s, v0e) <= 100.0)
-        add(f"{fs} shelf rise remaining above 2.5 kHz", "≤ 0.7 dB", f"{d.spk_db(min(3000.0, fs / 2 - 1)) - d.spk_db(2500):.3f} dB", d.spk_db(min(3000.0, fs / 2 - 1)) - d.spk_db(2500) <= 0.7)
+        # FR-005: "no further feature above 2.5 kHz and the shelf's remaining rise there at most
+        # 0.7 dB": the largest rise over 2.5 kHz anywhere up to 0.45·fs (coach review T044, 1).
+        rise = max(d.spk_db(f) - d.spk_db(2500) for f in np.arange(2500.0, 0.45 * fs, 5.0)) if 0.45 * fs > 2505 else 0.0
+        add(f"{fs} shelf rise remaining above 2.5 kHz (to 0.45 fs)", "≤ 0.7 dB", f"{rise:.3f} dB", rise <= 0.7)
     print()
     return rows
 
