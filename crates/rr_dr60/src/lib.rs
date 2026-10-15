@@ -132,6 +132,7 @@ mod error;
 mod form;
 pub mod manifest;
 mod memory;
+pub mod output;
 mod paths;
 mod pipeline;
 mod rate;

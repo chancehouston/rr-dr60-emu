@@ -23,7 +23,7 @@ With every output stage bypassed the chain is the identity and the route is a la
 
 | Name | Value (plan; the script's print is authoritative) | Unit | Cited to |
 |---|---|---|---|
-| `V_CLIP_V` | 1.15 nominal at the measured 2.8 V rail (range 1.0 – 1.4; 1.33 at the datasheet's 3.0 V) | V peak differential | A-031 (S-006 pin swing limits and rated power; S-002 VDD 2.8 V) |
+| `V_CLIP_V` | 1.15 nominal at the 2.8 V rail the schematic marks (S-002) (range 1.0 – 1.4; 1.33 at the datasheet's 3.0 V) | V peak differential | A-031 (S-006 pin swing limits and rated power; S-002 VDD 2.8 V) |
 | `AMP_GAIN` | 13.6 (22.67 dB) at position 1; the loaded law `p · 2 Rf / (Ri + 50 kΩ · p (1 − p))` elsewhere | ratio | A-031, A-044 (S-002 R16 10 kΩ input, R18 68 kΩ feedback, VR1 50 kΩ; S-006 formula 2 Rf / Ri) |
 | `CODEC_FULL_SCALE_V` | 1.0 | V peak | A-030 |
 | `VOLUME_REFERENCE` | 0.1335 (the position at which the loaded law puts a full-scale codec output at the ceiling; script-solved) | position | A-043 |
@@ -61,7 +61,8 @@ Both survive `reset` and `reconfigure`; both are copied into the one-pass's and 
 
 | Field | Type | Reset |
 |---|---|---|
-| `route`, `volume: f64`, `k_spk: f64`, `k_ear: f64` | controls and the scalars derived from them per block | kept (controls are not state) |
+| `route`, `k_spk: f64`, `k_ear: f64` | the route and the two scalars derived from the position per block (the position itself lives in `Pipeline`) | kept (controls are not state) |
+| `n_out` | `u32`, the chain's settle at this rate (research R-08) | constant |
 | `run_amp`, `run_speaker`, `run_earphone` | `bool` | from settings |
 | `tap` | `Tap` (the point `process` returns) | from settings |
 | `vol_hpf` | `FirstOrder` (32 Hz, both routes) | zero |
@@ -110,8 +111,10 @@ Unchanged: `BlockInfo`, `RecordInfo`, `StopOutcome`, `PlayInfo`, `EngineState` k
 |---|---|---|---|
 | `output_only_speaker` | 11, 12 | `RouteOutput` | speaker |
 | `output_only_earphone` | 11, 13 | `RouteOutput` | earphone |
+| `output_only_amp` | 11 (the speaker template off: the clip and corner checks) | `RouteOutput` | speaker |
 | `default_output` | all | `RouteOutput` | speaker |
 | `default_earphone` | all | `RouteOutput` | earphone |
+| `default_loud` | all | `RouteOutput` | speaker, at `output::VOLUME_6DB_OVER` (the clipper engaged by the volume; the golden) |
 
 Every pre-009 configuration sets the three bypasses off (`output: OutputSettings::BYPASSED`).
 

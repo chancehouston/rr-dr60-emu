@@ -121,7 +121,7 @@
 pub(crate) const VOLUME_REFERENCE: f64 = f64::from_bits(0x3fc114f260000000); // 0.13345174491405487
 /// The position at which full-scale material sits 6 dB over the ceiling (the clip checks; the `default_loud` golden configuration).
 pub(crate) const VOLUME_6DB_OVER: f64 = f64::from_bits(0x3fd75e5d60000000); // 0.36513456702232361
-/// A-031: the clip ceiling, V peak differential at the measured 2.8 V rail (1.0 – 1.4 V registered).
+/// A-031: the clip ceiling, V peak differential at the 2.8 V rail the schematic marks (S-002) (1.0 – 1.4 V registered).
 pub(crate) const V_CLIP_V: f64 = f64::from_bits(0x3ff2666666666666); // 1.1499999999999999
 /// A-030: codec full scale at its analog output, V peak.
 pub(crate) const CODEC_FULL_SCALE_V: f64 = f64::from_bits(0x3ff0000000000000); // 1

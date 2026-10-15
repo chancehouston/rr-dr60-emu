@@ -53,7 +53,8 @@ impl FirstOrder {
         self.s
     }
 
-    /// The coefficients `[b0, b1, a1]`.
+    /// The coefficients `[b0, b1, a1]` (test-only).
+    #[cfg(test)]
     pub(crate) const fn coefficients(&self) -> [f64; 3] {
         [self.b0, self.b1, self.a1]
     }

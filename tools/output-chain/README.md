@@ -12,7 +12,7 @@ its own output.
 
 ## What it prints
 
-- the inputs: the clip ceiling (1.15 V at the measured 2.8 V rail; 1.0 – 1.4 V registered), the
+- the inputs: the clip ceiling (1.15 V at the 2.8 V rail the schematic marks (S-002); 1.0 – 1.4 V registered), the
   gain resistors, the corners (32, 159, 120 and 280 Hz), the speaker template's figures, the knee;
 - the loaded volume law at six positions on both routes (A-044), the reference position
   `VOLUME_REFERENCE` (A-043, solved so that codec full scale meets the ceiling; rounded to the

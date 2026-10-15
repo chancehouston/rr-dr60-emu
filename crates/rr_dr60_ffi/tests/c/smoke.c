@@ -194,6 +194,9 @@ int main(int argc, char **argv) {
   s6.playback_stage_enabled = false;
   s6.adc_clamp_enabled = false; /* bypass_all bypasses the clamp too (spec 005 FR-008) */
   s6.speech_codec_enabled = false; /* and the speech codec (spec 008 FR-021) */
+  s6.output_volume_amp_enabled = false; /* and the output chain (spec 009 FR-016) */
+  s6.output_speaker_enabled = false;
+  s6.output_earphone_enabled = false;
   RrDr60Pipeline *p6 = NULL;
   CHECK(rr_dr60_create(&s6, &p6) == RR_DR60_STATUS_OK && p6 != NULL, "create at 6000 Hz");
   CHECK(rr_dr60_process(p6, in6, out6, N6, NULL) == RR_DR60_STATUS_OK, "process at 6000 Hz");
@@ -282,6 +285,9 @@ int main(int argc, char **argv) {
   bypass.record_stage_enabled = false;
   bypass.playback_stage_enabled = false;
   bypass.speech_codec_enabled = false;
+  bypass.output_volume_amp_enabled = false; /* spec 009 FR-016 */
+  bypass.output_speaker_enabled = false;
+  bypass.output_earphone_enabled = false;
   CHECK(rr_dr60_reconfigure(p, &bypass) == RR_DR60_STATUS_OK, "reconfigure to bypass_all");
   CHECK(rr_dr60_latency_samples(p, &latency_after) == RR_DR60_STATUS_OK && latency_after < latency,
         "bypass_all latency %u should be below default %u", latency_after, latency);
@@ -406,6 +412,12 @@ int main(int argc, char **argv) {
     static float sq[FS];
     for (size_t i = 0; i < FS; i++) sq[i] = (i % 48) < 24 ? 0.125f : -0.125f;
     RrDr60Settings d = rr_dr60_settings_default(FS);
+    /* The 0.8 record-then-play case keeps 0.8's output: the output chain bypassed and the tap
+       after stage 10 (spec 009 FR-016); 009 T031 adds the route cases with their own hashes. */
+    d.output_volume_amp_enabled = false;
+    d.output_speaker_enabled = false;
+    d.output_earphone_enabled = false;
+    d.tap = RR_DR60_TAP_AFTER_PLAYBACK;
     RrDr60Pipeline *a = NULL;
     CHECK(rr_dr60_create(&d, &a) == RR_DR60_STATUS_OK && a != NULL, "create (006 loop)");
     /* Spec 008 FR-004: with the codec on the default one-pass latency is 1923 host samples at

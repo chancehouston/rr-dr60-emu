@@ -365,10 +365,12 @@ impl Default for OutputSettings {
 /// is connected). It is **not** a setting: the host selects it at any time, during playback
 /// too, with `Pipeline::set_route`, and it survives `reset` and `reconfigure`.
 ///
-/// In this version the two routes produce identical output. Signal-chain stages 11–13 (the
-/// volume control and power amplifier, the speaker, the earphone follower; A-031, A-010,
-/// A-032) are not yet modeled; the route exists so that those features do not change the
-/// interface.
+/// Since 0.9 the route selects which branch of the output chain runs (spec 009 FR-001): the
+/// volume control and power amplifier (stage 11) into the speaker template (stage 12), or the
+/// earphone output (stage 13); and which output scale applies (A-042: a sample of 1.0 is the
+/// amplifier's clip ceiling on the speaker route and the volume control's full swing on the
+/// earphone route). The relative loudness of the two transducers is not modeled: a host sets
+/// its own playback gain per route.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum Route {

@@ -11,7 +11,7 @@ real RR-DR60 (constitution Principle II; spec 009 FR-018). The register IDs:
 
 - A-031 (adopted by spec 009): the 50 kΩ linear volume control, the NJM2113 amplifier's gain
   2·Rf/Ri = 2·68/10 (22.7 dB at full travel), its clip ceiling ≈ 1.15 V peak differential at the
-  measured 2.8 V battery rail (1.0 – 1.4 V registered), the 32 Hz (C14 into VR1) and 159 Hz
+  2.8 V battery rail the schematic marks (1.0 – 1.4 V registered), the 32 Hz (C14 into VR1) and 159 Hz
   (C8 into R16) input coupling corners, the symmetric knee as a design choice bracketed by the
   datasheet's distortion figures;
 - A-044: the position is the control's wiper fraction and the gains follow the loaded law
@@ -54,7 +54,7 @@ OUTPUT = Path("crates/rr_dr60/src/stages/output_coeffs.rs")
 RATES = [6000, 8000, 16000, 44100, 48000, 88200, 96000]  # SUPPORTED_HOST_RATES order (004 FR-002)
 
 # --- The circuit (S-002 sheet 3.1, read at plan time; S-006) ---------------------------------
-V_CLIP = 1.15  # A-031: clip ceiling, V peak differential, at the measured 2.8 V rail
+V_CLIP = 1.15  # A-031: clip ceiling, V peak differential, at the 2.8 V rail the schematic marks (S-002)
 V_CLIP_RANGE = (1.0, 1.4)  # A-031: over the cells' state and the quiescent spread
 V_CLIP_DATASHEET = 1.33  # S-006: 55 mW into 16 Ω at 10 % THD at 3.0 V
 CODEC_FULL_SCALE_V = 1.0  # A-030: receive +3 dBm0, 1.0 V peak at the codec output
@@ -388,7 +388,7 @@ def render_file(designs: list[Design], rows) -> str:
     lines.append("")
     lines += const_f64("VOLUME_REFERENCE", P_REF, "A-043: the reference position (the `f32` default's value), where codec full scale meets the ceiling under the loaded law.")
     lines += const_f64("VOLUME_6DB_OVER", P_6DB_OVER, "The position at which full-scale material sits 6 dB over the ceiling (the clip checks; the `default_loud` golden configuration).")
-    lines += const_f64("V_CLIP_V", V_CLIP, "A-031: the clip ceiling, V peak differential at the measured 2.8 V rail (1.0 – 1.4 V registered).")
+    lines += const_f64("V_CLIP_V", V_CLIP, "A-031: the clip ceiling, V peak differential at the 2.8 V rail the schematic marks (S-002) (1.0 – 1.4 V registered).")
     lines += const_f64("CODEC_FULL_SCALE_V", CODEC_FULL_SCALE_V, "A-030: codec full scale at its analog output, V peak.")
     lines += const_f64("AMP_GAIN", AMP_GAIN, "A-031: 2·Rf/Ri = 2·68/10 at position 1 (S-006's formula, S-002's values).")
     lines += const_f64("R_FEEDBACK_OHM", R_F, "S-002: R18, the feedback resistor.")

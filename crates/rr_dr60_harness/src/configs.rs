@@ -37,7 +37,7 @@ pub const CODEC_CONFIGS: [&str; 3] = ["default_codec", "codec_only", "codec_only
 /// is a control the check sets), the amplifier path alone (stage 11 with the speaker template
 /// off, for the clip and corner checks), and the 0.9 default on each route plus the default at
 /// the "6 dB over" volume (`default_loud`; the check sets the position from
-/// `rr_dr60::output::VOLUME_6DB_OVER` once it exists, 009 T013).
+/// `rr_dr60::output::VOLUME_6DB_OVER`).
 pub const OUTPUT_CONFIGS: [&str; 6] = [
     "output_only_speaker",
     "output_only_earphone",

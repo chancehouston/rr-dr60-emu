@@ -135,6 +135,9 @@ pub struct Pipeline {
     pub(crate) transport: Transport,
     /// The output route (spec 006 FR-015): not a setting; kept through reset and reconfigure.
     pub(crate) route: Route,
+    /// The volume position (spec 009 FR-003): not a setting; kept through reset and
+    /// reconfigure; copied into both playback paths' chains at every processing call.
+    pub(crate) volume: f32,
     /// The rate plan's `(l, m)`: `m / l` host samples per device sample.
     pub(crate) plan_l_m: (u64, u64),
     /// The recorder's speech encoder (stage 7; spec 008 research R-06), `None` when the codec
@@ -344,13 +347,25 @@ impl Pipeline {
         let plan = RatePlan::for_host(settings.host_rate_hz)?;
         // Spec 008 FR-012: the codec setting fixes the memory's encoding.
         let memory = Memory::new(&settings.memory, Encoding::for_settings(&settings))?;
-        Ok(Self::with_memory(settings, &plan, memory, Route::default()))
+        Ok(Self::with_memory(
+            settings,
+            &plan,
+            memory,
+            Route::default(),
+            crate::output::VOLUME_REFERENCE, // A-043
+        ))
     }
 
     /// Builds every path around an existing memory (`new` and `reconfigure`). Infallible once
     /// the settings are validated and the plan exists, so `reconfigure` can move the memory in
     /// without a window in which the pipeline has none.
-    fn with_memory(settings: Settings, plan: &RatePlan, memory: Memory, route: Route) -> Self {
+    fn with_memory(
+        settings: Settings,
+        plan: &RatePlan,
+        memory: Memory,
+        route: Route,
+        volume: f32,
+    ) -> Self {
         let one_pass = OnePass::new(&settings, plan);
         let latency = latency_samples(plan, &settings, &one_pass);
         Self {
@@ -362,6 +377,7 @@ impl Pipeline {
             memory,
             transport: Transport::default(),
             route,
+            volume,
             plan_l_m: paths::l_m(plan),
             encoder: settings.speech_codec_enabled.then(SpeechEncoder::new),
             decoder: settings.speech_codec_enabled.then(SpeechDecoder::new),
@@ -373,10 +389,16 @@ impl Pipeline {
     ///
     /// Only `output[..produced]` is written (see [`BlockInfo`]); the rest is left unchanged.
     ///
+    /// The route and the volume position are read at entry (spec 009 FR-009: a change takes
+    /// effect at the next call), and the output is at the configured tap: by default the
+    /// selected route's output (spec 009 FR-010).
+    ///
     /// # Errors
     ///
     /// [`Error::LengthMismatch`] if the lengths differ, [`Error::RecordingInProgress`] or
-    /// [`Error::PlaybackInProgress`] while a path is active (spec 006 FR-009). The pipeline
+    /// [`Error::PlaybackInProgress`] while a path is active (spec 006 FR-009),
+    /// [`Error::TapNotOnRoute`] when the tap is [`Tap::AfterSpeaker`] or
+    /// [`Tap::AfterEarphone`] and the other route is selected (spec 009 FR-011). The pipeline
     /// state is not changed.
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) -> Result<BlockInfo, Error> {
         if input.len() != output.len() {
@@ -386,6 +408,7 @@ impl Pipeline {
             });
         }
         self.refuse_if_active()?;
+        self.tap_on_route()?;
         Ok(self.run_block(Some(input), output, &mut []))
     }
 
@@ -395,9 +418,12 @@ impl Pipeline {
     /// are unspecified. Output index never exceeds input index, so in-place processing is safe.
     /// While a recording or playback is in progress the call is refused: nothing is processed
     /// and `produced` is 0 (this signature has no error channel; [`process`](Self::process)
-    /// and [`state`](Self::state) report the reason; spec 006 FR-009).
+    /// and [`state`](Self::state) report the reason; spec 006 FR-009). So is a call with a
+    /// named route tap of the other route (spec 009 FR-011): a host that uses
+    /// [`Tap::AfterSpeaker`] or [`Tap::AfterEarphone`] checks [`route`](Self::route) first,
+    /// because a refused in-place call is indistinguishable from a drop-mode pause.
     pub fn process_in_place(&mut self, buffer: &mut [f32]) -> BlockInfo {
-        if self.refuse_if_active().is_err() {
+        if self.refuse_if_active().is_err() || self.tap_on_route().is_err() {
             return self.refused_block();
         }
         self.run_block(None, buffer, &mut [])
@@ -413,7 +439,8 @@ impl Pipeline {
     ///
     /// [`Error::LengthMismatch`] if `input` and `output` lengths differ,
     /// [`Error::RecordingInProgress`] or [`Error::PlaybackInProgress`] while a path is active
-    /// (spec 006 FR-009). The pipeline state is not changed.
+    /// (spec 006 FR-009), [`Error::TapNotOnRoute`] for a named route tap of the other route
+    /// (spec 009 FR-011). The pipeline state is not changed.
     pub fn process_with_events(
         &mut self,
         input: &[f32],
@@ -427,21 +454,68 @@ impl Pipeline {
             });
         }
         self.refuse_if_active()?;
+        self.tap_on_route()?;
         Ok(self.run_block(Some(input), output, events))
     }
 
     /// As [`process_in_place`](Self::process_in_place), and writes the block's VAS events to
     /// `events` as [`process_with_events`](Self::process_with_events) does. Real-time safe.
-    /// Refused (nothing processed, `produced` 0) while a path is active.
+    /// Refused (nothing processed, `produced` 0) while a path is active or with a named route
+    /// tap of the other route (spec 009 FR-011; see [`process_in_place`](Self::process_in_place)).
     pub fn process_in_place_with_events(
         &mut self,
         buffer: &mut [f32],
         events: &mut [VasEvent],
     ) -> BlockInfo {
-        if self.refuse_if_active().is_err() {
+        if self.refuse_if_active().is_err() || self.tap_on_route().is_err() {
             return self.refused_block();
         }
         self.run_block(None, buffer, events)
+    }
+
+    /// Spec 009 FR-011: a named route tap with the other route selected is refused at the
+    /// processing call; the route output tap follows the route.
+    fn tap_on_route(&self) -> Result<(), Error> {
+        let tap = self.settings.tap;
+        let wrong = matches!(
+            (tap, self.route),
+            (Tap::AfterSpeaker, Route::Earphone) | (Tap::AfterEarphone, Route::Speaker)
+        );
+        if wrong {
+            Err(Error::TapNotOnRoute {
+                tap,
+                route: self.route,
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Sets the volume position (spec 009 FR-003; A-043, A-044): the control's wiper fraction,
+    /// 0 (silence) to 1 (maximum), at any time including during playback; takes effect at the
+    /// next processing call or `play` block; survives [`reset`](Self::reset) and
+    /// [`reconfigure`](Self::reconfigure). The routes' gains follow the circuit's loaded law
+    /// ([`output::speaker_gain_db`](crate::output::speaker_gain_db),
+    /// [`output::earphone_gain_db`](crate::output::earphone_gain_db)). Default
+    /// [`output::VOLUME_REFERENCE`](crate::output::VOLUME_REFERENCE), where full-scale material
+    /// just reaches the clip ceiling on the speaker route; positions above it clip. Real-time
+    /// safe.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidVolume`] for a non-finite position or one outside 0 … 1; the position
+    /// is unchanged.
+    pub fn set_volume(&mut self, position: f32) -> Result<(), Error> {
+        if !(position.is_finite() && (0.0..=1.0).contains(&position)) {
+            return Err(Error::InvalidVolume { position });
+        }
+        self.volume = position;
+        Ok(())
+    }
+
+    /// The volume position (spec 009 FR-003).
+    pub fn volume(&self) -> f32 {
+        self.volume
     }
 
     /// The report of a refused in-place call: nothing produced, the stream's paused state.
@@ -473,6 +547,8 @@ impl Pipeline {
         out: &mut [f32],
         events: &mut [VasEvent],
     ) -> BlockInfo {
+        // Spec 009 FR-009: the controls are read once per call, at the block boundary.
+        self.one_pass.play.set_controls(self.route, self.volume);
         let (mut produced, mut count, mut frames) = (0, 0, 0);
         for i in 0..out.len() {
             let x = match input {
@@ -571,7 +647,7 @@ impl Pipeline {
         } else {
             self.memory.copied_to(&settings.memory, encoding)?
         };
-        *self = Self::with_memory(settings, &plan, memory, self.route);
+        *self = Self::with_memory(settings, &plan, memory, self.route, self.volume);
         Ok(())
     }
 
@@ -708,6 +784,8 @@ mod validation_tests {
     /// the earlier specs' rules are checked with the codec off; the codec has its own tests).
     fn settings_006(rate: u32) -> Settings {
         let mut s = Settings::new(rate);
+        s.output = crate::settings::OutputSettings::BYPASSED; // 009 FR-016: the earlier checks run with stages 11–13 bypassed
+        s.tap = Tap::AfterPlayback; // 009 FR-011: 0.8's output
         s.speech_codec_enabled = false;
         s
     }
@@ -903,6 +981,8 @@ mod limiter_tests {
     /// the earlier specs' rules are checked with the codec off; the codec has its own tests).
     fn settings_006(rate: u32) -> Settings {
         let mut s = Settings::new(rate);
+        s.output = crate::settings::OutputSettings::BYPASSED; // 009 FR-016: the earlier checks run with stages 11–13 bypassed
+        s.tap = Tap::AfterPlayback; // 009 FR-011: 0.8's output
         s.speech_codec_enabled = false;
         s
     }
@@ -1376,6 +1456,8 @@ mod narrowing_tests {
     /// the earlier specs' rules are checked with the codec off; the codec has its own tests).
     fn settings_006(rate: u32) -> Settings {
         let mut s = Settings::new(rate);
+        s.output = crate::settings::OutputSettings::BYPASSED; // 009 FR-016: the earlier checks run with stages 11–13 bypassed
+        s.tap = Tap::AfterPlayback; // 009 FR-011: 0.8's output
         s.speech_codec_enabled = false;
         s
     }
@@ -1757,5 +1839,243 @@ mod codec_tests {
         let mut without = silence;
         let _ = q.process_in_place(&mut without);
         assert_ne!(without, fresh);
+    }
+}
+
+/// 009 T009 (spec 009 FR-003, FR-008 – FR-011; contracts/rust-api.md; research R-01, R-05,
+/// R-06, R-08): the controls, the route-tap refusal, the drain, the latencies and the
+/// equivalence precondition.
+#[cfg(test)]
+mod output_chain_tests {
+    extern crate std;
+    use super::*;
+    use crate::output::{self, VOLUME_REFERENCE};
+    use crate::settings::OutputSettings;
+    use std::vec;
+    use std::vec::Vec;
+
+    fn tone(rate: u32, n: usize) -> Vec<f32> {
+        let w = core::f64::consts::TAU * 1000.0 / f64::from(rate);
+        (0..n)
+            .map(|i| (0.25 * rr_dr60_detmath::sin(w * i as f64)) as f32)
+            .collect()
+    }
+
+    #[test]
+    fn set_volume_refuses_and_keeps_position() {
+        let mut p = Pipeline::new(Settings::new(48_000)).unwrap();
+        assert_eq!(p.volume(), VOLUME_REFERENCE); // A-043
+        for bad in [1.5, -0.1, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let err = p.set_volume(bad).unwrap_err();
+            assert!(
+                matches!(err, Error::InvalidVolume { position } if position.to_bits() == bad.to_bits())
+            );
+            assert_eq!(p.volume(), VOLUME_REFERENCE, "{bad}");
+        }
+        assert_eq!(p.set_volume(0.0), Ok(()));
+        assert_eq!(p.volume(), 0.0);
+        assert_eq!(p.set_volume(1.0), Ok(()));
+        assert_eq!(p.volume(), 1.0);
+    }
+
+    #[test]
+    fn volume_and_route_survive_reset_and_reconfigure() {
+        let mut p = Pipeline::new(Settings::new(48_000)).unwrap();
+        p.set_volume(0.42).unwrap();
+        p.set_route(Route::Earphone);
+        p.reset();
+        assert_eq!((p.volume(), p.route()), (0.42, Route::Earphone));
+        let mut s = Settings::new(44_100);
+        s.output.speaker_enabled = false;
+        p.reconfigure(s).unwrap();
+        assert_eq!((p.volume(), p.route()), (0.42, Route::Earphone));
+    }
+
+    #[test]
+    fn route_tap_refused_on_the_other_route() {
+        let x = tone(48_000, 256);
+        let mut y = vec![0.0f32; 256];
+        for (tap, wrong, right) in [
+            (Tap::AfterSpeaker, Route::Earphone, Route::Speaker),
+            (Tap::AfterEarphone, Route::Speaker, Route::Earphone),
+        ] {
+            let mut s = Settings::new(48_000);
+            s.tap = tap;
+            let mut p = Pipeline::new(s).unwrap();
+            p.set_route(wrong);
+            assert_eq!(
+                p.process(&x, &mut y),
+                Err(Error::TapNotOnRoute { tap, route: wrong })
+            );
+            assert_eq!(
+                p.process_with_events(&x, &mut y, &mut []),
+                Err(Error::TapNotOnRoute { tap, route: wrong })
+            );
+            let mut buf = x.clone();
+            assert_eq!(p.process_in_place(&mut buf).produced, 0);
+            assert_eq!(
+                p.process_in_place_with_events(&mut buf, &mut []).produced,
+                0
+            );
+            assert_eq!(buf, x, "nothing processed");
+            p.set_route(right);
+            assert!(p.process(&x, &mut y).is_ok());
+        }
+        for tap in [Tap::RouteOutput, Tap::AfterVolumeAmp, Tap::AfterPlayback] {
+            let mut s = Settings::new(48_000);
+            s.tap = tap;
+            let mut p = Pipeline::new(s).unwrap();
+            for route in [Route::Speaker, Route::Earphone] {
+                p.set_route(route);
+                assert!(p.process(&x, &mut y).is_ok(), "{tap:?} {route:?}");
+            }
+        }
+    }
+
+    /// FR-009: a `set_volume` between two calls changes the second call's output and none of
+    /// the first's (the one-pass at 6 kHz, the chain alone, so the output is the input's
+    /// length and alignment).
+    #[test]
+    fn controls_land_at_the_next_call() {
+        let mut s = Settings::new(6000);
+        s.agc.enabled = false;
+        s.vas.enabled = false;
+        s.record_stage_enabled = false;
+        s.playback_stage_enabled = false;
+        s.adc_clamp_enabled = false;
+        s.speech_codec_enabled = false;
+        s.output.speaker_enabled = false;
+        let x = tone(6000, 128);
+        let run = |volume_second: f32| {
+            let mut p = Pipeline::new(s).unwrap();
+            p.set_route(Route::Earphone);
+            p.set_volume(1.0).unwrap();
+            let mut y = vec![0.0f32; 128];
+            let _ = p.process(&x[..64], &mut y[..64]).unwrap();
+            p.set_volume(volume_second).unwrap();
+            let _ = p.process(&x[64..], &mut y[64..]).unwrap();
+            y
+        };
+        let (same, changed) = (run(1.0), run(0.5));
+        assert_eq!(same[..64], changed[..64], "the first call is unchanged");
+        assert_ne!(
+            same[64], changed[64],
+            "the first sample of the next call carries the new gain"
+        );
+    }
+
+    /// Research R-08: `drain_samples` grows by `N_OUT` when any output stage runs, and is spec
+    /// 006's figure with the chain bypassed; the reported latencies are unchanged (FR-008).
+    #[test]
+    fn drain_grows_by_n_out_and_latencies_are_unchanged() {
+        for (rate, n_out, one_pass_008, play_006) in
+            [(6000, 346, 181, 0), (48_000, 2764, 1923, 241)]
+        {
+            let on = Pipeline::new(Settings::new(rate)).unwrap();
+            let mut s = Settings::new(rate);
+            s.output = OutputSettings::BYPASSED;
+            let off = Pipeline::new(s).unwrap();
+            assert_eq!(on.drain_samples(), off.drain_samples() + n_out, "{rate}");
+            assert_eq!(output::settle_samples(rate), Some(n_out));
+            for only in 0..3 {
+                let mut s = Settings::new(rate);
+                s.output = OutputSettings {
+                    volume_amp_enabled: only == 0,
+                    speaker_enabled: only == 1,
+                    earphone_enabled: only == 2,
+                };
+                let p = Pipeline::new(s).unwrap();
+                assert_eq!(
+                    p.drain_samples(),
+                    off.drain_samples() + n_out,
+                    "{rate} stage {only}"
+                );
+            }
+            assert_eq!(on.latency_samples(), one_pass_008, "{rate}");
+            assert_eq!(on.latency_samples(), off.latency_samples());
+            assert_eq!(on.playback_latency_samples(), play_006);
+            assert_eq!(on.record_latency_samples(), off.record_latency_samples());
+        }
+    }
+
+    /// FR-010 (coach C8): the one-pass's first 180 outputs of an impulse stream are exactly 0.0
+    /// with the chain on at 6 kHz, so the chain's state at the equivalence skip point is rest.
+    #[test]
+    fn one_pass_prefix_is_exact_zero() {
+        let mut x = vec![0.0f32; 400];
+        x[0] = 0.5;
+        for route in [Route::Speaker, Route::Earphone] {
+            let mut p = Pipeline::new(Settings::new(6000)).unwrap();
+            p.set_route(route);
+            p.set_volume(1.0).unwrap();
+            let mut y = vec![0.0f32; 400];
+            let n = p.process(&x, &mut y).unwrap().produced;
+            assert!(n >= 181, "{n}");
+            assert!(y[..180].iter().all(|v| v.to_bits() == 0), "{route:?}");
+        }
+    }
+
+    /// Edge case "Recording": record, stop, play twice; both playbacks bit-identical (the chain
+    /// holds no state across a recording and a later playback starts from rest).
+    #[test]
+    fn playback_starts_from_rest_after_a_recording() {
+        let mut p = Pipeline::new(Settings::new(6000)).unwrap();
+        p.set_volume(1.0).unwrap();
+        let x = tone(6000, 6000);
+        p.start_recording().unwrap();
+        let _ = p.record(&x, &mut []).unwrap();
+        let _ = p.stop_recording(&mut []).unwrap();
+        let play = |p: &mut Pipeline| {
+            p.start_playback(1).unwrap();
+            let mut out = Vec::new();
+            let mut buf = vec![0.0f32; 512];
+            loop {
+                let info = p.play(&mut buf).unwrap();
+                out.extend_from_slice(&buf[..info.produced]);
+                if info.finished {
+                    break;
+                }
+            }
+            out
+        };
+        let a = play(&mut p);
+        let b = play(&mut p);
+        assert_eq!(a, b);
+        // 6000 kept samples are 51 whole frames (spec 008 FR-013: ⌈(6000 + 60) / 120⌉), then
+        // the drain with the chain's settle.
+        assert_eq!(a.len() as u32, 51 * 120 + p.drain_samples());
+    }
+
+    /// Research R-01: the one-pass and the player run the same `OutputChain` code: at 6 kHz
+    /// with every earlier stage bypassed, `play` of a stored tone equals the one-pass of the
+    /// same tone sample for sample (both through the same chain from rest).
+    #[test]
+    fn both_paths_run_the_same_chain() {
+        let mut s = Settings::new(6000);
+        s.agc.enabled = false;
+        s.vas.enabled = false;
+        s.record_stage_enabled = false;
+        s.playback_stage_enabled = false;
+        s.adc_clamp_enabled = false;
+        s.speech_codec_enabled = false;
+        let x = tone(6000, 3000);
+        for route in [Route::Speaker, Route::Earphone] {
+            let mut p = Pipeline::new(s).unwrap();
+            p.set_route(route);
+            p.set_volume(0.6).unwrap();
+            let mut y = vec![0.0f32; x.len()];
+            let _ = p.process(&x, &mut y).unwrap();
+            let mut q = Pipeline::new(s).unwrap();
+            q.set_route(route);
+            q.set_volume(0.6).unwrap();
+            q.start_recording().unwrap();
+            let _ = q.record(&x, &mut []).unwrap();
+            let _ = q.stop_recording(&mut []).unwrap();
+            q.start_playback(1).unwrap();
+            let mut played = vec![0.0f32; x.len() + q.drain_samples() as usize];
+            let info = q.play(&mut played).unwrap();
+            assert!(info.finished);
+            assert_eq!(played[..x.len()], y[..], "{route:?}");
+        }
     }
 }

@@ -6,10 +6,10 @@
 
 pub(crate) mod biquad;
 pub(crate) mod clamp;
-#[allow(dead_code)] // 009 T012 (US1) uses it; Phase 1 lands the section alone
 pub(crate) mod first_order;
 pub(crate) mod limiter;
-#[allow(dead_code)] // 009 T012 (US1) uses the tables; Phase 1 generates and pins them
+pub(crate) mod output;
+#[allow(dead_code)] // the generated table carries the script's pinned figures, read by tests
 pub(crate) mod output_coeffs;
 pub(crate) mod vas;
 pub(crate) mod voiceband;
