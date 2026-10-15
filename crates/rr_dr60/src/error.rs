@@ -5,7 +5,10 @@ use core::fmt;
 use crate::settings::SUPPORTED_HOST_RATES;
 
 /// Errors from configuration and processing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// Since 0.9.0, `Error` is no longer `Eq`, because [`Error::InvalidVolume`] carries the rejected
+/// `f32` position.
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Error {
     /// The requested host rate is not in [`SUPPORTED_HOST_RATES`] (FR-002).
@@ -94,6 +97,22 @@ pub enum Error {
         minor: u16,
         /// Patch.
         patch: u16,
+    },
+    /// `set_volume` with a position outside 0 … 1 or not finite (spec 009 FR-003); the position
+    /// is unchanged.
+    InvalidVolume {
+        /// The rejected position.
+        position: f32,
+    },
+    /// A processing call with a named route tap ([`Tap::AfterSpeaker`](crate::Tap::AfterSpeaker)
+    /// or [`Tap::AfterEarphone`](crate::Tap::AfterEarphone)) while the other route is selected
+    /// (spec 009 FR-011); nothing was processed. The route output tap
+    /// ([`Tap::RouteOutput`](crate::Tap::RouteOutput)) follows the route and is never refused.
+    TapNotOnRoute {
+        /// The configured tap.
+        tap: crate::Tap,
+        /// The selected route.
+        route: crate::Route,
     },
 }
 
@@ -240,6 +259,13 @@ impl fmt::Display for Error {
                 minor,
                 patch,
             } => write!(f, "unsupported codec model version {major}.{minor}.{patch}"),
+            Error::InvalidVolume { position } => write!(
+                f,
+                "invalid volume position {position}: must be finite and within 0 … 1"
+            ),
+            Error::TapNotOnRoute { tap, route } => {
+                write!(f, "tap {tap:?} is not on the selected route {route:?}")
+            }
         }
     }
 }
@@ -275,7 +301,7 @@ mod tests {
     /// refusal has a `Display` that names the reason in the spec's words and includes its field.
     #[test]
     fn transport_errors_display_the_reason_and_their_field() {
-        let cases: [(Error, &[&str]); 16] = [
+        let cases: [(Error, &[&str]); 18] = [
             (Error::RecordingInProgress, &["recording in progress"]),
             (Error::PlaybackInProgress, &["playback in progress"]),
             (Error::NotRecording, &["not recording"]),
@@ -311,6 +337,18 @@ mod tests {
                     patch: 0,
                 },
                 &["unsupported codec model version", "0.7.0"],
+            ),
+            // Spec 009 FR-003, FR-011.
+            (
+                Error::InvalidVolume { position: 1.5 },
+                &["invalid volume position", "1.5", "within 0 … 1"],
+            ),
+            (
+                Error::TapNotOnRoute {
+                    tap: crate::Tap::AfterSpeaker,
+                    route: crate::Route::Earphone,
+                },
+                &["is not on the selected route", "AfterSpeaker", "Earphone"],
             ),
         ];
         let mut texts = std::vec::Vec::new();

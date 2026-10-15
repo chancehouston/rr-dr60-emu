@@ -376,6 +376,7 @@ impl Pipeline {
             .span(number)
             .ok_or(Error::NoSuchRecording { number })?;
         self.player.reset();
+        self.player.set_controls(self.route, self.volume); // spec 009 FR-009
         if let Some(dec) = &mut self.decoder {
             dec.reset();
         }
@@ -411,6 +412,8 @@ impl Pipeline {
         if self.transport.state != State::Playing {
             return Err(Error::NotPlaying);
         }
+        // Spec 009 FR-009: the route and the volume land at this block.
+        self.player.set_controls(self.route, self.volume);
         let mut produced = 0;
         let mut frames = 0;
         let Pipeline {
@@ -614,8 +617,11 @@ impl Pipeline {
     }
 
     /// Selects the output route (spec 006 FR-015): speaker or earphone, at any time, during
-    /// playback too; it takes effect at the next `play` block and survives `reset` and
-    /// `reconfigure`. The two routes produce identical output in this version. Real-time safe.
+    /// playback too; it takes effect at the next `play` block or processing call and survives
+    /// `reset` and `reconfigure`. Since 0.9 the route selects which branch of the output chain
+    /// runs and which output scale applies (spec 009 FR-001, FR-004): the volume control and
+    /// power amplifier into the speaker template, or the earphone output; the newly selected
+    /// branch starts from rest (FR-009). Real-time safe.
     pub fn set_route(&mut self, route: Route) {
         self.route = route;
     }
@@ -679,8 +685,10 @@ impl Pipeline {
 
     /// The host samples `play` produces after the recording's own ⌈K·m/l⌉: stage 10's
     /// settling length of device-rate silence (121 device samples at the committed
-    /// coefficients, −100 dB; 0 with the stage bypassed) and the rate conversion's full
-    /// remaining response (spec 006 FR-008). Real-time safe.
+    /// coefficients, −100 dB; 0 with the stage bypassed), the rate conversion's full
+    /// remaining response (spec 006 FR-008), and the output chain's settle
+    /// ([`output::settle_samples`](crate::output::settle_samples), about 58 ms) when any
+    /// output stage runs (spec 009 research R-08). Real-time safe.
     pub fn drain_samples(&self) -> u32 {
         self.player.drain_len_host_samples()
     }
@@ -806,6 +814,8 @@ mod tests {
     /// FR-021: these tests state the 006 rules, which the codec's own tests restate for frames).
     fn settings_006(rate: u32) -> Settings {
         let mut s = Settings::new(rate);
+        s.output = crate::settings::OutputSettings::BYPASSED; // 009 FR-016: the earlier checks run with stages 11–13 bypassed
+        s.tap = crate::settings::Tap::AfterPlayback; // 009 FR-011: 0.8's output
         s.speech_codec_enabled = false;
         s
     }
@@ -955,6 +965,11 @@ mod tests {
     #[test]
     fn route_is_set_at_any_time_and_survives_reset_and_reconfigure() {
         let mut p = small(8000, 2, 2);
+        // Spec 009 FR-016: with the output chain bypassed the route is the label of spec 006
+        // (the same sound on both routes); with the chain on it selects the branch (009 US1).
+        let mut s = *p.settings();
+        s.output = crate::settings::OutputSettings::BYPASSED;
+        p.reconfigure(s).unwrap();
         assert_eq!(p.route(), Route::Speaker);
         let x = tone(-20.0, 0.3, 8000.0);
         let _ = record_all(&mut p, &x);
@@ -976,7 +991,7 @@ mod tests {
         assert_eq!(
             rest[..pre],
             speaker[..],
-            "the route does not change the sound"
+            "with the chain bypassed the route does not change the sound"
         );
         p.reset();
         assert_eq!(p.route(), Route::Earphone);

@@ -30,15 +30,54 @@ pub enum Tap {
     /// After signal-chain stage 5 (VAS). Stage 10 is not run, whatever its setting
     /// (spec 003 FR-003). In drop mode the output can be shorter than the input.
     AfterVas,
-    /// After signal-chain stage 10 (playback band-limit). The default, because the device
-    /// band-limits on both record and playback (A-002).
-    #[default]
+    /// After signal-chain stage 10 (playback band-limit), before the output chain: **version
+    /// 0.8's default output** (spec 009 FR-011). Stages 11 – 13 are not run, whatever their
+    /// settings. The default through 0.8; since 0.9 the default is [`Tap::RouteOutput`], and a
+    /// host that wants 0.8's output sets this tap explicitly. [`Tap::AFTER_STAGE_10`] aliases it.
     AfterPlayback,
     /// After signal-chain stage 9 (the speech decoder), before stage 10: "the codec's output"
     /// (spec 008 FR-015). The speech encoder and decoder run in line with their 180-sample
     /// delay; stage 10 does not. With the speech codec bypassed this tap equals
     /// [`Tap::AfterVas`]. Appended in 0.8.
     AfterDecoder,
+    /// The selected route's output (spec 009 FR-011): after the speaker (stage 12) on the
+    /// speaker route, after the earphone output (stage 13) on the earphone route, at the
+    /// route's own full swing (A-042). **The default since 0.9**, because the device plays
+    /// through its speaker (A-031, A-010, A-032). Follows the route selected with
+    /// `Pipeline::set_route`. Appended in 0.9.
+    #[default]
+    RouteOutput,
+    /// After signal-chain stage 11 (the volume control and power amplifier) on either route:
+    /// the amplifier's output on the speaker route, the volume control's output on the
+    /// earphone route (spec 009 FR-011; A-031). Appended in 0.9.
+    AfterVolumeAmp,
+    /// After signal-chain stage 12 (the speaker template; A-010), the speaker route's output.
+    /// Refused at the processing call while the earphone route is selected
+    /// ([`Error::TapNotOnRoute`](crate::Error::TapNotOnRoute)). Appended in 0.9.
+    AfterSpeaker,
+    /// After signal-chain stage 13 (the earphone output; A-032), the earphone route's output.
+    /// Refused at the processing call while the speaker route is selected
+    /// ([`Error::TapNotOnRoute`](crate::Error::TapNotOnRoute)). Appended in 0.9.
+    AfterEarphone,
+}
+
+impl Tap {
+    /// [`Tap::AfterPlayback`] under the stage's name: after stage 10, before the output chain
+    /// (version 0.8's default output; spec 009 FR-011).
+    pub const AFTER_STAGE_10: Tap = Tap::AfterPlayback;
+
+    /// Whether everything through stage 10 runs for this tap: [`Tap::AfterPlayback`] and the
+    /// four output-chain taps (spec 009 FR-011).
+    pub(crate) const fn is_after_stage_10(self) -> bool {
+        matches!(
+            self,
+            Tap::AfterPlayback
+                | Tap::RouteOutput
+                | Tap::AfterVolumeAmp
+                | Tap::AfterSpeaker
+                | Tap::AfterEarphone
+        )
+    }
 }
 
 /// Record-path automatic gain control, signal-chain stage 3: a **limiter** (spec 005; replaces
@@ -270,15 +309,68 @@ impl Default for MemorySettings {
     }
 }
 
+/// The output chain, signal-chain stages 11 – 13 (spec 009): three bypass settings, one per
+/// stage. All three are **on by default**: the device plays through its volume control and
+/// power amplifier into its speaker, or through its earphone output (A-031, A-032 adopted;
+/// A-010 revised). A bypassed stage passes its input unchanged, and a bypassed output chain is
+/// a combination the device cannot produce (an emulator configuration for measurement).
+///
+/// - `volume_amp_enabled`: stage 11, the volume control and the power amplifier. Bypassing it
+///   removes the volume control, its 32 Hz coupling corner, the amplifier's 159 Hz corner, its
+///   gain and its clipper together: unity gain at the codec's scale (A-030), the volume position
+///   retained and without effect.
+/// - `speaker_enabled`: stage 12, a **template of a small speaker** (A-010, low confidence; not
+///   a measured driver), on the speaker route.
+/// - `earphone_enabled`: stage 13, the earphone follower's two coupling corners (A-032), on the
+///   earphone route.
+///
+/// The route and the volume position are controls, not settings (`Pipeline::set_route`,
+/// `Pipeline::set_volume`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct OutputSettings {
+    /// Stage 11 (volume control and power amplifier) on (`true`, default; A-031) or bypassed.
+    pub volume_amp_enabled: bool,
+    /// Stage 12 (the speaker template) on (`true`, default; A-010) or bypassed.
+    pub speaker_enabled: bool,
+    /// Stage 13 (the earphone output) on (`true`, default; A-032) or bypassed.
+    pub earphone_enabled: bool,
+}
+
+impl OutputSettings {
+    /// The device: every stage on (A-031, A-010, A-032).
+    pub const DEVICE: Self = Self {
+        volume_amp_enabled: true, // A-031 adopted (009 FR-002)
+        speaker_enabled: true,    // A-010 revised (009 FR-002)
+        earphone_enabled: true,   // A-032 adopted (009 FR-002)
+    };
+    /// Every output stage bypassed: the engine of version 0.8 at [`Tap::AfterPlayback`]. Not a
+    /// device configuration (spec 009 FR-002, FR-016: the earlier specs' checks run with it).
+    pub const BYPASSED: Self = Self {
+        volume_amp_enabled: false,
+        speaker_enabled: false,
+        earphone_enabled: false,
+    };
+}
+
+impl Default for OutputSettings {
+    /// [`OutputSettings::DEVICE`].
+    fn default() -> Self {
+        Self::DEVICE
+    }
+}
+
 /// The playback output route (spec 006 FR-015): the speaker, or the 2.5 mm earphone jack. The
 /// routes are exclusive, as on the device (S-001: no sound from the speaker while an earphone
 /// is connected). It is **not** a setting: the host selects it at any time, during playback
 /// too, with `Pipeline::set_route`, and it survives `reset` and `reconfigure`.
 ///
-/// In this version the two routes produce identical output. Signal-chain stages 11–13 (the
-/// volume control and power amplifier, the speaker, the earphone follower; A-031, A-010,
-/// A-032) are not yet modeled; the route exists so that those features do not change the
-/// interface.
+/// Since 0.9 the route selects which branch of the output chain runs (spec 009 FR-001): the
+/// volume control and power amplifier (stage 11) into the speaker template (stage 12), or the
+/// earphone output (stage 13); and which output scale applies (A-042: a sample of 1.0 is the
+/// amplifier's clip ceiling on the speaker route and the volume control's full swing on the
+/// earphone route). The relative loudness of the two transducers is not modeled: a host sets
+/// its own playback gain per route.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum Route {
@@ -311,7 +403,8 @@ pub struct Settings {
     /// both on the codec clips only the dead time of a loud onset (spec 005 FR-008). Not applied
     /// at [`Tap::AfterAgc`].
     pub adc_clamp_enabled: bool,
-    /// Output tap point. Default [`Tap::AfterPlayback`].
+    /// Output tap point. Default [`Tap::RouteOutput`] since 0.9 (the selected route's output;
+    /// spec 009 FR-010); [`Tap::AfterPlayback`] gives 0.8's default output.
     pub tap: Tap,
     /// Seed for stochastic stages (FR-009). No stage is stochastic in this version, so the
     /// seed has no effect on output.
@@ -331,26 +424,32 @@ pub struct Settings {
     /// recordings present is refused. Modeled on a 4 kbit/s CELP-class coder of the period, not
     /// on the device's own coder (A-040, A-041).
     pub speech_codec_enabled: bool,
+    /// Signal-chain stages 11 – 13, the **output chain** (the volume control and power
+    /// amplifier, the speaker template, the earphone output). Default
+    /// [`OutputSettings::DEVICE`] (every stage on; spec 009 FR-002).
+    pub output: OutputSettings,
 }
 
 impl Settings {
     /// Default settings for the given host rate: the limiter and the VAS on with the device
-    /// values, both band-limit stages and the ADC clamp on, tap after playback, seed 0, the
-    /// memory at the device's 60 minutes and 99 recordings.
+    /// values, both band-limit stages and the ADC clamp on, the speech codec on, the output
+    /// chain on, the tap at the route output (since 0.9, spec 009 FR-010; 0.8's output is
+    /// [`Tap::AfterPlayback`]), seed 0, the memory at the device's 60 minutes and 99 recordings.
     ///
     /// The rate is not validated here. [`Pipeline::new`](crate::Pipeline::new) validates it.
     pub const fn new(host_rate_hz: u32) -> Self {
         Self {
             host_rate_hz,
-            record_stage_enabled: true,   // A-002
-            playback_stage_enabled: true, // A-002
-            adc_clamp_enabled: true,      // A-030
-            tap: Tap::AfterPlayback,
+            record_stage_enabled: true,     // A-002
+            playback_stage_enabled: true,   // A-002
+            adc_clamp_enabled: true,        // A-030
+            tap: Tap::RouteOutput,          // 009 FR-010: the selected route's output
             seed: 0,                        // FR-009
             agc: AgcSettings::DEVICE,       // A-020, A-028, A-034, A-035
             vas: VasSettings::DEVICE,       // S-001, A-008, A-021 – A-024
             memory: MemorySettings::DEVICE, // S-001: 60 min, 99 items (006 FR-010)
             speech_codec_enabled: true,     // A-004 adopted (008 FR-002): the device has no bypass
+            output: OutputSettings::DEVICE, // A-031, A-010, A-032 (009 FR-002)
         }
     }
 
@@ -380,9 +479,46 @@ mod tests {
         assert_eq!(s.host_rate_hz, 48_000);
         assert!(s.record_stage_enabled); // A-002
         assert!(s.playback_stage_enabled); // A-002
-        assert_eq!(s.tap, Tap::AfterPlayback);
+        assert_eq!(s.tap, Tap::RouteOutput); // 009 FR-010
         assert_eq!(s.seed, 0); // FR-009
-        assert_eq!(Tap::default(), Tap::AfterPlayback);
+        assert_eq!(Tap::default(), Tap::RouteOutput);
+        assert_eq!(Tap::AFTER_STAGE_10, Tap::AfterPlayback); // 009 FR-011
+    }
+
+    /// 009 T006 (spec 009 FR-002, FR-011): the output chain's defaults and the taps that run
+    /// everything through stage 10.
+    #[test]
+    fn output_defaults_and_stage_10_taps() {
+        assert_eq!(OutputSettings::default(), OutputSettings::DEVICE);
+        let d = OutputSettings::default();
+        // A-031, A-010, A-032: every stage on in the device defaults.
+        assert_eq!(
+            (d.volume_amp_enabled, d.speaker_enabled, d.earphone_enabled),
+            (true, true, true)
+        );
+        let b = OutputSettings::BYPASSED;
+        assert_eq!(
+            (b.volume_amp_enabled, b.speaker_enabled, b.earphone_enabled),
+            (false, false, false)
+        );
+        assert_eq!(Settings::new(48_000).output, OutputSettings::DEVICE);
+        for t in [
+            Tap::AfterPlayback,
+            Tap::RouteOutput,
+            Tap::AfterVolumeAmp,
+            Tap::AfterSpeaker,
+            Tap::AfterEarphone,
+        ] {
+            assert!(t.is_after_stage_10(), "{t:?}");
+        }
+        for t in [
+            Tap::AfterAgc,
+            Tap::AfterRecord,
+            Tap::AfterVas,
+            Tap::AfterDecoder,
+        ] {
+            assert!(!t.is_after_stage_10(), "{t:?}");
+        }
     }
 
     /// 004 T004 (spec 004 FR-001, FR-002; contracts/rust-api.md): seven host rates with 6 kHz
@@ -444,7 +580,10 @@ mod tests {
     #[test]
     fn tap_after_agc_exists_and_default_is_unchanged() {
         assert_ne!(Tap::AfterAgc, Tap::AfterPlayback);
-        assert_eq!(Tap::default(), Tap::AfterPlayback);
+        // The default moved to the route output in 0.9 (spec 009 FR-010); 0.8's output stays
+        // `AfterPlayback`.
+        assert_eq!(Tap::default(), Tap::RouteOutput);
+        assert_ne!(Tap::AfterAgc, Tap::RouteOutput);
     }
 
     #[test]
@@ -465,7 +604,8 @@ mod tests {
     #[test]
     fn tap_after_vas_exists_and_default_is_unchanged() {
         assert_ne!(Tap::AfterVas, Tap::AfterPlayback);
-        assert_eq!(Tap::default(), Tap::AfterPlayback);
+        assert_eq!(Tap::default(), Tap::RouteOutput); // 009 FR-010
+        assert_ne!(Tap::AfterVas, Tap::RouteOutput);
     }
 
     /// 006 T011 (spec 006 FR-010; contracts/rust-api.md): the memory's device figures, 60 min

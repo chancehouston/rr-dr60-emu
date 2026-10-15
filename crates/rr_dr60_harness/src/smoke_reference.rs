@@ -77,7 +77,9 @@ pub struct Reference {
 
 /// The Rust path's reference figures.
 pub fn rust_reference() -> Reference {
-    let mut p = Pipeline::new(rr_dr60::Settings::new(SMOKE_RATE)).expect("rate");
+    // Spec 009 FR-016: the 0.8 case keeps 0.8's output (the chain bypassed, the tap after
+    // stage 10); the route cases of 009 T031/T033 have their own constants.
+    let mut p = Pipeline::new(crate::configs::settings_008(SMOKE_RATE)).expect("rate");
     p.start_recording().expect("idle");
     for chunk in stimulus().chunks(SMOKE_BLOCK) {
         let info = p.record(chunk, &mut []).expect("recording");
@@ -98,6 +100,51 @@ pub fn rust_reference() -> Reference {
         frames: out.flush.frames_total,
         silence_fed: out.silence_fed_samples,
     }
+}
+
+/// Spec 009 US4 (T031, T033): the four route cases' hashes, the stimulus recorded once in the
+/// 0.9 default (the chain on) and played on the speaker route at `VOLUME_REFERENCE` and at 1.0
+/// (the clipper engaged) and on the earphone route at both. Pinned once from the Rust path
+/// (`rust_route_references`); `ffi_parity::smoke_reference_hash_is_pinned` checks them.
+pub const SMOKE_SPEAKER_REF_HASH: u64 = 0xe414_787b_3395_1ea4; // measured 2026-10-15 from the Rust path (53 168 samples; 009 T033)
+/// See [`SMOKE_SPEAKER_REF_HASH`].
+pub const SMOKE_SPEAKER_FULL_HASH: u64 = 0xbf5f_8794_084b_0d08; // measured 2026-10-15 from the Rust path (53 168 samples; 009 T033)
+/// See [`SMOKE_SPEAKER_REF_HASH`].
+pub const SMOKE_EARPHONE_REF_HASH: u64 = 0xe7a0_621c_54ea_1b7a; // measured 2026-10-15 (Z_EAR 6.4 kΩ, T043 B1) from the Rust path (53 168 samples; 009 T033)
+/// See [`SMOKE_SPEAKER_REF_HASH`].
+pub const SMOKE_EARPHONE_FULL_HASH: u64 = 0x4a93_f668_93e3_04fb; // measured 2026-10-15 from the Rust path (53 168 samples; 009 T033)
+/// The route cases' playback length: the 0.8 length plus the chain's settle at 48 kHz
+/// (spec 009 research R-08: 50 404 + 2 764).
+pub const SMOKE_ROUTE_PLAYBACK_SAMPLES: usize = 53_168;
+
+/// The four route cases `(route, position, hash, length)` from the Rust path: one recording of
+/// the stimulus in the 0.9 default, played four times with the controls set before each
+/// playback (spec 009 FR-014, US4 scenario 3).
+pub fn rust_route_references() -> [(rr_dr60::Route, f32, u64, usize); 4] {
+    use rr_dr60::Route;
+    use rr_dr60::output::VOLUME_REFERENCE;
+    let mut p = Pipeline::new(rr_dr60::Settings::new(SMOKE_RATE)).expect("rate");
+    p.start_recording().expect("idle");
+    for chunk in stimulus().chunks(SMOKE_BLOCK) {
+        let info = p.record(chunk, &mut []).expect("recording");
+        assert!(info.stopped.is_none());
+    }
+    let out = p.stop_recording(&mut []).expect("recording");
+    let rr_dr60::StopResult::Kept { number, .. } = out.result else {
+        unreachable!("the stimulus is recorded")
+    };
+    let cases = [
+        (Route::Speaker, VOLUME_REFERENCE),
+        (Route::Speaker, 1.0),
+        (Route::Earphone, VOLUME_REFERENCE),
+        (Route::Earphone, 1.0),
+    ];
+    cases.map(|(route, volume)| {
+        p.set_route(route);
+        p.set_volume(volume).expect("a valid position");
+        let play = crate::split_checks::play_to_end(&mut p, number, SMOKE_BLOCK);
+        (route, volume, fnv1a64(&play), play.len())
+    })
 }
 
 /// The Rust path's playback of the smoke stimulus, hashed, with its length (the 006 reading).

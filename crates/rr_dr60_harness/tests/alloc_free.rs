@@ -165,6 +165,7 @@ fn processing_never_touches_the_heap() {
 
         // Spec 008 FR-016 (T022): the speech codec in the one-pass and in the paths.
         codec_cases(rate, vas_sizes);
+        output_cases(rate, vas_sizes);
     }
 
     // Spec 007 FR-016, FR-017, SC-004: the manifest reads, Rust and C.
@@ -428,4 +429,62 @@ fn vas_cases(rate: u32, sizes: &[usize]) {
         // SAFETY: handle came from rr_dr60_create.
         unsafe { rr_dr60_destroy(handle) };
     }
+}
+
+/// Spec 009 FR-012 (tasks.md T017): the output chain's controls and processing never touch the
+/// heap: `set_volume`, `volume`, `set_route` and the one-pass on both routes at three positions
+/// in the 0.9 default, the gain-law functions, and record / play through the chain with the
+/// controls moved between play blocks.
+fn output_cases(rate: u32, sizes: &[usize]) {
+    use rr_dr60::output::{VOLUME_REFERENCE, earphone_gain_db, speaker_gain_db};
+    let input = vas_input(rate);
+    let mut output = vec![0.0f32; 1024];
+    let settings = configs::memory_capacity(configs::settings("default_output", rate), 300, 3);
+    let mut p = Pipeline::new(settings).unwrap();
+    let mut events = vec![VasEvent::default(); p.max_record_events(1024) + 8];
+    let before = counts();
+    let mut db_sum = 0.0f32;
+    for (i, &n) in sizes.iter().enumerate() {
+        let route = if i % 2 == 0 {
+            Route::Speaker
+        } else {
+            Route::Earphone
+        };
+        let volume = [VOLUME_REFERENCE, 1.0, 0.0][i % 3];
+        p.set_route(route);
+        p.set_volume(volume).unwrap();
+        assert_eq!(p.volume(), volume);
+        db_sum += speaker_gain_db(volume) + earphone_gain_db(volume);
+        let _ = p.process(&input[..n], &mut output[..n]).unwrap();
+    }
+    std::hint::black_box(db_sum);
+    p.start_recording().unwrap();
+    for &n in &sizes[..200] {
+        let info = p.record(&input[..n], &mut events).unwrap();
+        assert!(info.stopped.is_none());
+    }
+    let out = p.stop_recording(&mut events).unwrap();
+    assert!(matches!(out.result, rr_dr60::StopResult::Kept { .. }));
+    p.start_playback(1).unwrap();
+    let mut block = 0usize;
+    loop {
+        p.set_route(if block % 7 < 4 {
+            Route::Speaker
+        } else {
+            Route::Earphone
+        });
+        p.set_volume([VOLUME_REFERENCE, 0.5, 1.0][block % 3])
+            .unwrap();
+        let info = p.play(&mut output[..512]).unwrap();
+        block += 1;
+        if info.finished {
+            break;
+        }
+    }
+    p.reset();
+    let after = counts();
+    assert_eq!(
+        after, before,
+        "{rate} Hz default_output: heap activity [allocs, deallocs, reallocs] with the output chain"
+    );
 }

@@ -1,8 +1,8 @@
 rr_dr60 manifest
-library_version: 0.8.0
+library_version: 0.9.0
 device_rate_hz: 6000
 stage_count: 15
-counts: not_modeled=8 assumed=7 sourced=0 checked=0
+counts: not_modeled=5 assumed=10 sourced=0 checked=0
 basis: Modeled on the RR-DR60 owner's and service manuals and the codec family datasheets; no stage has been checked against a real unit.
 evidence_link: https://github.com/chancehouston/rr-dr60-emu/issues/new?template=hardware_evidence.yml
 assumptions_link: https://github.com/chancehouston/rr-dr60-emu/blob/main/docs/hardware/assumptions.md
@@ -130,39 +130,39 @@ model_version: 0.4.0
 
 stage 11 volume_amp
 name: Volume control and power amplifier
-description: Sets the playback level and drives the speaker through a power amplifier that is muted while recording.
-status: not_modeled
+description: Sets the playback level with the volume control and drives the speaker through a power amplifier that clips near its battery rail; muted while recording.
+status: assumed
 path: playback
-confidence: not_applicable
+confidence: medium
 sources: S-001, S-002, S-006
-assumptions: A-031
-coverage:
-controls: set_route, route; EngineState.speaker_muted
-model_version:
+assumptions: A-031, A-043, A-044
+coverage: the 159 Hz corner's shift with the knob; the clip level's change with the battery and the transistor; the beep tones
+controls: output.volume_amp_enabled; set_volume, volume; set_route, route; Tap::AfterVolumeAmp; EngineState.speaker_muted
+model_version: 0.9.0
 
 stage 12 speaker
 name: Speaker
-description: Turns the amplified signal into sound through a 2.8 cm, 8 Ω speaker.
-status: not_modeled
+description: A 2.8 cm, 8 Ω dynamic speaker in the case, driven by the power amplifier; silent while recording.
+status: assumed
 path: playback
-confidence: not_applicable
+confidence: low
 sources: S-001, S-002
-assumptions: A-010
-coverage:
-controls: Route::Speaker
-model_version:
+assumptions: A-010, A-042
+coverage: this driver's own response (the model is a generic small-speaker template, not a capture); nonlinearity, enclosure, room
+controls: output.speaker_enabled; Route::Speaker; Tap::AfterSpeaker, Tap::RouteOutput
+model_version: 0.9.0
 
 stage 13 earphone
 name: Earphone output
-description: Feeds the volume-controlled signal to the 2.5 mm earphone jack, bypassing the power amplifier.
-status: not_modeled
+description: Feeds the volume-controlled signal to the 2.5 mm earphone jack through an emitter follower, bypassing the power amplifier.
+status: assumed
 path: playback
-confidence: not_applicable
+confidence: low
 sources: S-001, S-002
-assumptions: A-012, A-032
-coverage:
-controls: Route::Earphone
-model_version:
+assumptions: A-012, A-032, A-042
+coverage: the follower's clipping cut-off on loud material; its corners' spread with the transistor's gain; loads other than 16 Ω
+controls: output.earphone_enabled; Route::Earphone; Tap::AfterEarphone, Tap::RouteOutput
+model_version: 0.9.0
 
 stage 14 clock
 name: Clock

@@ -45,7 +45,7 @@ use rr_dr60::{
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 8;
+pub const RR_DR60_VERSION_MINOR: u32 = 9;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -106,6 +106,12 @@ pub enum RrDr60Status {
     /// The bytes carry speech-codec frames of a model version this release cannot decode
     /// (spec 008 FR-010, FR-011).
     UnsupportedCodecModelVersion = 22,
+    /// `rr_dr60_set_volume` with a position outside 0 … 1 or not finite; the position is
+    /// unchanged (spec 009 FR-003).
+    InvalidVolume = 23,
+    /// A processing call with `RR_DR60_TAP_AFTER_SPEAKER` or `RR_DR60_TAP_AFTER_EARPHONE` while
+    /// the other route is selected; nothing processed (spec 009 FR-011).
+    TapNotOnRoute = 24,
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -162,7 +168,26 @@ pub enum RrDr60Tap {
     /// After signal-chain stage 9 (the speech decoder), before stage 10 (spec 008 FR-015).
     /// Appended in 0.8.
     AfterDecoder = 4,
+    /// The selected route's output: after the speaker (stage 12) or the earphone output (stage
+    /// 13), at the route's full swing (spec 009 FR-011; A-042). The default since 0.9; to keep
+    /// 0.8's output set `RR_DR60_TAP_AFTER_PLAYBACK`. Appended in 0.9.
+    RouteOutput = 5,
+    /// After signal-chain stage 11 (the volume control and power amplifier) on either route
+    /// (spec 009 FR-011). Appended in 0.9.
+    AfterVolumeAmp = 6,
+    /// After signal-chain stage 12 (the speaker template); refused with
+    /// `RR_DR60_STATUS_TAP_NOT_ON_ROUTE` while the earphone route is selected (spec 009
+    /// FR-011). Appended in 0.9.
+    AfterSpeaker = 7,
+    /// After signal-chain stage 13 (the earphone output); refused with
+    /// `RR_DR60_STATUS_TAP_NOT_ON_ROUTE` while the speaker route is selected (spec 009
+    /// FR-011). Appended in 0.9.
+    AfterEarphone = 8,
 }
+
+/// `RR_DR60_TAP_AFTER_PLAYBACK` under the stage's name: after stage 10, before the output chain
+/// (version 0.8's default output; spec 009 FR-011).
+pub const RR_DR60_TAP_AFTER_STAGE_10: RrDr60Tap = RrDr60Tap::AfterPlayback;
 
 /// What the VAS does with paused audio, passed as `uint32_t` in [`RrDr60Settings::vas_mode`]
 /// (spec 003 FR-004).
@@ -381,8 +406,9 @@ pub struct RrDr60MemoryStatus {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RrDr60Settings {
-    /// Must be `sizeof(RrDr60Settings)`: 96 since 0.8 (88 in 0.6 and 0.7, 80 in 0.5, 72 in 0.3
-    /// and 0.4, rejected as `STRUCT_SIZE`). Lets the struct grow in later versions.
+    /// Must be `sizeof(RrDr60Settings)`: 104 since 0.9 (96 in 0.8, 88 in 0.6 and 0.7, 80 in
+    /// 0.5, 72 in 0.3 and 0.4, rejected as `STRUCT_SIZE`). Lets the struct grow in later
+    /// versions.
     pub struct_size: u32,
     /// Host sample rate in Hz: 6000, 8000, 16000, 44100, 48000, 88200 or 96000 (spec 004
     /// FR-002; 6000 is the device rate, A-026, and needs no rate conversion).
@@ -447,11 +473,25 @@ pub struct RrDr60Settings {
     /// frames when on, device-rate samples when bypassed (spec 008 FR-002, FR-012). Appended in
     /// 0.8 at offset 88.
     pub speech_codec_enabled: bool,
+    /// Ignored; reserved since 0.9 (the 0.8 layout's tail padding, offsets 89 – 95, kept empty
+    /// so that a 0.8 caller's `struct_size = 96` is refused instead of reading settings from
+    /// uninitialized bytes). Write 0.
+    pub reserved_009: [u8; 7],
+    /// Signal-chain stage 11, the volume control and power amplifier, on (true, default; A-031)
+    /// or bypassed (unity gain at the codec's scale; the volume position retained and ignored).
+    /// Appended in 0.9 at offset 96 (spec 009 FR-002, FR-014).
+    pub output_volume_amp_enabled: bool,
+    /// Signal-chain stage 12, a template of a small speaker (A-010, low confidence), on (true,
+    /// default) or bypassed. Appended in 0.9 at offset 97.
+    pub output_speaker_enabled: bool,
+    /// Signal-chain stage 13, the earphone output's two coupling corners (A-032), on (true,
+    /// default) or bypassed. Appended in 0.9 at offset 98.
+    pub output_earphone_enabled: bool,
 }
 
 // spec 006 contracts/c-api.md: the 0.6 layout is 88 bytes; the 0.5 offsets are kept and the two
 // memory fields sit at 76 and 80 (the unit tests assert every offset).
-const _: () = assert!(size_of::<RrDr60Settings>() == 96); // spec 008 contracts/c-api.md: 88 → 96
+const _: () = assert!(size_of::<RrDr60Settings>() == 104); // spec 009 contracts/c-api.md: 96 → 104
 // spec 003 contracts/c-api.md: the C event type and the core's `repr(C)` `VasEvent` share one
 // layout, so `rr_dr60_process_with_events` can pass the caller's buffer straight through.
 const _: () = assert!(
@@ -560,6 +600,9 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
             RrDr60Status::UnsupportedCodecModelVersion,
             RrDr60SettingField::None,
         ),
+        // Spec 009 contracts/c-api.md: statuses 23 and 24.
+        Error::InvalidVolume { .. } => (RrDr60Status::InvalidVolume, RrDr60SettingField::None),
+        Error::TapNotOnRoute { .. } => (RrDr60Status::TapNotOnRoute, RrDr60SettingField::None),
         _ => (RrDr60Status::InvalidArgument, RrDr60SettingField::None),
     }
 }
@@ -593,6 +636,10 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Sett
         2 => Tap::AfterAgc,
         3 => Tap::AfterVas,
         4 => Tap::AfterDecoder,
+        5 => Tap::RouteOutput,
+        6 => Tap::AfterVolumeAmp,
+        7 => Tap::AfterSpeaker,
+        8 => Tap::AfterEarphone,
         _ => return Err(invalid(RrDr60SettingField::Tap)),
     };
     let vas_mode = match s.vas_mode {
@@ -620,13 +667,17 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Sett
     out.memory.capacity_s = s.memory_capacity_s;
     out.memory.max_recordings = s.memory_max_recordings;
     out.speech_codec_enabled = s.speech_codec_enabled;
+    out.output.volume_amp_enabled = s.output_volume_amp_enabled; // 009 FR-002
+    out.output.speaker_enabled = s.output_speaker_enabled;
+    out.output.earphone_enabled = s.output_earphone_enabled;
     Ok(out)
 }
 
 /// Default settings for `host_rate_hz` (not validated): the limiter and the VAS on with the
-/// modeled device values, both band-limit stages and the ADC clamp on, tap after playback,
-/// seed 0, the reserved slots 0, the memory at the device's 60 minutes and 99 recordings.
-/// Never fails.
+/// modeled device values, both band-limit stages and the ADC clamp on, the speech codec on,
+/// the output chain on, the tap at the route output (`RR_DR60_TAP_ROUTE_OUTPUT`, since 0.9;
+/// 0.8's output is `RR_DR60_TAP_AFTER_PLAYBACK`), seed 0, the reserved slots 0, the memory at
+/// the device's 60 minutes and 99 recordings. Never fails.
 #[unsafe(no_mangle)]
 pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings {
     let agc = rr_dr60::AgcSettings::DEVICE; // A-020, A-028, A-034, A-035
@@ -638,7 +689,7 @@ pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings 
         host_rate_hz,
         record_stage_enabled: defaults.record_stage_enabled,
         playback_stage_enabled: defaults.playback_stage_enabled,
-        tap: RrDr60Tap::AfterPlayback as u32,
+        tap: RrDr60Tap::RouteOutput as u32, // 009 FR-010
         seed: 0,
         agc_enabled: agc.enabled,
         agc_knee_dbfs: agc.knee_dbfs,
@@ -657,6 +708,10 @@ pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings 
         memory_max_recordings: memory.max_recordings,
         reserved_008: 0,
         speech_codec_enabled: defaults.speech_codec_enabled, // A-004 adopted (008 FR-002)
+        reserved_009: [0; 7],
+        output_volume_amp_enabled: defaults.output.volume_amp_enabled, // A-031 (009 FR-002)
+        output_speaker_enabled: defaults.output.speaker_enabled,       // A-010 (009 FR-002)
+        output_earphone_enabled: defaults.output.earphone_enabled,     // A-032 (009 FR-002)
     }
 }
 
@@ -878,6 +933,14 @@ unsafe fn process_block(
         State::Playing => return early(RrDr60Status::PlaybackInProgress),
         _ => {}
     }
+    // Spec 009 FR-011: a named route tap with the other route selected is refused before
+    // anything runs (the in-place core call has no error channel, so the check is here).
+    if matches!(
+        (p.inner.settings().tap, p.inner.route()),
+        (Tap::AfterSpeaker, Route::Earphone) | (Tap::AfterEarphone, Route::Speaker)
+    ) {
+        return early(RrDr60Status::TapNotOnRoute);
+    }
     if input.is_null() || output.is_null() || (events.is_null() && events_capacity > 0) {
         return early(RrDr60Status::NullPointer);
     }
@@ -918,8 +981,8 @@ unsafe fn process_block(
                     std::slice::from_raw_parts_mut(output, frames),
                 )
             };
-            // Lengths are equal by construction and the transport is idle (checked above),
-            // so this cannot fail.
+            // Lengths are equal by construction, the transport is idle and the tap is on the
+            // route (all checked above), so this cannot fail.
             p.inner.process_with_events(x, y, slots).unwrap_or_default()
         }
     }));
@@ -1501,6 +1564,80 @@ pub unsafe extern "C" fn rr_dr60_get_route(
     // SAFETY: out_route is non-null and writable (caller contract).
     unsafe { *out_route = route_to_c(p.inner.route()) };
     RrDr60Status::Ok
+}
+
+/// The volume control's default position (spec 009 FR-003; A-043): the reference position at
+/// which a full-scale codec output just reaches the amplifier's clip ceiling under the loaded
+/// law, about 0.1335. Equal to the Rust `output::VOLUME_REFERENCE`. In the C header it is a
+/// double literal: cast it to `float` (`(float)RR_DR60_VOLUME_REFERENCE`), whose nearest value
+/// is the engine's default bit for bit.
+pub const RR_DR60_VOLUME_REFERENCE: f32 = 0.133_451_74; // A-043: equal to `rr_dr60::output::VOLUME_REFERENCE` bit for bit (a literal so cbindgen emits the define; the unit test pins it)
+
+/// Sets the volume position (spec 009 FR-003; A-043, A-044): the control's wiper fraction,
+/// 0 (silence) to 1 (maximum), at any time including during playback; it takes effect at the
+/// next processing call or `rr_dr60_play` block and survives `rr_dr60_reset` and
+/// `rr_dr60_reconfigure`. Default `RR_DR60_VOLUME_REFERENCE`; positions above it clip
+/// full-scale material on the speaker route. Real-time safe.
+///
+/// Returns `RR_DR60_STATUS_INVALID_VOLUME` for a non-finite position or one outside 0 … 1; the
+/// position is then unchanged.
+///
+/// # Safety
+///
+/// `pipeline` must be NULL or a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_set_volume(
+    pipeline: *mut RrDr60Pipeline,
+    position: f32,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    match p.inner.set_volume(position) {
+        Ok(()) => RrDr60Status::Ok,
+        Err(e) => status_from_error(e),
+    }
+}
+
+/// Writes the volume position to `*out_position` (spec 009 FR-003). Real-time safe.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_position` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_get_volume(
+    pipeline: *mut RrDr60Pipeline,
+    out_position: *mut f32,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out_position.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: out_position is non-null and writable (caller contract).
+    unsafe { *out_position = p.inner.volume() };
+    RrDr60Status::Ok
+}
+
+/// The speaker route's gain in dB at a volume position under the circuit's loaded law (spec
+/// 009 FR-003; A-044): 22.7 dB at 1, about 9.6 dB at 0.5, −∞ at 0; in volts of amplifier output
+/// per volt of codec output, for a host's volume display. Needs no handle; real-time safe.
+#[unsafe(no_mangle)]
+pub extern "C" fn rr_dr60_speaker_gain_db(position: f32) -> f32 {
+    rr_dr60::output::speaker_gain_db(position)
+}
+
+/// The earphone route's gain in dB at a volume position under the loaded law (spec 009 FR-003;
+/// A-044): 0 dB at 1, about −9.4 dB at 0.5, about −19.2 dB at `RR_DR60_VOLUME_REFERENCE`, −∞ at
+/// 0. Needs no handle; real-time safe.
+#[unsafe(no_mangle)]
+pub extern "C" fn rr_dr60_earphone_gain_db(position: f32) -> f32 {
+    rr_dr60::output::earphone_gain_db(position)
 }
 
 /// Writes the engine's state (idle, recording or playing), the route, the current recording's
@@ -2303,7 +2440,7 @@ mod tests {
         let mut s = rr_dr60_settings_default(48_000);
         assert_eq!(s.struct_size as usize, size_of::<RrDr60Settings>());
         assert!(to_settings(&s).is_ok());
-        s.tap = 7;
+        s.tap = 9; // 0 – 8 are taps since 0.9 (spec 009 contracts/c-api.md)
         assert_eq!(
             to_settings(&s),
             Err((RrDr60Status::InvalidArgument, RrDr60SettingField::Tap))
@@ -2353,7 +2490,7 @@ mod tests {
     #[test]
     fn settings_layout_is_88_bytes_with_the_contract_offsets() {
         use std::mem::offset_of;
-        assert_eq!(size_of::<RrDr60Settings>(), 96); // spec 008 contracts/c-api.md
+        assert_eq!(size_of::<RrDr60Settings>(), 104); // spec 009 contracts/c-api.md
         assert_eq!(offset_of!(RrDr60Settings, struct_size), 0);
         assert_eq!(offset_of!(RrDr60Settings, host_rate_hz), 4);
         assert_eq!(offset_of!(RrDr60Settings, record_stage_enabled), 8);
@@ -2378,6 +2515,159 @@ mod tests {
         // Spec 008 contracts/c-api.md: 88 → 96, the codec control at 88 behind a reserved word.
         assert_eq!(offset_of!(RrDr60Settings, reserved_008), 84);
         assert_eq!(offset_of!(RrDr60Settings, speech_codec_enabled), 88);
+        // Spec 009 contracts/c-api.md: 96 → 104, the three output bools after the 0.8 size (the
+        // 0.8 tail padding 89 – 95 stays reserved so a stale `struct_size = 96` is refused).
+        assert_eq!(offset_of!(RrDr60Settings, reserved_009), 89);
+        assert_eq!(offset_of!(RrDr60Settings, output_volume_amp_enabled), 96);
+        assert_eq!(offset_of!(RrDr60Settings, output_speaker_enabled), 97);
+        assert_eq!(offset_of!(RrDr60Settings, output_earphone_enabled), 98);
+        let mut stale = rr_dr60_settings_default(48_000);
+        stale.struct_size = 96; // a 0.8 caller
+        assert_eq!(
+            to_settings(&stale),
+            Err((
+                RrDr60Status::InvalidArgument,
+                RrDr60SettingField::StructSize
+            ))
+        );
+    }
+
+    /// 009 T029 (spec 009 FR-014; contracts/c-api.md): the volume functions and the constant.
+    /// `RR_DR60_VOLUME_REFERENCE` is the Rust constant bit for bit; the gain functions equal the
+    /// Rust ones at six positions; `rr_dr60_set_volume` refuses 1.5, −1, NaN and ∞ with
+    /// `INVALID_VOLUME` and leaves the position; a NULL out pointer is `NULL_POINTER` (the
+    /// convention of every `rr_dr60_get_*`); `rr_dr60_process` with the speaker tap on the
+    /// earphone route is `TAP_NOT_ON_ROUTE` with `produced` 0.
+    #[test]
+    fn volume_functions_and_route_tap_refusal() {
+        assert_eq!(
+            RR_DR60_VOLUME_REFERENCE.to_bits(),
+            rr_dr60::output::VOLUME_REFERENCE.to_bits()
+        );
+        for p in [1.0f32, 0.5, 0.25, RR_DR60_VOLUME_REFERENCE, 0.1, 0.01] {
+            assert_eq!(
+                rr_dr60_speaker_gain_db(p).to_bits(),
+                rr_dr60::output::speaker_gain_db(p).to_bits()
+            );
+            assert_eq!(
+                rr_dr60_earphone_gain_db(p).to_bits(),
+                rr_dr60::output::earphone_gain_db(p).to_bits()
+            );
+        }
+        let s = rr_dr60_settings_default(48_000);
+        let mut p: *mut RrDr60Pipeline = std::ptr::null_mut();
+        // SAFETY: valid pointers.
+        assert_eq!(unsafe { rr_dr60_create(&s, &mut p) }, RrDr60Status::Ok);
+        let mut v = -1.0f32;
+        // SAFETY: live handle; valid out pointer.
+        assert_eq!(unsafe { rr_dr60_get_volume(p, &mut v) }, RrDr60Status::Ok);
+        assert_eq!(v, RR_DR60_VOLUME_REFERENCE);
+        for bad in [1.5f32, -1.0, f32::NAN, f32::INFINITY] {
+            // SAFETY: live handle.
+            assert_eq!(
+                unsafe { rr_dr60_set_volume(p, bad) },
+                RrDr60Status::InvalidVolume,
+                "{bad}"
+            );
+            // SAFETY: live handle; valid out pointer.
+            assert_eq!(unsafe { rr_dr60_get_volume(p, &mut v) }, RrDr60Status::Ok);
+            assert_eq!(v, RR_DR60_VOLUME_REFERENCE, "unchanged after {bad}");
+        }
+        // SAFETY: live handle.
+        assert_eq!(unsafe { rr_dr60_set_volume(p, 0.5) }, RrDr60Status::Ok);
+        // SAFETY: live handle; valid out pointer.
+        assert_eq!(unsafe { rr_dr60_get_volume(p, &mut v) }, RrDr60Status::Ok);
+        assert_eq!(v, 0.5);
+        // SAFETY: live handle; a NULL out pointer must be refused.
+        assert_eq!(
+            unsafe { rr_dr60_get_volume(p, std::ptr::null_mut()) },
+            RrDr60Status::NullPointer
+        );
+        // SAFETY: NULL handle.
+        assert_eq!(
+            unsafe { rr_dr60_set_volume(std::ptr::null_mut(), 0.5) },
+            RrDr60Status::NullPointer
+        );
+        // SAFETY: live handle.
+        unsafe { rr_dr60_destroy(p) };
+        // The route-tap refusal through the processing call.
+        let mut s = rr_dr60_settings_default(48_000);
+        s.tap = RrDr60Tap::AfterSpeaker as u32;
+        let mut p: *mut RrDr60Pipeline = std::ptr::null_mut();
+        // SAFETY: valid pointers.
+        assert_eq!(unsafe { rr_dr60_create(&s, &mut p) }, RrDr60Status::Ok);
+        // SAFETY: live handle.
+        assert_eq!(
+            unsafe { rr_dr60_set_route(p, RrDr60Route::Earphone as u32) },
+            RrDr60Status::Ok
+        );
+        let x = [0.1f32; 64];
+        let mut y = [0.0f32; 64];
+        let mut info = RrDr60BlockInfo::default();
+        // SAFETY: live handle; valid buffers.
+        let status = unsafe { rr_dr60_process(p, x.as_ptr(), y.as_mut_ptr(), 64, &mut info) };
+        assert_eq!(status, RrDr60Status::TapNotOnRoute);
+        assert_eq!(info.produced, 0);
+        // SAFETY: live handle.
+        assert_eq!(
+            unsafe { rr_dr60_set_route(p, RrDr60Route::Speaker as u32) },
+            RrDr60Status::Ok
+        );
+        // SAFETY: live handle; valid buffers.
+        let status = unsafe { rr_dr60_process(p, x.as_ptr(), y.as_mut_ptr(), 64, &mut info) };
+        assert_eq!(status, RrDr60Status::Ok);
+        // SAFETY: live handle.
+        unsafe { rr_dr60_destroy(p) };
+    }
+
+    /// 009 T006 (spec 009 contracts/c-api.md): taps 0 – 8 convert both ways, 9 is refused, the
+    /// stage-10 alias, the statuses 23 and 24, the defaults' three output bools and tap.
+    #[test]
+    fn output_chain_taps_statuses_and_defaults() {
+        let mut s = rr_dr60_settings_default(48_000);
+        assert_eq!(s.tap, RrDr60Tap::RouteOutput as u32); // 009 FR-010
+        assert_eq!(RrDr60Tap::RouteOutput as u32, 5);
+        assert_eq!(RrDr60Tap::AfterVolumeAmp as u32, 6);
+        assert_eq!(RrDr60Tap::AfterSpeaker as u32, 7);
+        assert_eq!(RrDr60Tap::AfterEarphone as u32, 8);
+        assert_eq!(RR_DR60_TAP_AFTER_STAGE_10, RrDr60Tap::AfterPlayback);
+        for (v, t) in [
+            (0, Tap::AfterRecord),
+            (1, Tap::AfterPlayback),
+            (2, Tap::AfterAgc),
+            (3, Tap::AfterVas),
+            (4, Tap::AfterDecoder),
+            (5, Tap::RouteOutput),
+            (6, Tap::AfterVolumeAmp),
+            (7, Tap::AfterSpeaker),
+            (8, Tap::AfterEarphone),
+        ] {
+            s.tap = v;
+            assert_eq!(to_settings(&s).unwrap().tap, t, "{v}");
+        }
+        s.tap = 9;
+        assert!(to_settings(&s).is_err());
+        assert_eq!(RrDr60Status::InvalidVolume as u32, 23);
+        assert_eq!(RrDr60Status::TapNotOnRoute as u32, 24);
+        assert_eq!(
+            status_from_error(Error::InvalidVolume { position: 2.0 }),
+            RrDr60Status::InvalidVolume
+        );
+        assert_eq!(
+            status_from_error(Error::TapNotOnRoute {
+                tap: Tap::AfterSpeaker,
+                route: rr_dr60::Route::Earphone,
+            }),
+            RrDr60Status::TapNotOnRoute
+        );
+        let d = rr_dr60_settings_default(48_000);
+        assert!(
+            d.output_volume_amp_enabled && d.output_speaker_enabled && d.output_earphone_enabled
+        );
+        let mut off = d;
+        off.output_speaker_enabled = false;
+        assert!(!to_settings(&off).unwrap().output.speaker_enabled);
+        assert!(to_settings(&off).unwrap().output.volume_amp_enabled);
     }
 
     /// 005 T008 (FR-010, FR-015), restated by 006 T017: the 0.5 defaults, the reserved slots at
@@ -2385,7 +2675,7 @@ mod tests {
     #[test]
     fn settings_default_has_the_0_6_values() {
         let s = rr_dr60_settings_default(48_000);
-        assert_eq!(s.struct_size, 96); // spec 008
+        assert_eq!(s.struct_size, 104); // spec 009
         assert_eq!(s.memory_capacity_s, 3600); // S-001: 60 minutes
         assert_eq!(s.memory_max_recordings, 99); // S-001: 99 items
         assert!(s.agc_enabled); // A-020
@@ -3113,13 +3403,13 @@ mod tests {
         bytes
     }
 
-    /// 008 T040 (contracts/c-api.md): 96 bytes with the codec control at 88, default `true`;
-    /// a 0.7-layout `struct_size` of 88 is `STRUCT_SIZE`; the decoder tap is 4; the encoding
-    /// values are the form's.
+    /// 008 T040 (contracts/c-api.md): the codec control at 88, default `true`; a 0.7-layout
+    /// `struct_size` of 88 is `STRUCT_SIZE`; the decoder tap is 4; the encoding values are the
+    /// form's. (The size is 104 since 0.9, spec 009 contracts/c-api.md.)
     #[test]
     fn codec_settings_tap_and_encoding_values() {
         let s = rr_dr60_settings_default(48_000);
-        assert_eq!(s.struct_size, 96);
+        assert_eq!(s.struct_size, 104);
         assert!(s.speech_codec_enabled);
         assert_eq!(s.reserved_008, 0);
         let mut old = s;

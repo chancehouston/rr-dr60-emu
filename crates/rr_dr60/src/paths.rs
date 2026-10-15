@@ -22,11 +22,13 @@ use crate::pipeline::VasEvent;
 use crate::rate::RatePlan;
 use crate::resample::{self, PolyphaseDown, PolyphaseUp};
 use crate::sanitize::{narrow_out, sanitize_in};
+use crate::settings::Route;
 use crate::settings::{DEVICE_RATE_HZ, Settings, Tap, VasMode};
 #[cfg(any(test, feature = "__test-hooks"))]
 use crate::stages::biquad::Biquad;
 use crate::stages::clamp::ClampStage;
 use crate::stages::limiter::Limiter;
+use crate::stages::output::OutputChain;
 use crate::stages::vas::{VasDecision, VasStage};
 use crate::stages::voiceband::{PlaybackStage, RecordStage};
 
@@ -157,10 +159,8 @@ impl RecordHalf {
             vas: VasStage::new(&settings.vas),
             run_vas: settings.vas.enabled
                 && (!honour_tap
-                    || matches!(
-                        settings.tap,
-                        Tap::AfterVas | Tap::AfterDecoder | Tap::AfterPlayback
-                    )),
+                    || matches!(settings.tap, Tap::AfterVas | Tap::AfterDecoder)
+                    || settings.tap.is_after_stage_10()),
             mute: settings.vas.mode == VasMode::Mute,
             forced: false,
             after_drop: false,
@@ -243,8 +243,9 @@ impl PlaybackHalf {
     pub(crate) fn new(settings: &Settings, honour_tap: bool) -> Self {
         Self {
             playback: PlaybackStage::playback(),
+            // Spec 009 FR-011: the output-chain taps run stage 10 too (009 T013 adds the chain).
             run_playback: settings.playback_stage_enabled
-                && (!honour_tap || settings.tap == Tap::AfterPlayback),
+                && (!honour_tap || settings.tap.is_after_stage_10()),
         }
     }
 
@@ -418,7 +419,9 @@ impl RecordPath {
         // Spec 008 FR-004, FR-015: the codec runs after the recorder whenever it is on, and
         // after the one-pass record path at the taps from the decoder's on.
         let codec_runs = settings.speech_codec_enabled
-            && (!honour_tap || matches!(settings.tap, Tap::AfterDecoder | Tap::AfterPlayback));
+            && (!honour_tap
+                || settings.tap == Tap::AfterDecoder
+                || settings.tap.is_after_stage_10());
         let codec_delay = if codec_runs {
             codec_delay_host_samples(settings.host_rate_hz)
         } else {
@@ -590,6 +593,9 @@ pub(crate) struct PlaybackPath {
     pub(crate) half: PlaybackHalf,
     /// `None` at the 6 kHz identity rate and at the honoured "after AGC" tap.
     pub(crate) up: Option<PolyphaseUp>,
+    /// The output chain, stages 11 – 13, at the host rate after the interpolator (spec 009
+    /// research R-01).
+    pub(crate) chain: OutputChain,
     /// The identity rate's one pending host sample (stage 10's output, 64-bit).
     pending: Option<f64>,
     plan_l: u64,
@@ -615,6 +621,7 @@ impl PlaybackPath {
             } else {
                 resample::interpolator(plan)
             },
+            chain: OutputChain::new(settings, honour_tap),
             pending: None,
             plan_l: l,
             plan_m: m,
@@ -640,7 +647,20 @@ impl PlaybackPath {
         // remaining response (research R-06; hardware review B2). N₁₀ = 0 with stage 10 off.
         let n10 = if self.half.runs() { N10 as u64 } else { 0 };
         let settle = (u128::from(n10) * u128::from(self.plan_m)).div_ceil(u128::from(self.plan_l));
-        self.drain = u32::try_from(settle).unwrap_or(u32::MAX) + 2 * self.delay_host;
+        // Spec 009 research R-08: plus the output chain's settle N_OUT when any output stage runs.
+        let n_out = if self.chain.runs_any() {
+            self.chain.n_out()
+        } else {
+            0
+        };
+        self.drain = u32::try_from(settle).unwrap_or(u32::MAX) + 2 * self.delay_host + n_out;
+    }
+
+    /// Copies the route and the volume position into the chain at a block boundary (spec 009
+    /// FR-009).
+    #[inline]
+    pub(crate) fn set_controls(&mut self, route: Route, volume: f32) {
+        self.chain.set_controls(route, volume);
     }
 
     /// One stored device sample in: widened exactly, through stage 10 if it runs, into the
@@ -667,14 +687,15 @@ impl PlaybackPath {
     }
 
     /// The next host sample, if the device samples it reads have arrived (spec 003 research
-    /// R-05): at the identity rate the pending sample, once. Narrowed for output.
+    /// R-05): at the identity rate the pending sample, once; through the output chain (spec
+    /// 009 research R-01: at the host rate, on the 64-bit sample); narrowed for output.
     #[inline]
     pub(crate) fn try_next_host(&mut self) -> Option<f32> {
         let y = match &mut self.up {
             None => self.pending.take()?,
             Some(up) => up.try_next_host()?,
         };
-        Some(narrow_out(y))
+        Some(narrow_out(self.chain.process(y)))
     }
 
     /// The path's latency in host samples: round(D + τ_play · host / 6000) (spec 006 FR-016).
@@ -697,6 +718,7 @@ impl PlaybackPath {
             up.reset();
         }
         self.pending = None;
+        self.chain.reset();
     }
 
     /// Test-only: stage 10 with other coefficients (the SC-007 mutation tests, spec 004 T024);
@@ -704,6 +726,18 @@ impl PlaybackPath {
     #[cfg(feature = "__test-hooks")]
     pub(crate) fn replace_playback_stage(&mut self, stage: PlaybackStage, plan: &RatePlan) {
         self.half.playback = stage;
+        self.derive_figures(plan);
+    }
+
+    /// Test-only: the output chain altered (the spec 009 SC-006 mutation tests); the drain
+    /// follows.
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn mutate_chain(
+        &mut self,
+        m: &crate::__test_hooks::OutputMutation,
+        plan: &RatePlan,
+    ) {
+        self.chain.__mutate(m);
         self.derive_figures(plan);
     }
 }
@@ -926,6 +960,7 @@ mod tests {
     fn identity_rate_pending_sample() {
         let mut s = Settings::new(6000);
         s.playback_stage_enabled = false;
+        s.output = crate::settings::OutputSettings::BYPASSED; // 009 FR-016
         let mut play = PlaybackPath::new(&s, &plan(6000), true);
         assert_eq!(play.try_next_host(), None);
         play.push_device(0.5);
@@ -969,11 +1004,14 @@ mod tests {
         }
     }
 
-    /// R-06 (FR-008): the drain length table, ⌈N₁₀·m/l⌉ + 2D, and 2D alone with stage 10 off.
+    /// R-06 (FR-008): the drain length table, ⌈N₁₀·m/l⌉ + 2D, and 2D alone with stage 10 off
+    /// (with the output chain bypassed; spec 009 adds N_OUT when it runs, tested in
+    /// `pipeline.rs`).
     #[test]
     fn drain_len_table() {
         for (i, rate) in RATES.iter().copied().enumerate() {
-            let s = Settings::new(rate);
+            let mut s = Settings::new(rate);
+            s.output = crate::settings::OutputSettings::BYPASSED; // 009 FR-016: spec 006's table
             let play = PlaybackPath::new(&s, &plan(rate), true);
             assert_eq!(play.drain_len_host_samples(), DRAIN[i], "{rate} Hz");
             let (l, m) = l_m(rate);

@@ -23,6 +23,12 @@
  * recording's frame bytes (51 frames), the frame count and the stop's silence fed. */
 #define RR_DR60_SMOKE_REFERENCE_HASH 0x971c70e3428c23c7ULL
 #define RR_DR60_SMOKE_PLAYBACK_SAMPLES 50404
+/* Spec 009 T033: the four route cases, pinned from the Rust path (smoke_reference.rs). */
+#define RR_DR60_SMOKE_ROUTE_PLAYBACK_SAMPLES 53168
+#define RR_DR60_SMOKE_SPEAKER_REF_HASH 0xe414787b33951ea4ULL
+#define RR_DR60_SMOKE_SPEAKER_FULL_HASH 0xbf5f8794084b0d08ULL
+#define RR_DR60_SMOKE_EARPHONE_REF_HASH 0xe7a0621c54ea1b7aULL
+#define RR_DR60_SMOKE_EARPHONE_FULL_HASH 0x4a93f66893e304fbULL
 #define RR_DR60_SMOKE_FRAMES_HASH 0x54035d54bd48af25ULL
 #define RR_DR60_SMOKE_FRAMES 51
 #define RR_DR60_SMOKE_SILENCE_FED 149
@@ -134,12 +140,20 @@ int main(int argc, char **argv) {
 
   RrDr60Settings s = rr_dr60_settings_default(FS);
   CHECK(s.struct_size == sizeof(RrDr60Settings), "struct_size %u", s.struct_size);
-  CHECK(s.struct_size == 96, "struct_size %u (must be 96 since 0.8, spec 008 contracts/c-api.md)", s.struct_size);
+  CHECK(s.struct_size == 104, "struct_size %u (must be 104 since 0.9, spec 009 contracts/c-api.md)", s.struct_size);
+  CHECK(s.output_volume_amp_enabled && s.output_speaker_enabled && s.output_earphone_enabled,
+        "output chain on by default (spec 009 FR-002; A-031, A-010, A-032)");
   CHECK(s.speech_codec_enabled, "speech codec on by default (spec 008 FR-002, A-004)");
   CHECK(s.reserved_008 == 0, "reserved_008 must default to 0");
   CHECK(s.memory_capacity_s == 3600, "default memory capacity %u s (S-001: 60 minutes)", s.memory_capacity_s);
   CHECK(s.memory_max_recordings == 99, "default recording count %u (S-001: 99 items)", s.memory_max_recordings);
-  CHECK(s.tap == RR_DR60_TAP_AFTER_PLAYBACK, "default tap");
+  CHECK(s.tap == RR_DR60_TAP_ROUTE_OUTPUT, "default tap (spec 009 FR-010)");
+  /* The 0.8 case below keeps 0.8's output: the output chain bypassed and the tap after stage 10
+     (spec 009 FR-016); 009 T031 adds the route cases. */
+  s.output_volume_amp_enabled = false;
+  s.output_speaker_enabled = false;
+  s.output_earphone_enabled = false;
+  s.tap = RR_DR60_TAP_AFTER_PLAYBACK;
   CHECK(s.agc_enabled, "limiter on by default (spec 005, A-020)");
   CHECK(s.agc_knee_dbfs == -1.0f, "default knee %g dBFS (A-028)", (double)s.agc_knee_dbfs);
   CHECK(s.agc_attack_ms == 3.0f, "default attack %g ms (A-034)", (double)s.agc_attack_ms);
@@ -186,6 +200,9 @@ int main(int argc, char **argv) {
   s6.playback_stage_enabled = false;
   s6.adc_clamp_enabled = false; /* bypass_all bypasses the clamp too (spec 005 FR-008) */
   s6.speech_codec_enabled = false; /* and the speech codec (spec 008 FR-021) */
+  s6.output_volume_amp_enabled = false; /* and the output chain (spec 009 FR-016) */
+  s6.output_speaker_enabled = false;
+  s6.output_earphone_enabled = false;
   RrDr60Pipeline *p6 = NULL;
   CHECK(rr_dr60_create(&s6, &p6) == RR_DR60_STATUS_OK && p6 != NULL, "create at 6000 Hz");
   CHECK(rr_dr60_process(p6, in6, out6, N6, NULL) == RR_DR60_STATUS_OK, "process at 6000 Hz");
@@ -243,8 +260,8 @@ int main(int argc, char **argv) {
   CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_UNSUPPORTED_HOST_RATE && q == NULL, "7000 Hz");
   q = sentinel;
   bad = rr_dr60_settings_default(FS);
-  bad.tap = 7;
-  CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_INVALID_ARGUMENT && q == sentinel, "tap = 7");
+  bad.tap = 9; /* 0 – 8 are taps since 0.9 (spec 009 contracts/c-api.md) */
+  CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_INVALID_ARGUMENT && q == sentinel, "tap = 9");
   bad = rr_dr60_settings_default(FS);
   bad.struct_size = 4;
   CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_INVALID_ARGUMENT && q == sentinel, "struct_size = 4");
@@ -274,6 +291,9 @@ int main(int argc, char **argv) {
   bypass.record_stage_enabled = false;
   bypass.playback_stage_enabled = false;
   bypass.speech_codec_enabled = false;
+  bypass.output_volume_amp_enabled = false; /* spec 009 FR-016 */
+  bypass.output_speaker_enabled = false;
+  bypass.output_earphone_enabled = false;
   CHECK(rr_dr60_reconfigure(p, &bypass) == RR_DR60_STATUS_OK, "reconfigure to bypass_all");
   CHECK(rr_dr60_latency_samples(p, &latency_after) == RR_DR60_STATUS_OK && latency_after < latency,
         "bypass_all latency %u should be below default %u", latency_after, latency);
@@ -398,6 +418,12 @@ int main(int argc, char **argv) {
     static float sq[FS];
     for (size_t i = 0; i < FS; i++) sq[i] = (i % 48) < 24 ? 0.125f : -0.125f;
     RrDr60Settings d = rr_dr60_settings_default(FS);
+    /* The 0.8 record-then-play case keeps 0.8's output: the output chain bypassed and the tap
+       after stage 10 (spec 009 FR-016); 009 T031 adds the route cases with their own hashes. */
+    d.output_volume_amp_enabled = false;
+    d.output_speaker_enabled = false;
+    d.output_earphone_enabled = false;
+    d.tap = RR_DR60_TAP_AFTER_PLAYBACK;
     RrDr60Pipeline *a = NULL;
     CHECK(rr_dr60_create(&d, &a) == RR_DR60_STATUS_OK && a != NULL, "create (006 loop)");
     /* Spec 008 FR-004: with the codec on the default one-pass latency is 1923 host samples at
@@ -558,6 +584,82 @@ int main(int argc, char **argv) {
               rr_dr60_drain_samples(a, &dr) == RR_DR60_STATUS_OK && rl + pl >= latency_default - 1 &&
               rl + pl <= latency_default + 1,
           "latencies %u + %u vs one-pass %u, drain %u (006 FR-016; 008 FR-004)", rl, pl, latency_default, dr);
+
+    /* Spec 009 US4 (FR-014; SC-009): the same stimulus recorded once in the 0.9 default (the
+     * output chain on) and played on the speaker route at RR_DR60_VOLUME_REFERENCE and at 1.0
+     * (the clipper engaged) and on the earphone route at both; each playback's hash equals the
+     * Rust path's pinned reference. The volume refusals and the route-tap refusal too. */
+    {
+      RrDr60Settings on = rr_dr60_settings_default(FS);
+      RrDr60Pipeline *r = NULL;
+      CHECK(rr_dr60_create(&on, &r) == RR_DR60_STATUS_OK && r != NULL, "create (009 route cases)");
+      float vol = -1.0f;
+      /* The define is a C double literal; its nearest float is the Rust constant bit for bit. */
+      CHECK(rr_dr60_get_volume(r, &vol) == RR_DR60_STATUS_OK && vol == (float)RR_DR60_VOLUME_REFERENCE,
+            "default volume %g (A-043)", (double)vol);
+      CHECK(rr_dr60_set_volume(r, 1.5f) == RR_DR60_STATUS_INVALID_VOLUME, "set_volume 1.5 refused");
+      CHECK(rr_dr60_set_volume(r, NAN) == RR_DR60_STATUS_INVALID_VOLUME, "set_volume NaN refused");
+      CHECK(rr_dr60_get_volume(r, &vol) == RR_DR60_STATUS_OK && vol == (float)RR_DR60_VOLUME_REFERENCE,
+            "volume unchanged after a refused position");
+      CHECK(rr_dr60_get_volume(r, NULL) == RR_DR60_STATUS_NULL_POINTER, "get_volume(NULL)");
+      CHECK(rr_dr60_speaker_gain_db(1.0f) > 22.6f && rr_dr60_speaker_gain_db(1.0f) < 22.8f,
+            "speaker gain at position 1: %g dB (22.7, A-031)", (double)rr_dr60_speaker_gain_db(1.0f));
+      CHECK(rr_dr60_earphone_gain_db(1.0f) == 0.0f, "earphone gain at position 1: 0 dB (A-042)");
+      CHECK(rr_dr60_start_recording(r) == RR_DR60_STATUS_OK, "start_recording (route cases)");
+      for (size_t at = 0; at < FS; at += 480) {
+        RrDr60RecordInfo ri;
+        CHECK(rr_dr60_record(r, sq + at, 480, &ri, NULL, 0) == RR_DR60_STATUS_OK, "record (route cases) %zu", at / 480);
+      }
+      RrDr60StopOutcome rso;
+      CHECK(rr_dr60_stop_recording(r, &rso, NULL, 0) == RR_DR60_STATUS_OK && rso.kept && rso.number == 1,
+            "stop_recording (route cases)");
+      static const uint32_t routes[4] = {RR_DR60_ROUTE_SPEAKER, RR_DR60_ROUTE_SPEAKER, RR_DR60_ROUTE_EARPHONE,
+                                         RR_DR60_ROUTE_EARPHONE};
+      const float volumes[4] = {(float)RR_DR60_VOLUME_REFERENCE, 1.0f, (float)RR_DR60_VOLUME_REFERENCE, 1.0f};
+      const uint64_t want[4] = {RR_DR60_SMOKE_SPEAKER_REF_HASH, RR_DR60_SMOKE_SPEAKER_FULL_HASH,
+                                RR_DR60_SMOKE_EARPHONE_REF_HASH, RR_DR60_SMOKE_EARPHONE_FULL_HASH};
+      static float pr[8 * FS];
+      for (int k = 0; k < 4; k++) {
+        CHECK(rr_dr60_set_route(r, routes[k]) == RR_DR60_STATUS_OK && rr_dr60_set_volume(r, volumes[k]) == RR_DR60_STATUS_OK,
+              "route case %d controls", k);
+        CHECK(rr_dr60_start_playback(r, 1) == RR_DR60_STATUS_OK, "start_playback (route case %d)", k);
+        size_t nr = 0;
+        for (;;) {
+          RrDr60PlayInfo pi;
+          CHECK(nr + 480 <= 8 * (size_t)FS, "route playback longer than expected");
+          CHECK(rr_dr60_play(r, pr + nr, 480, &pi) == RR_DR60_STATUS_OK, "play (route case %d)", k);
+          nr += pi.produced;
+          if (pi.finished) break;
+        }
+        CHECK(nr == RR_DR60_SMOKE_ROUTE_PLAYBACK_SAMPLES, "route case %d: %zu samples (Rust: %d)", k, nr,
+              RR_DR60_SMOKE_ROUTE_PLAYBACK_SAMPLES);
+        uint64_t h = 0xcbf29ce484222325ULL;
+        for (size_t i = 0; i < nr; i++) {
+          uint8_t le[4];
+          memcpy(le, &pr[i], 4);
+          for (int b = 0; b < 4; b++) {
+            h ^= le[b];
+            h *= 0x00000100000001b3ULL;
+          }
+        }
+        CHECK(h == want[k], "route case %d: playback hash %016llx differs from the Rust path's %016llx (009 US4 scenario 3)", k,
+              (unsigned long long)h, (unsigned long long)want[k]);
+      }
+      /* The named route tap with the other route selected is refused at the processing call. */
+      RrDr60Settings spk_tap = rr_dr60_settings_default(FS);
+      spk_tap.tap = RR_DR60_TAP_AFTER_SPEAKER;
+      RrDr60Pipeline *t = NULL;
+      CHECK(rr_dr60_create(&spk_tap, &t) == RR_DR60_STATUS_OK && t != NULL, "create (speaker tap)");
+      CHECK(rr_dr60_set_route(t, RR_DR60_ROUTE_EARPHONE) == RR_DR60_STATUS_OK, "earphone route on a speaker-tap handle");
+      RrDr60BlockInfo bi;
+      CHECK(rr_dr60_process(t, sq, pr, 480, &bi) == RR_DR60_STATUS_TAP_NOT_ON_ROUTE && bi.produced == 0,
+            "process with the speaker tap on the earphone route: 24");
+      CHECK(rr_dr60_set_route(t, RR_DR60_ROUTE_SPEAKER) == RR_DR60_STATUS_OK &&
+                rr_dr60_process(t, sq, pr, 480, &bi) == RR_DR60_STATUS_OK,
+            "process with the speaker tap on the speaker route");
+      rr_dr60_destroy(t);
+      rr_dr60_destroy(r);
+    }
     CHECK(rr_dr60_erase_all(a) == RR_DR60_STATUS_OK && rr_dr60_memory_status(a, &ms) == RR_DR60_STATUS_OK &&
               ms.count == 0 && ms.used_samples == 0,
           "erase_all -> count 0");

@@ -186,7 +186,7 @@ fn validate(s: &RrDr60Settings) -> (RrDr60Status, RrDr60SettingField) {
 /// processing; a 72-byte (0.4-layout) struct is rejected as `STRUCT_SIZE`.
 #[test]
 fn c_api_005_layout_defaults_and_reserved_fields() {
-    assert_eq!(size_of::<RrDr60Settings>(), 96); // spec 008 contracts/c-api.md (88 in 0.6/0.7)
+    assert_eq!(size_of::<RrDr60Settings>(), 104); // spec 009 contracts/c-api.md (96 in 0.8)
     assert_eq!(std::mem::offset_of!(RrDr60Settings, agc_knee_dbfs), 28);
     assert_eq!(std::mem::offset_of!(RrDr60Settings, reserved_agc_1), 32);
     assert_eq!(std::mem::offset_of!(RrDr60Settings, reserved_agc_2), 36);
@@ -199,7 +199,7 @@ fn c_api_005_layout_defaults_and_reserved_fields() {
         80
     ); // 006
     let d = rr_dr60_settings_default(48_000);
-    assert_eq!(d.struct_size, 96); // spec 008
+    assert_eq!(d.struct_size, 104); // spec 009
     assert_eq!(d.agc_knee_dbfs, -1.0); // A-028
     assert_eq!(d.agc_attack_ms, 3.0); // A-034
     assert_eq!(d.agc_release_ms, 1370.0); // A-035
@@ -443,7 +443,7 @@ fn error_table() {
         RrDr60Status::UnsupportedHostRate
     );
     assert_eq!(
-        status(RrDr60Settings { tap: 7, ..ok }, &mut out),
+        status(RrDr60Settings { tap: 9, ..ok }, &mut out), // 0 – 8 are taps since 0.9
         RrDr60Status::InvalidArgument
     );
     assert_eq!(
@@ -1709,6 +1709,151 @@ fn smoke_reference_hash_is_pinned() {
         smoke_reference::rust_playback_hash(),
         (r.playback_hash, r.playback_samples)
     );
+    // Spec 009 T033: the four route cases (the chain on), pinned once.
+    let routes = smoke_reference::rust_route_references();
+    for (route, volume, hash, len) in routes {
+        println!("smoke route case {route:?} at {volume}: {len} samples, FNV-1a 64 {hash:#018x}");
+    }
+    let want = [
+        smoke_reference::SMOKE_SPEAKER_REF_HASH,
+        smoke_reference::SMOKE_SPEAKER_FULL_HASH,
+        smoke_reference::SMOKE_EARPHONE_REF_HASH,
+        smoke_reference::SMOKE_EARPHONE_FULL_HASH,
+    ];
+    for (i, (route, volume, hash, len)) in routes.into_iter().enumerate() {
+        assert_eq!(hash, want[i], "{route:?} at {volume}");
+        assert_eq!(
+            len,
+            smoke_reference::SMOKE_ROUTE_PLAYBACK_SAMPLES,
+            "{route:?} at {volume}"
+        );
+    }
+}
+
+// ---- Spec 009 User Story 4: the output chain through the C API (tasks.md T030) ----
+
+/// Spec 009 US4 scenarios 1 and 3 (FR-014; SC-009): at the seven rates the C handle and the
+/// Rust engine, fed the voiced stimulus through the one-pass on both routes at two positions,
+/// give bit-identical output; record / stop / play through C on both routes equals Rust's;
+/// `rr_dr60_set_volume` / `rr_dr60_get_volume` round-trip four positions; a route change
+/// between C `process` calls lands at the same block as Rust's.
+#[test]
+fn c_api_output_chain_matches_rust_at_all_rates() {
+    use rr_dr60::output::VOLUME_REFERENCE;
+    for &rate in configs::measurement_rates() {
+        let x = stimulus::voiced(f64::from(rate), 1.0, -20.0, 0x0D60);
+        let s = configs::settings("default_output", rate);
+        let cs = configs::c_settings(&s);
+        for (route, volume) in [
+            (Route::Speaker, VOLUME_REFERENCE),
+            (Route::Speaker, 1.0),
+            (Route::Earphone, VOLUME_REFERENCE),
+            (Route::Earphone, 1.0),
+        ] {
+            // The one-pass, in 1024-sample blocks.
+            let mut rp = Pipeline::new(s).unwrap();
+            rp.set_route(route);
+            rp.set_volume(volume).unwrap();
+            let cp = create(&cs);
+            // SAFETY: live handle.
+            assert_eq!(
+                unsafe { rr_dr60_set_route(cp, if route == Route::Speaker { 0 } else { 1 }) },
+                RrDr60Status::Ok
+            );
+            // SAFETY: live handle.
+            assert_eq!(unsafe { rr_dr60_set_volume(cp, volume) }, RrDr60Status::Ok);
+            let mut got = 0.0f32;
+            // SAFETY: live handle; valid out pointer.
+            assert_eq!(
+                unsafe { rr_dr60_get_volume(cp, &mut got) },
+                RrDr60Status::Ok
+            );
+            assert_eq!(got, volume);
+            let (mut r_out, mut c_out) = (Vec::new(), Vec::new());
+            for chunk in x.chunks(1024) {
+                let mut y = vec![0.0f32; chunk.len()];
+                let n = rp.process(chunk, &mut y).unwrap().produced;
+                r_out.extend_from_slice(&y[..n]);
+                let mut info = RrDr60BlockInfo::default();
+                // SAFETY: live handle; valid buffers.
+                let status = unsafe {
+                    rr_dr60_process(cp, chunk.as_ptr(), y.as_mut_ptr(), chunk.len(), &mut info)
+                };
+                assert_eq!(status, RrDr60Status::Ok);
+                c_out.extend_from_slice(&y[..info.produced]);
+            }
+            assert_eq!(
+                r_out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                c_out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                "{rate} Hz one-pass {route:?} at {volume}"
+            );
+            // Record then play, both sides.
+            let mut rp = Pipeline::new(s).unwrap();
+            rp.set_route(route);
+            rp.set_volume(volume).unwrap();
+            let run = split_checks::record_then_play(&mut rp, &x, 480, 480);
+            let mut r_play = run.pre_drain.clone();
+            r_play.extend_from_slice(&run.drain);
+            let cp2 = create(&cs);
+            // SAFETY: live handle.
+            assert_eq!(
+                unsafe { rr_dr60_set_route(cp2, if route == Route::Speaker { 0 } else { 1 }) },
+                RrDr60Status::Ok
+            );
+            // SAFETY: live handle.
+            assert_eq!(unsafe { rr_dr60_set_volume(cp2, volume) }, RrDr60Status::Ok);
+            let rec = c_record(cp2, &x, 480);
+            assert!(rec.outcome.kept);
+            let c_play_out = c_play(cp2, rec.outcome.number, 480);
+            assert_eq!(
+                r_play.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                c_play_out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                "{rate} Hz record-then-play {route:?} at {volume}"
+            );
+            // SAFETY: live handles.
+            unsafe {
+                rr_dr60_destroy(cp);
+                rr_dr60_destroy(cp2);
+            }
+        }
+        // A route change between calls lands at the same block on both sides (FR-009).
+        let mut rp = Pipeline::new(s).unwrap();
+        rp.set_volume(1.0).unwrap();
+        let cp = create(&cs);
+        // SAFETY: live handle.
+        assert_eq!(unsafe { rr_dr60_set_volume(cp, 1.0) }, RrDr60Status::Ok);
+        let (mut r_out, mut c_out) = (Vec::new(), Vec::new());
+        for (i, chunk) in x.chunks(256).enumerate() {
+            let route = if i < 8 {
+                Route::Speaker
+            } else {
+                Route::Earphone
+            };
+            rp.set_route(route);
+            // SAFETY: live handle.
+            assert_eq!(
+                unsafe { rr_dr60_set_route(cp, if route == Route::Speaker { 0 } else { 1 }) },
+                RrDr60Status::Ok
+            );
+            let mut y = vec![0.0f32; chunk.len()];
+            let n = rp.process(chunk, &mut y).unwrap().produced;
+            r_out.extend_from_slice(&y[..n]);
+            let mut info = RrDr60BlockInfo::default();
+            // SAFETY: live handle; valid buffers.
+            let status = unsafe {
+                rr_dr60_process(cp, chunk.as_ptr(), y.as_mut_ptr(), chunk.len(), &mut info)
+            };
+            assert_eq!(status, RrDr60Status::Ok);
+            c_out.extend_from_slice(&y[..info.produced]);
+        }
+        assert_eq!(
+            r_out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            c_out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            "{rate} Hz route change"
+        );
+        // SAFETY: live handle.
+        unsafe { rr_dr60_destroy(cp) };
+    }
 }
 
 // ---- Spec 007 User Story 3: the manifest through the C API equals the Rust manifest ----

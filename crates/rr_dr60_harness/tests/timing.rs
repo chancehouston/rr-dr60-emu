@@ -293,3 +293,81 @@ fn voiced_m20_frame_bytes_digest_in_this_profile() {
         );
     }
 }
+
+/// Spec 009 SC-007 (research R-09; T039): the output chain's cost at 48 kHz in 4096-sample
+/// blocks, the 0.9 default with the codec bypassed, the chain on against `OutputSettings::BYPASSED`,
+/// on both routes, as ns per host sample and as the percentage over the bypassed figure (the
+/// budget 25 %); the reported latencies unchanged at the seven rates; the chain's 1 kHz group
+/// delay per route from the output checks (≤ 0.5 ms). Quote the figures from a solo run (the
+/// timing tests run concurrently under `cargo test`).
+#[test]
+#[ignore = "release-mode timing; run with --ignored"]
+fn output_cost() {
+    use rr_dr60::{OutputSettings, Route};
+    if skip_in_debug() {
+        return;
+    }
+    let x = stimulus::noise(9, 30 * 48_000);
+    let mut on = configs::settings("default_output", 48_000);
+    on.speech_codec_enabled = false; // the codec-bypassed one-pass is SC-007's denominator
+    let mut off = on;
+    off.output = OutputSettings::BYPASSED;
+    off.tap = rr_dr60::Tap::AfterPlayback;
+    let cost = |s: rr_dr60::Settings, route: Route| {
+        let mut best = f64::MAX;
+        for _ in 0..5 {
+            let mut p = Pipeline::new(s).unwrap();
+            p.set_route(route);
+            p.set_volume(1.0).unwrap();
+            let mut buf = x.clone();
+            let t = Instant::now();
+            for chunk in buf.chunks_mut(4096) {
+                let _ = p.process_in_place(chunk);
+            }
+            best = best.min(t.elapsed().as_nanos() as f64 / x.len() as f64);
+        }
+        best
+    };
+    let bypassed = cost(off, Route::Speaker);
+    for route in [Route::Speaker, Route::Earphone] {
+        let with = cost(on, route);
+        let over = 100.0 * (with / bypassed - 1.0);
+        println!(
+            "output chain, {route:?} route, 48 kHz, 4096 blocks: {with:.1} ns per host sample with the chain, {bypassed:.1} bypassed, {over:+.1} % (009 SC-007: budget 25 %)"
+        );
+        assert!(
+            over <= 25.0,
+            "{route:?}: the chain adds {over:.1} % (009 SC-007)"
+        );
+    }
+    for rate in configs::all_rates() {
+        let a = Pipeline::new(configs::settings("default_output", rate)).unwrap();
+        let b = Pipeline::new(configs::settings_008(rate)).unwrap();
+        assert_eq!(
+            a.latency_samples(),
+            b.latency_samples(),
+            "{rate} Hz one-pass latency"
+        );
+        assert_eq!(
+            a.record_latency_samples(),
+            b.record_latency_samples(),
+            "{rate} Hz"
+        );
+        assert_eq!(
+            a.playback_latency_samples(),
+            b.playback_latency_samples(),
+            "{rate} Hz"
+        );
+    }
+    for route in [Route::Speaker, Route::Earphone] {
+        let rows = rr_dr60_harness::output_checks::group_delay_1k(
+            48_000,
+            route,
+            &rr_dr60_harness::checks::standard,
+        );
+        for r in &rows {
+            println!("{r}");
+            assert!(r.passed, "{r}");
+        }
+    }
+}

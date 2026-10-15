@@ -433,3 +433,93 @@ fn manifest_canonical_text_is_identical_on_every_target() {
         want
     );
 }
+
+/// Spec 009 FR-012 (SC-006; tasks.md T017): the 0.9 default on both routes at two volume
+/// positions is partition-invariant (ten random partitions per case; a hundred for the
+/// speaker route at the reference position at 48 kHz), and record-then-play with a route
+/// change at a fixed play block is the same twice.
+#[test]
+fn output_chain_routes_and_volumes_are_partition_invariant() {
+    use rr_dr60::Route;
+    use rr_dr60::output::VOLUME_REFERENCE;
+    let mut rng = Pcg32::new(0x0D60, 9);
+    let run =
+        |s: rr_dr60::Settings, route: Route, volume: f32, x: &[f32], rng: Option<&mut Pcg32>| {
+            let mut p = Pipeline::new(s).unwrap();
+            p.set_route(route);
+            p.set_volume(volume).unwrap();
+            let mut out = Vec::with_capacity(x.len());
+            let mut pos = 0;
+            let mut rng = rng;
+            while pos < x.len() {
+                let n = match rng.as_deref_mut() {
+                    Some(r) => (r.below(8193) as usize).min(x.len() - pos),
+                    None => x.len() - pos,
+                };
+                let mut y = vec![0.0; n];
+                let produced = p.process(&x[pos..pos + n], &mut y).unwrap().produced;
+                out.extend_from_slice(&y[..produced]);
+                pos += n;
+            }
+            out
+        };
+    for &rate in configs::measurement_rates() {
+        let s = configs::settings("default_output", rate);
+        for (route, volume) in [
+            (Route::Speaker, VOLUME_REFERENCE),
+            (Route::Speaker, 1.0),
+            (Route::Earphone, VOLUME_REFERENCE),
+            (Route::Earphone, 1.0),
+        ] {
+            for stim in golden::STIMULI {
+                let x = golden::stimulus(stim, rate);
+                let want = run(s, route, volume, &x, None);
+                let reps =
+                    if rate == 48_000 && route == Route::Speaker && volume == VOLUME_REFERENCE {
+                        100
+                    } else {
+                        10
+                    };
+                for i in 0..reps {
+                    assert_eq!(
+                        run(s, route, volume, &x, Some(&mut rng)),
+                        want,
+                        "{rate} Hz {route:?} {volume} {stim}, partition {i}"
+                    );
+                }
+            }
+        }
+        // Record-then-play with a route change at play block 2 (480-sample blocks): the same
+        // twice, and not the same as the run without the change.
+        let x = golden::stimulus("tone_1k_m20", rate);
+        let play = |switch: bool| {
+            let mut p = Pipeline::new(s).unwrap();
+            p.set_volume(1.0).unwrap();
+            p.start_recording().unwrap();
+            let _ = p.record(&x, &mut []).unwrap();
+            let StopResult::Kept { .. } = p.stop_recording(&mut []).unwrap().result else {
+                unreachable!()
+            };
+            p.set_route(Route::Speaker);
+            p.start_playback(1).unwrap();
+            let mut out = Vec::new();
+            let mut buf = vec![0.0f32; 480];
+            let mut block = 0;
+            loop {
+                if switch && block == 2 {
+                    p.set_route(Route::Earphone);
+                }
+                let info = p.play(&mut buf).unwrap();
+                out.extend_from_slice(&buf[..info.produced]);
+                block += 1;
+                if info.finished {
+                    break;
+                }
+            }
+            out
+        };
+        let (a, b, c) = (play(true), play(true), play(false));
+        assert_eq!(a, b, "{rate} Hz: the route change is deterministic");
+        assert_ne!(a, c, "{rate} Hz: the route change changes the sound");
+    }
+}

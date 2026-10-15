@@ -13,6 +13,7 @@ pub mod codec_checks;
 pub mod configs;
 pub mod golden;
 pub mod manifest_checks;
+pub mod output_checks;
 pub mod report;
 pub mod smoke_reference;
 pub mod split_checks;

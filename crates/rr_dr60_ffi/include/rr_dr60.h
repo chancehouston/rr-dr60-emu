@@ -20,7 +20,9 @@
  *   rr_dr60_reset, rr_dr60_latency_samples, rr_dr60_settings_validate,
  *   rr_dr60_start_recording, rr_dr60_record, rr_dr60_max_record_events,
  *   rr_dr60_stop_recording, rr_dr60_start_playback, rr_dr60_play, rr_dr60_stop_playback,
- *   rr_dr60_set_route, rr_dr60_get_route, rr_dr60_get_state, rr_dr60_memory_status,
+ *   rr_dr60_set_route, rr_dr60_get_route, rr_dr60_set_volume, rr_dr60_get_volume,
+ *   rr_dr60_speaker_gain_db, rr_dr60_earphone_gain_db (no handle; spec 009),
+ *   rr_dr60_get_state, rr_dr60_memory_status,
  *   rr_dr60_recording_length, rr_dr60_export_len, rr_dr60_record_latency_samples,
  *   rr_dr60_playback_latency_samples, rr_dr60_drain_samples, rr_dr60_footprint_bytes,
  *   rr_dr60_get_encoding, rr_dr60_speech_codec_info (constants; no handle; spec 008),
@@ -46,10 +48,17 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 8
+#define RR_DR60_VERSION_MINOR 9
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
+
+// The volume control's default position (spec 009 FR-003; A-043): the reference position at
+// which a full-scale codec output just reaches the amplifier's clip ceiling under the loaded
+// law, about 0.1335. Equal to the Rust `output::VOLUME_REFERENCE`. In the C header it is a
+// double literal: cast it to `float` (`(float)RR_DR60_VOLUME_REFERENCE`), whose nearest value
+// is the engine's default bit for bit.
+#define RR_DR60_VOLUME_REFERENCE 0.13345174
 
 // Result of every fallible C API call.
 enum RrDr60Status
@@ -110,6 +119,12 @@ enum RrDr60Status
   // The bytes carry speech-codec frames of a model version this release cannot decode
   // (spec 008 FR-010, FR-011).
   RR_DR60_STATUS_UNSUPPORTED_CODEC_MODEL_VERSION = 22,
+  // `rr_dr60_set_volume` with a position outside 0 … 1 or not finite; the position is
+  // unchanged (spec 009 FR-003).
+  RR_DR60_STATUS_INVALID_VOLUME = 23,
+  // A processing call with `RR_DR60_TAP_AFTER_SPEAKER` or `RR_DR60_TAP_AFTER_EARPHONE` while
+  // the other route is selected; nothing processed (spec 009 FR-011).
+  RR_DR60_STATUS_TAP_NOT_ON_ROUTE = 24,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -182,6 +197,21 @@ enum RrDr60Tap
   // After signal-chain stage 9 (the speech decoder), before stage 10 (spec 008 FR-015).
   // Appended in 0.8.
   RR_DR60_TAP_AFTER_DECODER = 4,
+  // The selected route's output: after the speaker (stage 12) or the earphone output (stage
+  // 13), at the route's full swing (spec 009 FR-011; A-042). The default since 0.9; to keep
+  // 0.8's output set `RR_DR60_TAP_AFTER_PLAYBACK`. Appended in 0.9.
+  RR_DR60_TAP_ROUTE_OUTPUT = 5,
+  // After signal-chain stage 11 (the volume control and power amplifier) on either route
+  // (spec 009 FR-011). Appended in 0.9.
+  RR_DR60_TAP_AFTER_VOLUME_AMP = 6,
+  // After signal-chain stage 12 (the speaker template); refused with
+  // `RR_DR60_STATUS_TAP_NOT_ON_ROUTE` while the earphone route is selected (spec 009
+  // FR-011). Appended in 0.9.
+  RR_DR60_TAP_AFTER_SPEAKER = 7,
+  // After signal-chain stage 13 (the earphone output); refused with
+  // `RR_DR60_STATUS_TAP_NOT_ON_ROUTE` while the speaker route is selected (spec 009
+  // FR-011). Appended in 0.9.
+  RR_DR60_TAP_AFTER_EARPHONE = 8,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -373,8 +403,9 @@ typedef struct RrDr60Pipeline RrDr60Pipeline;
 // the two reserved slots at 32 and 36, `adc_clamp_enabled` at 72) and the two memory fields
 // are appended at 76 and 80 (spec 006 contracts/c-api.md).
 typedef struct RrDr60Settings {
-  // Must be `sizeof(RrDr60Settings)`: 96 since 0.8 (88 in 0.6 and 0.7, 80 in 0.5, 72 in 0.3
-  // and 0.4, rejected as `STRUCT_SIZE`). Lets the struct grow in later versions.
+  // Must be `sizeof(RrDr60Settings)`: 104 since 0.9 (96 in 0.8, 88 in 0.6 and 0.7, 80 in
+  // 0.5, 72 in 0.3 and 0.4, rejected as `STRUCT_SIZE`). Lets the struct grow in later
+  // versions.
   uint32_t struct_size;
   // Host sample rate in Hz: 6000, 8000, 16000, 44100, 48000, 88200 or 96000 (spec 004
   // FR-002; 6000 is the device rate, A-026, and needs no rate conversion).
@@ -439,6 +470,20 @@ typedef struct RrDr60Settings {
   // frames when on, device-rate samples when bypassed (spec 008 FR-002, FR-012). Appended in
   // 0.8 at offset 88.
   bool speech_codec_enabled;
+  // Ignored; reserved since 0.9 (the 0.8 layout's tail padding, offsets 89 – 95, kept empty
+  // so that a 0.8 caller's `struct_size = 96` is refused instead of reading settings from
+  // uninitialized bytes). Write 0.
+  uint8_t reserved_009[7];
+  // Signal-chain stage 11, the volume control and power amplifier, on (true, default; A-031)
+  // or bypassed (unity gain at the codec's scale; the volume position retained and ignored).
+  // Appended in 0.9 at offset 96 (spec 009 FR-002, FR-014).
+  bool output_volume_amp_enabled;
+  // Signal-chain stage 12, a template of a small speaker (A-010, low confidence), on (true,
+  // default) or bypassed. Appended in 0.9 at offset 97.
+  bool output_speaker_enabled;
+  // Signal-chain stage 13, the earphone output's two coupling corners (A-032), on (true,
+  // default) or bypassed. Appended in 0.9 at offset 98.
+  bool output_earphone_enabled;
 } RrDr60Settings;
 
 // The result of one `rr_dr60_process` call (spec 003 FR-004, FR-005).
@@ -632,14 +677,19 @@ typedef struct RrDr60StageEntry {
   const char *model_version;
 } RrDr60StageEntry;
 
+// `RR_DR60_TAP_AFTER_PLAYBACK` under the stage's name: after stage 10, before the output chain
+// (version 0.8's default output; spec 009 FR-011).
+#define RR_DR60_TAP_AFTER_STAGE_10 RrDr60Tap_AfterPlayback
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
 
 // Default settings for `host_rate_hz` (not validated): the limiter and the VAS on with the
-// modeled device values, both band-limit stages and the ADC clamp on, tap after playback,
-// seed 0, the reserved slots 0, the memory at the device's 60 minutes and 99 recordings.
-// Never fails.
+// modeled device values, both band-limit stages and the ADC clamp on, the speech codec on,
+// the output chain on, the tap at the route output (`RR_DR60_TAP_ROUTE_OUTPUT`, since 0.9;
+// 0.8's output is `RR_DR60_TAP_AFTER_PLAYBACK`), seed 0, the reserved slots 0, the memory at
+// the device's 60 minutes and 99 recordings. Never fails.
 struct RrDr60Settings rr_dr60_settings_default(uint32_t host_rate_hz);
 
 // Creates a pipeline. On success, writes the new handle to `*out_pipeline`. Not real-time
@@ -870,6 +920,37 @@ RrDr60Status rr_dr60_set_route(struct RrDr60Pipeline *pipeline, uint32_t route);
 //
 // `pipeline` must be a live handle. `out_route` must be NULL or writable.
 RrDr60Status rr_dr60_get_route(struct RrDr60Pipeline *pipeline, uint32_t *out_route);
+
+// Sets the volume position (spec 009 FR-003; A-043, A-044): the control's wiper fraction,
+// 0 (silence) to 1 (maximum), at any time including during playback; it takes effect at the
+// next processing call or `rr_dr60_play` block and survives `rr_dr60_reset` and
+// `rr_dr60_reconfigure`. Default `RR_DR60_VOLUME_REFERENCE`; positions above it clip
+// full-scale material on the speaker route. Real-time safe.
+//
+// Returns `RR_DR60_STATUS_INVALID_VOLUME` for a non-finite position or one outside 0 … 1; the
+// position is then unchanged.
+//
+// # Safety
+//
+// `pipeline` must be NULL or a live handle.
+RrDr60Status rr_dr60_set_volume(struct RrDr60Pipeline *pipeline, float position);
+
+// Writes the volume position to `*out_position` (spec 009 FR-003). Real-time safe.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_position` must be NULL or writable.
+RrDr60Status rr_dr60_get_volume(struct RrDr60Pipeline *pipeline, float *out_position);
+
+// The speaker route's gain in dB at a volume position under the circuit's loaded law (spec
+// 009 FR-003; A-044): 22.7 dB at 1, about 9.6 dB at 0.5, −∞ at 0; in volts of amplifier output
+// per volt of codec output, for a host's volume display. Needs no handle; real-time safe.
+float rr_dr60_speaker_gain_db(float position);
+
+// The earphone route's gain in dB at a volume position under the loaded law (spec 009 FR-003;
+// A-044): 0 dB at 1, about −9.4 dB at 0.5, about −19.2 dB at `RR_DR60_VOLUME_REFERENCE`, −∞ at
+// 0. Needs no handle; real-time safe.
+float rr_dr60_earphone_gain_db(float position);
 
 // Writes the engine's state (idle, recording or playing), the route, the current recording's
 // number and whether the speaker is muted to `*out_state` (spec 006 FR-003). Real-time safe.
