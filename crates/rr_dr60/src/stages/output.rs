@@ -80,6 +80,24 @@ pub(crate) fn knee(x: f64, k: f64) -> f64 {
     if x < 0.0 { -y } else { y }
 }
 
+/// The output clamp's bound (spec 010 FR-001; A-042: the route's full scale): `y` above `hi`
+/// becomes `hi`, below `lo` becomes `lo`, a not-a-number becomes 0.0 (unreachable: the output
+/// is finite, spec 002 R-07; defined so the behaviour is stated), and anything else, −0.0
+/// included, passes unchanged. Not `f64::clamp`, whose `lo <= hi` assertion would be a panic
+/// site in the per-sample path once the ends are fields (research R-01).
+#[inline(always)]
+pub(crate) fn bound(y: f64, lo: f64, hi: f64) -> f64 {
+    if y > hi {
+        hi
+    } else if y < lo {
+        lo
+    } else if y.is_nan() {
+        0.0
+    } else {
+        y
+    }
+}
+
 /// The output chain's state for one playback path (data-model.md › `OutputChain` state).
 #[derive(Clone, Debug)]
 pub(crate) struct OutputChain {
@@ -100,6 +118,15 @@ pub(crate) struct OutputChain {
     /// A scale on the speaker route's scalar: in production always 1.0; the mutation tests'
     /// lever on the level.
     gain_scale: f64,
+    /// The output clamp's gate (spec 010 FR-001, FR-003): `clamp_enabled` **and** the return
+    /// point is the route output. The player's return point is always the route output; the
+    /// one-pass's is the configured tap, so the per-stage taps are never bounded.
+    clamp: bool,
+    /// The bound's two ends: in production always −1.0 and +1.0 (A-042: the route's full
+    /// scale); fields only so the mutation tests can move them (`clamp_bound`,
+    /// `clamp_positive_only`).
+    bound_lo: f64,
+    bound_hi: f64,
     vol_hpf: FirstOrder,
     amp_hpf: FirstOrder,
     speaker_res: Biquad,
@@ -124,8 +151,13 @@ impl OutputChain {
             volume_amp_enabled,
             speaker_enabled,
             earphone_enabled,
-            clamp_enabled: _, // 010 T011 wires the gate
+            clamp_enabled,
         } = settings.output;
+        let tap = if honour_tap {
+            settings.tap
+        } else {
+            Tap::RouteOutput
+        };
         let mut chain = Self {
             route: Route::Speaker,
             k_spk: 1.0,
@@ -134,13 +166,14 @@ impl OutputChain {
             run_speaker: enabled && speaker_enabled, // A-010 (009 FR-002)
             run_earphone: enabled && earphone_enabled, // A-032 (009 FR-002)
             active: enabled && (volume_amp_enabled || speaker_enabled || earphone_enabled),
-            tap: if honour_tap {
-                settings.tap
-            } else {
-                Tap::RouteOutput
-            },
+            tap,
             knee_start: c::KNEE_START, // A-031 (low): the knee's shape
             gain_scale: 1.0,
+            // 010 FR-003: only the route-output tap is bounded; the gate is decided here, never
+            // read from the settings per sample.
+            clamp: clamp_enabled && tap == Tap::RouteOutput,
+            bound_lo: -1.0, // A-042: the route's full scale (spec 010 FR-001)
+            bound_hi: 1.0,
             vol_hpf: FirstOrder::new(c::VOL_HPF[i]), // A-031: 32 Hz, both routes
             amp_hpf: FirstOrder::new(c::AMP_HPF[i]), // A-031: 159 Hz, speaker route
             speaker_res: Biquad::from_sos(c::SPK_RES[i]), // A-010: the template's resonance
@@ -182,6 +215,13 @@ impl OutputChain {
         self.knee_start = m.knee_start;
         self.gain_scale = m.gain_scale;
         self.n_out = u32::try_from(i64::from(self.n_out) + m.n_out_delta).unwrap_or(0);
+        // Spec 010 (research R-06): the bound moved, or applied to positive samples only.
+        self.bound_hi = m.clamp_bound;
+        self.bound_lo = if m.clamp_positive_only {
+            f64::NEG_INFINITY
+        } else {
+            -m.clamp_bound
+        };
         let route = self.route;
         self.set_controls(route, self.volume_for_rescale());
     }
@@ -195,10 +235,25 @@ impl OutputChain {
     }
 
     /// One host-rate sample through the chain, returning the sample at the configured tap
-    /// (data-model.md › The chain in the playback path). With every stage off (or at a tap
-    /// before the chain) the sample passes through with no arithmetic.
+    /// (data-model.md › The chain in the playback path), **bounded** when the output clamp is
+    /// on and the tap is the route output (spec 010 FR-001, FR-003; research R-01). The bound
+    /// applies to the stages' result even when every stage is off (the chain inactive), so a
+    /// bypassed chain at the route-output tap is still bounded.
     #[inline(always)]
     pub(crate) fn process(&mut self, y: f64) -> f64 {
+        let r = self.inner(y);
+        if self.clamp {
+            bound(r, self.bound_lo, self.bound_hi)
+        } else {
+            r
+        }
+    }
+
+    /// The stages themselves: the sample at the configured tap before the output clamp. With
+    /// every stage off (or at a tap before the chain) the sample passes through with no
+    /// arithmetic.
+    #[inline(always)]
+    fn inner(&mut self, y: f64) -> f64 {
         if !self.active {
             return y;
         }
@@ -661,5 +716,125 @@ mod tests {
             let ch = OutputChain::new(&settings(fs), false);
             assert_eq!(ch.n_out(), N_OUT[i]);
         }
+    }
+
+    // ---- Spec 010 (tasks.md T011): the output clamp ----
+
+    /// 010 FR-001, Edge Cases: the bound on a vector that crosses it, ±∞, NaN and −0.0.
+    #[test]
+    fn bound_replaces_beyond_and_passes_within() {
+        let tiny = 2f64.powi(-60);
+        let cases: [(f64, f64); 12] = [
+            (-2.0, -1.0),
+            (-1.0, -1.0),
+            (-1.0 + tiny, -1.0 + tiny),
+            (-0.0, -0.0),
+            (0.0, 0.0),
+            (0.5, 0.5),
+            (1.0, 1.0),
+            (1.0 + tiny, 1.0 + tiny), // 1 + 2⁻⁶⁰ == 1.0 in f64 already
+            (2.0, 1.0),
+            (f64::INFINITY, 1.0),
+            (f64::NEG_INFINITY, -1.0),
+            (f64::NAN, 0.0),
+        ];
+        for (x, want) in cases {
+            let got = bound(x, -1.0, 1.0);
+            assert_eq!(got.to_bits(), want.to_bits(), "bound({x})");
+        }
+        assert_eq!(bound(0.75, -0.5, 0.5), 0.5);
+        assert_eq!(bound(-0.75, f64::NEG_INFINITY, 0.5), -0.75);
+    }
+
+    /// 010 FR-005 (research R-01): bounding in f64 before the narrowing equals bounding the
+    /// narrowed f32 afterwards, bit for bit, over a sweep spanning the f64 range and the
+    /// neighbourhood of ±1.
+    #[test]
+    fn bound_commutes_with_the_narrowing() {
+        use crate::sanitize::narrow_out;
+        let mut xs: Vec<f64> = Vec::new();
+        for i in 0..100_000u32 {
+            let t = f64::from(i) / 100_000.0;
+            xs.push(-1e300 + 2e300 * t);
+            xs.push(-2.0 + 4.0 * t);
+            xs.push(1.0 + (t - 0.5) * 1e-6);
+            xs.push(-1.0 + (t - 0.5) * 1e-6);
+        }
+        xs.extend([f64::MAX, f64::MIN, f64::from(f32::MAX) * 2.0, 1e-40, -1e-40]);
+        for x in xs {
+            let a = narrow_out(bound(x, -1.0, 1.0));
+            let b = narrow_out(x).clamp(-1.0, 1.0);
+            assert_eq!(a.to_bits(), b.to_bits(), "{x}");
+        }
+    }
+
+    /// 010 FR-003: the gate is true for the player (every tap) and for the one-pass at the
+    /// route output only; the per-stage and earlier taps are never bounded.
+    #[test]
+    fn clamp_gate_follows_the_tap() {
+        let mut o = OutputSettings::DEVICE;
+        o.clamp_enabled = true;
+        for tap in [
+            Tap::RouteOutput,
+            Tap::AfterVolumeAmp,
+            Tap::AfterSpeaker,
+            Tap::AfterEarphone,
+            Tap::AfterPlayback,
+            Tap::AfterDecoder,
+            Tap::AfterVas,
+        ] {
+            let mut s = settings_output(48_000, o);
+            s.tap = tap;
+            assert!(OutputChain::new(&s, false).clamp, "player, {tap:?}");
+            assert_eq!(
+                OutputChain::new(&s, true).clamp,
+                tap == Tap::RouteOutput,
+                "one-pass, {tap:?}"
+            );
+        }
+        let s = settings_output(48_000, OutputSettings::DEVICE);
+        assert!(!OutputChain::new(&s, false).clamp);
+        assert!(!OutputChain::new(&s, true).clamp);
+    }
+
+    /// 010 Edge Cases "Output chain bypassed": a chain with every stage off at the route
+    /// output and the option on returns the bounded sample; off, the sample itself. The rest
+    /// state, the settle and `runs_any` are unchanged by the option.
+    #[test]
+    fn bypassed_chain_is_bounded_at_the_route_output() {
+        let mut o = OutputSettings::BYPASSED;
+        o.clamp_enabled = true;
+        let s = settings_output(48_000, o);
+        let mut on = OutputChain::new(&s, true);
+        assert!(!on.active && on.clamp);
+        assert_eq!(on.process(1.5), 1.0);
+        assert_eq!(on.process(-1.5), -1.0);
+        assert_eq!(on.process(0.25), 0.25);
+        let mut off = OutputChain::new(&settings_output(48_000, OutputSettings::BYPASSED), true);
+        assert_eq!(off.process(1.5), 1.5);
+        assert!(on.at_rest() && off.at_rest());
+        assert_eq!(on.n_out(), off.n_out());
+        assert_eq!(on.runs_any(), off.runs_any());
+        // The device chain on the speaker route at position 1 on a full-scale square: the
+        // template rings above 1.0 without the option and is bounded with it (the identity).
+        let mut d = OutputSettings::DEVICE;
+        d.clamp_enabled = true;
+        let mut chain_on = OutputChain::new(&settings_output(48_000, d), false);
+        let mut chain_off =
+            OutputChain::new(&settings_output(48_000, OutputSettings::DEVICE), false);
+        chain_on.set_controls(Route::Speaker, 1.0);
+        chain_off.set_controls(Route::Speaker, 1.0);
+        let mut exceeded = false;
+        for i in 0..48_000usize {
+            let x = if (i / 24) % 2 == 0 { 1.0 } else { -1.0 };
+            let a = chain_on.process(x);
+            let b = chain_off.process(x);
+            exceeded |= b.abs() > 1.0;
+            assert_eq!(a.to_bits(), bound(b, -1.0, 1.0).to_bits(), "{i}");
+        }
+        assert!(
+            exceeded,
+            "the template rings above the bound on a full-scale square"
+        );
     }
 }
