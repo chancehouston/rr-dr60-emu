@@ -47,6 +47,49 @@ pub const OUTPUT_CONFIGS: [&str; 6] = [
     "default_loud",
 ];
 
+/// The spec 010 output-clamp configurations (010 data-model.md › Harness configurations;
+/// contracts/golden-format.md): each is its option-off twin ([`output_clamp_twin`]) with
+/// `output.clamp_enabled = true`. `output_clamp_only` is every stage bypassed at the route-output
+/// tap (the primary stimulus needs no stage); the four position-1 names clamp the chain's
+/// overshoot; `default_output_ref_clamp` is the 0.9 default at the reference position, the
+/// non-overshooting case (FR-010).
+pub const OUTPUT_CLAMP_CONFIGS: [&str; 6] = [
+    "output_clamp_only",
+    "output_only_speaker_clamp",
+    "output_only_earphone_clamp",
+    "default_output_clamp",
+    "default_earphone_clamp",
+    "default_output_ref_clamp",
+];
+
+/// The option-off twin of a spec 010 clamp configuration: the same settings with
+/// `clamp_enabled = false` (the harness's identity oracle, 010 FR-005).
+pub fn output_clamp_twin(name: &str) -> &'static str {
+    match name {
+        "output_clamp_only" => "bypass_route_output",
+        "output_only_speaker_clamp" => "output_only_speaker",
+        "output_only_earphone_clamp" => "output_only_earphone",
+        "default_output_clamp" | "default_output_ref_clamp" => "default_output",
+        "default_earphone_clamp" => "default_earphone",
+        other => panic!("configs::output_clamp_twin: not a clamp configuration {other:?}"),
+    }
+}
+
+/// The route and the volume position of a spec 010 clamp configuration in the golden file
+/// (contracts/golden-format.md): position 1 everywhere except the reference configuration;
+/// the position is without effect in `output_clamp_only`.
+pub fn output_clamp_route_volume(name: &str) -> (rr_dr60::Route, f32) {
+    use rr_dr60::Route;
+    match name {
+        "output_clamp_only" | "output_only_speaker_clamp" | "default_output_clamp" => {
+            (Route::Speaker, 1.0)
+        }
+        "output_only_earphone_clamp" | "default_earphone_clamp" => (Route::Earphone, 1.0),
+        "default_output_ref_clamp" => (Route::Speaker, rr_dr60::output::VOLUME_REFERENCE),
+        other => panic!("configs::output_clamp_route_volume: not a clamp configuration {other:?}"),
+    }
+}
+
 /// The 0.8 default: [`Settings::new`] with the output chain **bypassed** and the tap after stage
 /// 10 (spec 009 FR-016). Every pre-009 check, golden file and harness scenario builds on this
 /// instead of `Settings::new`, so the earlier specs' checks and the four golden files stay
@@ -178,6 +221,17 @@ pub fn settings(name: &str, host_rate_hz: u32) -> Settings {
             s.output.earphone_enabled = name == "output_only_earphone"; // stage 13 (A-032)
         }
         "default_output" | "default_earphone" | "default_loud" => s = Settings::new(host_rate_hz),
+        // Spec 010: `bypass_all` at the route-output tap (the twin of `output_clamp_only`).
+        "bypass_route_output" => {
+            s = settings("bypass_all", host_rate_hz);
+            s.tap = Tap::RouteOutput;
+        }
+        // Spec 010 (data-model.md › Harness configurations): the clamp configurations are their
+        // twins with the output clamp on; nothing else differs.
+        name if OUTPUT_CLAMP_CONFIGS.contains(&name) => {
+            s = settings(output_clamp_twin(name), host_rate_hz);
+            s.output.clamp_enabled = true; // 010 FR-001
+        }
         other => panic!("unknown configuration {other:?}"),
     }
     s
@@ -434,6 +488,33 @@ mod tests {
                 s.tap,
             )
         };
+        // Spec 010 T004: every pre-010 name keeps the output clamp off; every clamp name sets
+        // it and differs from its twin in nothing else.
+        for name in CONFIGS
+            .iter()
+            .chain(AGC_CONFIGS.iter())
+            .chain(VAS_CONFIGS.iter())
+            .chain(CODEC_CONFIGS.iter())
+            .chain(OUTPUT_CONFIGS.iter())
+            .chain(["bypass_route_output"].iter())
+        {
+            assert!(!settings(name, 48_000).output.clamp_enabled, "{name}");
+        }
+        for name in OUTPUT_CLAMP_CONFIGS {
+            let c = settings(name, 48_000);
+            let mut twin = settings(output_clamp_twin(name), 48_000);
+            assert!(c.output.clamp_enabled, "{name}");
+            twin.output.clamp_enabled = true;
+            assert_eq!(c, twin, "{name}");
+        }
+        assert_eq!(
+            settings("bypass_route_output", 48_000).tap,
+            Tap::RouteOutput
+        );
+        assert_eq!(
+            output_clamp_route_volume("default_output_ref_clamp").1,
+            rr_dr60::output::VOLUME_REFERENCE
+        );
         assert_eq!(out("output_only_speaker"), (on, on, off, Tap::RouteOutput));
         assert_eq!(out("output_only_earphone"), (on, off, on, Tap::RouteOutput));
         assert_eq!(out("output_only_amp"), (on, off, off, Tap::RouteOutput));

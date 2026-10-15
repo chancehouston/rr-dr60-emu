@@ -2003,6 +2003,7 @@ mod output_chain_tests {
                     volume_amp_enabled: only == 0,
                     speaker_enabled: only == 1,
                     earphone_enabled: only == 2,
+                    clamp_enabled: false,
                 };
                 let p = Pipeline::new(s).unwrap();
                 assert_eq!(

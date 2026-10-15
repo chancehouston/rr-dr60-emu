@@ -124,6 +124,7 @@ impl OutputChain {
             volume_amp_enabled,
             speaker_enabled,
             earphone_enabled,
+            clamp_enabled: _, // 010 T011 wires the gate
         } = settings.output;
         let mut chain = Self {
             route: Route::Speaker,
@@ -532,6 +533,7 @@ mod tests {
             volume_amp_enabled: false,
             speaker_enabled: true,
             earphone_enabled: true,
+            clamp_enabled: false,
         };
         let mut ch = OutputChain::new(&settings_output(48_000, o), false);
         ch.set_controls(Route::Speaker, 0.0); // the position is ignored
@@ -549,6 +551,7 @@ mod tests {
             volume_amp_enabled: true,
             speaker_enabled: false,
             earphone_enabled: true,
+            clamp_enabled: false,
         };
         let mut a = OutputChain::new(&settings_output(48_000, o), false);
         let mut s = settings_output(48_000, o);
@@ -572,6 +575,7 @@ mod tests {
             volume_amp_enabled: true,
             speaker_enabled: true,
             earphone_enabled: false,
+            clamp_enabled: false,
         };
         let mut e = OutputChain::new(&settings_output(48_000, o), false);
         e.set_controls(Route::Earphone, 0.5);

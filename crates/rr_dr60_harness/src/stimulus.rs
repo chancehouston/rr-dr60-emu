@@ -24,6 +24,17 @@ pub fn tone(freq_hz: f64, amp: f64, fs: f64, len: usize) -> Vec<f32> {
         .collect()
 }
 
+/// A square wave of `±amp` at `freq_hz`: a half-period of `round(fs / (2·freq_hz))` samples,
+/// starting at `+amp` (spec 010 data-model.md › Stimuli; the golden's `square_1k_fs`). At 1 kHz
+/// the half-period is 3 samples at 6 kHz, 4 at 8 kHz, 22 at 44.1 kHz and 24 at 48 kHz; a
+/// whole-sample half-period keeps the stimulus defined at every host rate.
+pub fn square(freq_hz: f64, amp: f32, fs: f64, len: usize) -> Vec<f32> {
+    let half = (fs / (2.0 * freq_hz)).round().max(1.0) as usize;
+    (0..len)
+        .map(|n| if (n / half) % 2 == 0 { amp } else { -amp })
+        .collect()
+}
+
 /// A tone at `level_dbfs` starting at `phase_rad`: `A · sin(2π·freq·n/fs + φ)`, n = 0..len,
 /// bit-reproducible (detmath). The cycle count is reduced to one cycle before `sin`.
 pub fn tone_at_phase(
@@ -782,5 +793,23 @@ mod tests {
         let uv = unvoiced_voiced(6000.0, 3.0, -20.0, 0x0D60);
         assert_eq!(uv.len(), 18_000);
         assert_eq!(uv, unvoiced_voiced(6000.0, 3.0, -20.0, 0x0D60));
+    }
+
+    /// Spec 010 T002: the square wave's half-period rule and its first sample.
+    #[test]
+    fn square_half_period_and_first_sample() {
+        for (fs, half) in [
+            (6000.0, 3usize),
+            (8000.0, 4),
+            (44_100.0, 22),
+            (48_000.0, 24),
+        ] {
+            let x = square(1000.0, 1.0, fs, 4 * half);
+            assert_eq!(x[0], 1.0, "{fs}");
+            assert!(x[..half].iter().all(|&v| v == 1.0), "{fs}");
+            assert!(x[half..2 * half].iter().all(|&v| v == -1.0), "{fs}");
+            assert_eq!(x[2 * half], 1.0, "{fs}");
+        }
+        assert_eq!(square(1000.0, 0.125, 48_000.0, 48)[24], -0.125);
     }
 }

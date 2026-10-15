@@ -52,6 +52,10 @@ Two things the option is not: it is not a limiter (no gain control, no time cons
 - Q (D10): the cost stimulus → A: full-scale noise at position 1 (a large fraction of samples replaced: the worst case); the bounded fraction reported (SC-005 amended).
 - Q (P10): the iOS device golden script → A: it never gained `golden_output` in 009; this feature adds both `golden_output` and `golden_output_clamp`.
 
+### Session 2026-10-15 (implementation, Phase 1: the T006 measurement)
+
+- Q (T006): is the sixth golden configuration (the 0.9 default on the speaker route at the reference position) a non-overshooting case on all three golden stimuli? → A: **On both tones, yes, at every rate** (the full-scale 1 kHz tone and the amplitude-1.5 sine, which the limiter holds, read 0.88 – 0.99 with zero samples beyond ±1.0); **on the full-scale square wave at 96 kHz only, 3 samples** read up to 1.006 (0.5 % over; the limiter-held square's reconstruction plus the template's ringing), zero at the six other rates. FR-010's non-overshooting case is therefore stated for the tones; the golden generator's bless-time zero-count assertion covers `tone_1k_0` and `sine_1k_1p5`, and the square's count is reported and recorded by its entry's bound count (T032). US1 AS4 and SC-002 (the full-scale tone) are unaffected.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Bounded output for integer-buffer hosts (Priority: P1)
