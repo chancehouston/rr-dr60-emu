@@ -5,12 +5,16 @@
 use rr_dr60_harness::checks::{assert_all, standard};
 use rr_dr60_harness::{configs, output_checks, report};
 
-/// Every US1 row at every supported host rate.
+/// Every US1 and US2 row at every supported host rate.
 #[test]
 fn output_chain_matrix() {
     let results: Vec<_> = configs::all_rates()
         .iter()
-        .flat_map(|&r| output_checks::all_us1(r, &standard))
+        .flat_map(|&r| {
+            let mut rows = output_checks::all_us1(r, &standard);
+            rows.extend(output_checks::all_us2(r, &standard));
+            rows
+        })
         .collect();
     report::print(&results);
     let (passed, total) = (results.iter().filter(|r| r.passed).count(), results.len());

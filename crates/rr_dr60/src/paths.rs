@@ -728,6 +728,18 @@ impl PlaybackPath {
         self.half.playback = stage;
         self.derive_figures(plan);
     }
+
+    /// Test-only: the output chain altered (the spec 009 SC-006 mutation tests); the drain
+    /// follows.
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn mutate_chain(
+        &mut self,
+        m: &crate::__test_hooks::OutputMutation,
+        plan: &RatePlan,
+    ) {
+        self.chain.__mutate(m);
+        self.derive_figures(plan);
+    }
 }
 
 /// The plan's derived figures (006 research R-06; data-model.md › Per-rate figures), pinned

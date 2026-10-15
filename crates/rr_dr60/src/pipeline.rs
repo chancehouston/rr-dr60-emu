@@ -685,6 +685,26 @@ impl Pipeline {
         Ok(p)
     }
 
+    /// Test-only (hidden): a pipeline whose output chain is altered in both playback paths
+    /// (the one-pass's and the player's) by `m`: the speaker template's numerator scaled, the
+    /// knee's start moved, the drain's settle shifted, the speaker route's gain scaled. Used
+    /// by the spec 009 SC-006 mutation tests (tasks.md T017); the latencies are unchanged.
+    ///
+    /// # Errors
+    ///
+    /// As [`Pipeline::new`].
+    #[doc(hidden)]
+    pub fn __with_output_mutation(
+        settings: Settings,
+        m: &crate::__test_hooks::OutputMutation,
+    ) -> Result<Self, Error> {
+        let mut p = Self::new(settings)?;
+        let plan = RatePlan::for_host(settings.host_rate_hz)?;
+        p.one_pass.play.mutate_chain(m, &plan);
+        p.player.mutate_chain(m, &plan);
+        Ok(p)
+    }
+
     /// Test-only (hidden): a one-pass pipeline with the FR-009 `f32` narrowing of the post-VAS
     /// device-rate stream enabled (the shipped behaviour) or disabled (the pre-0.6 engine), so
     /// the harness can measure the narrowing's effect (spec 006 research R-02;

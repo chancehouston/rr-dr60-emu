@@ -411,3 +411,93 @@ mod codec {
         assert!(!same(d - per_device), "one device sample too early fails");
     }
 }
+
+/// Spec 009 SC-006 (tasks.md T017): a deliberate alteration of the output chain, applied
+/// through `Pipeline::__with_output_mutation` (never by editing the generated table), is caught
+/// by the named check: the speaker template's numerator 2 % high by the peak-gain row; a knee
+/// starting at 0.5 by the distortion bracket; the drain's settle 100 samples short by the drain
+/// table; the speaker route's gain 10 % high by the THD at the reference position.
+mod output {
+    use rr_dr60::__test_hooks::OutputMutation;
+    use rr_dr60::{Pipeline, Settings};
+    use rr_dr60_harness::checks::MeasurementResult;
+    use rr_dr60_harness::output_checks;
+
+    fn failed(results: &[MeasurementResult]) -> Vec<&'static str> {
+        results
+            .iter()
+            .filter(|r| !r.passed)
+            .map(|r| r.property)
+            .collect()
+    }
+
+    fn mutant(m: OutputMutation) -> impl Fn(Settings) -> Pipeline {
+        move |s| Pipeline::__with_output_mutation(s, &m).unwrap()
+    }
+
+    #[test]
+    fn speaker_numerator_scale_is_caught_by_the_peak_gain_row() {
+        let make = mutant(OutputMutation {
+            speaker_numerator_scale: 1.02,
+            ..OutputMutation::default()
+        });
+        let f = failed(&output_checks::speaker_response(48_000, &make));
+        assert!(f.iter().any(|p| p.contains("never above 1.0")), "{f:?}");
+        // The committed chain passes the same rows.
+        assert!(
+            failed(&output_checks::speaker_response(
+                48_000,
+                &rr_dr60_harness::checks::standard
+            ))
+            .is_empty()
+        );
+    }
+
+    /// A knee starting at 0.5 softens the curve: the compression at the ceiling rises to
+    /// 1 − 0.5 / 4 = 0.875 (1.16 dB, above FR-006's 1 dB), while the 10 % THD crossing stays
+    /// inside +1 … +3 dB (the task's 0.95 start sits inside every bracket, so the softer knee
+    /// is the honest mutant; coach review T019).
+    #[test]
+    fn soft_knee_is_caught_by_the_distortion_bracket() {
+        let make = mutant(OutputMutation {
+            knee_start: 0.5,
+            ..OutputMutation::default()
+        });
+        let f = failed(&output_checks::clip(48_000, &make));
+        assert!(f.iter().any(|p| p.contains("compression")), "{f:?}");
+    }
+
+    #[test]
+    fn short_settle_is_caught_by_the_drain_table() {
+        // The growth rows (the literal N_OUT table) catch a one-sample change; the ring-down
+        // row needs a large cut: at N_OUT the earphone route's tail reads about −152 dBFS at
+        // 6 kHz (the 32 Hz state after a 1 kHz tone sits 30 dB below the tone and decays
+        // 100 dB; the follower's corners attenuate the slow tail further), so the −80 dBFS
+        // bound has about 70 dB of margin. 280 samples short of the 346 (−80 %), at
+        // 0.29 dB per sample, lifts the tail by about 81 dB and trips the row.
+        let make = mutant(OutputMutation {
+            n_out_delta: -280,
+            ..OutputMutation::default()
+        });
+        let f = failed(&output_checks::chain_drain_table(6000, &make));
+        assert!(f.iter().any(|p| p.contains("last 1 ms")), "{f:?}");
+        assert!(
+            f.iter().any(|p| p.contains("minus the bypassed drain")),
+            "{f:?}"
+        );
+    }
+
+    #[test]
+    fn gain_scale_is_caught_by_the_reference_position_thd() {
+        let make = mutant(OutputMutation {
+            gain_scale: 1.1,
+            ..OutputMutation::default()
+        });
+        let f = failed(&output_checks::default_position_level(48_000, &make));
+        assert!(
+            f.iter()
+                .any(|p| p.contains("THD at the reference position")),
+            "{f:?}"
+        );
+    }
+}

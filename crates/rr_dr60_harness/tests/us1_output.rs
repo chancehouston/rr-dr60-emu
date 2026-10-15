@@ -96,3 +96,67 @@ fn as6_earphone_default_level_and_group_delay() {
         rows
     }));
 }
+
+// ---------------------------------------------------------------------------------------------
+// User Story 2: the whole chain, the route, the bypasses and the earlier checks (tasks.md T016;
+// spec › US2 AS1–AS5). Every test function is named `chain_…` so that
+// `cargo test --test us1_output chain` selects them all (quickstart §4).
+// ---------------------------------------------------------------------------------------------
+
+/// US2 AS1 (FR-010, SC-005): record-then-play equals the one-pass bit for bit with the chain
+/// on, both routes, two positions, the skipped prefix exactly zero.
+#[test]
+fn chain_equivalence_both_routes_two_volumes() {
+    finish(at(|r| {
+        let mut rows = Vec::new();
+        for (route, volume) in [
+            (Route::Speaker, rr_dr60::output::VOLUME_REFERENCE),
+            (Route::Speaker, 1.0),
+            (Route::Earphone, rr_dr60::output::VOLUME_REFERENCE),
+            (Route::Earphone, 1.0),
+        ] {
+            rows.extend(output_checks::chain_equivalence(
+                r, route, volume, &standard,
+            ));
+        }
+        rows
+    }));
+}
+
+/// US2 AS4 (FR-011, SC-005): the one-pass at the after-stage-10 tap equals 0.8's default
+/// output bit for bit.
+#[test]
+fn chain_after_playback_equals_0_8() {
+    finish(at(|r| {
+        output_checks::chain_after_playback_equals_0_8(r, &standard)
+    }));
+}
+
+/// US2 AS3 (FR-009, SC-005): route and volume changes take effect exactly at the next block at
+/// sixteen change points, the volume gain never overshooting.
+#[test]
+fn chain_route_and_volume_change_timing() {
+    finish(at(|r| {
+        let mut rows = output_checks::chain_route_change_timing(r, &standard);
+        rows.extend(output_checks::chain_volume_change_timing(r, &standard));
+        rows
+    }));
+}
+
+/// FR-013: a recording made by a 0.8 engine plays through the chain unchanged in its stored
+/// content and equals the one-pass with the chain on.
+#[test]
+fn chain_legacy_recording() {
+    finish(at(|r| output_checks::chain_legacy_recording(r, &standard)));
+}
+
+/// US2 AS5 (FR-008; research R-08): the drain table with and without the chain, the playback
+/// length, the drain's quiet tail, and the three latencies unchanged.
+#[test]
+fn chain_drain_table_and_latencies() {
+    finish(at(|r| {
+        let mut rows = output_checks::chain_drain_table(r, &standard);
+        rows.extend(output_checks::chain_latencies_unchanged(r, &standard));
+        rows
+    }));
+}

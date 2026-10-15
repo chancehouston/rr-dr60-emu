@@ -67,8 +67,7 @@ pub(crate) fn k_ear(p: f64) -> f64 {
 /// `k = KNEE_START` of the ceiling to `2 − k`, C¹ at both joints, a hard ceiling of 1.0 above.
 /// Plain IEEE arithmetic: compares, multiplies, one divide of constants.
 #[inline]
-pub(crate) fn knee(x: f64) -> f64 {
-    let k = c::KNEE_START;
+pub(crate) fn knee(x: f64, k: f64) -> f64 {
     let u = if x < 0.0 { -x } else { x };
     let y = if u <= k {
         u
@@ -93,6 +92,12 @@ pub(crate) struct OutputChain {
     /// The point `process` returns: `RouteOutput` for the player; the configured tap for the
     /// one-pass.
     tap: Tap,
+    /// The knee's start: in production always `KNEE_START` (A-031); a field only so the SC-006
+    /// mutation tests can move it through the `__test-hooks` feature.
+    knee_start: f64,
+    /// A scale on the speaker route's scalar: in production always 1.0; the mutation tests'
+    /// lever on the level.
+    gain_scale: f64,
     vol_hpf: FirstOrder,
     amp_hpf: FirstOrder,
     speaker_res: Biquad,
@@ -130,6 +135,8 @@ impl OutputChain {
             } else {
                 Tap::RouteOutput
             },
+            knee_start: c::KNEE_START, // A-031 (low): the knee's shape
+            gain_scale: 1.0,
             vol_hpf: FirstOrder::new(c::VOL_HPF[i]), // A-031: 32 Hz, both routes
             amp_hpf: FirstOrder::new(c::AMP_HPF[i]), // A-031: 159 Hz, speaker route
             speaker_res: Biquad::from_sos(c::SPK_RES[i]), // A-010: the template's resonance
@@ -152,8 +159,31 @@ impl OutputChain {
             self.reset();
         }
         let p = f64::from(volume);
-        self.k_spk = k_spk(p);
+        self.k_spk = k_spk(p) * self.gain_scale;
         self.k_ear = k_ear(p);
+    }
+
+    /// Test-only (the `__test-hooks` feature): alters the chain for the SC-006 mutation tests
+    /// (spec 009 FR-012; contracts/rust-api.md › Test hooks). The controls are re-applied so
+    /// the scalars carry the new scale.
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn __mutate(&mut self, m: &crate::__test_hooks::OutputMutation) {
+        let s = m.speaker_numerator_scale;
+        let b = self.speaker_res.coefficients();
+        self.speaker_res = Biquad::from_sos([b[0] * s, b[1] * s, b[2] * s, b[3], b[4]]);
+        self.knee_start = m.knee_start;
+        self.gain_scale = m.gain_scale;
+        self.n_out = u32::try_from(i64::from(self.n_out) + m.n_out_delta).unwrap_or(0);
+        let route = self.route;
+        self.set_controls(route, self.volume_for_rescale());
+    }
+
+    /// Test-only: the position the current scalars were computed from is not stored (the
+    /// controls are re-copied at every block), so a mutation re-applies the reference position;
+    /// the harness sets its own position afterwards.
+    #[cfg(feature = "__test-hooks")]
+    fn volume_for_rescale(&self) -> f32 {
+        c::VOLUME_REFERENCE as f32
     }
 
     /// One host-rate sample through the chain, returning the sample at the configured tap
@@ -175,7 +205,7 @@ impl OutputChain {
                 // Stage 11's amplifier path: the input corner, the loaded gain over the ceiling,
                 // the knee. `+ 0.0` turns a −0.0 at position 0 into +0.0.
                 let a = if self.run_amp {
-                    knee(self.k_spk * self.amp_hpf.process(u) + 0.0)
+                    knee(self.k_spk * self.amp_hpf.process(u) + 0.0, self.knee_start)
                 } else {
                     u
                 };
@@ -286,7 +316,12 @@ mod tests {
         let n = fs / f0 * cycles;
         let amp = 10f64.powf(level_db / 20.0);
         let y: Vec<f64> = (0..n)
-            .map(|i| knee(amp * (core::f64::consts::TAU * i as f64 / 48.0).sin()))
+            .map(|i| {
+                knee(
+                    amp * (core::f64::consts::TAU * i as f64 / 48.0).sin(),
+                    c::KNEE_START,
+                )
+            })
             .collect();
         let peak = y.iter().fold(0.0f64, |m, v| m.max(v.abs()));
         // The harmonic amplitudes by direct DFT at the exact bins.
@@ -347,22 +382,22 @@ mod tests {
     /// FR-006: symmetric, never above 1.0, C¹ at both joints, `+0.0` at zero.
     #[test]
     fn knee_is_symmetric_bounded_and_smooth() {
+        let k = c::KNEE_START;
         for i in 0..1000 {
             let x = i as f64 * 0.003;
-            assert_eq!(knee(-x), -knee(x), "{x}");
-            assert!(knee(x) <= 1.0, "{x}");
+            assert_eq!(knee(-x, k), -knee(x, k), "{x}");
+            assert!(knee(x, k) <= 1.0, "{x}");
         }
         for x in [1e3, 1e6, f64::MAX] {
-            assert_eq!(knee(x), 1.0);
-            assert_eq!(knee(-x), -1.0);
+            assert_eq!(knee(x, k), 1.0);
+            assert_eq!(knee(-x, k), -1.0);
         }
-        let k = c::KNEE_START;
         let e = 1e-6;
-        let slope = |at: f64| (knee(at + e) - knee(at - e)) / (2.0 * e);
+        let slope = |at: f64| (knee(at + e, k) - knee(at - e, k)) / (2.0 * e);
         assert!((slope(k) - 1.0).abs() < 1e-4, "{}", slope(k));
         assert!(slope(2.0 - k).abs() < 1e-4, "{}", slope(2.0 - k));
-        assert_eq!(knee(k), k, "continuous at the knee");
-        assert_eq!(knee(0.0).to_bits(), 0.0f64.to_bits(), "+0.0");
+        assert_eq!(knee(k, k), k, "continuous at the knee");
+        assert_eq!(knee(0.0, k).to_bits(), 0.0f64.to_bits(), "+0.0");
         // A −0.0 input gives −0.0 (the sign is restored as is); the chain adds +0.0 before the
         // knee so position 0 writes +0.0 (`bypass_semantics_and_taps`).
     }
@@ -521,7 +556,7 @@ mod tests {
         let k = k_spk(f64::from(VOLUME_REFERENCE as f32));
         let want: Vec<f64> = noise
             .iter()
-            .map(|&v| knee(k * amp.process(vol.process(v)) + 0.0))
+            .map(|&v| knee(k * amp.process(vol.process(v)) + 0.0, c::KNEE_START))
             .collect();
         assert_eq!(ya, want);
         // Stage 13 off on the earphone route: `e = K_EAR · u`; and `AfterVolumeAmp` there is the

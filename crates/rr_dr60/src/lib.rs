@@ -224,6 +224,33 @@ pub mod __test_hooks {
     pub fn stage_settling(sos: &[[f64; 5]], rel: f64) -> usize {
         crate::paths::settling_len(sos, rel)
     }
+
+    /// A deliberate alteration of the output chain for the spec 009 SC-006 mutation tests
+    /// (`Pipeline::__with_output_mutation`; tasks.md T017). `Default` is the committed chain.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct OutputMutation {
+        /// The speaker template's numerator scaled by this (1.0: as committed; 1.02 lifts the
+        /// peak gain above 1.0).
+        pub speaker_numerator_scale: f64,
+        /// The knee's start as a fraction of the ceiling (the committed 0.85; 0.5 softens it).
+        pub knee_start: f64,
+        /// Added to the chain's settle `N_OUT` (0: as committed).
+        pub n_out_delta: i64,
+        /// The speaker route's per-block scalar scaled by this (1.0: as committed; 1.1 drives
+        /// full-scale material 0.8 dB into the knee at the reference position).
+        pub gain_scale: f64,
+    }
+
+    impl Default for OutputMutation {
+        fn default() -> Self {
+            Self {
+                speaker_numerator_scale: 1.0,
+                knee_start: crate::stages::output_coeffs::KNEE_START,
+                n_out_delta: 0,
+                gain_scale: 1.0,
+            }
+        }
+    }
 }
 
 /// Crate version, e.g. `"0.1.0"`.

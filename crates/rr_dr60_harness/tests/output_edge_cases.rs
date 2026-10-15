@@ -118,10 +118,11 @@ fn volume_change_lands_at_the_next_block_without_overshoot() {
     }
 }
 
-/// "Route changed mid-playback": the next block is the other route's, and the newly selected
-/// route's stages start from rest (with silence before the switch, the switched engine equals
-/// an engine on that route from the start, bit for bit; the state reset itself is a core unit
-/// test).
+/// "Route changed mid-playback": the next block is the other route's; with silence before the
+/// switch, the switched engine equals an engine on that route from the start, bit for bit (a
+/// consistency check: both chains are at rest regardless). The rest state after a real signal
+/// is proven by the core unit test `route_change_resets_sections…` and by
+/// `output_checks::chain_route_change_timing`'s 6 kHz row (coach review T019, S4).
 #[test]
 fn route_change_lands_at_the_next_block_from_rest() {
     for rate in RATES {
