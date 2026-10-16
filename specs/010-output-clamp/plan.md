@@ -81,7 +81,7 @@ specs/010-output-clamp/
 crates/rr_dr60/src/
 ├── lib.rs                      # crate docs: one paragraph on the output clamp; __test_hooks::OutputMutation { .., clamp_bound: f64 (1.0), clamp_positive_only: bool }
 ├── settings.rs                 # OutputSettings { .., clamp_enabled } (false in DEVICE and BYPASSED); Tap docs: which taps are bounded; the player sentence
-└── stages/output.rs            # OutputChain { clamp, bound, positive_only }; fn bound(y, b); process = inner(y) then the bound; __mutate; unit tests
+└── stages/output.rs            # as built: OutputChain { clamp, bound_lo, bound_hi }; fn bound(y, lo, hi) (branchless); process = inner(y) then the bound; __mutate; unit tests
 
 crates/rr_dr60_ffi/
 ├── src/lib.rs                  # reserved_010 [u8; 5] at 99, output_clamp_enabled at 104, reserved_010_tail [u8; 7] at 105 (112 bytes; three const assertions); conversion; default; RR_DR60_VERSION_MINOR = 10; tap docs; layout tests

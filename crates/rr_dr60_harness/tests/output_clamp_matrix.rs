@@ -99,15 +99,23 @@ fn output_clamp_matrix() {
         // the bursts peak within about 0.7 dB of the bound with the codec on, the 800 Hz square
         // exceeds it slightly at the high rates (reported, never asserted; level-sensitive
         // through the codec's discrete choices).
-        for stim in ["bursts_800_p10", "square_800_fs"] {
+        for (stim, len_s) in [
+            ("bursts_800_p10", LEN_S),
+            ("bursts_800_3p162", LEN_S),
+            ("square_800_fs", 2.0), // 2 s: the square's peak comes at 1.1 – 1.5 s
+        ] {
             rows.extend(clamp::identity(
                 &standard,
                 rate,
                 "default_output_ref_clamp",
                 stim,
-                LEN_S,
+                len_s,
                 Expect::Report,
             ));
+            println!(
+                "{rate} Hz reference position, {stim} ({len_s} s): option-off peak {:.3}",
+                clamp::off_peak(&standard, rate, "default_output_ref_clamp", stim, len_s)
+            );
         }
         // The mechanism with the codec bypassed: the bursts exceed the bound robustly.
         {

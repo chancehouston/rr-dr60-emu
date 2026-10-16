@@ -729,16 +729,20 @@ mod tests {
     /// 010 FR-001, Edge Cases: the bound on a vector that crosses it, ±∞, NaN and −0.0.
     #[test]
     fn bound_replaces_beyond_and_passes_within() {
-        let tiny = 2f64.powi(-60);
-        let cases: [(f64, f64); 12] = [
+        // The true neighbours of ±1.0 (T039 R11; `next_up` needs Rust 1.86, the MSRV is 1.85).
+        let above = f64::from_bits(1.0f64.to_bits() + 1);
+        let below = f64::from_bits(1.0f64.to_bits() - 1);
+        let cases: [(f64, f64); 14] = [
             (-2.0, -1.0),
+            (-above, -1.0),
             (-1.0, -1.0),
-            (-1.0 + tiny, -1.0 + tiny),
+            (-below, -below),
             (-0.0, -0.0),
             (0.0, 0.0),
             (0.5, 0.5),
+            (below, below),
             (1.0, 1.0),
-            (1.0 + tiny, 1.0 + tiny), // 1 + 2⁻⁶⁰ == 1.0 in f64 already
+            (above, 1.0),
             (2.0, 1.0),
             (f64::INFINITY, 1.0),
             (f64::NEG_INFINITY, -1.0),

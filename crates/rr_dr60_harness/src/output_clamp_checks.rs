@@ -49,6 +49,21 @@ pub fn stimulus_by_name(name: &str, rate: u32, len_s: f64) -> Vec<f32> {
                 })
                 .collect()
         }
+        // The same bursts at a literal peak of 3.162 instead of +10 dBFS's 3.16228 (0.0008 dB
+        // lower): one of the speech codec's discrete decisions flips and the peak crosses the
+        // bound (T038 B2, T039 R2: the level sensitivity the records quote).
+        "bursts_800_3p162" => {
+            let on = (0.2 * fs) as usize;
+            (0..n)
+                .map(|i| {
+                    if (i / on) % 2 == 0 {
+                        stimulus::tone_sample(800.0, 3.162, fs, i) as f32
+                    } else {
+                        0.0
+                    }
+                })
+                .collect()
+        }
         "square_800_fs" => stimulus::square(800.0, 1.0, fs, n),
         other => panic!("output_clamp_checks::stimulus_by_name: unknown stimulus {other:?}"),
     }
@@ -233,6 +248,25 @@ pub fn per_stage_taps_unclamped(make: Make<'_>, rate: u32, route: Route) -> Vec<
                 format!("{stim}, {tap:?}"),
                 &y_on,
                 &y_off,
+            ));
+            // T039 R9: the tapped signal exceeds the bound where it can, so a bound wrongly
+            // applied at the tap would fail the row above (the full-scale square at the route's
+            // last stage); `AfterVolumeAmp` on the speaker route is held at 1.0 by the clipper.
+            let exceeds = stim == "square_1k_fs" && tap != Tap::AfterVolumeAmp;
+            rows.push(MeasurementResult::new(
+                "FR-003",
+                "per-stage tap's peak with the option on (unbounded where it exceeds)",
+                T_CLAMP,
+                rate,
+                config,
+                format!("{stim}, {tap:?}"),
+                f64::from(y_on.iter().fold(0.0f32, |m, v| m.max(v.abs()))),
+                "full scale",
+                if exceeds {
+                    Tolerance::AtLeast(1.0 + 1e-6)
+                } else {
+                    Tolerance::Report
+                },
             ));
         }
     }

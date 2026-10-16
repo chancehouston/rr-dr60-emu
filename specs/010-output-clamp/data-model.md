@@ -19,10 +19,9 @@ Two new fields, set at construction, mutated only by the test hook:
 | Field | Value | Role |
 |---|---|---|
 | `clamp: bool` | `settings.output.clamp_enabled && tap == Tap::RouteOutput` | The player passes `honour_tap = false`, so its `tap` is `RouteOutput` and `clamp` equals the setting; the one-pass passes the configured tap, so `clamp` is true only when that tap is `RouteOutput`. |
-| `bound: f64` | `1.0` (A-042: the route's full scale) | A field only for `__mutate` (`clamp_bound`); production never changes it. |
 | `bound_lo`, `bound_hi` | `−1.0`, `+1.0` | As built (T038 N3): the hook's `clamp_bound` moves `bound_hi` (and `bound_lo = −clamp_bound`); `clamp_positive_only` sets `bound_lo = −∞`. |
 
-`process(y)`: `let r = inner(y); if self.clamp { bound(r, self.bound) } else { r }`, where `inner` is today's body including the `active` early return and the `AfterVolumeAmp` returns (never bounded, because `clamp` is false for that tap), and
+`process(y)` (as built): `let r = inner(y); if self.clamp { bound(r, self.bound_lo, self.bound_hi) } else { r }`, where `inner` is today's body including the `active` early return and the `AfterVolumeAmp` returns (never bounded, because `clamp` is false for that tap), and
 
 ```rust
 fn bound(y: f64, lo: f64, hi: f64) -> f64 { let r = y.max(lo).min(hi); if y.is_nan() { 0.0 } else { r } }

@@ -23,7 +23,7 @@ All items are in `rr_dr60`; every public item has rustdoc citing its FR and A-04
 | Reconfigure | The option is read at `Pipeline::new` / `reconfigure` like the other settings; a change applies from the next processing call, the paths reset (spec 006). |
 | Route and volume controls | Unchanged; the bound applies to whichever route's output is selected at each block (FR-006). |
 | Latency, drain, stored form | Unchanged at every rate (the bound is stateless: `n_out` and the latency tables untouched, FR-005; the export bytes identical with the option on or off, FR-006). |
-| Non-finite input to the bound | Cannot occur (the output is finite, spec 002 R-07); `bound(y, b)` maps ±∞ to ±b and NaN to 0.0, −0.0 passes, pinned by a unit test. |
+| Non-finite input to the bound | Cannot occur (the output is finite, spec 002 R-07); `bound(y, lo, hi)` (as built: branchless `y.max(lo).min(hi)` with a NaN select) maps ±∞ to the ends and NaN to 0.0, −0.0 passes, pinned by a unit test. |
 
 ## Test hook
 

@@ -361,10 +361,9 @@ pub struct OutputSettings {
     /// one-pass the option is inert at every tap but [`Tap::RouteOutput`]. It has no state and
     /// adds no latency. On material above the bound (high volume positions, clipped or
     /// transient material) it replaces the excess with flat tops, which adds distortion of its
-    /// own that the device does not have. At the default volume position speech-like material
-    /// and noise stay below full scale, but square-edged material near the speaker template's
-    /// resonance (about 800 Hz) can exceed it slightly (an 800 Hz full-scale square reads up to
-    /// about 1.04 at 88.2 kHz). Appended in 0.10.
+    /// own that the device does not have. At the default volume position the harness's
+    /// speech-like and noise stimuli stay below full scale; loud material near the speaker
+    /// template's resonance (about 800 Hz) can exceed it (see A-042). Appended in 0.10.
     pub clamp_enabled: bool,
 }
 

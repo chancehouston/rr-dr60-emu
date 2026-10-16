@@ -786,6 +786,56 @@ fn readme_output_clamp_statements() {
         assert!(!lower.contains(word), "A-042 contains {word:?}");
     }
     assert_eq!(mc::denylist_hit(row), None, "A-042");
+    // T039 R10: the record-path paragraph and the option's documentation in the code.
+    let record_path = text
+        .lines()
+        .find(|l| l.starts_with("> **The record path is clamped"))
+        .expect("the README's record-path paragraph");
+    let doc_block = |path: &str, start: &str, end: &str| -> String {
+        let src = std::fs::read_to_string(mc::repo_root().join(path)).unwrap();
+        let i = src
+            .find(start)
+            .unwrap_or_else(|| panic!("{path}: {start:?}"));
+        let j = i + src[i..]
+            .find(end)
+            .unwrap_or_else(|| panic!("{path}: {end:?}"));
+        src[i..j].to_string()
+    };
+    let texts = [
+        ("README record-path paragraph", record_path.to_string()),
+        (
+            "OutputSettings::clamp_enabled",
+            doc_block(
+                "crates/rr_dr60/src/settings.rs",
+                "/// The **output clamp**",
+                "pub clamp_enabled",
+            ),
+        ),
+        (
+            "RrDr60Settings::output_clamp_enabled",
+            doc_block(
+                "crates/rr_dr60_ffi/src/lib.rs",
+                "/// The **output clamp**",
+                "pub output_clamp_enabled",
+            ),
+        ),
+        (
+            "crate docs",
+            doc_block(
+                "crates/rr_dr60/src/lib.rs",
+                "//! Since spec 010 the engine has an **output clamp**",
+                "//! Stages 4 and 10",
+            ),
+        ),
+    ];
+    for (name, t) in &texts {
+        assert!(t.contains("output clamp"), "{name} names the output clamp");
+        assert_eq!(mc::denylist_hit(t), None, "{name}");
+        let lower = t.to_lowercase();
+        for word in forbidden {
+            assert!(!lower.contains(word), "{name} contains {word:?}");
+        }
+    }
     // The manifest: the counts and the entry strings unchanged; the header's version moved.
     let canonical = std::fs::read_to_string(
         mc::repo_root().join("crates/rr_dr60_harness/golden/manifest-v1.txt"),
