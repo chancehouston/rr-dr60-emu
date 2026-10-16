@@ -206,3 +206,45 @@ pub fn rust_clamp_references() -> ([(rr_dr60::Route, u64, usize); 2], usize) {
     let beyond = play.iter().filter(|v| v.abs() > 1.0).count();
     (cases, beyond)
 }
+
+/// Spec 011 T035 (contracts/c-api.md › Smoke loop): the volume-transition case's hash: the
+/// full-scale square of the clamp cases recorded once in the default engine (the option off)
+/// and played on the speaker route at 0.1, with the position set to 1.0 before play block 10
+/// and to 0.4 before block 11 (480-sample blocks: a retarget mid-transition). Pinned once from
+/// the Rust path (`rust_ramp_reference`); `ffi_parity::smoke_reference_hash_is_pinned` checks it.
+pub const SMOKE_SPEAKER_RAMP_HASH: u64 = 0xcc01_33ff_c64a_c96e; // measured 2026-10-16 from the Rust path (53 168 samples; 011 T035)
+
+/// The play blocks before which the transition case sets the position (contracts/c-api.md).
+pub const SMOKE_RAMP_CHANGES: [(usize, f32); 2] = [(10, 1.0), (11, 0.4)]; // engineering target (011 T035)
+
+/// The volume-transition case `(hash, length)` from the Rust path.
+pub fn rust_ramp_reference() -> (u64, usize) {
+    let mut p = Pipeline::new(rr_dr60::Settings::new(SMOKE_RATE)).expect("rate");
+    p.start_recording().expect("idle");
+    for chunk in clamp_stimulus().chunks(SMOKE_BLOCK) {
+        let info = p.record(chunk, &mut []).expect("recording");
+        assert!(info.stopped.is_none());
+    }
+    let out = p.stop_recording(&mut []).expect("recording");
+    let rr_dr60::StopResult::Kept { number, .. } = out.result else {
+        unreachable!("the stimulus is recorded")
+    };
+    p.set_route(rr_dr60::Route::Speaker);
+    p.set_volume(0.1).expect("a valid position");
+    p.start_playback(number).expect("idle");
+    let mut play = Vec::new();
+    let mut buf = vec![0.0f32; SMOKE_BLOCK];
+    for block in 0.. {
+        for &(at, v) in &SMOKE_RAMP_CHANGES {
+            if at == block {
+                p.set_volume(v).expect("a valid position");
+            }
+        }
+        let info = p.play(&mut buf).expect("playing");
+        play.extend_from_slice(&buf[..info.produced]);
+        if info.finished {
+            break;
+        }
+    }
+    (fnv1a64(&play), play.len())
+}

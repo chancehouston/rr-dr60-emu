@@ -34,6 +34,9 @@
    pinned from the Rust path (smoke_reference.rs). */
 #define RR_DR60_SMOKE_SPEAKER_CLAMP_HASH 0x5a7f9b91a49f806eULL
 #define RR_DR60_SMOKE_EARPHONE_CLAMP_HASH 0xfbafbb6b11507362ULL
+/* Spec 011 T035: the volume-transition case (the square at 0.1 on the speaker route, 1.0 before
+   play block 10, 0.4 before block 11), pinned from the Rust path (smoke_reference.rs). */
+#define RR_DR60_SMOKE_SPEAKER_RAMP_HASH 0xcc0133ffc64ac96eULL
 #define RR_DR60_SMOKE_FRAMES 51
 #define RR_DR60_SMOKE_SILENCE_FED 149
 
@@ -743,6 +746,41 @@ int main(int argc, char **argv) {
         if (pi.finished) break;
       }
       CHECK(exceeded, "the option-off speaker route exceeds 1.0 on the full-scale square (010 FR-011)");
+      /* Spec 011 T035: the volume transition through C: the same recording on the speaker route at
+       * 0.1, the position set to 1.0 before play block 10 and to 0.4 before block 11 (a retarget
+       * mid-transition); the playback equals the Rust path's bit for bit. */
+      CHECK(RR_DR60_VOLUME_TRANSITION_MS == 20, "RR_DR60_VOLUME_TRANSITION_MS is 20 (011 FR-002)");
+      CHECK(rr_dr60_set_route(handles2[1], RR_DR60_ROUTE_SPEAKER) == RR_DR60_STATUS_OK &&
+                rr_dr60_set_volume(handles2[1], 0.1f) == RR_DR60_STATUS_OK &&
+                rr_dr60_start_playback(handles2[1], 1) == RR_DR60_STATUS_OK,
+            "volume-transition playback");
+      size_t nr2 = 0;
+      for (int block = 0;; block++) {
+        if (block == 10) CHECK(rr_dr60_set_volume(handles2[1], 1.0f) == RR_DR60_STATUS_OK, "set_volume 1.0 (011)");
+        if (block == 11) CHECK(rr_dr60_set_volume(handles2[1], 0.4f) == RR_DR60_STATUS_OK, "set_volume 0.4 (011)");
+        RrDr60PlayInfo pi;
+        CHECK(nr2 + 480 <= 8 * (size_t)FS, "transition playback longer than expected");
+        CHECK(rr_dr60_play(handles2[1], pc + nr2, 480, &pi) == RR_DR60_STATUS_OK, "play (011)");
+        nr2 += pi.produced;
+        if (pi.finished) break;
+      }
+      float vread = 0.0f;
+      CHECK(rr_dr60_get_volume(handles2[1], &vread) == RR_DR60_STATUS_OK && vread == 0.4f,
+            "get_volume returns the last setting (011 FR-011)");
+      CHECK(nr2 == RR_DR60_SMOKE_ROUTE_PLAYBACK_SAMPLES, "transition case: %zu samples (Rust: %d)", nr2,
+            RR_DR60_SMOKE_ROUTE_PLAYBACK_SAMPLES);
+      uint64_t hr = 0xcbf29ce484222325ULL;
+      for (size_t i = 0; i < nr2; i++) {
+        uint8_t le[4];
+        memcpy(le, &pc[i], 4);
+        for (int b = 0; b < 4; b++) {
+          hr ^= le[b];
+          hr *= 0x00000100000001b3ULL;
+        }
+      }
+      CHECK(hr == RR_DR60_SMOKE_SPEAKER_RAMP_HASH,
+            "transition case: playback hash %016llx differs from the Rust path's %016llx (011 T035)",
+            (unsigned long long)hr, (unsigned long long)RR_DR60_SMOKE_SPEAKER_RAMP_HASH);
       rr_dr60_destroy(handles2[0]);
       rr_dr60_destroy(handles2[1]);
     }
