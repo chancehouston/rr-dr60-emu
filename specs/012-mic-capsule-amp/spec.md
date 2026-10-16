@@ -30,7 +30,7 @@ The spec review re-read the service manual's schematic (S-002, sheet 3.1) at ful
 
 The capsule's signal current reaches that feedback node through C1 (0.15 µF), and part of it is lost into the capsule's 1 kΩ bias resistor R2. That makes a **first-order high-pass near 0.82 kHz** (680–980 Hz; plan review), inside the device's band. Relative to 1 kHz, it cuts 300 Hz by about 7–8 dB and lifts 2.5 kHz by about 2 dB.
 
-The registers had listed C1 as a 10–15 Hz corner (A-029), which this re-read corrects. The coupling corner after the amplifier is a **single** first-order corner near 76 Hz: C4, R7, C5 and R10 form one series loop while the limiter is idle, and the 7 Hz "minor corner" does not exist. Both of the corners the feature description named (72 Hz and 13 kHz) are inaudible in the device's 225–2550 Hz band. The input high-pass is not.
+The registers had listed C1 as a 10–15 Hz corner (A-029), which this re-read corrects. The coupling corner after the amplifier is a **single** first-order corner near 77 Hz: C4, R7, C5 and R10 form one series loop while the limiter is idle, and the 7 Hz "minor corner" does not exist. Both of the corners the feature description named (72 Hz and 13 kHz) are inaudible in the device's 225–2550 Hz band. The input high-pass is not.
 
 ### What this feature adds
 
@@ -45,7 +45,7 @@ This feature adds both stages to the record path, ahead of the limiter, so the r
   1. the input coupling high-pass near 0.82 kHz;
   2. the amplifier's gain, normalized to unity at 1 kHz;
   3. its asymmetric soft clipping at its supply rails, with negative samples clipping first;
-  4. the output coupling near 76 Hz;
+  4. the output coupling near 77 Hz;
   5. the codec input amplifier's roll-off near 13 kHz.
 
 ### How it fits the existing record path
@@ -183,7 +183,7 @@ An app maker records through the emulated recorder. The sound now passes the dev
 
 - **Low end.** The input high-pass thins it below about 1 kHz: 300 Hz sits about 7–8 dB below 1 kHz.
 - **High end.** It is lifted slightly toward 2.5 kHz.
-- **Very low rumble.** Removed below about 76 Hz.
+- **Very low rumble.** Removed below about 77 Hz.
 - **Above 13 kHz.** Rolled off before the limiter sees it.
 - **Quiet passages** carry the capsule's hiss, a steady broadband floor at a documented level, shaped by the same band.
 
@@ -376,7 +376,7 @@ Every figure the engine uses traces to a source or a registered assumption.
   - **Limits.** Negative engine samples are limited first, at L₋ ≈ +7 dBFS (+5 … +9), and positive samples at L₊ ≈ +16.5 dBFS (+16 … +17.5). These are dBFS at the engine input at 1 kHz, derived from S-002's DC voltages, independent of the limiter's knee setting. Each polarity's soft onset lies a documented distance below its limit, and the clipper is exactly linear below the onset.
   - **Bounds.** The clipper's output MUST never exceed its limits, and the signal after stage 2 MUST never exceed L₊ + L₋.
 - **FR-007: Switches.** Each new stage MUST be bypassable on its own; a bypassed stage passes its input unchanged. Stage 1 on means the hiss is on, at the offset's level.
-- **FR-008: Observation points.** The signal after stage 1 and after stage 2 MUST each be selectable as an output observation point, with latency 0. No earlier observation point changes its meaning or its latency. Stage 2's 1 kHz group delay MUST be reported per host rate.
+- **FR-008: Observation points.** The signal after stage 1 and after stage 2 MUST each be selectable as an output observation point, with latency 0. No earlier observation point changes its meaning or its latency: `AfterAgc` stays the signal after stage 3, which now has stages 1–2 upstream when they run. Stage 2's 1 kHz group delay MUST be reported per host rate.
 - **FR-009: State, streams and equivalence.**
   - **Rest.** The new stages' filters MUST start at rest after construction, reset, reconfigure and the start of each recording.
   - **Counter.** A recording counter MUST start at 0 at construction and never rewind. `reset` and `reconfigure` keep it. It advances by one at each successful recording start (a refused start consumes nothing). Each recording's hiss MUST be the stream for (seed, counter), from its beginning. The one-pass MUST use the stream for the counter's current value (the next recording's), from construction, `reset` or `reconfigure`.

@@ -30,6 +30,8 @@ description: "Task list for 012 Microphone Capsule and Amplifier (signal-chain s
 7. The C surface.
 8. Gates, the ngspice gate, the reviews, the bless and the PR.
 
+The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b, 5 and 6; here they are numbered 1–8.
+
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: can run in parallel (different files, no dependency on an incomplete task).
@@ -304,7 +306,7 @@ description: "Task list for 012 Microphone Capsule and Amplifier (signal-chain s
 ### Implementation for User Story 2
 
 - [ ] T036 [US2] The clipper in `crates/rr_dr60/src/stages/mic.rs` (FR-006; R-03):
-  - `y = v` when −k·L₋ ≤ v ≤ k·L₊; otherwise `L₊·knee(v·inv₊, k)` for v > 0 and `−L₋·knee(−v·inv₋, k)` for v < 0, as branchless selects (reuse `stages::output::knee`, made `pub(crate)`);
+  - `y = v` when −k·L₋ ≤ v ≤ k·L₊; otherwise `L₊·knee(v·inv₊, k)` for v > 0 and `−L₋·knee(−v·inv₋, k)` for v < 0, as branchless selects (reuse `stages::output::knee`, already `pub(crate)`);
   - the limits from `mic_coeffs`;
   - the mutants wired;
   - core unit tests: exact linearity, memorylessness, symmetric and swapped mutants.
@@ -353,7 +355,8 @@ description: "Task list for 012 Microphone Capsule and Amplifier (signal-chain s
   - **`output_cost_mic`:** `output_cost`'s body with stages 1–2 on, printing the same line format; it asserts `limiter_state() == 0.0` at the end (R-09).
 - [ ] T041 [US3] Timing scripts and workflow:
   - `scripts/ab-timing.sh`: an optional second argument (the head build's test name, default `output_cost`); the default baseline becomes `c9f9994`; the comment says what each mode measures;
-  - `.github/workflows/ab-timing.yml`: baseline `c9f9994` and a second step `scripts/ab-timing.sh c9f9994 output_cost_mic`.
+  - `.github/workflows/ab-timing.yml`: baseline `c9f9994` and a second step `scripts/ab-timing.sh c9f9994 output_cost_mic`;
+  - `.github/workflows/ci.yml`: the release timing step sets the environment variable that `mic_cost` reads, so the 25 % CI ceiling applies there (spec FR-011; the analysis finding U1).
 - [ ] T042 [US3] Run the cost measurements solo on the development machine:
   - `cargo test -p rr_dr60_harness --release --test timing mic_cost -- --ignored --nocapture --test-threads=1`;
   - `scripts/ab-timing.sh` (bypassed against 0.11: ≤ 3 %);
