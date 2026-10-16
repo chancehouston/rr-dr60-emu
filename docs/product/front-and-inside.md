@@ -4,6 +4,8 @@ A product note on the app's two views of the emulated recorder. Part 1 is Chance
 
 Public wording: **"The front is the recorder. The inside is the model."** (Decided 2026-10-11.)
 
+> **Partly superseded 2026-10-15.** The current brief is [brief.md](brief.md). The flip, the honesty of motion, the empty sockets, the status badges and header, the wording rules and the accessibility rules stand. Superseded: "the free inside has no controls" and "see free, touch paid" (the engine's intended user adjustments are free, O-1), and the raw capture as Workbench-only (O-3). The "now" column and the engine-request status describe engine 0.5; the 0.11.0 facts are in brief.md › Engine capabilities. The app now has two modes (Recorder and Investigation) that both use this front and inside.
+
 ## Part 1: the brief (Chance, 2026-10-11)
 
 The `rr_dr60` library is the machine on the bench: the stages, components and behaviours that together recreate the recorder. The app shows that machine from two sides.
@@ -34,7 +36,7 @@ The inside supports the positioning in decisions.md ("stage by stage, from the s
 ### Rules that keep it honest
 
 1. **Honesty of motion.** A component animates only from a number the engine returned for the current block. Stages that are not yet modeled render as labelled empty sockets ("not yet modeled"), with their source and assumption IDs. The sockets are a feature: they are the visible work list and the appeal for captures. Nothing on the inside moves for effect.
-2. **No global controls.** The free inside has no controls at all. Every Workbench control lives in the card of the component it belongs to; a dot on the component marks it as off the device default; each card has one "device default" button. (Decided 2026-10-11.)
+2. **No global controls.** *(Partly superseded 2026-10-15: controls are no longer all paid, brief.md O-1; the card, dot and "device default" rules stand.)* The free inside has no controls at all. Every Workbench control lives in the card of the component it belongs to; a dot on the component marks it as off the device default; each card has one "device default" button. (Decided 2026-10-11.)
 3. **The front is the default.** The app opens on the front, recording starts from the front, and after a period without touch the inside drops to a low frame rate. Investigation sessions run an hour or more on battery.
 
 ### Scope: the first cut
@@ -73,7 +75,7 @@ Tapping a component raises a card; dismissing it returns to the board. Nothing e
 3. Source and assumption IDs, confidence, and the engine version that last changed the stage.
 4. Workbench only: "Listen here" (plays the current recording as heard at this stage), bypass, and the stage's parameters, with the "device default" button.
 
-"Listen here" needs the recording's raw microphone capture. **Decided 2026-10-11:** the Workbench keeps the raw capture per recording; it is visible in the recording's details with a delete option, and the app's privacy label lists it. The free tier keeps only the device-rate render.
+"Listen here" needs the recording's raw microphone capture. *(Superseded 2026-10-15: an Investigation session keeps the original microphone audio and sessions are free; Recorder mode is open, brief.md O-3.)* **Decided 2026-10-11:** the Workbench keeps the raw capture per recording; it is visible in the recording's details with a delete option, and the app's privacy label lists it. The free tier keeps only the device-rate render.
 
 ### Status badges and the header
 
@@ -93,6 +95,8 @@ A fourth state, **Checked against a real unit**, applies to no stage today. The 
 - Each component is one accessible element with its name, badge and a throttled value; cards follow the system text size; the flat text list mirrors the board.
 
 ### Free and Workbench: see free, touch paid
+
+*Superseded 2026-10-15: the engine's intended user adjustments are free and paid expansion is component packages (brief.md › Value, O-1, O-2). Kept as the 2026-10-11 record.*
 
 Consistent with the decision that the free tier is the whole device and the Workbench is only what the device cannot do (decisions.md, monetization.md).
 
@@ -115,6 +119,8 @@ Say what the stage does to sound, with its status:
 Avoid: an "activity" indicator (name it "encoding" or "frames"), "detects", "senses", "listening for", "signal present", "anomaly", "spike", "event" as a label (use "splice" and "ceiling"), and "verified" (use "checked against a real unit"). The scope is the riskiest element, because a waveform in this category is read as evidence: keep it, labelled with level and time, calm, with no marks other than the engine's own splice and ceiling events. Store screenshots of the inside carry the status header.
 
 ### Engine requests
+
+*Status at engine 0.11.0 (2026-10-16): E-C is built (spec 006, the record/playback split and the memory) and E-D is built (spec 007, the stage manifest); E-A, E-B and E-E are not built. See brief.md › Engine capabilities.*
 
 Already in the engine (0.5): `BlockInfo.paused`, VAS events through `process_with_events` and `max_events`, per-stage bypass flags, one output `Tap`, `latency_samples`, `version_string`. The limiter's state is a test-only hook and its gain read-out is test-only. Each request below is phrased for `/speckit-specify`.
 
