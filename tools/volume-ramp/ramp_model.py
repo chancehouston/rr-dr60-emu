@@ -16,6 +16,14 @@ after stage 11 the coupling corners precede the gain, so the tone's amplitude an
 both runs alike and the ratio is unchanged (research R-02).
 
 Usage: uv run tools/volume-ramp/ramp_model.py [--check]
+       uv run tools/volume-ramp/ramp_model.py --t1090 MS [--from P] [--to P]
+
+`--t1090 MS` is A-045's knob-flick comparison: for a measured 10-90 % amplitude time it finds,
+per rate and route, the smoothstep length whose gain sequence has that 10-90 % time (between
+positions P, default FR-004's 0.1 -> 1), and prints that length, the click level in FR-004's
+window and band relative to the steady tone at the louder end (the figure a capture reads as the
+band energy during the motion in excess of a steady segment's, over the loud segment's total), and
+the reduction against the instantaneous step. The default output and `--check` are unchanged.
 """
 
 import sys
@@ -88,8 +96,11 @@ def band_energy(y, rate):
     return float((np.abs(np.fft.rfft(y * w)) ** 2)[m].sum())
 
 
-def click_reduction(rate, law, shape, p_s, p_t):
-    n = n_of(rate)
+def click_reduction(rate, law, shape, p_s, p_t, n=None, level=False):
+    """FR-004's reduction (dB) for a transition of n samples (default the engine's N); with
+    `level`, also the click level (dB) relative to the steady tone at the louder end in the same
+    window (a transition to position 0 ends in silence)."""
+    n = n_of(rate) if n is None else n
     win = round(0.5 * rate)
     pad = win  # a settled tone on both sides
     total = 2 * pad + n
@@ -108,7 +119,67 @@ def click_reduction(rate, law, shape, p_s, p_t):
 
     e_step = band_energy(windowed(x * step, n0), rate)
     e_ramp = band_energy(windowed(x * ramp, n0 + (n - 1) / 2), rate)
-    return 10 * np.log10(e_step / e_ramp)
+    reduction = 10 * np.log10(e_step / e_ramp)
+    if not level:
+        return reduction
+    steady = windowed(x * max(law(p_s), law(p_t)), n0) * np.hanning(win)
+    return reduction, 10 * np.log10(e_ramp / float((np.abs(np.fft.rfft(steady)) ** 2).sum()))
+
+
+def t1090(law, shape, p_s, p_t, n, rate):
+    """The 10-90 % amplitude time (s) of an n-sample transition: from the first sample whose
+    gain is 10 % of the way from the old gain to the new to the first that is 90 % of the way."""
+    g = gains(law, shape, p_s, p_t, n)
+    a = (g - law(p_s)) / (law(p_t) - law(p_s))
+    return (int(np.argmax(a >= 0.9)) - int(np.argmax(a >= 0.1))) / rate
+
+
+def n_for_t1090(law, shape, p_s, p_t, rate, target_s):
+    """The transition length (samples) whose 10-90 % time is nearest target_s: the smallest n
+    reaching it by bisection (the time grows with n), or the one before it if that is nearer."""
+    lo, hi = 2, 2
+    while t1090(law, shape, p_s, p_t, hi, rate) < target_s:
+        lo, hi = hi, hi * 2
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        lo, hi = (mid, hi) if t1090(law, shape, p_s, p_t, mid, rate) < target_s else (lo, mid)
+    err = lambda n: abs(t1090(law, shape, p_s, p_t, n, rate) - target_s)
+    return min((lo, hi), key=err)
+
+
+def flick(t1090_ms, p_s, p_t):
+    """A-045's knob-flick comparison (see the module docstring)."""
+    assert 0.0 <= p_s <= 1.0 and 0.0 <= p_t <= 1.0 and p_s != p_t, (p_s, p_t)
+    print(f"A-045 knob-flick comparison: a smoothstep with a {t1090_ms:g} ms 10-90 % amplitude time, {p_s:g} -> {p_t:g}\n")
+    print("The engine's own 20 ms transition, for reference (10-90 % time in ms):")
+    for route, law in LAWS.items():
+        own = [t1090(law, smoothstep, p_s, p_t, n_of(r), r) * 1e3 for r in RATES]
+        print(f"  {route:>9}: " + ", ".join(f"{t:.2f}" for t in own))
+        # Round trip: the length found for the engine's own 10-90 % time has that time (lengths
+        # a sample or two apart can share it, the time being counted in whole samples).
+        for r, t in zip(RATES, own):
+            n = n_for_t1090(law, smoothstep, p_s, p_t, r, t / 1e3)
+            assert t1090(law, smoothstep, p_s, p_t, n, r) * 1e3 == t and abs(n - n_of(r)) <= 0.001 * r, (r, n)
+    print(f"\n{'rate':>6} {'route':>9} {'N':>7} {'length ms':>9} {'10-90 ms':>9} {'click dB':>9} {'vs step':>8}")
+    for rate in RATES:
+        for route, law in LAWS.items():
+            n = n_for_t1090(law, smoothstep, p_s, p_t, rate, t1090_ms / 1e3)
+            red, lvl = click_reduction(rate, law, smoothstep, p_s, p_t, n=n, level=True)
+            t = t1090(law, smoothstep, p_s, p_t, n, rate) * 1e3
+            print(f"{rate:>6} {route:>9} {n:>7} {n / rate * 1e3:9.2f} {t:9.3f} {lvl:9.2f} {red:8.2f}")
+    if max(n_for_t1090(law, smoothstep, p_s, p_t, r, t1090_ms / 1e3) / r for law in LAWS.values() for r in RATES) > 0.5:
+        print("\nnote: the movement is longer than FR-004's 0.5 s window, so the window holds only part of it")
+    print("\nclick dB: the energy in FR-004's window (Hann, round(0.5 x rate), centred on the movement's")
+    print("midpoint) and band (20-2750 Hz, more than 250 Hz from 1 kHz), relative to the whole energy of")
+    print("the steady tone at the louder end in the same window; vs step: FR-004's reduction against the")
+    print("instantaneous step. A capture's figure is its motion window's band energy less a steady")
+    print("segment's (the codec's floor), over the loud steady segment's whole energy.")
+
+
+def flag(name, default):
+    if name not in sys.argv:
+        return default
+    return float(sys.argv[sys.argv.index(name) + 1])
 
 
 def drag(rate, law, shape):
@@ -152,6 +223,9 @@ def drag(rate, law, shape):
 
 
 def main():
+    if "--t1090" in sys.argv:
+        flick(flag("--t1090", None), flag("--from", 0.1), flag("--to", 1.0))
+        return
     check = "--check" in sys.argv
     ok = True
     print("Spec 011 volume transition (A-045): smoothstep in knob position, 20 ms\n")
