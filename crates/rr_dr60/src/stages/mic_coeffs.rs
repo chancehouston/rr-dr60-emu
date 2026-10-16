@@ -135,35 +135,119 @@
 
 /// Stage 2's input high-pass with the 1 kHz normalization in its numerator (A-046).
 pub(crate) const HP_IN: [[f64; 3]; 7] = [
-    [f64::from_bits(0x3febebd654582f72), f64::from_bits(0xbfebebd654582f72), f64::from_bits(0xbfdb29d616dce299)], // 6000 Hz
-    [f64::from_bits(0x3feebacb9c22515c), f64::from_bits(0xbfeebacb9c22515c), f64::from_bits(0xbfe0c81d2bacb65f)], // 8000 Hz
-    [f64::from_bits(0x3ff1da12530998eb), f64::from_bits(0xbff1da12530998eb), f64::from_bits(0xbfe71f721b64b565)], // 16000 Hz
-    [f64::from_bits(0x3ff398fc1898d704), f64::from_bits(0xbff398fc1898d704), f64::from_bits(0xbfec7e27bdb90ad4)], // 44100 Hz
-    [f64::from_bits(0x3ff3a3fbfeebb8b4), f64::from_bits(0xbff3a3fbfeebb8b4), f64::from_bits(0xbfecc8838ec37839)], // 48000 Hz
-    [f64::from_bits(0x3ff432d4a93f9ece), f64::from_bits(0xbff432d4a93f9ece), f64::from_bits(0xbfee304ecfc7bcb2)], // 88200 Hz
-    [f64::from_bits(0x3ff43f90053a3f07), f64::from_bits(0xbff43f90053a3f07), f64::from_bits(0xbfee54dd132738a4)], // 96000 Hz
+    [
+        f64::from_bits(0x3febebd654582f72),
+        f64::from_bits(0xbfebebd654582f72),
+        f64::from_bits(0xbfdb29d616dce299),
+    ], // 6000 Hz
+    [
+        f64::from_bits(0x3feebacb9c22515c),
+        f64::from_bits(0xbfeebacb9c22515c),
+        f64::from_bits(0xbfe0c81d2bacb65f),
+    ], // 8000 Hz
+    [
+        f64::from_bits(0x3ff1da12530998eb),
+        f64::from_bits(0xbff1da12530998eb),
+        f64::from_bits(0xbfe71f721b64b565),
+    ], // 16000 Hz
+    [
+        f64::from_bits(0x3ff398fc1898d704),
+        f64::from_bits(0xbff398fc1898d704),
+        f64::from_bits(0xbfec7e27bdb90ad4),
+    ], // 44100 Hz
+    [
+        f64::from_bits(0x3ff3a3fbfeebb8b4),
+        f64::from_bits(0xbff3a3fbfeebb8b4),
+        f64::from_bits(0xbfecc8838ec37839),
+    ], // 48000 Hz
+    [
+        f64::from_bits(0x3ff432d4a93f9ece),
+        f64::from_bits(0xbff432d4a93f9ece),
+        f64::from_bits(0xbfee304ecfc7bcb2),
+    ], // 88200 Hz
+    [
+        f64::from_bits(0x3ff43f90053a3f07),
+        f64::from_bits(0xbff43f90053a3f07),
+        f64::from_bits(0xbfee54dd132738a4),
+    ], // 96000 Hz
 ];
 
 /// Stage 2's output coupling, bilinear form (A-047, A-053).
 pub(crate) const HP_OUT: [[f64; 3]; 7] = [
-    [f64::from_bits(0x3feec37824039bc0), f64::from_bits(0xbfeec37824039bc0), f64::from_bits(0xbfed86f04807377f)], // 6000 Hz
-    [f64::from_bits(0x3fef10b9f206ee8f), f64::from_bits(0xbfef10b9f206ee8f), f64::from_bits(0xbfee2173e40ddd1e)], // 8000 Hz
-    [f64::from_bits(0x3fef877c478bfbf8), f64::from_bits(0xbfef877c478bfbf8), f64::from_bits(0xbfef0ef88f17f7f1)], // 16000 Hz
-    [f64::from_bits(0x3fefd33ac381a85e), f64::from_bits(0xbfefd33ac381a85e), f64::from_bits(0xbfefa675870350bc)], // 44100 Hz
-    [f64::from_bits(0x3fefd68ac2a76568), f64::from_bits(0xbfefd68ac2a76568), f64::from_bits(0xbfefad15854ecacf)], // 48000 Hz
-    [f64::from_bits(0x3fefe9a37624b267), f64::from_bits(0xbfefe9a37624b267), f64::from_bits(0xbfefd346ec4964ce)], // 88200 Hz
-    [f64::from_bits(0x3fefeb754143aa58), f64::from_bits(0xbfefeb754143aa58), f64::from_bits(0xbfefd6ea828754b1)], // 96000 Hz
+    [
+        f64::from_bits(0x3feec37824039bc0),
+        f64::from_bits(0xbfeec37824039bc0),
+        f64::from_bits(0xbfed86f04807377f),
+    ], // 6000 Hz
+    [
+        f64::from_bits(0x3fef10b9f206ee8f),
+        f64::from_bits(0xbfef10b9f206ee8f),
+        f64::from_bits(0xbfee2173e40ddd1e),
+    ], // 8000 Hz
+    [
+        f64::from_bits(0x3fef877c478bfbf8),
+        f64::from_bits(0xbfef877c478bfbf8),
+        f64::from_bits(0xbfef0ef88f17f7f1),
+    ], // 16000 Hz
+    [
+        f64::from_bits(0x3fefd33ac381a85e),
+        f64::from_bits(0xbfefd33ac381a85e),
+        f64::from_bits(0xbfefa675870350bc),
+    ], // 44100 Hz
+    [
+        f64::from_bits(0x3fefd68ac2a76568),
+        f64::from_bits(0xbfefd68ac2a76568),
+        f64::from_bits(0xbfefad15854ecacf),
+    ], // 48000 Hz
+    [
+        f64::from_bits(0x3fefe9a37624b267),
+        f64::from_bits(0xbfefe9a37624b267),
+        f64::from_bits(0xbfefd346ec4964ce),
+    ], // 88200 Hz
+    [
+        f64::from_bits(0x3fefeb754143aa58),
+        f64::from_bits(0xbfefeb754143aa58),
+        f64::from_bits(0xbfefd6ea828754b1),
+    ], // 96000 Hz
 ];
 
 /// Stage 2's roll-off: b0, b1 ≥ 0, unity DC gain (A-047, A-053).
 pub(crate) const LP: [[f64; 3]; 7] = [
-    [f64::from_bits(0x3fefeb10f2ed5242), f64::from_bits(0x3ddb6ae49c28001b), f64::from_bits(0xbf64ef0d04f84be2)], // 6000 Hz
-    [f64::from_bits(0x3fef96b4b95dd80d), f64::from_bits(0x3f8a52d1a51a60b3), f64::from_bits(0xbddb7cdfd9d7bdbb)], // 8000 Hz
-    [f64::from_bits(0x3fee3c5cd842a2e2), f64::from_bits(0x3fac3a327af9eadf), f64::from_bits(0xbddb7cdfd9d7bdbb)], // 16000 Hz
-    [f64::from_bits(0x3fe83d2315e5ca65), f64::from_bits(0x3fbf912636ec7227), f64::from_bits(0xbfbe85c119e53ab3)], // 44100 Hz
-    [f64::from_bits(0x3fe7611ee2bc0b82), f64::from_bits(0x3fc21e3add230c14), f64::from_bits(0xbfc05d4997ecc5e3)], // 48000 Hz
-    [f64::from_bits(0x3fe15355bb5223ff), f64::from_bits(0x3fb089c4f36be9aa), f64::from_bits(0xbfd936e34c80bd97)], // 88200 Hz
-    [f64::from_bits(0x3fe0758cf3279182), f64::from_bits(0x3fae680bc3151fae), f64::from_bits(0xbfdb47e4a14e3906)], // 96000 Hz
+    [
+        f64::from_bits(0x3fefeb10f2ed5242),
+        f64::from_bits(0x3ddb6ae49c28001b),
+        f64::from_bits(0xbf64ef0d04f84be2),
+    ], // 6000 Hz
+    [
+        f64::from_bits(0x3fef96b4b95dd80d),
+        f64::from_bits(0x3f8a52d1a51a60b3),
+        f64::from_bits(0xbddb7cdfd9d7bdbb),
+    ], // 8000 Hz
+    [
+        f64::from_bits(0x3fee3c5cd842a2e2),
+        f64::from_bits(0x3fac3a327af9eadf),
+        f64::from_bits(0xbddb7cdfd9d7bdbb),
+    ], // 16000 Hz
+    [
+        f64::from_bits(0x3fe83d2315e5ca65),
+        f64::from_bits(0x3fbf912636ec7227),
+        f64::from_bits(0xbfbe85c119e53ab3),
+    ], // 44100 Hz
+    [
+        f64::from_bits(0x3fe7611ee2bc0b82),
+        f64::from_bits(0x3fc21e3add230c14),
+        f64::from_bits(0xbfc05d4997ecc5e3),
+    ], // 48000 Hz
+    [
+        f64::from_bits(0x3fe15355bb5223ff),
+        f64::from_bits(0x3fb089c4f36be9aa),
+        f64::from_bits(0xbfd936e34c80bd97),
+    ], // 88200 Hz
+    [
+        f64::from_bits(0x3fe0758cf3279182),
+        f64::from_bits(0x3fae680bc3151fae),
+        f64::from_bits(0xbfdb47e4a14e3906),
+    ], // 96000 Hz
 ];
 
 /// The hiss source's RMS per host rate at offset 0 (A-048).

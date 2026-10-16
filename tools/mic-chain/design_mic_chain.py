@@ -686,7 +686,11 @@ def write(per_rate, clipinfo, xz, ratio):
         lines.append(f"pub(crate) const {name}: [[f64; 3]; 7] = [")
         for fs in RATES:
             row = per_rate[fs][key_]
-            lines.append(f"    [{', '.join(f'f64::from_bits({hexbits(v)})' for v in row)}], // {fs} Hz")
+            # rustfmt's layout for a row longer than the line limit (so --write and `cargo fmt` agree)
+            lines.append("    [")
+            for v in row:
+                lines.append(f"        f64::from_bits({hexbits(v)}),")
+            lines.append(f"    ], // {fs} Hz")
         lines.append("];")
         lines.append("")
 

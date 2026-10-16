@@ -8,7 +8,8 @@ pub(crate) mod biquad;
 pub(crate) mod clamp;
 pub(crate) mod first_order;
 pub(crate) mod limiter;
-#[allow(dead_code)] // spec 012: the generated microphone-path tables; read from Phase 2 (T025, T026)
+// Spec 012: the generated microphone-path tables, read from Phase 2 (T025, T026).
+#[allow(dead_code)]
 pub(crate) mod mic_coeffs;
 pub(crate) mod output;
 #[allow(dead_code)] // the generated table carries the script's pinned figures, read by tests
