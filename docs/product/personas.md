@@ -8,10 +8,10 @@ The app describes only what the recorder's signal chain does to sound. Personas 
 |---|---|---|---|---|
 | **Group-hunt hobbyist** | a phone, a cheap digital recorder, sometimes a "spirit box" app | The ritual and the sound: ask, pause, play back at once. The voice-activated pausing collapses silence so review is immediate. Wants the well-known device without the second-hand price. | free | Higgypop, "Panasonic RR-DR60: A Legendary EVP Recorder" (2020-02-13), on "quick-fire EVP sessions"; GhostTube EVP feature list (checked 2026-10-11) |
 | **Content creator** | phone and camera; often GhostTube EVP | A recognisable sound on camera, a credible on-screen origin ("modeled from the service manual"), quick sharing, tags to find moments | Workbench | GhostTube EVP markets to "video creators" (listing, checked 2026-10-11); judgement |
-| **Serious investigator** | dedicated recorders, sometimes a real RR-DR60 | Wants to know what is modeled and what is checked against a real unit; compares with a real unit; the likeliest source of test recordings and the likeliest critic | free; evidence contributor | judgement |
+| **Serious investigator** (Investigation mode, since 2026-10-15) | dedicated recorders, sometimes a real RR-DR60 | Wants to know what is modeled and what is checked against a real unit; compares with a real unit; the likeliest source of test recordings and the likeliest critic | free; evidence contributor | judgement |
 | **Curious one-time user** | phone | Tries it once after a video; needs a first recording within a minute, no account | free | judgement |
 | **App developer** (library) | n/a | Embeds a documented, deterministic, RR-DR60-modeled chain through the C API under a permissive licence | library | CLAUDE.md audience 1 |
-| **Vintage-gear and audio enthusiast** | n/a | The sonic character of a 1990s speech codec and a tiny speaker | Workbench, library | no evidence yet of this group at scale; keep in copy, do not build for it until GitHub activity or purchases show it |
+| **Vintage-gear and audio enthusiast** | n/a | The sonic character of a 1990s speech codec and a tiny speaker | Workbench, library | no evidence yet of this group at scale. *Superseded 2026-10-15: Recorder mode is built as this group's home (brief.md).* |
 
 ## Jobs, ranked by how many users notice
 
