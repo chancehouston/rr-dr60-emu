@@ -4,7 +4,7 @@
 
 - **Current as of:** 2026-10-16.
 - **Sources:**
-  - the design dossier *One instrument. Two ways to explore.* (v0.1, 15 October 2026), prepared from the product-design conversation with Chance Houston that day;
+  - the design dossier *One instrument. Two ways to explore.* (v0.1, 15 October 2026, [design-dossier-2026-10-15.pdf](design-dossier-2026-10-15.pdf)), prepared from the product-design conversation with Chance Houston that day;
   - the product decisions of 2026-10-11 that the dossier does not change (decisions.md);
   - the engine on `main` at version 0.11.0, read on 2026-10-16 for the capability facts below.
 - **Not a screen specification.** The dossier's renderings are illustrative: their controls, routings and readings are placeholders, and the sensor readings in them are invented for the concept.
@@ -289,7 +289,7 @@ These match the dossier's split.
 
 ## Concept references
 
-The three concept images are kept in the dossier, not in this repository.
+The three concept images are on pages 2–4 of [the dossier](design-dossier-2026-10-15.pdf).
 
 | Concept | Shows | Notes |
 |---|---|---|
