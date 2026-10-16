@@ -276,21 +276,22 @@ fn id_lists_ascending_and_well_formed() {
 }
 
 /// Spec 009 US3 scenario 1 (FR-015): stages 11, 12 and 13 read assumed with medium / low / low
-/// confidence and model version 0.9.0, their coverage notes name what each leaves out, their
+/// confidence and model versions 0.11.0 / 0.9.0 / 0.9.0 (stage 11 moved with the volume
+/// transition, spec 011 FR-010), their coverage notes name what each leaves out, their
 /// controls notes name the route, the volume control, the bypass settings and the taps, and
 /// the header counts read 5 not modeled / 10 assumed.
 #[test]
 fn output_stages_us3_scenario_1() {
     let m = manifest();
-    for (n, confidence) in [
-        (11u32, Confidence::Medium),
-        (12, Confidence::Low),
-        (13, Confidence::Low),
+    for (n, confidence, model_version) in [
+        (11u32, Confidence::Medium, "0.11.0"), // spec 011 FR-010: the volume transition
+        (12, Confidence::Low, "0.9.0"),
+        (13, Confidence::Low, "0.9.0"),
     ] {
         let e = m.stage(n).unwrap();
         assert_eq!(e.status, StageStatus::Assumed, "stage {n}");
         assert_eq!(e.confidence, confidence, "stage {n}");
-        assert_eq!(e.model_version, "0.9.0", "stage {n}");
+        assert_eq!(e.model_version, model_version, "stage {n}");
         assert!(
             !e.coverage.is_empty() && !e.controls.is_empty(),
             "stage {n}"
@@ -301,14 +302,15 @@ fn output_stages_us3_scenario_1() {
         );
     }
     let amp = m.stage(11).unwrap();
-    for id in ["A-031", "A-043", "A-044"] {
+    for id in ["A-031", "A-043", "A-044", "A-045"] {
         assert!(amp.assumptions.contains(&id), "stage 11 cites {id}");
     }
     assert!(
         amp.sources.contains(&"S-006"),
         "stage 11 cites the datasheet"
     );
-    for word in ["knob", "battery", "beep"] {
+    // Spec 011 FR-010: the wiper's noise and the knob's speed are not modeled.
+    for word in ["knob", "battery", "beep", "wiper", "speed"] {
         assert!(
             amp.coverage.contains(word),
             "stage 11 coverage lacks {word:?}"

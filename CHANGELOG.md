@@ -10,6 +10,9 @@ Changes to assumed hardware values ([assumption register](docs/hardware/assumpti
 
 ### Documentation
 
+<!-- 0.11.0:start -->
+- Spec 011 (2026-10-16): **A-045** registered (the volume transition: the wiper moves continuously, modeled as a 20 ms knob movement, an engine convention); **A-044** amended (a position change moves the knob over 20 ms); the signal-chain row 11 names the transition; the stage manifest's canonical text and the README's manifest table re-blessed once (the library version 0.11.0; stage 11 cites A-045, its coverage note names the wiper noise and the knob speed, its model version is 0.11.0). Details at T033.
+<!-- 0.11.0:end -->
 <!-- 0.10.0:start -->
 - Spec 010 (2026-10-15): **A-042** amended: the register now names the **output clamp** as the host's alternative to leaving headroom, states every overshoot figure with its configuration (the output chain alone about 1.9 at 48 kHz; the default engine's speaker route about 1.96 – 2.06 on a full-scale tone at position 1 at 44.1 – 96 kHz; the speaker route never above the speaker template's impulse-response L1 norm, 1.75 – 2.29 by host rate, a provable bound since stage 11 is held at 1.0 by the clipper; the earphone route 1.37 – 1.52 chain-only and 1.04 – 1.07 in the default on a full-scale square at position 1), corrects the earphone mechanism to the reconstruction overshoot plus the coupling corners' overshoot on square-edged material (the 009 edge-case test's comment said "only when the chain's input does"); adds that on a steady full-scale tone at position 1 the earphone route reads 1.02 – 1.04 (the level gain of the resampler pair and the speech codec); states that on material above the bound the clamp adds distortion of its own that the device does not have; and states that even at the reference position loud material near the speaker template's resonance (about 800 Hz) can exceed full scale (800 Hz bursts at +10 dBFS up to about 1.16 at one level, an 800 Hz full-scale square up to about 1.06; the speech codec's discrete choices make such peaks level-sensitive). The README's output section leads with headroom scaling (0.42, −7.5 dB) as the choice that keeps the model's sound unaltered, then the option, the 16-bit conversion (+1.0 maps to 32767; a host scaling by 32768 saturates +1.0), and the true-peak caveat; the record-path headroom note carries the corrected figures. The manifest canonical text was re-blessed once, for its header's library version (0.10.0) only: no stage row, count or string changed (the option is not a stage).
 <!-- 0.10.0:end -->
@@ -25,6 +28,9 @@ Changes to assumed hardware values ([assumption register](docs/hardware/assumpti
 
 ### Added
 
+<!-- 0.11.0:start -->
+- **Volume transition** ([spec 011](specs/011-volume-ramp/spec.md), 2026-10-16; version **0.11.0**). Details at T033.
+<!-- 0.11.0:end -->
 <!-- 0.10.0:start -->
 - **Output clamp** ([spec 010](specs/010-output-clamp/spec.md), 2026-10-15; version **0.10.0**). A host option, **off by default**, that replaces every sample at the route-output tap above +1.0 by +1.0 and every sample below −1.0 by −1.0 (each route's full scale, A-042), on both routes, after any output-chain bypass; the play calls always return the route output, so with the option on they are always bounded; the taps after stages 11, 12 and 13, `Tap::AfterPlayback` and every earlier tap are never bounded. It is an emulator convenience, not a device behavior, and not a stage: no manifest row, no new assumption. It has no state, adds no latency and no drain, and changes nothing stored; samples inside the bound pass unchanged, so with the option off every tap's output is bit-identical to 0.9's (the five golden files and their guards are unmoved).
   - Rust API: `OutputSettings::clamp_enabled` (`false` in `DEVICE` and `BYPASSED`); the tap docs say which taps are bounded.
@@ -81,6 +87,9 @@ Changes to assumed hardware values ([assumption register](docs/hardware/assumpti
 
 ### Changed
 
+<!-- 0.11.0:start -->
+- Spec 011 (2026-10-16): a volume position change is a 20 ms transition of the knob (A-045, new; A-044 amended); stage 11's model version is 0.11.0. Details at T033.
+<!-- 0.11.0:end -->
 <!-- 0.10.0:start -->
 - Spec 010 (2026-10-15), **breaking (0.9.0 → 0.10.0) for C callers:** `RrDr60Settings` is **112 bytes** (`struct_size = 104` is refused as `RR_DR60_STATUS_INVALID_ARGUMENT` / `RR_DR60_SETTING_FIELD_STRUCT_SIZE`; `rr_dr60_settings_default` fills 112). The structure holds a 64-bit seed and is 8-byte aligned, so the new field could not be appended into 0.9's tail padding without a stale caller's uninitialized byte being read as the option: offsets 99 – 103 are an explicit reserved field, `output_clamp_enabled` sits at 104, and 105 – 111 are an explicit reserved tail so that the next version can refuse 112. No other field, status, tap or function changed; `RR_DR60_VERSION_MINOR` is 10.
 - Spec 010, CI: the release timing tests now run one at a time (`--test-threads=1`): run concurrently on the shared runner they measured each other, and spec 008's worst-block test failed once while the new clamp timing test ran beside it.

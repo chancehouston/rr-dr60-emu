@@ -283,6 +283,18 @@ pub mod __test_hooks {
         /// The output clamp applied to positive samples only (false: as committed; true fails
         /// the identity check on the negative half-cycles).
         pub clamp_positive_only: bool,
+        /// Version 0.10's instantaneous volume step (spec 011 research R-07; false: as
+        /// committed, the 20 ms transition of A-045; true: every position change is taken at
+        /// once at the next block, the reference of the route-output comparison and of the
+        /// cost measurement).
+        pub volume_step: bool,
+        /// The volume transition's knob moved linearly in time instead of along the smoothstep
+        /// (false: as committed; true is the mutant that fails spec 011 FR-004 on the speaker
+        /// law, about 19 dB against the 30 dB floor).
+        pub volume_shape_linear: bool,
+        /// Added to the transition's length N in host samples (0: as committed; ±1 are the
+        /// length mutants that fail the splice identity at sample N or N − 1).
+        pub volume_ramp_delta: i64,
     }
 
     impl Default for OutputMutation {
@@ -294,6 +306,9 @@ pub mod __test_hooks {
                 gain_scale: 1.0,
                 clamp_bound: 1.0,
                 clamp_positive_only: false,
+                volume_step: false,
+                volume_shape_linear: false,
+                volume_ramp_delta: 0,
             }
         }
     }

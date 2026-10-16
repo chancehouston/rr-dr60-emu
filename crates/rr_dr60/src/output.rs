@@ -9,6 +9,7 @@
 //! generated table behind them is `stages/output_coeffs.rs`
 //! (`tools/output-chain/design_output_chain.py`).
 
+use crate::settings::SUPPORTED_HOST_RATES;
 use crate::stages::output as chain;
 use crate::stages::output_coeffs as c;
 
@@ -78,6 +79,39 @@ pub fn settle_samples(host_rate_hz: u32) -> Option<u32> {
     chain::rate_index(host_rate_hz).map(|i| c::N_OUT[i])
 }
 
+/// The length of a **volume transition**, in milliseconds (A-045; spec 011 FR-002): a valid
+/// volume change moves the knob from where it is to the new position over this time, starting
+/// and ending at rest, the gains following the loaded law (A-044) at every sample. The same at
+/// every supported host rate and for any size of change. A read-only constant, not a setting
+/// (spec 011 FR-011); `RR_DR60_VOLUME_TRANSITION_MS` in C.
+pub const VOLUME_TRANSITION_MS: u32 = 20; // A-045: an engine convention (spec 011 FR-002)
+
+// Spec 011 FR-002: 20 ms is a whole number of samples at every supported rate.
+const _: () = {
+    let mut i = 0;
+    while i < SUPPORTED_HOST_RATES.len() {
+        assert!(
+            SUPPORTED_HOST_RATES[i] % 50 == 0,
+            "20 ms is a whole number of samples"
+        );
+        i += 1;
+    }
+};
+
+/// The length of a volume transition at a host rate, in host samples (spec 011 FR-002):
+/// `host_rate_hz × VOLUME_TRANSITION_MS ÷ 1000`, exact at every supported rate (120 at 6 kHz
+/// … 1920 at 96 kHz). `None` for an unsupported rate.
+pub const fn volume_transition_samples(host_rate_hz: u32) -> Option<u32> {
+    let mut i = 0;
+    while i < SUPPORTED_HOST_RATES.len() {
+        if SUPPORTED_HOST_RATES[i] == host_rate_hz {
+            return Some(host_rate_hz * VOLUME_TRANSITION_MS / 1000);
+        }
+        i += 1;
+    }
+    None
+}
+
 fn db(ratio: f64) -> f32 {
     if ratio <= 0.0 {
         f32::NEG_INFINITY
@@ -114,5 +148,17 @@ mod tests {
         // The shelf's figure from its zero and pole.
         let shelf = 20.0 * rr_dr60_detmath::ln(1310.0 / 780.0) / core::f64::consts::LN_10;
         assert!((shelf - f64::from(SPEAKER_SHELF_DB)).abs() < 0.01);
+    }
+
+    /// Spec 011 FR-002: N = 0.02 × the host rate exactly at the seven rates.
+    #[test]
+    fn volume_transition_samples_per_rate() {
+        assert_eq!(VOLUME_TRANSITION_MS, 20); // A-045
+        let n: [Option<u32>; 7] = SUPPORTED_HOST_RATES.map(volume_transition_samples);
+        assert_eq!(n, [120, 160, 320, 882, 960, 1764, 1920].map(Some));
+        assert_eq!(volume_transition_samples(22_050), None);
+        assert_eq!(volume_transition_samples(0), None);
+        const AT_48K: Option<u32> = volume_transition_samples(48_000); // usable in const context
+        assert_eq!(AT_48K, Some(960));
     }
 }

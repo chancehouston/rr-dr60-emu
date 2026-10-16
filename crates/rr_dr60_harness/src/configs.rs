@@ -232,9 +232,29 @@ pub fn settings(name: &str, host_rate_hz: u32) -> Settings {
             s = settings(output_clamp_twin(name), host_rate_hz);
             s.output.clamp_enabled = true; // 010 FR-001
         }
+        // Spec 011 (data-model.md › Configurations): stage 11 alone, read at the tap after it
+        // (every earlier stage bypassed, the speaker template and the earphone output off); the
+        // route is a control the check sets (`stage11_route`).
+        "stage11_only_speaker" | "stage11_only_earphone" => {
+            s = settings("output_only_amp", host_rate_hz);
+            s.tap = Tap::AfterVolumeAmp; // 011 FR-004: the tap after stage 11
+        }
         other => panic!("unknown configuration {other:?}"),
     }
     s
+}
+
+/// The spec 011 stage-11-only configurations (data-model.md › Configurations): the volume
+/// control and amplifier alone at [`Tap::AfterVolumeAmp`], where the coupling corners precede
+/// the gain, so a run held at a constant position is the transition's oracle (research R-05).
+pub const STAGE11_CONFIGS: [&str; 2] = ["stage11_only_speaker", "stage11_only_earphone"];
+
+/// The route a spec 011 stage-11-only configuration is read on.
+pub fn stage11_route(name: &str) -> rr_dr60::Route {
+    match name {
+        "stage11_only_earphone" => rr_dr60::Route::Earphone,
+        _ => rr_dr60::Route::Speaker,
+    }
 }
 
 /// `settings` with the memory's capacity set to `secs` seconds and `max` recordings (spec 006
@@ -511,6 +531,28 @@ mod tests {
         assert_eq!(
             settings("bypass_route_output", 48_000).tap,
             Tap::RouteOutput
+        );
+        // Spec 011 T008: stage 11 alone at the tap after it, nothing else on.
+        for name in STAGE11_CONFIGS {
+            let c = settings(name, 48_000);
+            assert_eq!(c.tap, Tap::AfterVolumeAmp, "{name}");
+            assert!(c.output.volume_amp_enabled, "{name}");
+            assert!(
+                !c.output.speaker_enabled && !c.output.earphone_enabled,
+                "{name}"
+            );
+            assert!(!c.output.clamp_enabled && !c.speech_codec_enabled, "{name}");
+            let mut amp = settings("output_only_amp", 48_000);
+            amp.tap = Tap::AfterVolumeAmp;
+            assert_eq!(c, amp, "{name}");
+        }
+        assert_eq!(
+            stage11_route("stage11_only_earphone"),
+            rr_dr60::Route::Earphone
+        );
+        assert_eq!(
+            stage11_route("stage11_only_speaker"),
+            rr_dr60::Route::Speaker
         );
         assert_eq!(
             output_clamp_route_volume("default_output_ref_clamp").1,

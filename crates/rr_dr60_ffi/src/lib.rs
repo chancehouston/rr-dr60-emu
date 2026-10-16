@@ -45,7 +45,7 @@ use rr_dr60::{
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 10;
+pub const RR_DR60_VERSION_MINOR: u32 = 11;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -2561,7 +2561,7 @@ mod tests {
         assert!(!d.output_clamp_enabled); // 010 FR-002
         assert_eq!(d.reserved_010, [0; 5]);
         assert_eq!(d.reserved_010_tail, [0; 7]);
-        assert_eq!(RR_DR60_VERSION_MINOR, 10);
+        assert_eq!(RR_DR60_VERSION_MINOR, 11);
         let mut stale = rr_dr60_settings_default(48_000);
         stale.struct_size = 104; // a 0.9 caller (spec 010 FR-008)
         assert_eq!(

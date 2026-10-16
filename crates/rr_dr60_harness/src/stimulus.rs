@@ -35,6 +35,24 @@ pub fn square(freq_hz: f64, amp: f32, fs: f64, len: usize) -> Vec<f32> {
         .collect()
 }
 
+/// Spec 011 (research R-05): a 1 kHz cosine at `level_dbfs`, `len` samples, whose positive
+/// peak falls on **output** sample `peak_at` of a path with `latency` host samples, i.e. on
+/// input sample `peak_at − latency` (the coupling corners' phase lead at 1 kHz, 1.7 – 10.9°, is
+/// not compensated). The click-energy stimulus of FR-004.
+pub fn tone_peaking_at(
+    level_dbfs: f64,
+    rate: u32,
+    len: usize,
+    peak_at: usize,
+    latency: usize,
+) -> Vec<f32> {
+    let (fs, amp) = (f64::from(rate), amplitude(level_dbfs));
+    let at = peak_at as f64 - latency as f64;
+    (0..len)
+        .map(|n| (amp * cos(TAU * 1000.0 * (n as f64 - at) / fs)) as f32)
+        .collect()
+}
+
 /// A tone at `level_dbfs` starting at `phase_rad`: `A · sin(2π·freq·n/fs + φ)`, n = 0..len,
 /// bit-reproducible (detmath). The cycle count is reduced to one cycle before `sin`.
 pub fn tone_at_phase(
@@ -503,6 +521,23 @@ fn scale_to_level(x: &[f64], level_dbfs: f64) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Spec 011 T010: the input peaks at `peak_at − latency`.
+    #[test]
+    fn tone_peaking_at_places_the_peak() {
+        for (rate, peak_at, latency) in [
+            (6000u32, 3000usize, 181usize),
+            (44_100, 22_050, 1771),
+            (48_000, 24_000, 1923),
+        ] {
+            let x = tone_peaking_at(0.0, rate, 2 * peak_at, peak_at, latency);
+            let i = peak_at - latency;
+            assert_eq!(x[i], 1.0, "{rate} Hz");
+            assert!(x[i - 1] < x[i] && x[i + 1] < x[i], "{rate} Hz");
+        }
+        let quiet = tone_peaking_at(-30.0, 48_000, 100, 10, 0);
+        assert!((f64::from(quiet[10]) - amplitude(-30.0)).abs() < 1e-7);
+    }
 
     #[test]
     fn tone_length_and_peak() {
