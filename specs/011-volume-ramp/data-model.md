@@ -70,7 +70,7 @@ k = N: g = g_to (exactly 0.10's scalar), knob = to
 
 | Name | Settings | Route | Read at |
 |---|---|---|---|
-| `stage11_only_speaker` | `bypass_all` + `output.volume_amp_enabled = true` | speaker | `Tap::AfterVolumeAmp` |
+| `stage11_only_speaker` | as built: `output_only_amp` (every earlier stage, the codec and the ADC clamp off; stage 11 on) | speaker | `Tap::AfterVolumeAmp` |
 | `stage11_only_earphone` | the same | earphone | `Tap::AfterVolumeAmp` |
 | `output_only_speaker`, `output_only_earphone` | spec 009's | each | `Tap::RouteOutput` (US1 AS7, reported) |
 | `default_output`, `default_earphone` | spec 009's | each | `Tap::RouteOutput` (US2, golden) |

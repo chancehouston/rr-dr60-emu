@@ -492,7 +492,7 @@ fn volume_ramp_cost() {
     };
     let constant = |position: f32, route: Route| {
         let mut best = f64::MAX;
-        for _ in 0..5 {
+        for _ in 0..1 {
             let mut p = Pipeline::new(s).unwrap();
             p.set_route(route);
             p.set_volume(position).unwrap();
@@ -506,10 +506,14 @@ fn volume_ramp_cost() {
         best
     };
     for route in [Route::Speaker, Route::Earphone] {
-        let at: Vec<f64> = [0.1f32, 0.55, 1.0]
-            .iter()
-            .map(|&p| constant(p, route))
-            .collect();
+        // Coach review R7: nine interleaved rounds (the three positions inside each round, the
+        // fastest of each kept), so the spread check survives a noisy shared runner.
+        let mut at = [f64::MAX; 3];
+        for _ in 0..9 {
+            for (k, &p) in [0.1f32, 0.55, 1.0].iter().enumerate() {
+                at[k] = at[k].min(constant(p, route));
+            }
+        }
         let lo = at.iter().copied().fold(f64::MAX, f64::min);
         let hi = at.iter().copied().fold(0.0, f64::max);
         let spread = 100.0 * (hi / lo - 1.0);

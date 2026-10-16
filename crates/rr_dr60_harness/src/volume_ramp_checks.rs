@@ -231,8 +231,31 @@ pub fn splice(
         .rev()
         .find(|&i| y[i].to_bits() != b[i].to_bits());
     let k = |i: Option<usize>| i.map_or(f64::NAN, |i| (i as f64) - c as f64 + 1.0);
+    // Post-implementation review N2: every transition sample lies between the two runs (exact on
+    // the earphone route; on the speaker route the knee is monotonic and memoryless).
+    let outside = (c..c + n - 1)
+        .filter(|&i| {
+            let (lo, hi) = if a[i] <= b[i] {
+                (a[i], b[i])
+            } else {
+                (b[i], a[i])
+            };
+            !(lo..=hi).contains(&y[i])
+        })
+        .count();
     let stim = describe(level, from, to, c);
     vec![
+        MeasurementResult::new(
+            "FR-003",
+            "transition samples outside the old and new runs (sandwich)",
+            T_RAMP,
+            rate,
+            config,
+            stim.clone(),
+            outside as f64,
+            "",
+            Tolerance::Exact(0.0), // 011 FR-003: engineering target
+        ),
         MeasurementResult::new(
             "FR-001",
             "bit-identical to the old position's run before the change",
@@ -242,7 +265,7 @@ pub fn splice(
             stim.clone(),
             pass(same(&y[..c], &a[..c])),
             "",
-            Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
+            Tolerance::Exact(1.0), // 011 FR-001: engineering target
         ),
         MeasurementResult::new(
             "FR-001",
@@ -253,7 +276,7 @@ pub fn splice(
             stim.clone(),
             pass(same(&y[c + n - 1..], &b[c + n - 1..])),
             "",
-            Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
+            Tolerance::Exact(1.0), // 011 FR-001: engineering target
         ),
         MeasurementResult::new(
             "FR-001",
@@ -264,7 +287,7 @@ pub fn splice(
             stim.clone(),
             k(first),
             "sample",
-            Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
+            Tolerance::Exact(1.0), // 011 FR-001: engineering target
         ),
         MeasurementResult::new(
             "FR-002",
@@ -332,7 +355,7 @@ pub fn ratio_reader(
         ),
         ratio_reversals(&q, to > from) as f64,
         "",
-        Tolerance::Exact(0.0), // A-045: engineering target (spec 011)
+        Tolerance::Exact(0.0), // 011 FR-003, SC-001: engineering target
     )]
 }
 
@@ -359,7 +382,7 @@ pub fn partitions(make: Make<'_>, rate: u32, config: &'static str) -> Vec<Measur
             format!("{}, {name} vs 64", describe(level, 0.1, 1.0, s.c)),
             pass(same(&s.run(make, 0.1, &changes, blocks), &want)),
             "",
-            Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
+            Tolerance::Exact(1.0), // 011 FR-002: engineering target
         )
     })
     .collect()
@@ -452,14 +475,14 @@ pub fn ceiling(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
         let stim = format!("1 kHz 0 dBFS, {name}");
         rows.push(MeasurementResult::new(
             "FR-003",
-            "speaker route peak through a transition (ceiling 1.0)",
+            "speaker route peak through a transition (ceiling 1.0; a knee regression row)",
             T_RAMP,
             rate,
             config,
             stim.clone(),
             peak,
             "FS",
-            Tolerance::AtMost(1.0), // A-045: engineering target (spec 011)
+            Tolerance::AtMost(1.0), // 011 US1 AS4; A-042 (the route's full scale): engineering target
         ));
         rows.push(MeasurementResult::new(
             "FR-001",
@@ -470,7 +493,7 @@ pub fn ceiling(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
             stim,
             pass(same(&y[..c], &a[..c]) && same(&y[last_at + n - 1..], &b[last_at + n - 1..])),
             "",
-            Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
+            Tolerance::Exact(1.0), // 011 FR-001: engineering target
         ));
     }
     rows
@@ -512,7 +535,7 @@ pub fn retarget(make: Make<'_>, rate: u32, config: &'static str) -> Vec<Measurem
             stim.clone(),
             across / max_step,
             "",
-            Tolerance::AtMost(1.0), // A-045: engineering target (spec 011)
+            Tolerance::AtMost(1.0), // 011 SC-003 (no jump at a retarget): engineering target
         ),
         MeasurementResult::new(
             "FR-001",
@@ -523,7 +546,7 @@ pub fn retarget(make: Make<'_>, rate: u32, config: &'static str) -> Vec<Measurem
             stim.clone(),
             pass(same(&y[c2 + n - 1..], &b[c2 + n - 1..])),
             "",
-            Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
+            Tolerance::Exact(1.0), // 011 FR-001: engineering target
         ),
         MeasurementResult::new(
             "FR-003",
@@ -534,7 +557,7 @@ pub fn retarget(make: Make<'_>, rate: u32, config: &'static str) -> Vec<Measurem
             stim,
             pass(same(&once, &twice)),
             "",
-            Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
+            Tolerance::Exact(1.0), // 011 FR-003: engineering target
         ),
     ]
 }
@@ -579,7 +602,7 @@ pub fn zeros(make: Make<'_>, rate: u32, config: &'static str) -> Vec<Measurement
             describe(level, 1.0, 0.0, c),
             nonzero as f64,
             "",
-            Tolerance::Exact(0.0), // A-045: engineering target (spec 011)
+            Tolerance::Exact(0.0), // 011 FR-008: engineering target
         ),
         MeasurementResult::new(
             "FR-008",
@@ -590,7 +613,7 @@ pub fn zeros(make: Make<'_>, rate: u32, config: &'static str) -> Vec<Measurement
             format!("1 kHz -20 dBFS, 1 -> 0 at sample {c}"),
             analysis::db(tail.max(1e-300)),
             "dBFS",
-            Tolerance::AtMost(-120.0), // A-045: engineering target (spec 011)
+            Tolerance::AtMost(-120.0), // 011 FR-008 (009 FR-009's bound): engineering target
         ),
     ]
 }
@@ -641,7 +664,7 @@ pub fn drag(make: Make<'_>, rate: u32, config: &'static str) -> Vec<MeasurementR
             stim,
             ratio_reversals(&q, true) as f64,
             "",
-            Tolerance::Exact(0.0), // A-045: engineering target (spec 011)
+            Tolerance::Exact(0.0), // 011 SC-003: engineering target
         ),
     ]
 }
@@ -791,7 +814,7 @@ pub fn whole_engine(
             name.to_string(),
             pass(same(&f(make), &f(step))),
             "",
-            Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
+            Tolerance::Exact(1.0), // 011 FR-005: engineering target
         ));
     };
     agree("after construction", &|m| {
@@ -804,13 +827,32 @@ pub fn whole_engine(
         p.reset();
         process_64(&mut p, &x[half..])
     });
-    agree("after reconfigure", &|m| {
-        let mut p = fresh(m, 0.3);
+    // Post-implementation review B2: `reconfigure` rebuilds the engine (the test hook does not
+    // survive it), so its oracle is a new engine at the position, as "created anew" means; the
+    // same oracle for `reset`.
+    let anew = process_64(&mut fresh(make, 0.8), &x[half..]);
+    let mut fresh_rows = Vec::new();
+    for (name, reconfigure) in [("reset", false), ("reconfigure", true)] {
+        let mut p = fresh(make, 0.3);
         let _ = process_64(&mut p, &x[..half]);
         p.set_volume(0.8).unwrap();
-        p.reconfigure(s).unwrap();
-        process_64(&mut p, &x[half..])
-    });
+        if reconfigure {
+            p.reconfigure(s).unwrap();
+        } else {
+            p.reset();
+        }
+        fresh_rows.push(MeasurementResult::new(
+            "FR-005",
+            "takes the position at once (equal to a new engine)",
+            T_RAMP,
+            rate,
+            config,
+            format!("after {name}"),
+            pass(same(&process_64(&mut p, &x[half..]), &anew)),
+            "",
+            Tolerance::Exact(1.0), // 011 FR-005: engineering target
+        ));
+    }
     agree("after a zero-length call", &|m| {
         let mut p = fresh(m, 0.3);
         let _ = p.process(&[], &mut []).unwrap();
@@ -851,6 +893,48 @@ pub fn whole_engine(
         p.set_volume(0.5).unwrap();
         play_with_changes(&mut p, number, 16, &[])
     });
+    rows.extend(fresh_rows);
+    // Plan review R5: the `volume_step` hook is 0.10's step bit for bit: at the tap after stage
+    // 11 its run equals the splice of the two constant-position runs at the change.
+    let hooked = run_with_changes(step, s, route, 0.1, &[(half, 1.0)], &x, Blocks::Fixed(64));
+    let mut splice_ref = run_with_changes(make, s, route, 0.1, &[], &x, Blocks::Fixed(64));
+    let at_one = run_with_changes(make, s, route, 1.0, &[], &x, Blocks::Fixed(64));
+    splice_ref[half..].copy_from_slice(&at_one[half..]);
+    rows.push(MeasurementResult::new(
+        "FR-011",
+        "the volume_step hook equals 0.10's step (the splice)",
+        T_RAMP,
+        rate,
+        config,
+        "0.1 -> 1".to_string(),
+        pass(same(&hooked, &splice_ref)),
+        "",
+        Tolerance::Exact(1.0), // 011 FR-011: engineering target
+    ));
+    // Post-implementation review N3: a transition started in a playback's last block completes
+    // inside the drain: from its sample N to the end the playback equals one held at the target.
+    {
+        let mut p = fresh(make, 0.3);
+        let number = record(&mut p, &x);
+        let plain = play_with_changes(&mut p, number, 480, &[]);
+        let drain = p.drain_samples() as usize;
+        let last_block = (plain.len() - drain - 1) / 480 * 480;
+        let late = play_with_changes(&mut p, number, 480, &[(last_block, 1.0)]);
+        p.set_volume(1.0).unwrap();
+        let held = play_with_changes(&mut p, number, 480, &[]);
+        let from_n = last_block + n_of(rate) - 1;
+        rows.push(MeasurementResult::new(
+            "FR-005",
+            "a transition in the last block completes inside the drain",
+            T_RAMP,
+            rate,
+            config,
+            format!("0.3 -> 1 at playback sample {last_block}, drain {drain}"),
+            pass(late.len() == held.len() && same(&late[from_n..], &held[from_n..])),
+            "",
+            Tolerance::Exact(1.0), // 011 FR-005: engineering target
+        ));
+    }
     // Stage 11 bypassed: the position has no effect.
     let mut bypassed = configs::settings("output_only_speaker", rate);
     bypassed.output.volume_amp_enabled = false;
@@ -873,7 +957,7 @@ pub fn whole_engine(
         "0.1 -> 1",
         pass(same(&changed, &held)),
         "",
-        Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
+        Tolerance::Exact(1.0), // 011 FR-005: engineering target
     ));
     // The output clamp (spec 010 FR-005): on == clamp(off) through a transition at full scale.
     let out_config = match route {
@@ -912,7 +996,7 @@ pub fn whole_engine(
         "1 kHz 0 dBFS, 0.1 -> 1",
         pass(same(&on, &bounded)),
         "",
-        Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
+        Tolerance::Exact(1.0), // 011 FR-005: engineering target
     ));
     // The drain: a transition started in a playback's last block completes inside it; the
     // length is unchanged and 009 FR-008's last-millisecond bound holds (the default engine,
@@ -941,7 +1025,7 @@ pub fn whole_engine(
         format!("voiced -20 dBFS, 0.3 -> 1 at {last_block}"),
         late.len() as f64 - plain.len() as f64,
         "samples",
-        Tolerance::Exact(0.0), // A-045: engineering target (spec 011)
+        Tolerance::Exact(0.0), // 011 FR-005: engineering target
     ));
     rows.push(MeasurementResult::new(
         "FR-005",
@@ -952,7 +1036,7 @@ pub fn whole_engine(
         format!("voiced -20 dBFS, 0.3 -> 1 at {last_block}"),
         analysis::db(tail.max(1e-300)),
         "dBFS",
-        Tolerance::AtMost(-80.0), // A-045: engineering target (spec 011)
+        Tolerance::AtMost(-80.0), // 009 FR-008 (the drain's last millisecond): engineering target
     ));
     // The one-pass after a playback in which the volume changed ramps from its own last
     // position at its next block (each path keeps its own knob): equal to the same one-pass
@@ -980,7 +1064,7 @@ pub fn whole_engine(
         "0.3, a playback with a change, then 0.8",
         pass(same(&with_playback, &without)),
         "",
-        Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
+        Tolerance::Exact(1.0), // 011 FR-007: engineering target
     ));
     rows
 }
@@ -1038,6 +1122,54 @@ pub fn equivalence_with_change(make: Make<'_>, rate: u32, route: Route) -> Vec<M
         format!("voiced -20 dBFS, {route:?}, 0.1 -> 1 at playback sample {at}"),
         pass(equal),
         "",
-        Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
+        Tolerance::Exact(1.0), // 011 FR-007: engineering target
     )]
+}
+
+/// Post-implementation review B1 (reported): how far the knob trails a host that moves the
+/// position along a straight line from 0.1 to 1 over 1 s with an update every `every` host
+/// samples (each update restarts the 20 ms movement from rest), in milliseconds, averaged over
+/// the last 40 % of the line. Read on the earphone route of the stage-11-only configuration at
+/// full scale, where the output divided by a run at position 1 is the loaded law's gain
+/// exactly; the knob position is the law inverted by bisection.
+pub fn follow_lag_ms(make: Make<'_>, rate: u32, every: usize) -> f64 {
+    let config = "stage11_only_earphone";
+    let settings = configs::settings(config, rate);
+    let route = Route::Earphone;
+    let len = rate as usize;
+    let latency = make(settings).latency_samples() as usize;
+    let lead = 2 * every.max(4096);
+    let x = stimulus::tone_peaking_at(0.0, rate, lead + len + 4096, lead, latency);
+    let line = |i: usize| 0.1 + 0.9 * (i as f64 / len as f64).min(1.0);
+    let changes: Vec<(usize, f32)> = (0..len)
+        .step_by(every)
+        .skip(1)
+        .map(|i| (lead + i, line(i) as f32))
+        .collect();
+    let y = run_with_changes(
+        make,
+        settings,
+        route,
+        0.1,
+        &changes,
+        &x,
+        Blocks::Fixed(every),
+    );
+    let r = run_with_changes(make, settings, route, 1.0, &[], &x, Blocks::Fixed(every));
+    let gain = |p: f64| analysis::from_db(f64::from(rr_dr60::output::earphone_gain_db(p as f32)));
+    let invert = |g: f64| {
+        let (mut lo, mut hi) = (0.0f64, 1.0f64);
+        for _ in 0..60 {
+            let mid = 0.5 * (lo + hi);
+            if gain(mid) < g { lo = mid } else { hi = mid }
+        }
+        0.5 * (lo + hi)
+    };
+    let q = ratios(&y, &r, lead + len * 6 / 10..lead + len);
+    let slope = 0.9 / len as f64; // position per host sample
+    let lags: Vec<f64> = q
+        .iter()
+        .map(|&(i, g)| (line(i - lead) - invert(g)) / slope / f64::from(rate) * 1000.0)
+        .collect();
+    lags.iter().sum::<f64>() / lags.len() as f64
 }

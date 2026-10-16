@@ -56,6 +56,26 @@ fn volume_ramp_matrix() {
             rows.extend(ramp::route_output(&standard, &step, rate, route));
         }
     }
+    // Post-implementation review B1 (reported): the knob's lag behind a host moving the position
+    // along a line, by update interval, at 48 kHz (each update restarts the 20 ms movement).
+    for (label, every) in [
+        ("updates at 60 Hz (800 samples)", 800usize),
+        ("updates at 120 Hz (400 samples)", 400),
+        ("an update every 480-sample block", 480),
+        ("an update every 64-sample block", 64),
+    ] {
+        rows.push(MeasurementResult::new(
+            "FR-003",
+            "knob lag behind a line of updates (reported)",
+            ramp::T_RAMP,
+            48_000,
+            "stage11_only_earphone",
+            label,
+            ramp::follow_lag_ms(&standard, 48_000, every),
+            "ms",
+            Tolerance::Report,
+        ));
+    }
     report::print(&rows);
     assert_all(&rows);
 }

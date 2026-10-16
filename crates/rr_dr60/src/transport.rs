@@ -621,8 +621,8 @@ impl Pipeline {
     /// `reset` and `reconfigure`. Since 0.9 the route selects which branch of the output chain
     /// runs and which output scale applies (spec 009 FR-001, FR-004): the volume control and
     /// power amplifier into the speaker template, or the earphone output; the newly selected
-    /// branch starts from rest (FR-009); a volume transition in progress completes at once at
-    /// its target (spec 011 FR-005). Real-time safe.
+    /// branch starts from rest (FR-009); a volume transition in progress ends at once and the new
+    /// route starts at the position last set (spec 011 FR-005). Real-time safe.
     pub fn set_route(&mut self, route: Route) {
         self.route = route;
     }

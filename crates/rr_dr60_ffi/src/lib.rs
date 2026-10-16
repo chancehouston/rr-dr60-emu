@@ -1614,10 +1614,14 @@ pub const RR_DR60_VOLUME_TRANSITION_MS: u32 = 20; // A-045: equal to `rr_dr60::o
 /// `rr_dr60_reconfigure`. Since 0.11 a change is a 20 ms volume transition
 /// (`RR_DR60_VOLUME_TRANSITION_MS`; spec 011, A-045): from the next block the knob moves from
 /// where it is to `position`, starting and ending at rest, the gain following the loaded law
-/// and never passing either end; a change during a transition starts a new one from the
-/// knob's current position. The first block after `rr_dr60_create`, `rr_dr60_reset`,
-/// `rr_dr60_reconfigure` or `rr_dr60_start_playback`, and the first after a route change, take
-/// the position at once. Default `RR_DR60_VOLUME_REFERENCE`; positions above it clip
+/// and never passing either end; a change during a transition starts a new 20 ms movement from
+/// the knob's current position, from rest, so the knob trails a stream of updates (about 19 ms
+/// at 60 Hz, about 105 ms if the position changes every 64-sample block at 48 kHz): send a
+/// position when the control moves, at most once per UI frame. The first block that produces
+/// output after `rr_dr60_create`, `rr_dr60_reset`, `rr_dr60_reconfigure` or
+/// `rr_dr60_start_playback`, and the first after a route change, take the position at once.
+/// The one-pass processing and the playback each keep their own knob position. Default
+/// `RR_DR60_VOLUME_REFERENCE`; positions above it clip
 /// full-scale material on the speaker route. Real-time safe.
 ///
 /// Returns `RR_DR60_STATUS_INVALID_VOLUME` for a non-finite position or one outside 0 … 1; the

@@ -75,7 +75,7 @@ pub(crate) fn k_ear(p: f64) -> f64 {
 const _: () = {
     let mut i = 0;
     while i < SUPPORTED_HOST_RATES.len() {
-        let n = SUPPORTED_HOST_RATES[i] as u64 * 20 / 1000; // A-045: 20 ms
+        let n = SUPPORTED_HOST_RATES[i] as u64 * crate::output::VOLUME_TRANSITION_MS as u64 / 1000; // A-045
         assert!(
             100 * c::N_OUT[i] as u64 > 287 * n,
             "the drain completes a transition"
@@ -250,8 +250,8 @@ impl OutputChain {
             volume_step: false,
             shape_linear: false,
         };
-        // A-045: N = 20 ms of host samples (`Pipeline::new` validated the rate; 120, the 6 kHz
-        // figure, only guards an impossible state).
+        // A-045: N = 20 ms of host samples. Unreachable fallback: `Pipeline::new` validated the
+        // rate before building the chain; 120 (the 6 kHz figure) only avoids a panic site.
         chain.set_ramp_len(volume_transition_samples(settings.host_rate_hz).unwrap_or(120));
         chain.set_controls(Route::Speaker, c::VOLUME_REFERENCE as f32);
         chain
@@ -1278,6 +1278,53 @@ mod tests {
                 let n = n_at(rate);
                 assert!(seq[n - 2] > 0.0, "{rate} {route:?}");
                 assert_eq!(seq[n - 1].to_bits(), 0.0f64.to_bits(), "{rate} {route:?}");
+            }
+        }
+    }
+
+    /// FR-001, FR-003 (post-implementation review N1): a retarget restarts the formula from the
+    /// knob's current position and the active scalar at the retarget, in both directions: the
+    /// sequence after the retarget equals the formula with `from` = the knob and the running
+    /// hold starting at the scalar, so a wrong start (e.g. `from = to`) fails.
+    #[test]
+    fn retarget_restarts_the_formula_from_the_knob() {
+        let rate = 48_000;
+        let n = n_at(rate);
+        for route in [Route::Speaker, Route::Earphone] {
+            for (a, b, c) in [(0.1f32, 1.0f32, 0.4f32), (1.0, 0.1, 0.6), (0.2, 0.9, 0.95)] {
+                let mut ch = OutputChain::new(&settings(rate), false);
+                ch.set_controls(route, a);
+                ch.process(0.0);
+                ch.set_controls(route, b);
+                for _ in 0..n / 2 {
+                    ch.process(0.0);
+                }
+                let (knob, g0) = (ch.knob, active_scalar(&ch, route));
+                ch.set_controls(route, c);
+                let pt = f64::from(c);
+                let g1 = law(route, pt);
+                let up = g1 > g0;
+                let inv_n = 1.0 / n as f64;
+                let mut prev = g0;
+                for k in 1..=n {
+                    ch.process(0.0);
+                    let want = if k == n {
+                        g1
+                    } else {
+                        hold(
+                            law(route, knob + (pt - knob) * smoothstep(k as f64 * inv_n)),
+                            prev,
+                            g1,
+                            up,
+                        )
+                    };
+                    assert_eq!(
+                        active_scalar(&ch, route).to_bits(),
+                        want.to_bits(),
+                        "{route:?} {a}->{b}->{c} k={k}"
+                    );
+                    prev = want;
+                }
             }
         }
     }

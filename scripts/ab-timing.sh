@@ -59,6 +59,6 @@ base, head, rev = best(sys.argv[1]), best(sys.argv[2]), sys.argv[3]
 for route in ("Speaker", "Earphone"):
     b, h = base[route], head[route]
     print(f"idle A/B, {route} route, 48 kHz, 4096 blocks, constant volume: {rev} {b:.1f} ns, "
-          f"working tree {h:.1f} ns per host sample, {h - b:+.2} ns ({100 * (h / b - 1):+.2} %) "
+          f"working tree {h:.1f} ns per host sample, {h - b:+.2f} ns ({100 * (h / b - 1):+.2f} %) "
           f"(011 FR-009: budget 3 %; fastest of nine alternating runs each)")
 EOF
