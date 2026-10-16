@@ -235,7 +235,8 @@ pub struct GoldenEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub volume: Option<f32>,
     /// Spec 010 (contracts/golden-format.md): the count of output samples exactly equal to
-    /// +1.0 or −1.0, so each entry documents whether the output clamp acted. Present in
+    /// +1.0 or −1.0, bounded or already there (a ±1.0 square at the identity rate counts every
+    /// sample). Present in
     /// output-clamp-file entries only; absent (and not serialized) in the five earlier files,
     /// which therefore read unchanged (FR-002).
     #[serde(default, skip_serializing_if = "Option::is_none")]

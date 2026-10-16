@@ -232,6 +232,7 @@ fn bypassed_route_output_equals_after_playback_without_the_option() {
         let mut s = configs::settings("bypass_route_output", r);
         s.tap = Tap::AfterPlayback;
         let b = output_checks::run(&standard, s, Route::Speaker, 1.0, &x);
+        assert_eq!(a.len(), b.len(), "{r}"); // T038 N5
         assert!(
             a.iter().zip(&b).all(|(p, q)| p.to_bits() == q.to_bits()),
             "{r}"

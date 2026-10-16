@@ -8,7 +8,7 @@
 //! it. Report: `cargo test -p rr_dr60_harness --test output_clamp_matrix -- --nocapture`.
 
 use rr_dr60::Route;
-use rr_dr60_harness::checks::{assert_all, standard};
+use rr_dr60_harness::checks::{MeasurementResult, Tolerance, assert_all, standard};
 use rr_dr60_harness::output_clamp_checks::{self as clamp, Expect};
 use rr_dr60_harness::{configs, report};
 
@@ -95,6 +95,97 @@ fn output_clamp_matrix() {
                 Expect::Within,
             ));
         }
+        // T038 B2: loud material near the template's resonance at the reference position:
+        // the bursts peak within about 0.7 dB of the bound with the codec on, the 800 Hz square
+        // exceeds it slightly at the high rates (reported, never asserted; level-sensitive
+        // through the codec's discrete choices).
+        for stim in ["bursts_800_p10", "square_800_fs"] {
+            rows.extend(clamp::identity(
+                &standard,
+                rate,
+                "default_output_ref_clamp",
+                stim,
+                LEN_S,
+                Expect::Report,
+            ));
+        }
+        // The mechanism with the codec bypassed: the bursts exceed the bound robustly.
+        {
+            let mut s = configs::settings("default_output", rate);
+            s.speech_codec_enabled = false;
+            let x = clamp::stimulus_by_name("bursts_800_p10", rate, LEN_S);
+            let y = rr_dr60_harness::output_checks::run(
+                &standard,
+                s,
+                Route::Speaker,
+                rr_dr60::output::VOLUME_REFERENCE,
+                &x,
+            );
+            rows.push(MeasurementResult::new(
+                "FR-011",
+                "reference position, codec bypassed: 800 Hz bursts +10 dBFS option-off peak (reported)",
+                &["A-042", "engineering target"],
+                rate,
+                "default_output (codec off)",
+                "bursts_800_p10",
+                f64::from(y.iter().fold(0.0f32, |m, v| m.max(v.abs()))),
+                "full scale",
+                Tolerance::Report,
+            ));
+        }
+        // T038 N2: the figures the README and A-042 quote, as ranges (the docs' own rounding).
+        let documented = |config: &str, stim: &str, lo: f64, hi: f64, what: &'static str| {
+            MeasurementResult::new(
+                "FR-009",
+                what,
+                &["A-042", "engineering target"],
+                rate,
+                "documented figure",
+                format!("{config}, {stim}"),
+                f64::from(clamp::off_peak(&standard, rate, config, stim, LEN_S)),
+                "full scale",
+                Tolerance::Range(lo, hi),
+            )
+        };
+        if rate == 48_000 {
+            rows.push(documented(
+                "output_only_speaker_clamp",
+                "square_1k_fs",
+                1.85,
+                1.95,
+                "chain-only speaker square at 1, about 1.9",
+            ));
+            rows.push(documented(
+                "output_only_speaker_clamp",
+                "tone_1k_0",
+                1.85,
+                1.95,
+                "chain-only speaker tone at 1, about 1.9",
+            ));
+        }
+        if rate >= 44_100 {
+            rows.push(documented(
+                "default_output_clamp",
+                "tone_1k_0",
+                1.95,
+                2.10,
+                "default speaker tone at 1, about 1.96 - 2.06",
+            ));
+        }
+        rows.push(documented(
+            "output_only_earphone_clamp",
+            "square_1k_fs",
+            1.36,
+            1.53,
+            "chain-only earphone square at 1, 1.37 - 1.52",
+        ));
+        rows.push(documented(
+            "default_earphone_clamp",
+            "square_1k_fs",
+            1.03,
+            1.08,
+            "default earphone square at 1, 1.04 - 1.07",
+        ));
         // The speaker route's bound: the template's L1 norm against every speaker-route peak.
         let peaks: Vec<(String, f32)> = [
             ("output_only_speaker_clamp", "square_1k_fs"),

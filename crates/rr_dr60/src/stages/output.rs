@@ -87,9 +87,10 @@ pub(crate) fn knee(x: f64, k: f64) -> f64 {
 /// site in the per-sample path once the ends are fields (research R-01).
 #[inline(always)]
 pub(crate) fn bound(y: f64, lo: f64, hi: f64) -> f64 {
-    // IEEE maxNum / minNum (one instruction each, no branch); they also map ±∞ to the ends
-    // and would return `lo` for a NaN, which the select below turns into 0.0 (a compare and a
-    // conditional move, still no branch; research R-08).
+    // IEEE maxNum / minNum: branchless (one instruction each on aarch64, a short branchless
+    // sequence on x86-64); they return one operand exactly, map ±∞ to the ends and would return
+    // `lo` for a NaN, which the select below turns into 0.0 (a compare and a conditional move;
+    // research R-01 as built: +0.33 ns per host sample against +3.6 ns for a two-branch form).
     let r = y.max(lo).min(hi);
     if y.is_nan() { 0.0 } else { r }
 }
@@ -691,6 +692,15 @@ mod tests {
             let h: Vec<f64> = (0..65_536)
                 .map(|n| shelf.process(res.process(if n == 0 { 1.0 } else { 0.0 })))
                 .collect();
+            // Spec 010 FR-011 (research R-04; T038 N1): the impulse-response L1 norm of the
+            // committed sections is the speaker route's provable bound, pinned here against the
+            // figures the README and A-042 quote.
+            let l1: f64 = h.iter().map(|v| v.abs()).sum();
+            let want_l1 = [1.75, 1.88, 2.09, 2.24, 2.25, 2.28, 2.29][i];
+            assert!(
+                (l1 - want_l1).abs() <= 0.02,
+                "{fs}: L1 {l1:.4}, want {want_l1}"
+            );
             let fsf = f64::from(fs);
             let mut peak = 0.0f64;
             let mut f = 20.0;

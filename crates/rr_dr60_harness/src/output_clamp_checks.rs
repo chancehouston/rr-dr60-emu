@@ -34,6 +34,22 @@ pub fn stimulus_by_name(name: &str, rate: u32, len_s: f64) -> Vec<f32> {
         "voiced_m1" => stimulus::voiced(fs, len_s, -1.0, 0x0D60),
         "voiced_limited" => stimulus::voiced(fs, len_s, 10.0, 0x0D60),
         "noise_m3" => stimulus::bandlimited_noise(0x0D60, n, fs, -3.0),
+        // T038 B2: loud material near the speaker template's resonance (about 800 Hz): 0.2 s
+        // bursts of 800 Hz at +10 dBFS, and an 800 Hz full-scale square.
+        "bursts_800_p10" => {
+            let amp = stimulus::amplitude(10.0);
+            let on = (0.2 * fs) as usize;
+            (0..n)
+                .map(|i| {
+                    if (i / on) % 2 == 0 {
+                        stimulus::tone_sample(800.0, amp, fs, i) as f32
+                    } else {
+                        0.0
+                    }
+                })
+                .collect()
+        }
+        "square_800_fs" => stimulus::square(800.0, 1.0, fs, n),
         other => panic!("output_clamp_checks::stimulus_by_name: unknown stimulus {other:?}"),
     }
 }

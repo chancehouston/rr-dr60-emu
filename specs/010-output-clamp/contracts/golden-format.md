@@ -10,7 +10,7 @@ Same `GoldenFile` form as `golden-output-v1.json` (`route` and `volume` present 
 
 | Field | Type | Meaning |
 |---|---|---|
-| `n_at_bound` | `u32` | the count of output samples exactly equal to +1.0 or −1.0; recomputed and compared on every run (it needs no twin), so each entry documents whether it clamped |
+| `n_at_bound` | `u32` | the count of output samples exactly equal to +1.0 or −1.0, bounded or already there (a ±1.0 square at the 6 kHz identity rate counts every sample; T038 N6); recomputed and compared on every run (it needs no twin) |
 
 Entries: 3 stimuli × 6 configurations × 7 host rates = **126**, sorted by (stimulus, config, host_rate_hz):
 

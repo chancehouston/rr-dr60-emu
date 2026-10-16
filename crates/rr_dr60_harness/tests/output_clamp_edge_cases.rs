@@ -197,6 +197,10 @@ fn play_calls_are_bounded_whatever_the_tap() {
             "{rate}: the play calls are bounded"
         );
         assert!(
+            bounded(&run.drain),
+            "{rate}: the drain is play-call output too (T038 N4)"
+        );
+        assert!(
             run.pre_drain.iter().any(|v| v.abs() == 1.0),
             "{rate}: the bound acts in play"
         );
