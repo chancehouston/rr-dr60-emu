@@ -1,180 +1,288 @@
 # Research: Microphone Capsule and Amplifier (stages 1–2)
 
-**Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md) | **Date**: 2026-10-16
+**Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md) | **Date**: 2026-10-16 (plan reviews applied the same day)
 
-All figures marked *plan-time* come from scratch computations made while planning: the hardware reviewer's `scratchpad/calc/{hiss,vas}.py` and the planner's `scratchpad/mic/nodal.py`. The design script `tools/mic-chain/design_mic_chain.py` (Phase 1) recomputes and prints each of them, and the tests pin to its print, never to these notes (spec Assumptions).
+## Sources of the figures
 
-## R-01: The circuit model and the input high-pass (spec FR-005, Clarifications D1)
+Figures marked *plan-time* come from scratch computations made while planning:
+- the hardware reviewer's `scratchpad/calc/{hiss,vas}.py` and `scratchpad/review012/{nodal2,full,realize,fit4,hiss2,costconf}.py`;
+- the planner's `scratchpad/mic/nodal.py`.
 
-**Decision.** Model S-002 sheet 3.1's microphone amplifier as a small-signal **hybrid-π nodal network**:
+The design script `tools/mic-chain/design_mic_chain.py` (Phase 1) recomputes and prints each of them. The tests pin to its print, never to these notes (spec Assumptions).
 
-- **The capsule:** a current source into node M, with R2 (1 kΩ) plus Q11's emitter resistance (≈ 65 Ω) to AC ground.
-- **The input path:** C1 (0.15 µF) from M to Q1's base B; R3 (100 kΩ) from the output O back to B.
-- **The differential pair:** Q1 (B / tail E / O) and Q3 (base at the codec's AC-grounded reference, collector C3); R5 (10 kΩ) from E.
-- **The second stage:** R6 (100 kΩ) from C3 to the rail; Q2 (PNP) with its base at C3, its emitter at the rail and its collector at O.
-- **The load:** the output coupling's series loop (C4 in series with C5, then 23 kΩ) at O.
+## R-01: The circuit model and the corners (FR-005; spec D1, plan review Q5, Q13)
 
-Operating points come from the schematic's DC voltages:
-- tail (1.1 V) / 10 kΩ = 110 µA;
-- Q3's collector (2.6 V against the 3.2 V rail) through R6 gives ≈ 6 µA;
-- so Q1 and Q2 carry ≈ 104 µA.
+### The model
 
-The design script solves the network at each frequency and prints three figures:
-- the input corner (the −3 dB point below the plateau);
+The design script models S-002 sheet 3.1's microphone amplifier as a small-signal **hybrid-π nodal network**:
+
+- **Capsule node M.** The capsule is a current source into M. R2 (1 kΩ) plus Q11's emitter resistance (≈ 65 Ω) go to AC ground.
+- **Input path.** C1 (0.15 µF, ±10 %, ECUV1C154KB) runs from M to Q1's base B. R3 (100 kΩ) feeds back from the output O to B.
+- **Differential pair.**
+  - Q1: base B, tail E, collector O.
+  - Q3: base at the codec's AC-grounded SG reference, collector C3.
+  - R5 (10 kΩ) from E.
+- **Second stage.** R6 (100 kΩ) from C3 to the rail. Q2 (PNP): base C3, emitter at the rail, collector O.
+- **Load.** The output coupling's series loop into the codec input amplifier's virtual ground: C4 in series with C5, both +80/−20 % Y5V, then R7 + R10 = 23 kΩ. The amplifier itself is R15 (82 kΩ) with C10 (150 pF) to GSX.
+
+### Operating points
+
+They come from the schematic's DC voltages:
+- tail current: 1.1 V / 10 kΩ = 110 µA;
+- Q3 carries ≈ 6 µA, from (3.2 − 2.6) V through R6 (plus Q2's ≈ 0.4 µA base current);
+- Q1 and Q2 carry ≈ 104 µA.
+
+### What the script computes
+
+The script solves the network from the capsule's current to **GSX** (the codec input amplifier's output, the limiter detector's and the ADC's view). It reports:
+- the three first-order corners as the poles of a joint fit to that transfer (the modeled quantity is exactly three first-order sections, residual < 0.001 dB);
+- the −3 dB point below the analytic plateau (f → ∞), as a cross-check;
 - the response at 300 Hz and 2550 Hz relative to 1 kHz;
-- the transimpedance plateau.
+- the transimpedance at 1 kHz.
 
-It does this for the nominal parts and over a grid of C1 ±10 % and hFE 150–400 (the 2SD1819A ranks, `sources.md` › To find). The script also states its model in prose, as `limiter_model.py` does.
+These are given for the nominal parts and over a grid of C1 ±10 %, hFE 150–460 (the 2SD1819A Q/R/S ranks; the "ASTX" marking is probably S), the Early voltage 20–100 V, and Q3's current 5–7 µA.
 
-**Plan-time result** (`nodal.py`):
+### Plan-time results (`full.py`, `nodal.py`)
 
-| hFE | C1 | Corner | 300 Hz re 1 kHz | 2550 Hz re 1 kHz | Plateau |
-|---|---|---|---|---|---|
-| 150 | 0.150 µF | 775 Hz | −6.81 dB | +1.66 dB | 78.5 kΩ |
-| 250 | 0.135 µF | 910 Hz | −7.47 dB | +2.10 dB | 82.7 kΩ |
-| **250** | **0.150 µF** | **820 Hz** | **−7.04 dB** | **+1.80 dB** | **82.7 kΩ** |
-| 250 | 0.165 µF | 744 Hz | −6.63 dB | +1.56 dB | 82.7 kΩ |
-| 400 | 0.150 µF | 847 Hz | −7.18 dB | +1.89 dB | 85.3 kΩ |
+| Case | Input corner | Output coupling | Roll-off | 300 Hz re 1 kHz | 2550 Hz re 1 kHz | Transimpedance to GSX at 1 kHz |
+|---|---|---|---|---|---|---|
+| nominal (hFE 250, VA 50 V, I3 6 µA, C1 0.15 µF) | **818.4 Hz** | **76.8 Hz** | **12 939 Hz** | −7.26 dB | +1.68 dB | 227 kΩ |
+| hFE 150, VA 20 V, I3 5 µA | 701.6 Hz | 77.3 Hz | 12 939 Hz | −6.60 dB | +1.30 dB | 206 kΩ |
+| hFE 400, VA 100 V, I3 7 µA | 878.3 Hz | 76.6 Hz | 12 939 Hz | −7.55 dB | +1.88 dB | 236 kΩ |
+| the full grid with C1 ±10 % | 678–979 Hz | 76.6–77.3 Hz | | | | |
 
-What this confirms:
-- **The hardware reviewer's finding holds**: the reviewer's estimate was ≈ 0.85 kHz (0.65–1.05), and an independent solve gives 820 Hz nominal (744–910 over the grid).
-- **The loop gain is low** (the plateau is about 83 % of R3), consistent with the reviewer's "loop gain about 6–30".
+### What the model shows (plan review Q5)
 
-The model's default corner is the script's nominal figure. The registered range is the grid's span widened to the reviewer's 0.65–1.05 kHz, low confidence.
+- **The loop gain is high.** The impedance into B is about 135–420 Ω, so the loop gain is about 240–740.
+- **The plateau at about 83 % of R3** is the current division R2′/(R2′ + Z_B) into the capsule's bias resistor, not a low loop gain.
+- **The corner is bounded above** by 1/(2π·C1·R2′) ≈ 996 Hz (1.1 kHz at C1 −10 %), whatever the transistors.
+- **Below-clip distortion** is negligible.
+- **The level chain closes** (Q10). Full scale (0.495 V rms at GSX ÷ 227 kV/A) is about 2.18 µA rms of capsule current, which is about 82 / 88 / 92 dB SPL for capsules of −35 / −40 / −44 dBV/Pa (at 2.2 kΩ). That supports 90 dB SPL (A-029 replaced: "does not close" is superseded).
 
-**Cross-check.** No circuit simulator is installed on the development machine (`ngspice`, `xyce`: not found). The script carries a netlist and a `--spice` option that runs ngspice when it is installed (`brew install ngspice`), with generic 2SD1819A/2SB1218A models. Without ngspice the option prints that it was skipped and why.
+**Registered range** (A-046): nominal 818 Hz, **680–980 Hz**, bounded above by about 1.0 kHz. Confidence: high that the corner exists (topology and parts list), medium in the value.
 
-The plan does not depend on ngspice. Its independent checks are:
-- the reviewer's estimate and the planner's solve, which agree;
-- the script's DC self-check: an Ebers–Moll operating-point solve that must reproduce S-002's measured 1.7 / 1.1 / 2.6 V within the meter's 0.1 V rounding.
+### Cross-checks
 
-A disagreement beyond 10 % between the solve and ngspice, when run, holds the bless.
+- **`--spice`** writes a netlist and runs **ngspice 47** (installed 2026-10-16, Homebrew) with generic 2SD1819A/2SB1218A models. It prints the AC response at GSX and the corners.
+  - It is a **gate before the golden bless** (spec plan review). A disagreement above 10 % in the input corner holds the bless.
+  - The netlist and the models' parameters are committed with the script.
+- **The DC check** is an Ebers–Moll solve with free saturation currents. It reproduces 1.7 / 1.1 / 2.6 V by construction, so it is a **consistency** check, not independent evidence: ΔVbe(Q1, Q3) = VT·ln(I1/I3) ≈ 74 mV against the meter's 0.1 ± 0.1 V, and Q2's Veb at 104 µA.
+- **The reviewer's closed form** 1/(2π·C1·(R2′ + Z_B)) is printed as a sanity check.
 
-**Alternatives considered.** The reviewer's closed form 1/(2π·C1·(R2 + r_e + R3/(1+A_ol))): kept as a printed sanity check, not the model. A SPICE-only design: it would make the build tool depend on an external binary. An unmodeled corner: rejected by the user (Clarifications).
+**Alternatives considered:**
+- A SPICE-only design: the build tool would depend on an external binary.
+- An unmodeled corner: rejected by the user.
+- A grid of hFE alone: it omits VA and I3, which matter as much.
 
-## R-02: Stage 2's realization, order and bound (FR-005, FR-006; C1, D2, D5)
+## R-02: Stage 2's realization and the bound (FR-005, FR-006; plan review Q1, P14)
 
-**Decision.** At the host rate, in f64, in the device's order:
+### The sections
 
-1. **The input high-pass** (≈ 820 Hz): a bilinear first-order section with the corner prewarped, as in spec 009's sections (`stages/first_order.rs`, state flushed below 1e-30).
-2. **The gain normalization** `g_n`: one multiply that makes the whole stage-2 prototype 0 dB at 1 kHz (the high-pass alone reads about −2 dB there). It sits **before the clipper**, so the clip limits are in engine units at the clipper's input.
-3. **The clipper** (R-03).
-4. **The output coupling** (≈ 76 Hz): a bilinear first-order high-pass, prewarped.
-5. **The roll-off** (≈ 13 kHz): a first-order low-pass, **magnitude-matched** at every host rate, so the response tracks the analog prototype within ±0.1 dB up to the lower of 20 kHz and 0.45 × fs.
-   - The bilinear transform's warping near Nyquist would miss that tolerance at 44.1 and 48 kHz.
-   - At 6, 8 and 16 kHz the pole lies above Nyquist; the matched section carries its in-band slope.
-   - The script picks the realization per rate and checks it (`--check`).
+At the host rate, in f64, in the device's order:
 
-**The bound after stage 2** (FR-006).
-- A bilinear first-order high-pass equals 1 − LP, where LP is the bilinear low-pass with a non-negative impulse response summing to 1. So the coupling's output of any input lying in [−L₋, L₊] lies in [−(L₊ + L₋), L₊ + L₋].
-- The roll-off's impulse response is non-negative with unity DC gain (the script asserts it), so it keeps that interval.
-- The bound is therefore **L₊ + L₋** (≈ +19 dBFS), up to a few ULP of rounding. The script prints the realized sections' worst-case figure, and the test asserts the printed bound.
+1. **HP_in**, the input high-pass: a first-order section with its zero at DC and its pole in [0, 1). The **1 kHz normalization is folded into its numerator**, so no extra multiply is needed. It sits before the clipper, so the clip limits are in engine units.
+2. **The clipper** (R-03).
+3. **HP_out**, the output coupling: the bilinear form (gain (1 + p)/2, zero at DC), so 1 − HP_out = LP′ is a low-pass with a non-negative impulse response summing to 1.
+4. **LP**, the roll-off: b0 ≥ 0, b1 ≥ 0, pole p in [0, 1), DC gain exactly 1.
 
-**The settling** after a clipped passage is the coupling's time constant, R·C with C4 in series with C5 and 23 kΩ: about **2.1 ms** to 1/e. The script prints the time to return within ±0.1 dB of the linear response (US2 AS4).
+### The fit
 
-**The output coupling's corner** (D5) is one corner, not two:
-- with the limiter idle, C4, R7, Q4's node, C5 and R10 form one series loop into the codec input amplifier's virtual ground: 1/(2π·23 kΩ·90.9 nF) = 76.1 Hz;
-- the amplifier's closed-loop output impedance (about 2–3 kΩ; the script prints its estimate from R-01's network) lowers it toward 69 Hz;
-- C4 and C5 are Y5V parts with +80/−20 % tolerance, so units vary over about 40–95 Hz (registered, not modeled);
-- under deep limiting the corner moves to C5·R10 = 159 Hz (not modeled; spec Out of Scope).
+The script fits **the three sections jointly per host rate** by constrained minimax (iterated least squares at power 2 → 16) against the analog prototype (R-01's three corners, normalized at 1 kHz):
+- **Where:** at the third-octave centres from 20 Hz to the lower of 20 kHz and 0.45·fs, wherever the prototype is above −40 dB.
+- **Achieved** (`fit4.py`, reproduced 2026-10-16): worst error **0.002 / 0.015 / 0.060 / 0.036 / 0.075 / 0.005 / 0.004 dB** at 6 / 8 / 16 / 44.1 / 48 / 88.2 / 96 kHz, with every constraint satisfied.
+- **The obvious realization fails.** Bilinear high-passes plus a Nyquist-matched low-pass err by 0.65 / 0.34 / 0.25 / 0.76 / 0.76 dB at 6 / 8 / 16 / 44.1 / 48 kHz. A three-point matched low-pass's pole goes negative at 6 kHz.
+- **Output.** The script emits each rate's coefficients as exact `f64` bit patterns in `stages/mic_coeffs.rs`.
+- **`--check`** asserts the constraints, the ±0.1 dB match, and that each realized impulse response satisfies the bound's premises.
 
-**Alternatives considered.**
-- Biquads: two sections where three first-order sections suffice. Spec 009 chose first-order sections for the same reason.
-- One combined minimum-phase filter after the clipper: it cannot put the input high-pass before the clipper.
-- An L1-norm bound (the coach's C1 form): looser (about 2·max(L) against L₊ + L₋), and unnecessary given the 1 − LP identity.
+**Fallback** if the Rust impulse/DTFT reader adds error near the thin 48 kHz margin (0.025 dB): the tolerance above 4 kHz becomes ±0.25 dB, recorded as a deviation (spec US1 AS1). Everything above 3 kHz is removed by the decimator.
 
-## R-03: The clipper (FR-006; D6, D8, C10)
+### The bound after stage 2
 
-**Decision.** A memoryless asymmetric soft clipper:
+- The clipper's output lies in [−L₋, L₊].
+- HP_out = 1 − LP′, with LP′ non-negative and summing to 1, so HP_out's output lies in [−(L₊ + L₋), L₊ + L₋].
+- LP is non-negative with unity DC gain, so it keeps that interval.
+- The bound is therefore **L₊ + L₋** (6.68 + 2.24 = 8.92, **+19.0 dBFS**), up to a few ULP. The test asserts it in f32, rounded up.
 
-- y = L₊ · knee(x / L₊, k) for x ≥ 0;
-- y = −L₋ · knee(−x / L₋, k) for x < 0;
+### Settling
 
-reusing spec 009's parabolic knee (`stages/output.rs::knee`, C¹ at both joints, a hard ceiling at 1). The divisions are precomputed reciprocals, and the comparisons are branchless selects (spec 010's lesson on x86).
+- The output coupling's time constant is about **2.1 ms** (77 Hz).
+- The oracle is the identity e = stage2(x) − stage2_linear(x), with a clipper-off twin hook. After the last clipped sample, e is exactly HP_out's and LP's decaying tail.
+- The script prints the time to return within ±0.1 dB for the stated stimulus: a 1 kHz tone at +13 dBFS for 50 ms, then −20 dBFS. Expect about 4–10 ms.
 
-**The limits** come from the DC voltages (sheet 3.1), with 0 dBFS = 0.196 V peak at the amplifier's output (A-029, A-030):
+**The output coupling's corner** (spec D5) is one corner, not two:
+- with the limiter idle, C4, R7, the shunt node, C5 and R10 form one series loop: about 77 Hz;
+- C4 and C5 are Y5V parts, +80/−20 %, so units vary over about 40–95 Hz (registered, not modeled);
+- under deep limiting the corner moves to C5·R10 = 159 Hz (not modeled).
 
-| Engine samples | What clips | Headroom | Limit (plan-time) |
+**Alternatives considered:**
+- Bilinear prewarped sections: they fail SC-002, as shown above.
+- Biquads: more operations, and they would need a new bound proof.
+- An L1-norm bound: looser, and unnecessary given the 1 − LP′ identity.
+
+## R-03: The clipper (FR-006; plan review Q4, P5)
+
+### The form
+
+A memoryless asymmetric soft clipper, **exactly linear below the onset**:
+
+- y = x when −k·L₋ ≤ x ≤ k·L₊;
+- otherwise y = L₊·knee(x·invL₊, k) for x > 0, or −L₋·knee(−x·invL₋, k) for x < 0;
+
+as branchless selects, reusing spec 009's parabolic knee (`stages/output.rs::knee`: C¹ at both joints, a hard ceiling at 1). The select keeps the linear region bit-exact, so US2 AS4's "equals the linear path" holds without an x·invL·L round trip.
+
+### The limits
+
+S-002's DC voltages give the **limits**, with 0 dBFS = 0.196 V peak at the amplifier's output (A-029, A-030):
+
+| Engine samples | Mechanism | Swing | Limit (plan-time) |
 |---|---|---|---|
-| Negative (clip first) | The output (1.7 V) falls until Q1 saturates near 1.15–1.3 V, with its emitter at 1.1 V | 0.4–0.55 V | **≈ +7 dBFS** (+5 … +9) |
-| Positive | Q2 saturates (3.2 V − 0.1…0.2 V − 1.7 V) | 1.3–1.4 V | **≈ +16.5 dBFS** (+16 … +17.5) |
+| Negative (limited first) | the output (1.7 V) falls until Q1 saturates near 1.15–1.3 V, with its emitter at 1.1 V | 0.4–0.55 V | **L₋ ≈ +7 dBFS** (+5 … +9) |
+| Positive | Q2 saturates (3.2 V − 0.1…0.2 V − 1.7 V) | 1.3–1.4 V | **L₊ ≈ +16.5 dBFS** (+16 … +17.5) |
 
-**The knee start** `k` is chosen so the onset (the 1 kHz input level at which a polarity's output peak falls 0.1 dB below the linear peak, spec US2 AS1) sits at a stated distance below each limit. The loop gain is low (R-01), so a gradual onset is plausible. The script prints `k`, both onsets and both limits; the spec's "about +7 / about +16.5 dBFS" ranges hold for both.
+### The knee
 
-**Polarity.** Negative engine samples are the polarity the limiter does not sense (A-036), so a loud asymmetric sound is clipped on the side the limiter ignores and limited on the other. A-036 gains the sentence.
+- **k = 0.85**, spec 009's value. It is justified (A-051) by Q1's saturation curvature: Q1 starts at Vcb ≈ 0, so its base-collector junction conducts from about +0.4 V, at a high loop gain.
+- **The onset** (0.1 dB compression) sits about **0.63 dB below L**, and the output reaches L about 1.21 dB above it. For k = 0.8 or 0.9 these are −1.01 / +1.58 dB and −0.30 / +0.83 dB.
+- The script prints k, both onsets and both limits, **in clipper units and referred to the engine input at 1 kHz**. The latter includes |HP_out·LP| at 1 kHz, about −0.04 dB.
 
-**Aliasing.** The clipper runs at the host rate. At 6 and 8 kHz a clipped 1 kHz tone's 4th–6th harmonics fold into the band. This is documented, and harmonic levels are asserted only at 44.1–96 kHz (spec Clarifications). Oversampling or ADAA was rejected: about 2–4× the clipper's cost against a +10 % budget, for an effect that only very loud input triggers.
+### Measurement
 
-## R-04: The hiss (FR-003; Clarifications Q2, D3, D9, D10)
+- **The static curve** is asserted in clipper units through a probe exposing the engine's actual (clip_in, clip_out) per sample. That is exact, needs no phase, and doesn't reimplement HP_in in the harness.
+- **The engine-input 1 kHz figures** use a tone started on the phase the script prints. The phase compensates HP_in's ≈ +39° at 1 kHz, so a sample lands on the clipper-input peak. Without it, 6 kHz reads 0.59 dB low (the 004 R-08 and 009 lessons).
 
-**Anchor** (registered; printed by the script):
-- capsule self-noise **34 dB SPL(A)** (32–36 for small electrets of the period: S/N 58–62 dB at 94 dB SPL, the WM-61A / WM-63 class; credible 26–38);
-- full scale **90 dB SPL at 1 kHz** (80–100, A-029);
-- the A-weighted-to-300–3000 Hz offset through stage 2's band, about −6 dB (the reviewer computed −5.9 with the tilt);
-- giving **≈ −62 dBFS** (RMS, AES17) in the 300–3000 Hz band at stage 2's output.
+**Polarity.** Negative engine samples are the polarity the limiter does not sense (A-036). A-036 gains the sentence.
 
-The script integrates the band level through the realized stage-2 response at each rate and solves for the source's RMS σ_r per host rate. The source is white at the host rate, so σ_r grows with the rate. The script prints σ_r (exact `f64` bits, emitted into the coefficients file), the band level, the 1 kHz third-octave level and the third-octave shape at the centres 315–2500 Hz.
+### Harmonics
 
-**Generator** (deterministic, no platform math):
-- **Uniform source:** `xoshiro256++`, a 256-bit state with a period of 2²⁵⁶ − 1, far beyond 3.5 × 10⁸.
-- **Seeding:** the state is seeded by **SplitMix64** from `seed ^ MIC_STREAM` and the recording counter, where `MIC_STREAM` is a stage-specific constant. A later stochastic stage takes its own constant and leaves this stream unchanged. SplitMix64 never produces an all-zero state, so seed 0 does not degenerate.
-- **Gaussian:** a **ziggurat** (Marsaglia & Tsang 2000, 128 layers) whose tables the script emits as `f64` bit patterns. The rare tail and wedge paths use `rr_dr60_detmath::{exp, ln}`, so the samples are exactly Gaussian to well beyond ±5σ.
-- **Cost:** about 1–2 ns per sample on the fast path.
+H2 and H3 of a tone 6 dB above the first onset are asserted within ±0.5 dB of the script's **discrete** model at each rate. The alias level (the discrete figure minus the continuous one) is reported. The C¹ knee's harmonics fall as about 1/n³, so the aliases are small. Oversampling or ADAA was rejected: about 2–4× the clipper's cost for an effect only very loud input triggers.
 
-**Level.** One multiply per sample by σ_r·10^(offset/20). That gain is computed at construction with `detmath::exp`, so a setting of 0 dB multiplies by σ_r exactly.
+## R-04: The hiss (FR-003; spec Q2, D3, D9, D10; plan review Q2, Q3, Q7, Q8, Q10)
 
-**Streams** (D9, the user's choice):
-- the recording counter is kept by the split engine (`Transport`), set to 0 at construction, `reset` and `reconfigure`;
-- `start_recording` rekeys the recorder's capsule to `(seed, counter)` and then increments the counter;
-- the one-pass record path's capsule uses counter 0 from construction, `reset` and `reconfigure`;
-- so the first recording equals the one-pass (FR-009), and recording k carries stream k.
+### The anchor (registered; printed by the script)
 
-**Tests.**
-- The 4σ exceedance count is within ±30 % of the Gaussian expectation over 10 s at 48 kHz.
-- The normalized cross-correlation is below 0.01 between seeds 0 and 1, and between counters 0 and 1.
-- In a release-only check, every 10 s window of a 60-minute run at 48 kHz is within ±0.5 dB.
-- Partition independence is asserted: the generator advances once per processed host sample.
+- **Capsule self-noise:** 34 dB SPL(A) (32–36 for small electrets of the period, S/N 58–62 dB at 94 dB SPL).
+- **Full scale:** 90 dB SPL at 1 kHz (R-01's closing chain; A-029).
+- **A-weighted to band:** −5.96 dB, from the A-weighted level to the 300–3000 Hz band through the full-network band.
+- **Result:** **−62.0 dBFS** (RMS, AES17) in the 300–3000 Hz band at stage 2's output.
+- **The 1 kHz third-octave** sits 11.3 dB below the band level.
+- **The amplifier and R2 add a floor near −73 dBFS** (Q3 at 6 µA: e_n ≈ 7 nV/√Hz at a noise gain of about 95; R2's thermal noise about −78 dBFS). That adds +0.27 dB at the anchor, folded in.
+- **Credible range:** about **−70 … −54 dBFS**, with the capsule's S/N held at 58–62 dB (A-048).
+- **Unknown:** the codec's SG reference noise reaches the output with the same gain. About 1.2 µV rms in band (22 nV/√Hz) would equal the whole hiss (A-050; S-003 pages 4–17 are the lead).
 
-**Alternatives considered.**
-- Box–Muller through detmath: one `ln`, one `sqrt`, one `sin` and one `cos` per two samples, about 15–25 ns per sample, which exceeds the cost budget alone.
-- Irwin–Hall(12): bounded at 6σ, but its 4σ tail is about 30 % light, which fails the exceedance test and flatters the voice-activation margin at 6 kHz (D10).
-- The harness's PCG32: fine for stimuli, but a separate core generator keeps the harness free to change.
+### The source
 
-## R-05: Placement, taps, latency and state (FR-001, FR-007 – FR-009)
+- The source is white at the host rate. The script integrates the band level through the **realized** stage-2 response at each rate and solves for the source's RMS σ_r per rate, emitted as exact `f64` bits.
+- The level gain is σ_r·10^(offset/20), computed at construction with `detmath::exp`. `exp(0.0)` is exactly 1.0, so offset 0 multiplies by σ_r exactly.
 
-**Decision.**
-- **Where the stages run.** Stages 1–2 run inside `RecordPath::limited` (renamed `front`), between `sanitize_in` and the limiter, so the one-pass, the recorder, the stop's flush and frame completion all pass through them by construction.
-- **The stop.** It already calls the recorder with zero-valued host input (`feed_zeros`), so the hiss continues through it, as FR-009 requires.
-- **Bypass.** A bypassed stage is a skipped branch decided at construction (no arithmetic, as the limiter's `run_limiter`), so bypassed stages are bit-identical to 0.11 by construction.
-- **Taps.** `Tap::AfterMicCapsule` and `Tap::AfterMicAmp` are host-rate taps without conversion, voice activation or chain, like `Tap::AfterAgc` (the one-pass's `limiter_only` path generalized to `front_only(upto)`), with latency 0. `Tap::AfterAgc` now includes stages 1–2 when they run; its latency stays 0.
-- **Latency.** Not reported, as for the output chain (spec 009 R-08). Stage 2's 1 kHz group delay is reported per rate by the script and by a harness row: about 0.10 ms, or 5 samples at 48 kHz.
-- **Reset and reconfigure.** `reset` puts the sections at rest and rekeys the capsule (counter 0 for the one-pass; the transport resets its counter). `reconfigure` rebuilds everything, as today.
+### The generator (no platform math)
 
-**Alternatives considered.** A separate front-end object before `RecordPath`: two call sites and a second state to reset, against one function that already exists.
+- **Uniform source:** `xoshiro256++`, period 2²⁵⁶ − 1.
+- **Keying** (plan review Q8): `z = mix64(seed ^ MIC_STREAM) ^ mix64(counter ^ MIC_COUNTER_SALT)`, where mix64 is SplitMix64's finalizer. Four SplitMix64 outputs from z fill the state.
+  - Two independent bijections remove the XOR/add collision families.
+  - SplitMix64 never yields an all-zero state, so seed 0 does not degenerate.
+  - Both constants are registered (A-049).
+- **Gaussian:** a ziggurat (Marsaglia & Tsang 2000, 128 layers), with tables emitted by the script as `f64` bits.
+  - **Bit use:** the layer index and sign come from bits 0–7, and the 53-bit mantissa from bits 11–63 (no overlap; Doornik 2005).
+  - **Tail:** the uniforms are `(r >> 11) + 1`, so `ln` never sees 0. The tail and the wedge use `detmath::{exp, ln}`.
+  - **Bounded work** (constitution IV): each rejection loop is capped at **8 attempts**. At the cap the last candidate is returned, deterministically. The probability of reaching the cap is about 1e-16 per sample (registered in A-049). A hook forces the cap path in a unit test.
+- **Advance count.** The source advances a variable but deterministic number of times per sample. The hiss is a function of the host samples processed, so partition independence holds.
 
-## R-06: The 0.11-default configuration (FR-010; C7)
+### Streams (spec FR-009, the user's plan-review choice)
 
-**Decision.** `configs::settings_011(rate)` is `Settings::new` with `mic = MicSettings::BYPASSED`. The existing base configurations are rebased on it:
+- The **recording counter** lives in the split engine (`Transport`). It is 0 at construction and **never rewinds**.
+- `start_recording`, after `memory.open()` succeeds, rekeys the recorder's capsule to (seed, counter) and then increments the counter.
+- The one-pass record path's capsule is keyed to the counter's **current** value (the next recording's) at construction, `reset` and `reconfigure`.
+- So the first recording after any of these equals the one-pass, and no two recordings of one engine share a stream.
+
+### Tests
+
+| Test | Where | Assertion |
+|---|---|---|
+| Tail counts | core, release-only, 10⁸ draws (about 0.2 s) | the 4σ count within ±5 % of its expectation (≈ 6 334); the 5σ count within ±40 % (≈ 57) |
+| Cross-correlation | harness, the tap after stage 1 (white), 480 000 samples per rate | below 5/√N at lag 0 and below 6/√N over lags ±64, for seeds 0 / 1 and counters 0 / 1 |
+| Level stability | release-only, a 60-minute run at 48 kHz | every 10 s window within ±0.5 dB |
+| Seeds | all | the seeds are fixed and never re-picked to make a test pass |
+
+### Alternatives considered
+
+- **Box–Muller:** about 15–25 ns per sample.
+- **Irwin–Hall(12):** its tails are light.
+- **The harness's PCG32:** fine for stimuli, but keeping the core's generator separate keeps the harness free to change.
+- **A counter that rewinds at reset:** rejected by the user, because recordings kept in memory would share hiss.
+
+## R-05: Placement, taps, latency and the counter's states (FR-001, FR-007 – FR-009)
+
+### Placement
+
+- **Where the stages run.** Stages 1–2 run inside `RecordPath::limited` (renamed `front`), between `sanitize_in` and the limiter, so the one-pass, the recorder, the stop's flush and the frame completion all pass through them.
+- **The stop.** It calls `recorder.push` with zero-valued host input (`transport.rs` `feed_zeros`), so the hiss continues through it. `StopOutcome::silence_fed_samples`'s rustdoc is amended: "zero-valued input samples; with stage 1 on, the recording carries hiss there".
+- **Bypass.** A bypassed stage is a skipped branch decided at construction, so it is bit-identical to 0.11 by construction.
+
+### Taps
+
+- `Tap::AfterMicCapsule` and `Tap::AfterMicAmp` are host-rate taps without conversion, voice activation or chain, with latency 0. The one-pass's `limiter_only` path is generalized to `front_only(upto)`.
+- The recorder ignores taps (it is built with `honour_tap = false`); the tap docs say so, as the existing ones do.
+- `Tap::AfterAgc` now includes stages 1–2 when they run. Its latency stays 0.
+
+### Latency
+
+Not reported (spec 009 R-08's precedent). The hardware reviewer withdrew the objection: the group delay is frequency-dependent (0.1 ms at 1 kHz, 0.3 ms at 300 Hz, about 2 ms near 77 Hz), so no single integer is right. The 1 kHz group delay is printed per rate.
+
+### The counter's states
+
+The transport (spec plan review, coach P11 / hardware Q2):
+
+| Event | Counter | One-pass capsule |
+|---|---|---|
+| construction | 0 | keyed (seed, 0) |
+| `reset` (idle or mid-recording) | unchanged | rekeyed (seed, counter) |
+| `reconfigure` accepted | unchanged (carried into the rebuilt engine) | keyed (seed, counter) |
+| `reconfigure` refused | unchanged | unchanged |
+| `start_recording` succeeds | recorder rekeyed (seed, counter); then counter += 1 | unchanged |
+| `start_recording` refused (any error) | unchanged | unchanged |
+| empty recording discarded at stop | already advanced (the stream is consumed) | unchanged |
+| memory-full self-stop | unchanged | unchanged |
+| erase, import, playback, one-pass calls | unchanged | the one-pass stream continues |
+| zero-length call | nothing advances | nothing advances |
+
+Each row gets a unit test in `transport.rs`.
+
+## R-06: The 0.11-default configuration and the rebase (FR-010; coach C7, P1, P2)
+
+### Harness
+
+`configs::settings_011(rate)` is `Settings::new` with `mic = MicSettings::BYPASSED`. The existing base configurations are rebased on it:
 - `settings_008`, and therefore `settings_007` and every named configuration;
 - `"default_output" | "default_earphone" | "default_loud"`;
 - the output-clamp and volume-ramp twins (through those names).
 
-Direct `Settings::new` uses are replaced by `settings_011` in `output_checks.rs`, `smoke_reference.rs` and `tests/output_edge_cases.rs`.
+Direct `Settings::new` uses in `output_checks.rs`, `smoke_reference.rs` and `tests/output_edge_cases.rs` move to `settings_011`.
 
-The C smoke loop's existing cases set the two new fields off after `rr_dr60_settings_default`, so their pinned hashes stay. New smoke cases use the 0.12 default and pin new hashes.
+### Core and FFI (coach P2)
 
-The seven SHA guards (`golden-v1`, `agc`, `vas`, `codec`, `output`, `output-clamp`, `volume-ramp`) are run in Phase 1 before and after the core change.
+About 70 `Settings::new(` uses in `crates/rr_dr60/src` (pipeline.rs 34, settings.rs 16, paths.rs 8, transport.rs 5, validate.rs 4, output.rs 2, memory.rs, manifest.rs), 5 in `rr_dr60_ffi/src/lib.rs`, and the doctests. They are audited at the default flip (Phase 2):
+- a `test_util::settings_011` helper in the core;
+- each use that checks pre-012 behaviour (for example pipeline.rs's "the first 180 outputs == 0.0") is rebased;
+- each use that checks the default is kept and restated.
 
-**Default-engine figures that move** (restated or labelled "0.11 default" in Phase 4):
+### C (coach P1)
+
+The C fields land **inert in Phase 1**: the structure grows to 120 bytes, `to_settings` maps the fields, and `smoke.c`'s earlier cases set both switches off. The C loop and `ffi_parity` are green before the default flips in Phase 2. **The bit-identity proof (the seven SHA guards, the C loop, `ffi_parity`) runs at the flip in Phase 2**, not in Phase 1, where the default is still bypassed.
+
+### Default-engine figures that move
+
+They are found by grepping the README, `assumptions.md` and CLAUDE.md for "default" figures (Phase 4b), then restating each or labelling it "0.11 default". Known so far:
 - A-042's 1.96–2.06 peaks;
+- the README's earphone 1.04–1.07;
 - spec 011's route-output click figures;
 - spec 008's "silence −78 dBFS and below";
-- spec 009's "decoder output on silence is quiet";
-- the README's "default" timing figures.
+- spec 009's "decoder output on silence is quiet".
 
-## R-07: The voice activation and the hiss (US3 AS6; D4)
+## R-07: The voice activation and the hiss (spec US3 AS6; D4; plan review P15)
 
-**Plan-time simulation** (the reviewer's `vas.py`): the real state machine (hang 6000, onset 120, gap 32 device samples) on Gaussian hiss through an approximation of stage 4 at 6 kHz.
+### Plan-time simulation
+
+The reviewer's `vas.py`: the real state machine (hang 6000, onset 120, gap 32 device samples) on Gaussian hiss through an approximation of stage 4.
 
 | Hiss (300–3000 Hz, AES17) | Level 5 (−46 dBFS) | Level 4 (−43) | Level 3 (−40) |
 |---|---|---|---|
@@ -184,97 +292,161 @@ The seven SHA guards (`golden-v1`, `agc`, `vas`, `codec`, `output`, `output-clam
 | −50 | never pauses | pauses after 48 s | pauses |
 | −48 | never pauses | **never pauses** | pauses after 1.8 s |
 
-- **Rule of thumb:** the gate pauses reliably when threshold − hiss RMS ≥ about 9 dB, and fails below about 6–7 dB.
-- **At the default** the RMS margin to level 5 is about 16 dB.
-- **At the top offset** (+12 dB, about −50 dBFS) levels 4–5 never pause in a silent room. This is documented, not refused.
+The gate pauses reliably when threshold − hiss RMS ≥ about 9 dB, and fails below about 6–7 dB. At the default, the RMS margin to level 5 is about 16 dB.
 
-**The harness check** (US3 AS6), at each sensitivity level and host rate (measurement rates under coverage):
-- a seeded 60 s silent run with the hiss on keeps exactly the hang time of device samples, pauses once, and never resumes, asserted from the events;
-- the RMS margin at the voice-activation input and the exceedance count are printed;
-- the offset at which each of levels 4 and 5 stops pausing is found by bisection and reported;
-- the 600 s run is release-only.
+### The harness check
 
-**A-022** is re-derived in Phase 4:
+- **Where:** `Tap::AfterVas`, which does not run the codec; the events do not depend on it (coach P15).
+- **The run:** a seeded 60 s silent run at each level and host rate, with `measurement_rates()` under coverage. It asserts from the events that the recording keeps exactly the hang time, pauses once, and never resumes. The RMS margin and the exceedance count are printed.
+- **The offset bisection:** the offset at which levels 4 and 5 stop pausing is found by bisection. Under `cfg(coverage)` it runs at 6 kHz only (the voice-activation input's hiss level is the same at every rate by construction); in the normal suite it runs at all rates.
+- **Release-only:** the 600 s runs.
+
+**A-022** is re-derived in Phase 4b:
 - the hiss's peaks (about −51 dBFS over 600 s) replace "capsule self-noise peaks around −57 to −62 dBFS";
 - room-noise placements move by the input high-pass's tilt.
 
-## R-08: The limiter and the speech codec with the hiss (US3 AS7, AS8; D11, D12)
+## R-08: The limiter and the speech codec with the hiss (spec US3 AS7, AS8; plan review Q12)
 
-**The limiter** (AS8).
-- **Setup.** Twin engines with the same seed, one with the limiter bypassed, are read at `Tap::AfterAgc`. A loud 1 kHz burst (+9 dBFS, 10 dB over the knee, starting on a host-grid peak, spec 005 R-03) is followed by 3 s of silence.
-- **Oracle.** Over the silence the ratio of the two outputs equals the limiter's gain, sample by sample. The hiss is identical, and the limiter is a pure gain below its knee.
-- **Assertion.** The ratio equals `limiter_state`-derived gain within 4 ULP, as in spec 011's ratio reader.
+### The limiter (AS8)
 
-**The codec** (AS7).
+- **Setup.** Twin engines with the same seed, one with the limiter bypassed, are read at `Tap::AfterAgc`. A +9 dBFS 1 kHz burst, starting on the host-grid peak, is followed by 3 s of silence.
+- **Assertions over the silence:**
+  - (a) the on/off ratio is at most 1 and non-decreasing;
+  - (b) the ratio trajectory is identical for seeds 0 and 1 within 4 f32 ULP (spec 011's reader).
+
+  This proves the hiss is only scaled and never drives the detector, without reimplementing the gain law in the harness. The release figures themselves remain spec 005's.
+
+### The codec (AS7)
+
 - **Setup.** The default configuration with the voice activation bypassed records and plays 10 s of silence.
-- **Measurement.** The decoded hiss's level relative to the input hiss is computed at 8 kHz after resampling both sides (spec 008's lesson) and reported per rate. It is expected a few dB low: analysis-by-synthesis renders noise low.
-- **Placement.** The hiss sits about 20 dB above the fixed-gain quantizer's floor (≈ −82 dBFS, `design_celp.py`), so it is coded, not zeroed.
-- **Default.** With the voice activation on, the recording's length (hang + stop feed) is reported.
+- **Measurement.** The decoded hiss's level relative to the input hiss is computed at 8 kHz after resampling both sides (spec 008's lesson) and reported per rate. It is expected a few dB low.
+- **Placement.** The hiss sits about 20 dB above the fixed-gain quantizer's floor (≈ −82 dBFS), so it is coded, not zeroed.
+- **Default.** With the voice activation on, the recording's length (hang plus stop feed) is reported.
 
-## R-09: Cost (FR-011; C11)
+## R-09: Cost (FR-011; the user's plan-review choice; coach P8, P9; hardware Q6)
 
-**Decision.** Three measurements, each the fastest of nine alternating solo release runs at 48 kHz, with the codec bypassed, on the speaker route:
+### Measurement conditions
 
-1. **Idle A/B against 0.11** (≤ 3 %).
-   - `scripts/ab-timing.sh <0.11 rev>` unchanged: `output_cost` in both builds.
-   - In the branch, `output_cost`'s configuration is rebased on `settings_011` (R-06), so it measures the stages **bypassed**.
-2. **On A/B against 0.11** (≤ 10 %).
-   - `scripts/ab-timing.sh <0.11 rev> output_cost_mic`: a new optional head-test argument.
-   - The branch's new `timing::output_cost_mic` is `output_cost` with stages 1–2 on, printing the same line format, so the baseline's `output_cost` and the branch's `output_cost_mic` compare directly.
-3. **In-build** `timing::mic_cost`, reported.
-   - Stages on against bypassed, on −20 dBFS noise and on full-scale noise, and the spread across hiss offsets.
-   - Its ratio ≤ 10 % is asserted (CI-safe), since the A/Bs need two builds.
+48 kHz, codec bypassed, speaker route, release build, timing tests one at a time, each side the fastest of nine alternating runs.
 
-**Deviation from the spec's wording.** FR-011 says "−20 dBFS noise". The cross-build A/Bs must use `output_cost`'s fixed 0.11 stimulus (uniform ±0.5). The mic stages' cost does not depend on level below the clip limits (branchless), and `mic_cost` reports the level spread to show it. This is recorded for the plan review to amend FR-011.
+| Measurement | Test | Stimulus | Budget | Where |
+|---|---|---|---|---|
+| **In-build, on against bypassed** | `timing::mic_cost` | −20 dBFS noise; full-scale noise and the hiss offsets as a reported spread | **≤ 10 %** | asserted on the development machine; on CI under a **25 %** safety ceiling (the x86 runner is several times slower on branchless selects, spec 010) |
+| **Cross-build, bypassed against 0.11** | `scripts/ab-timing.sh` (`output_cost` in both builds; in the branch its configuration is rebased on `settings_011`) | `output_cost`'s fixed stimulus | **≤ 3 %** | asserted on the development machine; once on CI through the `ab-timing` label |
+| **Cross-build, on against 0.11** | `scripts/ab-timing.sh c9f9994 output_cost_mic` (a new optional head-test argument) | `output_cost`'s fixed stimulus | **reported only** | `output_cost_mic` asserts `limiter_state() == 0.0` at the end, so a charged limiter can never pass as mic cost |
 
-**Estimate.**
-- Ziggurat plus xoshiro is about 2 ns.
-- Three first-order sections are about 3 ns.
-- The normalization and the clipper are about 1–2 ns.
-- That totals about 6–7 ns on about 73 ns: **≈ +8–10 %**. The budget is achievable but not loose (D10).
+Why the cross-build "on" figure is only reported: stage 2 changes the stimulus's level (RMS 0.240, peak 0.784, only 1.1 dB below the limiter's knee) and therefore the cost of the limiter and the speaker knee.
 
-**Fallback** if the A/B exceeds 10 %: fold the normalization into the input high-pass's coefficients, and merge the output coupling and the roll-off into one biquad. The change goes to the review before it is made.
+### Scripts and workflow
 
-## R-10: Interfaces (FR-012; C14)
+- `scripts/ab-timing.sh`'s default baseline becomes **`c9f9994`** (the 0.11.0 merge on main, the 012 branch point).
+- `.github/workflows/ab-timing.yml` gains a second step for `output_cost_mic` and the new baseline. A pull_request event uses the PR's copy of the workflow.
+- The A/B script only prints, so a task records its figures against the budgets.
 
-**Rust.**
-- `Settings::mic: MicSettings { capsule_enabled, amp_enabled, hiss_offset_db }`, with `MicSettings::DEVICE` (on, on, 0.0) and `MicSettings::BYPASSED`. The struct is `#[non_exhaustive]`.
-- Validation: `hiss_offset_db` must be finite and within −18 … +12 dB, or `Error::InvalidSetting`.
-- `Tap::AfterMicCapsule`, `Tap::AfterMicAmp`.
-- `mic::HISS_OFFSET_RANGE_DB` and the documented constants (`mic::FULL_SCALE_SPL_DB` = 90.0 as documentation of the reference).
+### Estimate and fallback
 
-**C.**
+- **Estimate:** ziggurat plus xoshiro ≈ 2 ns, three first-order sections ≈ 3 ns, the clipper ≈ 1–2 ns (the normalization is free, folded into HP_in). That is **about 6–7 ns on about 73 ns, +8–10 %**.
+- **Fallback** if the in-build ratio exceeds 10 %: merge HP_out and LP into one biquad. That voids the 1 − LP′ argument, so the script must re-prove the bound for the merged section (the L1 norm × (L₊ + L₋), and FR-006 amended) before the change. The change goes to review first.
+
+## R-10: Interfaces (FR-012; plan review P13, U4)
+
+### Rust
+
+- `Settings::mic: MicSettings { capsule_enabled, amp_enabled, hiss_offset_db }`, with `MicSettings::DEVICE` (on, on, 0.0) and `MicSettings::BYPASSED`. `#[non_exhaustive]`.
+- **Validation:** `hiss_offset_db` must be finite and within −18 … +12 dB, **checked whether or not the capsule is on** (as the AGC fields are), else `Error::InvalidSetting(Setting::MicHissOffsetDb)`. `Setting::MicHissOffsetDb` is appended, with its `range()`.
+- **Taps:** `Tap::AfterMicCapsule`, `Tap::AfterMicAmp`.
+- **Constants:** `mic::HISS_OFFSET_RANGE_DB` only, for UI sliders. **No public full-scale SPL constant** (coach P16 Q5): the 90 dB SPL figure lives in the rustdoc, the README and A-029.
+
+### C
+
 - `RrDr60Settings` grows 112 → **120** bytes (8-aligned):
   - `mic_capsule_enabled` at 112 and `mic_amp_enabled` at 113;
   - `reserved_012 [u8; 2]` at 114;
   - `mic_hiss_offset_db: f32` at 116.
-- Const assertions on size, alignment and offsets; `struct_size = 112` is refused with the existing invalid-argument status and the struct-size field, as spec 010 did for 104.
-- Taps `RR_DR60_TAP_AFTER_MIC_CAPSULE = 9` and `RR_DR60_TAP_AFTER_MIC_AMP = 10`.
-- `RR_DR60_VERSION_MINOR` 12.
+- **Const assertions** on the size, the alignment and **every new offset** (112, 113, 114, 116), plus offset 116 + 4 == size.
+- `struct_size = 112` is refused with the existing invalid-argument status and the struct-size field (spec 010's pattern). `RrDr60SettingField::MicHissOffsetDb = 16` is appended (5 and 6 are retired).
+- Taps `RR_DR60_TAP_AFTER_MIC_CAPSULE = 9` and `RR_DR60_TAP_AFTER_MIC_AMP = 10`. `RR_DR60_VERSION_MINOR` is 12.
+- The hardware reviewer noted that the three fields would fit in 0.11's reserved tail without a C break. Growing was kept for consistency with the earlier features (the project breaks before 1.0; U4 at its default).
 
-**Stored form.** Unchanged (version 2). Reconfiguring stages 1–2 needs no empty memory.
+### Stored form and controls
 
-**No live control.** The offset is a setting applied by `reconfigure`. Whether it becomes a live control belongs to the deferred controls discussion.
+- **Stored form:** unchanged (version 2).
+- **Live control:** the offset is a setting applied by `reconfigure`. A live control belongs to the deferred controls discussion.
 
-## R-11: Golden file and records (FR-013, FR-014)
+## R-11: Golden file, mutants and records (FR-013, FR-014; plan review P12, Q11, Q15)
 
-**Golden file.** `golden-mic-v1.json`:
-- **Stimuli:** silence 1 s; voiced −20 dBFS 1 s (`stimulus::voiced`); a loud 1 kHz tone at +12 dBFS for 0.25 s, starting on a host-grid peak.
-- **Configurations:** `mic_only` (stages 1–2, tap after stage 2); `mic_only_quiet` (hiss off); `mic_capsule_only` (tap after stage 1); `default_mic` (the 0.12 default, voice activation bypassed).
-- **Size:** 3 stimuli × 4 configurations × 7 host rates = **84 entries**, each with its configuration, counter and offset, and the output's hash and length.
-- **Bless:** once, after the post-implementation reviews, with its SHA pinned and added to `ci.yml` (check, golden matrix, iOS simulator) and `scripts/ios-device-golden.sh` in the same commit.
+### Golden file: `golden-mic-v1.json`
 
-**Manifest.** Stages 1 and 2 become `assumed`, model version 0.12.0, with their sources, assumptions, not-modeled notes (each ≤ 120 characters) and the Rust API items (`Settings::mic`, `MicSettings::*`, the taps). The canonical text and the README table are re-blessed once in Phase 1, after the wording and denylist runs on the new strings.
+- **Stimuli:**
+  - `silence_1s`;
+  - `voiced_1s` (`stimulus::voiced(fs, 1.0, −20.0, 7)`);
+  - `loud_tone` (1 kHz, +12 dBFS, 0.25 s);
+  - `very_loud_tone` (1 kHz, +24 dBFS, 0.25 s, reaching both limits).
 
-**Registers.**
-- **New assumptions:** A-046 the input high-pass; A-047 the output coupling with C4/C5's tolerance and the lumping ahead of the limiter; A-048 the hiss anchor and shape; A-049 the generator and streams; A-050 the amplifier's added noise and the unknown codec reference noise; A-051 the clip limits, softness and polarity; A-052 the capsule's flat response.
-- **Amended:** A-005, A-006, A-019, A-022, A-028, A-029, A-036.
-- **Other records:** signal-chain rows 1–2; `sources.md`'s S-002 summary (R6; R1 is the record lamp's resistor); the hardware-evidence issue template (the reviewer's seven captures); the seed's rustdoc and its C comment.
+  The tones start on the phase the script prints.
+- **Configurations:**
+  - `mic_only` (stages 1–2, tap after stage 2);
+  - `mic_only_quiet` (hiss off);
+  - `mic_capsule_only` (tap after stage 1, at offset −12 dB, which pins the `detmath::exp` gain);
+  - `default_mic` (the 0.12 default, voice activation bypassed);
+  - `default_mic_quiet` (the same, capsule off).
+- **Second recording:** a `default_mic_rec1` family of `silence_1s` at counter 1, recorded then played.
+- **Size:** 4 × 5 × 7 + 7 = **147 entries**.
+- **Bless:** once, after the post-implementation reviews. At bless time it asserts:
+  - the quiet entries on silence are exact zeros;
+  - the hiss band level is within ±0.5 dB of the script;
+  - `default_mic` at the first recording equals a record-then-play.
+
+### Mutants (five)
+
+1. `no_input_hp`;
+2. `symmetric_clip`;
+3. `swapped_polarity`, the likeliest real sign bug;
+4. `shared_stream` (the counter ignored);
+5. `hiss_db_delta` = 3 dB.
+
+Each must fail its row.
+
+### Manifest
+
+- Stages 1 and 2 become `assumed`, model version 0.12.0, with sources, assumptions, not-modeled notes (≤ 120 characters) and the Rust API items.
+- **One re-bless** of the canonical text and the README table in Phase 1, after the wording review and the denylist run. **One review-driven re-bless** is allowed in Phase 6 (as in specs 008 and 010).
+
+### Registers
+
+**New assumptions:**
+
+| ID | Content | Confidence |
+|---|---|---|
+| A-046 | the input high-pass | high that it exists; medium in the value |
+| A-047 | the output coupling with C4/C5's tolerance, and the 13 kHz roll-off | |
+| A-048 | the hiss anchor and shape, with its credible range | |
+| A-049 | the generator, keying, retry cap and streams | an engine convention |
+| A-050 | the amplifier's added noise, and the unknown SG reference noise with its 22 nV/√Hz equivalence figure | |
+| A-051 | the clip limits, the knee and its justification, polarity | |
+| A-052 | the capsule's flat response | |
+| A-053 | the lumping of A-047's sections ahead of the limiter | |
+
+**Amended:**
+- A-005;
+- A-006: the topology, with the loop gain high;
+- A-019, A-028: the detector no longer sees the host's DC;
+- A-022: re-derived;
+- A-029: the corners, the closed level chain, the self-noise figure; never "low loop gain";
+- A-036: the first-clipping polarity.
+
+**Other records:**
+- signal-chain rows 1–2;
+- `sources.md`'s S-002 summary (R6; R1 is the record lamp's resistor);
+- a candidate secondary source for the 2SD1819A ranks;
+- the hardware-evidence issue template (the reviewers' captures);
+- the seed's rustdoc and its C comment.
 
 ## R-12: Risks
 
-- **The input corner is wrong.** If a capture shows a flat low end, the corner is a setting change plus a re-bless, not a model change (A-046 registers the capture protocol).
-- **The cost budget** (R-09 fallback).
-- **The voice-activation coupling.** A future capture that raises the hiss can turn levels 4–5 into "never pause" (documented).
-- **The ziggurat tables** are an implementation detail with exact bit patterns; a table regeneration is a model change and a re-bless.
-- **Coverage time.** The 60 s voice-activation runs at seven rates are heavy under instrumentation, so they use `measurement_rates()` under `cfg(coverage)`, and the 600 s runs are release-only.
+- **The input corner is wrong.** A capture showing a flat low end becomes a coefficient change and a re-bless (A-046 carries the capture protocol).
+- **The cost budget:** see R-09's fallback.
+- **The voice-activation coupling.** A capture that raises the hiss can turn levels 4–5 into "never pause". This is documented.
+- **The thin 48 kHz fit margin:** see R-02's fallback.
+- **The ziggurat tables and constants** are exact bit patterns. Regenerating them is a model change and a re-bless.
+- **Coverage time.** The voice-activation runs are at `AfterVas` without the codec; the bisection runs at one rate under coverage; the 600 s and 60-minute runs are release-only. ci.yml's release `--ignored` step gains `--test mic_matrix`.

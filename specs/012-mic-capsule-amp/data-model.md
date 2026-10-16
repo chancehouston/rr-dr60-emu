@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | `capsule_enabled` | bool | true | false | none |
 | `amp_enabled` | bool | true | false | none |
-| `hiss_offset_db` | f32 | 0.0 | 0.0 | finite, −18.0 ≤ x ≤ +12.0, else `Error::InvalidSetting` (C: invalid-setting status, field `mic_hiss_offset_db`) |
+| `hiss_offset_db` | f32 | 0.0 | 0.0 | finite, −18.0 ≤ x ≤ +12.0, checked whether or not the capsule is on, else `Error::InvalidSetting(Setting::MicHissOffsetDb)` (C: invalid-setting status, field `RR_DR60_SETTING_FIELD_MIC_HISS_OFFSET_DB` = 16) |
 
 `Settings::new(rate)` uses `MicSettings::DEVICE`. The offset applies only when `capsule_enabled` is on. A setting is applied by `reconfigure` (not a live control).
 
@@ -23,7 +23,10 @@
 | `gain: f64` | σ_rate · 10^(offset/20), computed at construction with `detmath::exp` (σ_rate from `mic_coeffs`) |
 
 **Behaviour.**
-- `next() -> f64` draws one ziggurat sample. The fast path is integer and table work; the tail and wedge paths use `detmath::{exp, ln}`.
+- `next() -> f64` draws one ziggurat sample:
+  - the layer index and sign come from bits 0–7, the mantissa from bits 11–63;
+  - the fast path is integer and table work; the tail and wedge paths use `detmath::{exp, ln}`, with uniforms `(r >> 11) + 1`;
+  - each rejection loop is capped at 8 attempts, returning the last candidate.
 - `process(x) = x + gain · next()`.
 - `rekey(counter)` rebuilds the state and keeps nothing else.
 
@@ -31,14 +34,16 @@
 
 | Field | Meaning |
 |---|---|
-| `hp_in: FirstOrder` | the input high-pass (A-046), bilinear, prewarped |
-| `g_n: f64` | the normalization to 0 dB at 1 kHz |
-| `inv_lp, inv_ln, lp, ln: f64` | the clipper's limits L₊, L₋ and their reciprocals (A-051) |
-| `k: f64` | the knee start (A-051), via 009's `knee` |
-| `hp_out: FirstOrder` | the output coupling (A-047), bilinear, prewarped |
-| `lp_13k: FirstOrder` | the roll-off (A-047), magnitude-matched |
+| `hp_in: FirstOrder` | the input high-pass (A-046) with the 1 kHz normalization folded into its numerator; per-rate fitted coefficients (zero at DC, pole in [0, 1)) |
+| `l_pos, l_neg, inv_pos, inv_neg, k_pos, k_neg: f64` | the clipper's limits L₊, L₋, their reciprocals and the onset thresholds k·L (A-051) |
+| `k: f64` | the knee start, 0.85 (A-051), via 009's `knee` |
+| `hp_out: FirstOrder` | the output coupling (A-047): bilinear form, gain (1 + p)/2, per-rate fitted pole |
+| `lp: FirstOrder` | the roll-off (A-047): b0, b1 ≥ 0, pole in [0, 1), unity DC gain, per-rate fitted |
 
-**Behaviour.** `process(x) = lp_13k(hp_out(clip(g_n · hp_in(x))))`, where `clip` is branchless per polarity. `reset` puts the three states at 0.
+**Behaviour.** `process(x) = lp(hp_out(clip(hp_in(x))))`.
+- `clip(v)` is `v` when −k·L₋ ≤ v ≤ k·L₊ (exact); otherwise it is the knee per polarity, as branchless selects.
+- `reset` puts the three states at 0.
+- Test hooks expose the clipper's input and output per sample, a clipper-off twin and the mutants.
 
 ### `MicFront` (in `RecordPath`)
 
@@ -49,21 +54,19 @@
 ## Stream keying
 
 `key(seed, counter)`:
-1. `z = seed ^ MIC_STREAM`, then `z ^= counter.wrapping_mul(GOLDEN_GAMMA)`.
-2. Four SplitMix64 outputs from `z` fill the state.
+1. `z = mix64(seed ^ MIC_STREAM) ^ mix64(counter ^ MIC_COUNTER_SALT)`, where `mix64` is SplitMix64's finalizer.
+2. Four SplitMix64 outputs from `z` fill the xoshiro256++ state.
 
-`MIC_STREAM` and the SplitMix64 constants are fixed and registered in A-049.
+`MIC_STREAM`, `MIC_COUNTER_SALT` and the SplitMix64 constants are fixed, printed by the design script and registered in A-049.
 
-| Event | One-pass record path | Split engine (`Transport`) |
-|---|---|---|
-| construction | key(seed, 0) | counter = 0 |
-| `reset` | rekey(0), sections at rest | counter = 0 |
-| `reconfigure` | rebuilt: key(seed, 0) | rebuilt: counter = 0 |
-| `start_recording` | n/a | the recorder's path reset, rekey(counter), then counter += 1 |
-| `stop_recording` flush | n/a | zeros through the front (the hiss continues) |
-| zero-length call | nothing advances | nothing advances |
+**The recording counter** never rewinds. Its transitions are research R-05's table:
+- construction: 0;
+- `reset` and an accepted `reconfigure`: unchanged;
+- a successful `start_recording`: rekey the recorder to (seed, counter), then counter += 1;
+- a refused start, a refused reconfigure, erase, import, playback and one-pass calls: unchanged;
+- an empty recording discarded at the stop has consumed its stream.
 
-So recording k (from 0) after a construction, reset or reconfigure carries stream k, and recording 0 equals the one-pass.
+The one-pass capsule is keyed to (seed, counter) at construction, `reset` and `reconfigure`. So recording k since construction carries stream k, and the first recording after any of those events equals the one-pass.
 
 ## Taps
 
@@ -84,12 +87,13 @@ At the two new taps the one-pass runs no conversion, no voice activation and no 
 | `default_output`, `default_earphone`, `default_loud` | `settings_011` | as before |
 | `mic_only` | `bypass_all` | mic `DEVICE`, tap `AfterMicAmp` |
 | `mic_only_quiet` | `mic_only` | `capsule_enabled = false` |
-| `mic_capsule_only` | `bypass_all` | capsule on, amp off, tap `AfterMicCapsule` |
+| `mic_capsule_only` | `bypass_all` | capsule on at offset −12 dB, amp off, tap `AfterMicCapsule` |
 | `default_mic` | `Settings::new` | `vas.enabled = false` (the 0.12 default with the voice activation bypassed) |
+| `default_mic_quiet` | `default_mic` | `mic.capsule_enabled = false` |
 
 ## Golden entry (`golden-mic-v1.json`)
 
-`{ config, stimulus, host_rate_hz, seed, counter, hiss_offset_db, out_len, out_hash }`, with 84 entries: 3 stimuli × 4 configurations × 7 rates (contracts/golden-format.md).
+`{ config, stimulus, host_rate_hz, seed, counter, hiss_offset_db, out_len, out_hash }`, with 147 entries: 4 stimuli × 5 configurations × 7 rates, plus 7 second-recording entries (contracts/golden-format.md).
 
 ## Measurement rows (harness report)
 
