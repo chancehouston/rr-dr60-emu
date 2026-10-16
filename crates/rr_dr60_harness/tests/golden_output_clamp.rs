@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 /// defect, never a re-bless; a later change to the bounded output is a model change with a
 /// CHANGELOG entry (FR-010).
 const GOLDEN_OUTPUT_CLAMP_V1_SHA256: &str =
-    "0000000000000000000000000000000000000000000000000000000000000000"; // pinned at 010 T041
+    "62c0ae7721d8cd1f55faba1eaad2fb1fd25f585974a44151e78c3fb233c77cbd"; // blessed 2026-10-15 (010 T041)
 
 #[test]
 fn golden_output_clamp_v1_unchanged() {
