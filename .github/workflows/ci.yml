@@ -82,7 +82,10 @@ jobs:
         run: cargo test -p rr_dr60_harness --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp
       - name: Timing checks (release; FR-015 bounded work, SC-006; 008 SC-006 and the frame-byte digest)
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test -p rr_dr60_harness --release --test timing -- --ignored --nocapture
+        # One test at a time: the timing tests measure wall-clock cost and worst blocks, so running
+        # them concurrently makes each one measure the others (spec 010 added a seventh; PR #23's
+        # first run read 008's worst 64-sample block at 1373 µs against its 1333 µs budget).
+        run: cargo test -p rr_dr60_harness --release --test timing -- --ignored --nocapture --test-threads=1
       - name: AGC and VAS full settings matrices and slow edge cases (release; spec 002 SC-002, R-07; spec 003 SC-002, R-12)
         if: matrix.os == 'ubuntu-latest'
         run: cargo test -p rr_dr60_harness --release --test agc_matrix --test agc_edge_cases --test vas_matrix --test vas_edge_cases --test us2_memory -- --ignored
