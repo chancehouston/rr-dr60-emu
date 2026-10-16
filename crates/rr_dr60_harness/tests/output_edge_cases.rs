@@ -65,14 +65,18 @@ fn invalid_positions_are_refused_and_the_position_kept() {
 }
 
 /// "Volume changed mid-block": the new position applies from the next block, and the volume
-/// gain never overshoots either position's value (the per-sample gain at the earphone's
-/// after-stage-11 tap is one of the two laws' values at every sample).
+/// gain never overshoots either position's value. Since spec 011 the gain moves over a 20 ms
+/// transition (A-045): every block before the change reads the position-1 law, every block
+/// wholly after transition sample N the position-0.5 law, and every block in between lies
+/// between the two (tasks.md T019; 8192 samples so blocks remain after N at 96 kHz).
 #[test]
 fn volume_change_lands_at_the_next_block_without_overshoot() {
     for rate in RATES {
         let mut s = configs::settings("output_only_earphone", rate);
         s.tap = Tap::AfterVolumeAmp;
-        let x = tone(rate, -20.0, 4096.0 / f64::from(rate));
+        let x = tone(rate, -20.0, 8192.0 / f64::from(rate));
+        let n = rr_dr60::output::volume_transition_samples(rate).unwrap() as usize;
+        let after = 32 + (n - 1).div_ceil(64); // the first block wholly after sample N
         let reference = {
             let mut r = s;
             r.output = OutputSettings::BYPASSED;
@@ -85,12 +89,11 @@ fn volume_change_lands_at_the_next_block_without_overshoot() {
             p.set_volume(if i < 32 { 1.0 } else { 0.5 }).unwrap();
         });
         // The reference is the chain's input; the earphone after-stage-11 tap is k_ear(p) times
-        // the 32 Hz-filtered input, so compare block energies: the ratio is the law's at every
-        // block. The gain is block-constant by construction (one scalar per processing call,
-        // `OutputChain::set_controls`; the core test
-        // `route_change_resets_sections_and_volume_change_does_not` pins that a volume change
-        // moves only the scalars), so a block reading suffices; the sample-exact timing is the
-        // `assert_ne!` below.
+        // the 32 Hz-filtered input, so compare block energies: the ratio is the law's in every
+        // block before the change and wholly after the transition, and between the two laws in
+        // the transition's blocks (the per-sample trajectory is `volume_ramp_checks`' and the
+        // core test `transition_gain_sequence_is_the_formula`'s); the sample-exact timing is
+        // the `assert_ne!` below.
         let k1 = 10f64.powf(f64::from(rr_dr60::output::earphone_gain_db(1.0)) / 20.0);
         let k2 = 10f64.powf(f64::from(rr_dr60::output::earphone_gain_db(0.5)) / 20.0);
         let mut vol = 0.0; // the 32 Hz section's effect is the same for both runs: ratio of y to ref ≈ k
@@ -101,11 +104,18 @@ fn volume_change_lands_at_the_next_block_without_overshoot() {
                 continue;
             }
             let k = (ey / er).sqrt();
-            let want = if i < 32 { k1 } else { k2 };
-            assert!(
-                (k - want).abs() < 0.02 * want,
-                "{rate} Hz block {i}: gain {k} vs {want}"
-            );
+            if i < 32 || i >= after {
+                let want = if i < 32 { k1 } else { k2 };
+                assert!(
+                    (k - want).abs() < 0.02 * want,
+                    "{rate} Hz block {i}: gain {k} vs {want}"
+                );
+            } else {
+                assert!(
+                    k <= k1 * 1.02 && k >= k2 * 0.98,
+                    "{rate} Hz block {i}: gain {k} between {k2} and {k1}"
+                );
+            }
             vol = k;
         }
         assert!(vol > 0.0);

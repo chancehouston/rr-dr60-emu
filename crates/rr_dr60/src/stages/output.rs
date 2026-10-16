@@ -21,9 +21,15 @@
 //!
 //! The controls (the route and the volume position) are copied in once per processing call by
 //! [`OutputChain::set_controls`] (FR-009: they take effect at the next block); nothing in the
-//! per-sample path reads a control. Plain IEEE `f64` arithmetic, no platform math function
-//! (FR-012; 001 R-04).
+//! per-sample path reads a control. Since spec 011 a position change starts a **volume
+//! transition** (A-045): over N = 20 ms of host samples the knob moves from where it is to the
+//! new position along a smoothstep and the active route's scalar follows the loaded law at the
+//! knob's position, held within the two ends and against the previous sample, the last sample
+//! carrying exactly the target's block scalar (research R-01 – R-04). Construction, `reset`, a
+//! route change, an inactive chain and a bypassed stage 11 take the position at once. Plain
+//! IEEE `f64` arithmetic, no platform math function (FR-012; 001 R-04).
 
+use crate::output::volume_transition_samples;
 use crate::settings::{OutputSettings, Route, SUPPORTED_HOST_RATES, Settings, Tap};
 use crate::stages::biquad::Biquad;
 use crate::stages::first_order::FirstOrder;
@@ -61,6 +67,31 @@ pub(crate) fn k_spk(p: f64) -> f64 {
 #[inline]
 pub(crate) fn k_ear(p: f64) -> f64 {
     g_ear(p)
+}
+
+// Spec 011 FR-005: the output chain's share of the drain (`N_OUT`) alone exceeds 2.87
+// transition lengths at every rate (2.8786 – 2.8833), so a transition started in a playback's
+// last block completes inside the drain.
+const _: () = {
+    let mut i = 0;
+    while i < SUPPORTED_HOST_RATES.len() {
+        let n = SUPPORTED_HOST_RATES[i] as u64 * 20 / 1000; // A-045: 20 ms
+        assert!(
+            100 * c::N_OUT[i] as u64 > 287 * n,
+            "the drain completes a transition"
+        );
+        i += 1;
+    }
+};
+
+/// Holds a transition sample's gain `g` within the previous sample's gain and the target's
+/// (spec 011 FR-003; research R-03: the range and running hold): upward within `[prev, to]`,
+/// downward within `[to, prev]`. Compares and selects only; `g` is never NaN.
+#[inline(always)]
+fn hold(g: f64, prev: f64, to: f64, up: bool) -> f64 {
+    let (lo, hi) = if up { (prev, to) } else { (to, prev) };
+    let g = if g < lo { lo } else { g };
+    if g > hi { hi } else { g }
 }
 
 /// The amplifier's clipper (research R-04; A-031, low): a symmetric parabolic knee from
@@ -132,6 +163,32 @@ pub(crate) struct OutputChain {
     ear_in: FirstOrder,
     ear_out: FirstOrder,
     n_out: u32,
+    /// Spec 011 (A-045): the knob position the active route's scalar was last computed from;
+    /// equal to `to` outside a transition (data-model.md › `OutputChain` state).
+    knob: f64,
+    /// The transition's start (the knob when it began) and target positions.
+    from: f64,
+    to: f64,
+    /// The last position `set_controls` received: the compare that decides "a change".
+    target: f32,
+    /// The transition sample counter (0 … N) and N for this rate; `ramp_k == ramp_n` outside
+    /// a transition (FR-002).
+    ramp_k: u32,
+    ramp_n: u32,
+    /// 1 / N, computed once (research R-02: `u = k · inv_n` is non-decreasing in `k`).
+    inv_n: f64,
+    /// The transition's direction: the active route's target scalar above its start.
+    up: bool,
+    /// The target's block scalars as version 0.10 computes them, written at sample N (FR-001).
+    g_to_spk: f64,
+    g_to_ear: f64,
+    /// True after `new()` and `reset()` until the first processed sample: `set_controls` then
+    /// takes the position at once (FR-005; a zero-length call does not clear it).
+    fresh: bool,
+    /// Test hooks (spec 011 research R-07; `__test-hooks`): version 0.10's instantaneous step;
+    /// the knob moved linearly in time. Both false in production.
+    volume_step: bool,
+    shape_linear: bool,
 }
 
 impl OutputChain {
@@ -179,27 +236,120 @@ impl OutputChain {
             ear_in: FirstOrder::new(c::EAR_IN[i]),   // A-032: 120 Hz nominal
             ear_out: FirstOrder::new(c::EAR_OUT[i]), // A-032: 280 Hz nominal
             n_out: c::N_OUT[i],                      // research R-08
+            knob: c::VOLUME_REFERENCE,
+            from: c::VOLUME_REFERENCE,
+            to: c::VOLUME_REFERENCE,
+            target: c::VOLUME_REFERENCE as f32,
+            ramp_k: 0,
+            ramp_n: 0,
+            inv_n: 0.0,
+            up: false,
+            g_to_spk: 1.0,
+            g_to_ear: 1.0,
+            fresh: true, // 011 FR-005: the first block takes the position at once
+            volume_step: false,
+            shape_linear: false,
         };
+        // A-045: N = 20 ms of host samples (`Pipeline::new` validated the rate; 120, the 6 kHz
+        // figure, only guards an impossible state).
+        chain.set_ramp_len(volume_transition_samples(settings.host_rate_hz).unwrap_or(120));
         chain.set_controls(Route::Speaker, c::VOLUME_REFERENCE as f32);
         chain
     }
 
     /// Copies the controls in at a block boundary (FR-009): a route change resets every
-    /// section (the newly selected branch and the one left start from rest); the volume
-    /// position only moves the two scalars (the loaded law, A-044; one divide each). At
-    /// position 0 both scalars are exactly 0.0.
+    /// section (the newly selected branch and the one left start from rest) and takes the
+    /// position at once; a position change starts a **volume transition** (spec 011 FR-001:
+    /// the knob moves over N samples from where it is, research R-01), unless the chain is
+    /// fresh, inactive or has stage 11 off, which take it at once (FR-005); setting the
+    /// position already targeted changes nothing. At position 0 both scalars are exactly 0.0
+    /// once taken (at once or at transition sample N).
     pub(crate) fn set_controls(&mut self, route: Route, volume: f32) {
         if route != self.route {
             self.route = route;
             // Every section, the shared 32 Hz corner included (a simplification: physically that
             // section, C14 into VR1, is common to both routes and would keep its state; the
             // record band-pass leaves no low-frequency content for it to hold, hardware review
-            // T043 N3).
+            // T043 N3). `reset` marks the chain fresh: the new route starts at the new position.
             self.reset();
         }
+        if self.fresh || !self.active || !self.run_amp || self.volume_step {
+            self.take_at_once(volume); // 011 FR-005 (the hook: 0.10's step)
+        } else if volume != self.target {
+            self.start_transition(volume); // 011 FR-001
+        }
+    }
+
+    /// Takes `volume` at once (version 0.10's arithmetic): both scalars from the loaded law
+    /// (A-044; one divide each), the knob at the position, no transition (spec 011 R-04).
+    fn take_at_once(&mut self, volume: f32) {
         let p = f64::from(volume);
         self.k_spk = k_spk(p) * self.gain_scale;
         self.k_ear = k_ear(p);
+        self.g_to_spk = self.k_spk;
+        self.g_to_ear = self.k_ear;
+        self.knob = p;
+        self.from = p;
+        self.to = p;
+        self.target = volume;
+        self.ramp_k = self.ramp_n;
+    }
+
+    /// Starts a transition from the knob's current position to `volume` (spec 011 FR-001,
+    /// FR-003: a change during a transition starts a new full-length one from the knob).
+    fn start_transition(&mut self, volume: f32) {
+        let p = f64::from(volume);
+        self.from = self.knob;
+        self.to = p;
+        self.target = volume;
+        self.g_to_spk = k_spk(p) * self.gain_scale;
+        self.g_to_ear = k_ear(p);
+        self.up = match self.route {
+            Route::Speaker => self.g_to_spk > self.k_spk,
+            Route::Earphone => self.g_to_ear > self.k_ear,
+        };
+        self.ramp_k = 0;
+    }
+
+    /// Sets N (and 1 / N) and ends any transition (construction and the length hook).
+    fn set_ramp_len(&mut self, n: u32) {
+        self.ramp_n = n.max(1);
+        self.inv_n = 1.0 / f64::from(self.ramp_n);
+        self.ramp_k = self.ramp_n;
+    }
+
+    /// One transition sample (spec 011 FR-001 – FR-003; data-model.md › The per-sample step):
+    /// the knob along the smoothstep `u²(3 − 2u)`, the active route's scalar the loaded law at
+    /// the knob held within the previous scalar and the target's; at sample N the target's
+    /// block scalars exactly and the knob at the target.
+    #[inline]
+    fn ramp_step(&mut self) {
+        self.ramp_k += 1;
+        if self.ramp_k >= self.ramp_n {
+            self.ramp_k = self.ramp_n;
+            self.k_spk = self.g_to_spk; // 011 FR-001: exactly 0.10's scalar at sample N
+            self.k_ear = self.g_to_ear;
+            self.knob = self.to;
+            return;
+        }
+        let u = f64::from(self.ramp_k) * self.inv_n;
+        // A-045: the smoothstep (zero slope at both ends: the knob starts and ends at rest).
+        let s = if self.shape_linear {
+            u
+        } else {
+            u * u * (3.0 - 2.0 * u)
+        };
+        self.knob = self.from + (self.to - self.from) * s;
+        match self.route {
+            Route::Speaker => {
+                let g = k_spk(self.knob) * self.gain_scale;
+                self.k_spk = hold(g, self.k_spk, self.g_to_spk, self.up);
+            }
+            Route::Earphone => {
+                let g = k_ear(self.knob);
+                self.k_ear = hold(g, self.k_ear, self.g_to_ear, self.up);
+            }
+        }
     }
 
     /// Test-only (the `__test-hooks` feature): alters the chain for the SC-006 mutation tests
@@ -220,8 +370,13 @@ impl OutputChain {
         } else {
             -m.clamp_bound
         };
-        let route = self.route;
-        self.set_controls(route, self.volume_for_rescale());
+        // Spec 011 (research R-07): 0.10's step, the linear shape, the length mutants; the
+        // position is re-applied at once (R-04: no transition is left half-set).
+        self.volume_step = m.volume_step;
+        self.shape_linear = m.volume_shape_linear;
+        let n = i64::from(self.ramp_n) + m.volume_ramp_delta;
+        self.set_ramp_len(u32::try_from(n).unwrap_or(1));
+        self.take_at_once(self.volume_for_rescale());
     }
 
     /// Test-only: the position the current scalars were computed from is not stored (the
@@ -254,6 +409,10 @@ impl OutputChain {
     fn inner(&mut self, y: f64) -> f64 {
         if !self.active {
             return y;
+        }
+        self.fresh = false; // 011 FR-005: the first processed sample ends "fresh"
+        if self.ramp_k < self.ramp_n {
+            self.ramp_step(); // 011 FR-001: one transition sample
         }
         // Stage 11, both routes: the volume control's input coupling corner.
         let u = if self.run_amp {
@@ -300,8 +459,15 @@ impl OutputChain {
         }
     }
 
-    /// Zeroes every section's state; the controls are kept.
+    /// Zeroes every section's state; the controls are kept. Spec 011 FR-005: a transition in
+    /// progress completes at once (the scalars and the knob at its target) and the chain is
+    /// fresh, so the next `set_controls` takes its position at once.
     pub(crate) fn reset(&mut self) {
+        self.fresh = true;
+        self.ramp_k = self.ramp_n;
+        self.k_spk = self.g_to_spk;
+        self.k_ear = self.g_to_ear;
+        self.knob = self.to;
         self.vol_hpf.reset();
         self.amp_hpf.reset();
         self.speaker_res.reset();
@@ -501,7 +667,9 @@ mod tests {
         x.iter().map(|&v| chain.process(v)).collect()
     }
 
-    /// FR-009: a route change resets both branches' sections; a volume change only the scalars.
+    /// FR-009: a route change resets both branches' sections; a volume change only the scalars,
+    /// which since spec 011 move from the first processed sample and reach the target at
+    /// transition sample N (011 FR-001; tasks.md T019).
     #[test]
     fn route_change_resets_sections_and_volume_change_does_not() {
         let mut ch = OutputChain::new(&settings(48_000), false);
@@ -518,7 +686,25 @@ mod tests {
             "a volume change leaves the state"
         );
         assert_eq!(ch.amp_hpf, before.amp_hpf);
-        assert_ne!(ch.scalars(), before.scalars());
+        assert_eq!(
+            ch.scalars(),
+            before.scalars(),
+            "011: nothing moves before a sample"
+        );
+        ch.process(0.0);
+        assert_ne!(
+            ch.scalars(),
+            before.scalars(),
+            "011: the first transition sample"
+        );
+        for _ in 1..n_at(48_000) {
+            ch.process(0.0);
+        }
+        assert_eq!(
+            ch.scalars().0,
+            k_spk(0.5),
+            "011: the target exactly at sample N"
+        );
         ch.set_controls(Route::Earphone, 0.5);
         assert!(ch.at_rest(), "a route change resets every section");
         run(&mut ch, &burst);
@@ -847,5 +1033,252 @@ mod tests {
             exceeded,
             "the template rings above the bound on a full-scale square"
         );
+    }
+
+    // ---- Spec 011: the volume transition (tasks.md T016; research R-05 (b)) ----
+
+    fn smoothstep(u: f64) -> f64 {
+        u * u * (3.0 - 2.0 * u)
+    }
+
+    fn law(route: Route, p: f64) -> f64 {
+        match route {
+            Route::Speaker => k_spk(p),
+            Route::Earphone => k_ear(p),
+        }
+    }
+
+    fn active_scalar(ch: &OutputChain, route: Route) -> f64 {
+        let (spk, ear) = ch.scalars();
+        if route == Route::Speaker { spk } else { ear }
+    }
+
+    fn n_at(rate: u32) -> usize {
+        crate::output::volume_transition_samples(rate).unwrap() as usize
+    }
+
+    /// A chain on `route` at `from`, one sample processed (no longer fresh), then `to` set:
+    /// the active scalar after each of the next N + 2 samples.
+    fn transition(rate: u32, route: Route, from: f32, to: f32) -> Vec<f64> {
+        let mut ch = OutputChain::new(&settings(rate), false);
+        ch.set_controls(route, from);
+        ch.process(0.0);
+        ch.set_controls(route, to);
+        (0..n_at(rate) + 2)
+            .map(|_| {
+                ch.process(0.0);
+                active_scalar(&ch, route)
+            })
+            .collect()
+    }
+
+    /// The formula of research R-02 / R-03 recomputed: the law at the smoothstep's knob, held
+    /// within the previous gain and the target's; sample N the target exactly.
+    fn expected(rate: u32, route: Route, from: f32, to: f32) -> Vec<f64> {
+        let n = n_at(rate);
+        let (pf, pt) = (f64::from(from), f64::from(to));
+        let (g0, g1) = (law(route, pf), law(route, pt));
+        let up = g1 > g0;
+        let inv_n = 1.0 / n as f64;
+        let mut prev = g0;
+        let mut out = Vec::new();
+        for k in 1..=n + 2 {
+            let g = if k >= n {
+                g1
+            } else {
+                hold(
+                    law(route, pf + (pt - pf) * smoothstep(k as f64 * inv_n)),
+                    prev,
+                    g1,
+                    up,
+                )
+            };
+            out.push(g);
+            prev = g;
+        }
+        out
+    }
+
+    fn monotonic_within(seq: &[f64], start: f64, end: f64) -> bool {
+        let up = end > start;
+        let (lo, hi) = if up { (start, end) } else { (end, start) };
+        let mut prev = start;
+        seq.iter().all(|&g| {
+            let ok = (lo..=hi).contains(&g) && if up { g >= prev } else { g <= prev };
+            prev = g;
+            ok
+        })
+    }
+
+    /// FR-001 – FR-003 (US1 AS1 (b)): the gain sequence is the formula exactly, monotonic,
+    /// within the ends and exactly 0.10's scalar from sample N, on R-03's 21 × 21 grid at
+    /// 48 kHz and four pairs at every other rate, on both routes.
+    #[test]
+    fn transition_gain_sequence_is_the_formula() {
+        let grid: Vec<f32> = (0..=20).map(|i| (f64::from(i) * 0.05) as f32).collect();
+        for &rate in &SUPPORTED_HOST_RATES {
+            let pairs: Vec<(f32, f32)> = if rate == 48_000 {
+                grid.iter()
+                    .flat_map(|&a| grid.iter().map(move |&b| (a, b)))
+                    .filter(|(a, b)| a != b)
+                    .collect()
+            } else {
+                std::vec![(0.1, 1.0), (1.0, 0.1), (0.0, 0.5), (0.7, 0.0)]
+            };
+            let n = n_at(rate);
+            for route in [Route::Speaker, Route::Earphone] {
+                for &(a, b) in &pairs {
+                    let got = transition(rate, route, a, b);
+                    assert_eq!(
+                        got,
+                        expected(rate, route, a, b),
+                        "{rate} {route:?} {a} -> {b}"
+                    );
+                    let (g0, g1) = (law(route, f64::from(a)), law(route, f64::from(b)));
+                    assert!(
+                        monotonic_within(&got, g0, g1),
+                        "{rate} {route:?} {a} -> {b}"
+                    );
+                    assert_eq!(got[n - 1].to_bits(), g1.to_bits(), "exact at N");
+                    assert_ne!(
+                        got[n - 2].to_bits(),
+                        g1.to_bits(),
+                        "N - 1 differs ({rate} {a} -> {b})"
+                    );
+                }
+            }
+        }
+    }
+
+    /// FR-003 (research R-03, plan review Q2): a retarget to a position within rounding of the
+    /// moving knob stays exactly monotonic (the running hold).
+    #[test]
+    fn retarget_within_rounding_of_the_knob_is_monotonic() {
+        for route in [Route::Speaker, Route::Earphone] {
+            for half in [3usize, 480, 959, 1500] {
+                for nudge in [-2i32, -1, 0, 1, 2] {
+                    let mut ch = OutputChain::new(&settings(96_000), false);
+                    ch.set_controls(route, 0.3);
+                    ch.process(0.0);
+                    ch.set_controls(route, 0.7);
+                    for _ in 0..half {
+                        ch.process(0.0);
+                    }
+                    let knob = ch.knob as f32;
+                    let to = f32::from_bits((knob.to_bits() as i32 + nudge) as u32);
+                    let start = active_scalar(&ch, route);
+                    ch.set_controls(route, to);
+                    let seq: Vec<f64> = (0..n_at(96_000) + 1)
+                        .map(|_| {
+                            ch.process(0.0);
+                            active_scalar(&ch, route)
+                        })
+                        .collect();
+                    let end = law(route, f64::from(to));
+                    let up = end > start;
+                    let mut prev = start;
+                    for &g in &seq {
+                        assert!(
+                            if up { g >= prev } else { g <= prev },
+                            "{route:?} {half} {nudge}"
+                        );
+                        prev = g;
+                    }
+                    assert_eq!(seq.last().unwrap().to_bits(), end.to_bits());
+                }
+            }
+        }
+    }
+
+    /// FR-003: a retarget mid-transition starts from the knob's current position: the first
+    /// step after it is no larger than the first transition's largest step.
+    #[test]
+    fn retarget_starts_from_the_current_knob() {
+        for &rate in &SUPPORTED_HOST_RATES {
+            for route in [Route::Speaker, Route::Earphone] {
+                let mut ch = OutputChain::new(&settings(rate), false);
+                ch.set_controls(route, 0.1);
+                ch.process(0.0);
+                ch.set_controls(route, 1.0);
+                let mut prev = active_scalar(&ch, route);
+                let mut largest = 0.0f64;
+                for _ in 0..n_at(rate) / 2 {
+                    ch.process(0.0);
+                    let g = active_scalar(&ch, route);
+                    largest = largest.max((g - prev).abs());
+                    prev = g;
+                }
+                ch.set_controls(route, 0.4);
+                ch.process(0.0);
+                let step = (active_scalar(&ch, route) - prev).abs();
+                assert!(step <= largest, "{rate} {route:?}: {step} > {largest}");
+            }
+        }
+    }
+
+    /// FR-005 (research R-04): a fresh chain (after `new()`, after `reset()`, after a
+    /// zero-length block), an inactive chain and stage 11 off take the position at once; a
+    /// route change mid-transition completes it at the new position.
+    #[test]
+    fn start_at_once_rules() {
+        let route = Route::Earphone;
+        let at_once = |ch: &mut OutputChain, p: f32| {
+            ch.set_controls(route, p);
+            ch.process(0.0);
+            active_scalar(ch, route) == law(route, f64::from(p))
+        };
+        let mut ch = OutputChain::new(&settings(48_000), false);
+        assert!(at_once(&mut ch, 0.5), "after new()");
+        ch.set_controls(route, 0.9); // a transition, not yet run
+        ch.reset();
+        assert!(at_once(&mut ch, 0.2), "after reset()");
+        // A zero-length block: two set_controls with no sample between keep the chain fresh.
+        let mut z = OutputChain::new(&settings(48_000), false);
+        z.set_controls(route, 0.2);
+        assert!(
+            at_once(&mut z, 0.8),
+            "a zero-length block does not consume the first block"
+        );
+        // Stage 11 off: the position has no effect and is taken at once.
+        let mut s = settings(48_000);
+        s.output.volume_amp_enabled = false;
+        let mut off = OutputChain::new(&s, false);
+        off.set_controls(route, 0.3);
+        off.process(0.0);
+        off.set_controls(route, 0.6);
+        assert_eq!(off.scalars().1, k_ear(f64::from(0.6f32)));
+        // An inactive chain (the one-pass at a tap before the chain).
+        let mut t = settings(48_000);
+        t.tap = Tap::AfterPlayback;
+        let mut before = OutputChain::new(&t, true);
+        before.set_controls(route, 0.3);
+        before.process(0.0);
+        before.set_controls(route, 0.6);
+        assert_eq!(before.scalars().1, k_ear(f64::from(0.6f32)));
+        // A route change mid-transition completes it at the new position.
+        let mut r = OutputChain::new(&settings(48_000), false);
+        r.set_controls(Route::Speaker, 0.1);
+        r.process(0.0);
+        r.set_controls(Route::Speaker, 1.0);
+        for _ in 0..100 {
+            r.process(0.0);
+        }
+        r.set_controls(Route::Earphone, 1.0);
+        r.process(0.0);
+        assert_eq!(r.scalars(), (k_spk(1.0), k_ear(1.0)));
+        assert_eq!(r.ramp_k, r.ramp_n);
+    }
+
+    /// FR-008: a transition to 0 ends with both scalars exactly +0.0 at sample N.
+    #[test]
+    fn transition_to_zero_is_exact_at_n() {
+        for &rate in &SUPPORTED_HOST_RATES {
+            for route in [Route::Speaker, Route::Earphone] {
+                let seq = transition(rate, route, 1.0, 0.0);
+                let n = n_at(rate);
+                assert!(seq[n - 2] > 0.0, "{rate} {route:?}");
+                assert_eq!(seq[n - 1].to_bits(), 0.0f64.to_bits(), "{rate} {route:?}");
+            }
+        }
     }
 }
