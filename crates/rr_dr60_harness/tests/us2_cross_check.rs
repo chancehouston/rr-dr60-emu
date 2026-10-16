@@ -836,12 +836,13 @@ fn readme_output_clamp_statements() {
             assert!(!lower.contains(word), "{name} contains {word:?}");
         }
     }
-    // The manifest: the counts and the entry strings unchanged; the header's version moved.
+    // The manifest: the option adds no stage; the header's version moved. The counts are spec
+    // 012's (stages 1 – 2 modeled: 3 not modeled, 12 assumed; restated in 012 T020).
     let canonical = std::fs::read_to_string(
         mc::repo_root().join("crates/rr_dr60_harness/golden/manifest-v1.txt"),
     )
     .unwrap();
-    assert!(canonical.contains("counts: not_modeled=5 assumed=10 sourced=0 checked=0"));
+    assert!(canonical.contains("counts: not_modeled=3 assumed=12 sourced=0 checked=0"));
     assert!(canonical.contains(&format!("library_version: {}", rr_dr60::VERSION)));
     // Stage 4's controls note carries `adc_clamp_enabled`, the codec's clamp (A-030), so the
     // search is for the option's own names (research R-05).

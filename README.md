@@ -42,9 +42,9 @@ The engine's **stage manifest** ([spec 007](specs/007-stage-manifest/spec.md)) i
 <!-- manifest-table:start -->
 | # | Stage | Status | Confidence | Basis | Not modeled here | Model version |
 |---|---|---|---|---|---|---|
-| 1 | Microphone capsule | not modeled | — | S-002; A-005 |  |  |
-| 2 | Microphone amplifier | not modeled | — | S-002; A-006, A-029 |  |  |
-| 3 | Limiter (AGC) | assumed | low | S-001, S-002; A-007, A-019, A-020, A-028, A-030, A-034, A-035, A-036, A-037 | a soft knee, if the circuit has one; the DC block and 13 kHz roll-off ahead of the peak circuit | 0.5.0 |
+| 1 | Microphone capsule | assumed | low | S-002; A-005, A-048, A-049, A-050, A-052 | directivity; handling noise and wind; acoustic overload; the case's acoustics; the capsule's own response; unit spread | 0.12.0 |
+| 2 | Microphone amplifier | assumed | low | S-002; A-006, A-029, A-046, A-047, A-051, A-053 | the output coupling's 159 Hz shift under limiting; below-clip distortion; part and transistor spread | 0.12.0 |
+| 3 | Limiter (AGC) | assumed | low | S-001, S-002; A-007, A-019, A-020, A-028, A-030, A-034, A-035, A-036, A-037 | a soft knee, if the circuit has one | 0.5.0 |
 | 4 | Codec input: filter, ADC and µ-law | assumed | medium | S-002, S-003, S-005, S-007; A-003, A-015, A-016, A-026, A-027, A-030 | µ-law quantization, idle noise, the input amp's clipping ahead of the filter, and aliasing of input above 3 kHz | 0.5.0 |
 | 5 | Voice-activated pause (VAS) | assumed | low | S-001, S-002; A-008, A-021, A-022, A-023, A-024, A-025, A-033, A-037 | a digital gain from the sensitivity setting, if the device applies one | 0.5.0 |
 | 6 | Noise reduction | not modeled | — | S-002, S-004; A-009 |  |  |

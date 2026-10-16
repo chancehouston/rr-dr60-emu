@@ -348,17 +348,21 @@ macro_rules! stage_table {
 stage_table! {
     {
         number: 1, identifier: "mic_capsule", name: "Microphone capsule",
-        description: "Turns sound pressure into an electrical signal with a two-terminal electret capsule.",
-        status: NotModeled, path: Record, confidence: NotApplicable,
-        sources: ["S-002"], assumptions: ["A-005"],
-        coverage: "", controls: "", model_version: "",
+        description: "Turns sound pressure into an electrical signal with a two-terminal electret capsule, adding the capsule's own steady hiss.",
+        status: Assumed, path: Record, confidence: Low,
+        sources: ["S-002"], assumptions: ["A-005", "A-048", "A-049", "A-050", "A-052"],
+        coverage: "directivity; handling noise and wind; acoustic overload; the case's acoustics; the capsule's own response; unit spread",
+        controls: "mic.capsule_enabled, mic.hiss_offset_db; Tap::AfterMicCapsule",
+        model_version: "0.12.0",
     },
     {
         number: 2, identifier: "mic_amp", name: "Microphone amplifier",
-        description: "Amplifies the microphone signal ahead of the codec and carries the AGC's attenuator.",
-        status: NotModeled, path: Record, confidence: NotApplicable,
-        sources: ["S-002"], assumptions: ["A-006", "A-029"],
-        coverage: "", controls: "", model_version: "",
+        description: "Amplifies the microphone signal ahead of the codec: a high-pass near 820 Hz thins the low end, and very loud sounds clip at its supply rails.",
+        status: Assumed, path: Record, confidence: Low,
+        sources: ["S-002"], assumptions: ["A-006", "A-029", "A-046", "A-047", "A-051", "A-053"],
+        coverage: "the output coupling's 159 Hz shift under limiting; below-clip distortion; part and transistor spread",
+        controls: "mic.amp_enabled; Tap::AfterMicAmp",
+        model_version: "0.12.0",
     },
     {
         number: 3, identifier: "limiter", name: "Limiter (AGC)",
@@ -366,7 +370,7 @@ stage_table! {
         status: Assumed, path: Record, confidence: Low,
         sources: ["S-001", "S-002"],
         assumptions: ["A-007", "A-019", "A-020", "A-028", "A-030", "A-034", "A-035", "A-036", "A-037"],
-        coverage: "a soft knee, if the circuit has one; the DC block and 13 kHz roll-off ahead of the peak circuit",
+        coverage: "a soft knee, if the circuit has one",
         controls: "agc.enabled, agc.knee_dbfs, agc.attack_ms, agc.release_ms; Tap::AfterAgc",
         model_version: "0.5.0",
     },
@@ -780,7 +784,7 @@ mod tests {
         // is exhaustive, so a new control or tap fails to compile until it is mapped here, and
         // mapping it to a stage the manifest calls "not modeled" fails the assertion. This is
         // the code → manifest half of the guard (constitution Principle V).
-        use crate::{AgcSettings, MemorySettings, OutputSettings, Tap, VasSettings};
+        use crate::{AgcSettings, MemorySettings, MicSettings, OutputSettings, Tap, VasSettings};
         let Settings {
             host_rate_hz: _,
             record_stage_enabled,
@@ -793,7 +797,16 @@ mod tests {
             memory,
             speech_codec_enabled,
             output,
+            mic,
         } = Settings::new(6000);
+        // Spec 012: stages 1 and 2's two controls. The default turns them on in T029 and the
+        // manifest models the stages in T008; until then they are mapped but not asserted.
+        let MicSettings {
+            capsule_enabled,
+            amp_enabled,
+            hiss_offset_db: _, // a level, not a bypass control
+        } = mic;
+        let _ = (capsule_enabled, amp_enabled);
         let OutputSettings {
             volume_amp_enabled,
             speaker_enabled,
@@ -862,6 +875,8 @@ mod tests {
             Tap::AfterVolumeAmp => 11, // spec 009 FR-011
             Tap::AfterSpeaker => 12,   // spec 009 FR-011
             Tap::AfterEarphone => 13,  // spec 009 FR-011
+            Tap::AfterMicCapsule => 1, // spec 012 FR-008
+            Tap::AfterMicAmp => 2,     // spec 012 FR-008
         };
         for t in [
             Tap::AfterAgc,
@@ -1032,17 +1047,17 @@ mod tests {
     entries_panic!(
         rule_not_modeled_confidence,
         "not modeled has confidence NotApplicable",
-        |s| s[0].confidence = Confidence::Low
+        |s| s[5].confidence = Confidence::Low // stage 6, not modeled since 012
     );
     entries_panic!(
         rule_not_modeled_version,
         "not modeled has no model version",
-        |s| s[0].model_version = "0.1.0"
+        |s| s[5].model_version = "0.1.0" // stage 6
     );
     entries_panic!(
         rule_not_modeled_coverage,
         "not modeled has no coverage note",
-        |s| s[0].coverage = "x"
+        |s| s[5].coverage = "x" // stage 6
     );
     entries_panic!(
         rule_modeled_confidence,

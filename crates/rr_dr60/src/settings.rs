@@ -22,7 +22,9 @@ pub enum Tap {
     /// After signal-chain stage 3 (the limiter), **at the host rate**: the limiter's output
     /// sample for sample. The rate conversion, the band-limit stages, the ADC clamp and the VAS
     /// are not run, whatever their settings; latency is 0 and no VAS events occur (spec 005
-    /// FR-001; since 0.5 this tap is before the rate conversion, where the limiter runs).
+    /// FR-001; since 0.5 this tap is before the rate conversion, where the limiter runs). Since
+    /// 0.12 the microphone path (stages 1 – 2, [`MicSettings`]) runs ahead of the limiter when
+    /// it is on; the tap's meaning (after stage 3) and latency are unchanged (spec 012 FR-008).
     AfterAgc,
     /// After signal-chain stage 4 (record band-limit) and the ADC's full-scale clamp (spec 005
     /// FR-008). Stages 5 (VAS) and 10 are not run.
@@ -69,12 +71,31 @@ pub enum Tap {
     /// ([`Error::TapNotOnRoute`](crate::Error::TapNotOnRoute)). Appended in 0.9. Never bounded
     /// by the output clamp (spec 010 FR-003).
     AfterEarphone,
+    /// After signal-chain stage 1 (the capsule), **at the host rate**: the input plus the
+    /// capsule's unshaped hiss when stage 1 is on (spec 012 FR-008). Nothing after it runs;
+    /// latency 0, no events. The recorder ignores the tap, as it ignores every tap. Appended in
+    /// 0.12.
+    AfterMicCapsule,
+    /// After signal-chain stage 2 (the microphone amplifier), **at the host rate**: the input
+    /// (plus the hiss) through the amplifier's band and clipper (spec 012 FR-008). Nothing after
+    /// it runs; latency 0, no events. The recorder ignores the tap. Appended in 0.12.
+    AfterMicAmp,
 }
 
 impl Tap {
     /// [`Tap::AfterPlayback`] under the stage's name: after stage 10, before the output chain
     /// (version 0.8's default output; spec 009 FR-011).
     pub const AFTER_STAGE_10: Tap = Tap::AfterPlayback;
+
+    /// A host-rate tap at the front of the record path, where no conversion or later stage
+    /// runs: after stage 1, after stage 2 or after the limiter (spec 005 FR-001; spec 012
+    /// FR-008).
+    pub(crate) const fn is_front(self) -> bool {
+        matches!(
+            self,
+            Tap::AfterAgc | Tap::AfterMicCapsule | Tap::AfterMicAmp
+        )
+    }
 
     /// Whether everything through stage 10 runs for this tap: [`Tap::AfterPlayback`] and the
     /// four output-chain taps (spec 009 FR-011).
@@ -393,6 +414,55 @@ impl Default for OutputSettings {
     }
 }
 
+/// The microphone path, signal-chain stages 1 – 2 (spec 012): the capsule and the microphone
+/// amplifier, ahead of the limiter. Every figure is **modeled on the circuit** (S-002 sheet 3.1)
+/// with typical part values, not measured (A-046 – A-053).
+///
+/// - `capsule_enabled`: stage 1, the electret capsule's **self-noise (the hiss)**, a
+///   deterministic Gaussian noise at about −62 dBFS in the 300–3000 Hz band after stage 2
+///   (A-048), generated from [`Settings::seed`] with its own stream for each recording (A-049).
+///   The capsule's own response is flat (A-052), so stage 1 on means the hiss on.
+/// - `amp_enabled`: stage 2, the microphone amplifier: the input high-pass near 818 Hz
+///   (A-046; it thins the sound below about 1 kHz), the asymmetric soft clipper at its supply
+///   rails (A-051: negative samples limited first, near +7 dBFS), the output coupling near
+///   77 Hz and the roll-off near 12.9 kHz (A-047, A-053), normalized to unity gain at 1 kHz.
+/// - `hiss_offset_db`: the hiss level offset, −18 to +12 dB, default 0
+///   ([`mic::HISS_OFFSET_RANGE_DB`](crate::mic::HISS_OFFSET_RANGE_DB)); validated whether or
+///   not the capsule is on.
+///
+/// The engine's input level reference is unchanged: 0 dBFS at 1 kHz reaches the codec's full
+/// scale, which corresponds to about 90 dB SPL at the microphone (80 – 100 dB SPL, low
+/// confidence; A-029). A host scales its own microphone input. Appended in 0.12.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct MicSettings {
+    /// Stage 1 (the capsule's hiss) on (`true` in [`MicSettings::DEVICE`]; A-048) or bypassed.
+    pub capsule_enabled: bool,
+    /// Stage 2 (the microphone amplifier) on (`true` in [`MicSettings::DEVICE`]; A-046,
+    /// A-047, A-051) or bypassed.
+    pub amp_enabled: bool,
+    /// The hiss level offset in dB, −18 to +12, default 0 (spec 012 FR-003). It moves the hiss
+    /// from its documented level (A-048); above about +10 dB the voice activation stops pausing
+    /// in a silent room at sensitivity level 5.
+    pub hiss_offset_db: f32,
+}
+
+impl MicSettings {
+    /// The device: both stages on, the hiss at its documented level (spec 012 FR-001).
+    pub const DEVICE: Self = Self {
+        capsule_enabled: true, // A-048 (012 FR-003)
+        amp_enabled: true,     // A-046, A-047, A-051 (012 FR-005, FR-006)
+        hiss_offset_db: 0.0,   // 012 FR-003: the documented level
+    };
+    /// Both stages bypassed: the engine of version 0.11, whose input is the microphone
+    /// amplifier's output (spec 012 FR-010; the earlier specs' checks run with it).
+    pub const BYPASSED: Self = Self {
+        capsule_enabled: false,
+        amp_enabled: false,
+        hiss_offset_db: 0.0, // 012 FR-003: no effect with the capsule off
+    };
+}
+
 /// The playback output route (spec 006 FR-015): the speaker, or the 2.5 mm earphone jack. The
 /// routes are exclusive, as on the device (S-001: no sound from the speaker while an earphone
 /// is connected). It is **not** a setting: the host selects it at any time, during playback
@@ -461,6 +531,9 @@ pub struct Settings {
     /// amplifier, the speaker template, the earphone output). Default
     /// [`OutputSettings::DEVICE`] (every stage on; spec 009 FR-002).
     pub output: OutputSettings,
+    /// Signal-chain stages 1 – 2, the **microphone path** (the capsule's hiss and the
+    /// microphone amplifier), ahead of the limiter (spec 012). Appended in 0.12.
+    pub mic: MicSettings,
 }
 
 impl Settings {
@@ -483,6 +556,8 @@ impl Settings {
             memory: MemorySettings::DEVICE, // S-001: 60 min, 99 items (006 FR-010)
             speech_codec_enabled: true,     // A-004 adopted (008 FR-002): the device has no bypass
             output: OutputSettings::DEVICE, // A-031, A-010, A-032 (009 FR-002)
+            // Spec 012 T012: inert until the default flips on in T029.
+            mic: MicSettings::BYPASSED,
         }
     }
 

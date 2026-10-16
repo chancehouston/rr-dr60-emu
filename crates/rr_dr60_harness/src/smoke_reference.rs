@@ -123,7 +123,7 @@ pub const SMOKE_ROUTE_PLAYBACK_SAMPLES: usize = 53_168;
 pub fn rust_route_references() -> [(rr_dr60::Route, f32, u64, usize); 4] {
     use rr_dr60::Route;
     use rr_dr60::output::VOLUME_REFERENCE;
-    let mut p = Pipeline::new(rr_dr60::Settings::new(SMOKE_RATE)).expect("rate");
+    let mut p = Pipeline::new(crate::configs::settings_011(SMOKE_RATE)).expect("rate");
     p.start_recording().expect("idle");
     for chunk in stimulus().chunks(SMOKE_BLOCK) {
         let info = p.record(chunk, &mut []).expect("recording");
@@ -177,7 +177,7 @@ pub fn clamp_stimulus() -> Vec<f32> {
 pub fn rust_clamp_references() -> ([(rr_dr60::Route, u64, usize); 2], usize) {
     use rr_dr60::Route;
     let record = |clamp: bool| -> (Pipeline, u32) {
-        let mut s = rr_dr60::Settings::new(SMOKE_RATE);
+        let mut s = crate::configs::settings_011(SMOKE_RATE);
         s.output.clamp_enabled = clamp;
         let mut p = Pipeline::new(s).expect("rate");
         p.start_recording().expect("idle");
@@ -219,7 +219,7 @@ pub const SMOKE_RAMP_CHANGES: [(usize, f32); 2] = [(10, 1.0), (11, 0.4)]; // eng
 
 /// The volume-transition case `(hash, length)` from the Rust path.
 pub fn rust_ramp_reference() -> (u64, usize) {
-    let mut p = Pipeline::new(rr_dr60::Settings::new(SMOKE_RATE)).expect("rate");
+    let mut p = Pipeline::new(crate::configs::settings_011(SMOKE_RATE)).expect("rate");
     p.start_recording().expect("idle");
     for chunk in clamp_stimulus().chunks(SMOKE_BLOCK) {
         let info = p.record(chunk, &mut []).expect("recording");

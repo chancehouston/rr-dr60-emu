@@ -962,7 +962,7 @@ pub fn chain_equivalence_with(
 /// SC-005 (FR-011): the one-pass at `Tap::AfterPlayback` with the chain on equals version 0.8's
 /// default output (the chain bypassed at that tap) bit for bit on the four spec 001 stimuli.
 pub fn chain_after_playback_equals_0_8(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
-    let mut on = Settings::new(rate);
+    let mut on = configs::settings_011(rate);
     on.tap = Tap::AfterPlayback;
     let old = configs::settings_008(rate);
     golden::STIMULI
@@ -1341,7 +1341,7 @@ pub fn chain_drain_table(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
         ),
     ];
     for only in 0..3 {
-        let mut s = Settings::new(rate);
+        let mut s = configs::settings_011(rate);
         s.output.volume_amp_enabled = only == 0;
         s.output.speaker_enabled = only == 1;
         s.output.earphone_enabled = only == 2;
@@ -1460,7 +1460,7 @@ pub fn chain_latencies_unchanged(rate: u32, make: Make<'_>) -> Vec<MeasurementRe
     .map(|c| (c.to_string(), configs::settings(c, rate)))
     .collect();
     for only in 0..3 {
-        let mut s = Settings::new(rate);
+        let mut s = configs::settings_011(rate);
         s.output.volume_amp_enabled = only == 0;
         s.output.speaker_enabled = only == 1;
         s.output.earphone_enabled = only == 2;

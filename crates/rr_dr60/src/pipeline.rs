@@ -272,8 +272,9 @@ pub(crate) struct OnePass {
     /// The speech codec between the two paths (spec 008 FR-002, FR-015): present when it is on
     /// and the tap is at the decoder or after it.
     codec: Option<OnePassCodec>,
-    /// The output is the limiter's, at the host rate: nothing after it runs (spec 005 FR-001).
-    tap_after_agc: bool,
+    /// The output is taken at a host-rate front tap (after stage 1, stage 2 or the limiter):
+    /// nothing after it runs (spec 005 FR-001; spec 012 FR-008).
+    front_tap: bool,
     /// Test-only: `false` runs the pre-0.6 un-narrowed route, so `narrowing_delta` can measure
     /// FR-009's effect (spec 006 research R-02). The shipped build has no flag and no branch.
     #[cfg(any(test, feature = "__test-hooks"))]
@@ -287,7 +288,7 @@ impl OnePass {
             codec: rec.codec_runs().then(OnePassCodec::new),
             rec,
             play: PlaybackPath::new(settings, plan, true),
-            tap_after_agc: settings.tap == Tap::AfterAgc,
+            front_tap: settings.tap.is_front(),
             #[cfg(any(test, feature = "__test-hooks"))]
             narrow: true,
         }
@@ -299,10 +300,10 @@ impl OnePass {
     /// counts a completed speech frame in `frames`.
     #[inline]
     fn tick(&mut self, x: f32, frames: &mut usize) -> Option<f32> {
-        if self.tap_after_agc {
-            // The limiter's output sample for sample: no conversion, no chain, no events
-            // (spec 005 FR-001).
-            return Some(self.rec.limiter_only(x));
+        if self.front_tap {
+            // A host-rate front tap, sample for sample: no conversion, no chain, no events
+            // (spec 005 FR-001; spec 012 FR-008).
+            return Some(self.rec.front_only(x));
         }
         #[cfg(any(test, feature = "__test-hooks"))]
         if !self.narrow {
@@ -790,7 +791,7 @@ impl Pipeline {
 /// latency is 0 (spec 005 FR-001). Spec 006 FR-016 reports the two paths' latencies rounded
 /// separately; this single rounding is kept for the one-pass figure.
 fn latency_samples(plan: &RatePlan, settings: &Settings, one_pass: &OnePass) -> u32 {
-    if settings.tap == Tap::AfterAgc {
+    if settings.tap.is_front() {
         return 0;
     }
     let stages =
@@ -1051,6 +1052,40 @@ mod limiter_tests {
 
     fn peak(y: &[f32]) -> f32 {
         y.iter().fold(0.0f32, |m, v| m.max(v.abs()))
+    }
+
+    /// Spec 012 FR-008 (T014): the taps after stages 1 and 2 are host-rate front taps: latency
+    /// 0, no events, one sample out per sample in. With both stages bypassed they read the
+    /// sanitized input (a non-finite sample becomes 0.0), and so does every configuration until
+    /// the stages exist (US1).
+    #[test]
+    fn mic_taps_are_host_rate_front_taps() {
+        for rate in [6000, 44_100, 48_000] {
+            for tap in [Tap::AfterMicCapsule, Tap::AfterMicAmp] {
+                let mut s = Settings::new(rate);
+                s.tap = tap;
+                s.mic = crate::MicSettings::BYPASSED;
+                let p = Pipeline::new(s).unwrap();
+                assert_eq!(p.latency_samples(), 0, "{rate} Hz {tap:?}");
+                for n in [0, 1, 4800, 1 << 20] {
+                    assert_eq!(p.max_events(n), 0, "{rate} Hz {tap:?}, {n} frames");
+                }
+                let mut x = onset(f64::from(rate));
+                x[7] = f32::NAN;
+                x[8] = f32::INFINITY;
+                let (y, info) = run(s, &x);
+                assert_eq!(info.produced, x.len(), "{rate} Hz {tap:?}");
+                assert_eq!(info.events, 0, "{rate} Hz {tap:?}");
+                for (n, (&xi, &yi)) in x.iter().zip(&y).enumerate() {
+                    let want = narrow_out(sanitize_in(xi));
+                    assert_eq!(
+                        yi.to_bits(),
+                        want.to_bits(),
+                        "{rate} Hz {tap:?}, sample {n}"
+                    );
+                }
+            }
+        }
     }
 
     /// FR-001: at the "after AGC" tap the output is a standalone limiter's output, bit for bit,

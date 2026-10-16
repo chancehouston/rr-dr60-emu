@@ -3,7 +3,7 @@
 #![allow(clippy::disallowed_methods)] // analysis in a test, not the DSP path (001 R-04)
 
 use rr_dr60::output::VOLUME_REFERENCE;
-use rr_dr60::{Error, OutputSettings, Pipeline, Route, Settings, Tap};
+use rr_dr60::{Error, OutputSettings, Pipeline, Route, Tap};
 use rr_dr60_harness::analysis::{self, db};
 use rr_dr60_harness::checks::standard;
 use rr_dr60_harness::{configs, output_checks, stimulus};
@@ -53,7 +53,7 @@ fn volume_zero_decay_on_both_routes() {
 /// stays.
 #[test]
 fn invalid_positions_are_refused_and_the_position_kept() {
-    let mut p = standard(Settings::new(48_000));
+    let mut p = standard(configs::settings_011(48_000));
     p.set_volume(0.3).unwrap();
     for bad in [-0.001f32, 1.001, f32::NAN, f32::INFINITY] {
         assert!(matches!(
@@ -360,7 +360,7 @@ fn after_stage_11_on_the_earphone_route_is_the_volume_controls_output() {
 fn named_route_taps_are_refused_off_route() {
     let x = tone(48_000, -20.0, 0.01);
     let mut y = vec![0.0f32; x.len()];
-    let mut s = Settings::new(48_000);
+    let mut s = configs::settings_011(48_000);
     s.tap = Tap::AfterEarphone;
     let mut p = standard(s);
     assert_eq!(

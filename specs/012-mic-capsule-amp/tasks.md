@@ -132,7 +132,7 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
   - **A-053:** A-047's sections lumped ahead of the limiter.
 
   Mark each "assumed (spec 012)". The rationale text is completed in T045.
-- [ ] T008 Stages 1–2's manifest entries in `crates/rr_dr60/src/manifest.rs` (FR-013; R-11):
+- [x] T008 Stages 1–2's manifest entries in `crates/rr_dr60/src/manifest.rs` (FR-013; R-11):
   - **Status and versions:** status `assumed`, model version `"0.12.0"`.
   - **Sources and assumptions:** S-002; stage 1 cites A-005, A-048, A-049, A-052; stage 2 cites A-006, A-029, A-046, A-047, A-051, A-053.
   - **Descriptions:** one neutral sentence each, run through the denylist first (`cargo test -p rr_dr60_harness --test us2_cross_check denylist`).
@@ -144,7 +144,7 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
 - [x] T009 Open the three `<!-- 0.12.0:start -->` / `<!-- 0.12.0:end -->` regions in `CHANGELOG.md` under `[Unreleased]` › Added, Changed and Documentation as a skeleton.
   - **Changed:** "**output change**: stages 1–2 on by default (the input high-pass, the hiss, the clipper); a DC offset no longer reaches the limiter; C structure 112 → 120".
   - **Documentation:** the one re-bless.
-- [ ] T010 Re-bless **once**:
+- [x] T010 Re-bless **once**:
   - run `RR_DR60_BLESS=manifest cargo test -p rr_dr60_harness --test us2_cross_check canonical` and `RR_DR60_BLESS=readme cargo test -p rr_dr60_harness --test us2_cross_check readme -- --test-threads=1`;
   - check that `git diff crates/rr_dr60_harness/golden/manifest-v1.txt README.md` shows exactly the version, stages 1–2's entries and the counts;
   - run `cargo test -p rr_dr60_harness --test us1_manifest --test us2_cross_check` and `scripts/check-traceability.sh`, all green.
@@ -159,8 +159,8 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
 
 **Purpose**: the settings, taps and C fields exist but are **inert**: `Settings::new` keeps the stages bypassed. The 0.11-default configuration and the harness rebase are in place. **Blocks every story.**
 
-- [ ] T011 [P] `crates/rr_dr60/src/mic.rs` (a new public module, `pub mod mic` in `lib.rs`): `pub const HISS_OFFSET_RANGE_DB: (f32, f32) = (-18.0, 12.0);` with rustdoc (A-048, FR-003, for UI sliders). No SPL constant.
-- [ ] T012 `crates/rr_dr60/src/settings.rs` (contracts/rust-api.md):
+- [x] T011 [P] `crates/rr_dr60/src/mic.rs` (a new public module, `pub mod mic` in `lib.rs`): `pub const HISS_OFFSET_RANGE_DB: (f32, f32) = (-18.0, 12.0);` with rustdoc (A-048, FR-003, for UI sliders). No SPL constant.
+- [x] T012 `crates/rr_dr60/src/settings.rs` (contracts/rust-api.md):
   - **`MicSettings`:**
     - `#[non_exhaustive]`, fields `capsule_enabled`, `amp_enabled`, `hiss_offset_db: f32`;
     - `DEVICE` (true, true, 0.0) and `BYPASSED` (false, false, 0.0);
@@ -168,21 +168,21 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
   - **`Settings::mic`.** `Settings::new` sets **`MicSettings::BYPASSED` for now** (flipped in T029).
   - **`Tap::AfterMicCapsule` and `Tap::AfterMicAmp`**, appended, with rustdoc: host-rate, latency 0, ignored by the recorder.
   - **`Setting::MicHissOffsetDb`**, appended, with `range()` −18 … +12.
-- [ ] T013 `crates/rr_dr60/src/validate.rs`: `hiss_offset_db` must be finite and in −18.0 ≤ x ≤ +12.0, **checked whether or not the capsule is on**, else `Error::InvalidSetting(Setting::MicHissOffsetDb)`. Unit tests cover −18, +12, −18.001, 12.001, NaN and ±∞, with the capsule both on and off.
-- [ ] T014 `crates/rr_dr60/src/paths.rs`, `crates/rr_dr60/src/pipeline.rs`: the taps routed inert.
+- [x] T013 `crates/rr_dr60/src/validate.rs`: `hiss_offset_db` must be finite and in −18.0 ≤ x ≤ +12.0, **checked whether or not the capsule is on**, else `Error::InvalidSetting(Setting::MicHissOffsetDb)`. Unit tests cover −18, +12, −18.001, 12.001, NaN and ±∞, with the capsule both on and off.
+- [x] T014 `crates/rr_dr60/src/paths.rs`, `crates/rr_dr60/src/pipeline.rs`: the taps routed inert.
   - `Tap::AfterMicCapsule` and `Tap::AfterMicAmp` take the `AfterAgc`-like path (no conversion, no voice activation, no chain, no events, latency 0).
   - Until US1 the stages are identities, so both taps equal the sanitized input.
   - `max_events` is 0 at them, as at `AfterAgc`.
   - A unit test checks the latencies and the zero event bound.
-- [ ] T015 `crates/rr_dr60_ffi/src/lib.rs` (contracts/c-api.md), the C fields **inert**:
+- [x] T015 `crates/rr_dr60_ffi/src/lib.rs` (contracts/c-api.md), the C fields **inert**:
   - **Fields:** `mic_capsule_enabled` at 112, `mic_amp_enabled` at 113, `reserved_012 [u8; 2]` at 114, `mic_hiss_offset_db: f32` at 116.
   - **Assertions:** `size_of == 120`, `align_of == 8`, every new offset, and 116 + 4 == size.
   - **Mapping:** `to_settings` and `rr_dr60_settings_default` follow `Settings::new`.
   - **Refusals:** `struct_size = 112` refused with the invalid-argument status and the struct-size field.
   - **Enums:** `RrDr60SettingField::MicHissOffsetDb = 16`, taps `AfterMicCapsule = 9` and `AfterMicAmp = 10`.
   - **Header:** regenerated; the header drift check clean.
-- [ ] T016 `crates/rr_dr60_ffi/tests/c/smoke.c`: every existing case sets `s.mic_capsule_enabled = false; s.mic_amp_enabled = false;` after `rr_dr60_settings_default` (inert now; it keeps the hashes after the flip). Run `crates/rr_dr60_ffi/tests/c/run_smoke.sh` and `cargo test -p rr_dr60_harness --test ffi_parity`, both green.
-- [ ] T017 [P] `crates/rr_dr60_harness/src/configs.rs` (data-model.md › Harness configurations):
+- [x] T016 `crates/rr_dr60_ffi/tests/c/smoke.c`: every existing case sets `s.mic_capsule_enabled = false; s.mic_amp_enabled = false;` after `rr_dr60_settings_default` (inert now; it keeps the hashes after the flip). Run `crates/rr_dr60_ffi/tests/c/run_smoke.sh` and `cargo test -p rr_dr60_harness --test ffi_parity`, both green.
+- [x] T017 [P] `crates/rr_dr60_harness/src/configs.rs` (data-model.md › Harness configurations):
   - **The base.** `pub fn settings_011(rate)` is `Settings::new` with `mic = MicSettings::BYPASSED`.
   - **The rebase.** `settings_008` builds on it, and `"default_output" | "default_earphone" | "default_loud"` use it.
   - **New names:**
@@ -194,8 +194,8 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
     - `MIC_CONFIGS`.
   - **Explicit DEVICE.** Until T029 the mic names set `mic = MicSettings::DEVICE` explicitly, so they don't depend on the default.
   - **Unit tests:** every pre-012 named configuration has `mic == BYPASSED`.
-- [ ] T018 [P] Move the direct `Settings::new` uses in `crates/rr_dr60_harness/src/output_checks.rs`, `crates/rr_dr60_harness/src/smoke_reference.rs` and `crates/rr_dr60_harness/tests/output_edge_cases.rs` to `configs::settings_011` (R-06).
-- [ ] T019 [P] `crates/rr_dr60_harness/src/analysis.rs`:
+- [x] T018 [P] Move the direct `Settings::new` uses in `crates/rr_dr60_harness/src/output_checks.rs`, `crates/rr_dr60_harness/src/smoke_reference.rs` and `crates/rr_dr60_harness/tests/output_edge_cases.rs` to `configs::settings_011` (R-06).
+- [x] T019 [P] `crates/rr_dr60_harness/src/analysis.rs`:
   - `band_level_aes17(y, rate, lo, hi) -> f64`;
   - `THIRD_OCTAVE_CENTRES_20_20K`;
   - `prototype_deviation(impulse_response, rate, prototype_db: &[(f64, f64)]) -> Vec<(f64, f64)>`, by DTFT at the exact centres;
@@ -203,9 +203,22 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
   - `norm_xcorr_max(a, b, max_lag) -> (f64, f64)` (lag 0 and the maximum over ±max_lag).
 
   Each has a unit test against a closed form: a full-scale sine reads 0 dBFS; white noise's band level; an impulse's flat response; a shifted copy's correlation of 1 at its lag.
-- [ ] T020 Run T008 (stages 1–2's manifest entries) and T010 (the one re-bless) now that the controls exist. Restate spec 010's `readme_output_clamp_statements` in `crates/rr_dr60_harness/tests/us2_cross_check.rs`: it pins the manifest counts 5 / 10, which become 3 / 12 (stages 1–2 are assumed). Then run the seven golden tests, the C loop, `ffi_parity` and `cargo test --all-features`, all green.
+- [x] T020 Run T008 (stages 1–2's manifest entries) and T010 (the one re-bless) now that the controls exist. Restate spec 010's `readme_output_clamp_statements` in `crates/rr_dr60_harness/tests/us2_cross_check.rs`: it pins the manifest counts 5 / 10, which become 3 / 12 (stages 1–2 are assumed). Then run the seven golden tests, the C loop, `ffi_parity` and `cargo test --all-features`, all green.
 
-**Checkpoint**: the settings, taps and C fields exist and the manifest is re-blessed once; nothing audible has changed. Commit: `feat(012): MicSettings, the taps and the C fields (inert), the 0.11-default configuration, stages 1–2's manifest entries`.
+**Checkpoint**: the settings, taps and C fields exist and the manifest is re-blessed once; nothing audible has changed.
+
+*(As built:*
+- *`Tap::is_front()` generalizes the one-pass's "after AGC" path to the three host-rate front taps (`RecordPath::front_only`, a `FrontStop`), so the flag `tap_after_agc` is now `front_tap`.*
+- *The manifest's `bypass_control_anchor` destructures `mic` but asserts stages 1–2's controls only from T029, when the default turns them on.*
+- *The three "not modeled" rule tests moved from stage 1 to stage 6.*
+- *Stage 3's "not modeled here" note drops "the DC block and 13 kHz roll-off ahead of the peak circuit", now stage 2's.*
+- *`us1_manifest` and spec 010's `readme_output_clamp_statements` are restated to 3 / 12; `mic_stages_us4_scenario_1` is new.*
+- *The C smoke loop's 23 settings sites use a `settings_011()` helper; `configs::c_default_008` turns the two switches off; the C layer's, `ffi_parity`'s and `us2_bypass_tap`'s layout and tap pins are restated to 120 bytes and taps 9 / 10, with 11 refused.*
+- *The registers cross-check needed two things as soon as the manifest called stages 1–2 modeled:*
+  - *signal-chain rows 1–2's "Modeled by" marker (both rows rewritten with the corrected topology now, ahead of T045);*
+  - *A-050 cited, by stage 1, whose hiss figure folds the amplifier's floor in.*
+- *`manifest_checks::cross_check_negatives` also moved its not-modeled example to stage 6.*
+- *Full suite (`--no-fail-fast`), the C loop, the header drift check and traceability are green.)* Commit: `feat(012): MicSettings, the taps and the C fields (inert), the 0.11-default configuration, stages 1–2's manifest entries`.
 
 ---
 

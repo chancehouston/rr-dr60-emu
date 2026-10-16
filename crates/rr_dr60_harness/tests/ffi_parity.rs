@@ -186,7 +186,7 @@ fn validate(s: &RrDr60Settings) -> (RrDr60Status, RrDr60SettingField) {
 /// processing; a 72-byte (0.4-layout) struct is rejected as `STRUCT_SIZE`.
 #[test]
 fn c_api_005_layout_defaults_and_reserved_fields() {
-    assert_eq!(size_of::<RrDr60Settings>(), 112); // spec 010 contracts/c-api.md (104 in 0.9)
+    assert_eq!(size_of::<RrDr60Settings>(), 120); // spec 012 contracts/c-api.md (112 in 0.10 and 0.11)
     assert_eq!(std::mem::offset_of!(RrDr60Settings, agc_knee_dbfs), 28);
     assert_eq!(std::mem::offset_of!(RrDr60Settings, reserved_agc_1), 32);
     assert_eq!(std::mem::offset_of!(RrDr60Settings, reserved_agc_2), 36);
@@ -199,7 +199,7 @@ fn c_api_005_layout_defaults_and_reserved_fields() {
         80
     ); // 006
     let d = rr_dr60_settings_default(48_000);
-    assert_eq!(d.struct_size, 112); // spec 010
+    assert_eq!(d.struct_size, 120); // spec 012
     assert_eq!(d.agc_knee_dbfs, -1.0); // A-028
     assert_eq!(d.agc_attack_ms, 3.0); // A-034
     assert_eq!(d.agc_release_ms, 1370.0); // A-035
@@ -308,11 +308,11 @@ fn c_api_validate_agrees_with_create() {
     };
     let bad_size_and_tap = RrDr60Settings {
         struct_size: 24,
-        tap: 9,
+        tap: 11,
         ..base
     };
     let bad_tap_and_rate = RrDr60Settings {
-        tap: 9,
+        tap: 11,
         host_rate_hz: 22_050,
         ..base
     };
@@ -443,7 +443,7 @@ fn error_table() {
         RrDr60Status::UnsupportedHostRate
     );
     assert_eq!(
-        status(RrDr60Settings { tap: 9, ..ok }, &mut out), // 0 – 8 are taps since 0.9
+        status(RrDr60Settings { tap: 11, ..ok }, &mut out), // 0 – 10 are taps since 0.12
         RrDr60Status::InvalidArgument
     );
     assert_eq!(

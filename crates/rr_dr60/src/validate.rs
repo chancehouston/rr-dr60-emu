@@ -6,8 +6,8 @@ use crate::rate::RatePlan;
 use crate::settings::Settings;
 
 /// Checks `settings`: the host rate first (FR-002), then every AGC field (knee, attack,
-/// release), then every VAS field, then the memory figures (spec 006 FR-010), each in struct
-/// order. Ranges are inclusive ([`Setting::range`]); NaN and ±Inf fail. Fields are checked
+/// release), then every VAS field, then the memory figures (spec 006 FR-010), then the hiss
+/// offset (spec 012 FR-003), each in struct order. Ranges are inclusive ([`Setting::range`]); NaN and ±Inf fail. Fields are checked
 /// even when their stage is bypassed, so a bad value is always reported. The `bool` settings
 /// need no validation.
 pub(crate) fn validate(settings: &Settings) -> Result<(), Error> {
@@ -46,6 +46,13 @@ pub(crate) fn validate(settings: &Settings) -> Result<(), Error> {
         if !(lo..=hi).contains(&value) {
             return Err(Error::InvalidSetting { setting });
         }
+    }
+    // Spec 012 FR-003: the hiss offset, checked whether or not the capsule is on (A-048).
+    let setting = Setting::MicHissOffsetDb;
+    let (lo, hi) = setting.range();
+    let value = settings.mic.hiss_offset_db;
+    if !(value >= lo && value <= hi) {
+        return Err(Error::InvalidSetting { setting });
     }
     Ok(())
 }
@@ -404,5 +411,43 @@ mod tests {
         .to_string();
         assert!(err.contains("agc.release_ms"), "{err}");
         assert!(err.contains("200") && err.contains("10000"), "{err}"); // 005 FR-010
+    }
+
+    /// Spec 012 FR-003 (012 T013): the hiss offset is valid from −18 to +12 dB inclusive,
+    /// whether or not the capsule is on; NaN and ±∞ are refused.
+    #[test]
+    fn hiss_offset_range_with_the_capsule_on_and_off() {
+        for capsule in [true, false] {
+            for (value, ok) in [
+                (-18.0_f32, true),
+                (12.0, true),
+                (0.0, true),
+                (-18.001, false),
+                (12.001, false),
+                (f32::NAN, false),
+                (f32::INFINITY, false),
+                (f32::NEG_INFINITY, false),
+            ] {
+                let mut s = Settings::new(48_000);
+                s.mic.capsule_enabled = capsule;
+                s.mic.hiss_offset_db = value;
+                let got = validate(&s);
+                if ok {
+                    assert_eq!(got, Ok(()), "{value} (capsule {capsule})");
+                } else {
+                    assert_eq!(
+                        got,
+                        Err(Error::InvalidSetting {
+                            setting: Setting::MicHissOffsetDb
+                        }),
+                        "{value} (capsule {capsule})"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            Setting::MicHissOffsetDb.to_string(),
+            "mic.hiss_offset_db (valid range -18 to 12 dB)"
+        );
     }
 }

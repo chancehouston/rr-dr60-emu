@@ -2,7 +2,7 @@
 //! (data-model.md › Named configurations; tasks.md T045; spec 005 data-model.md › Named harness
 //! configurations).
 
-use rr_dr60::{OutputSettings, SUPPORTED_HOST_RATES, Settings, Tap, VasMode};
+use rr_dr60::{MicSettings, OutputSettings, SUPPORTED_HOST_RATES, Settings, Tap, VasMode};
 use rr_dr60_ffi::{RrDr60Settings, RrDr60Tap, RrDr60VasMode, rr_dr60_settings_default};
 
 /// The five spec 001 configurations, in 001 data-model.md order. Each one means "the spec 001
@@ -90,13 +90,23 @@ pub fn output_clamp_route_volume(name: &str) -> (rr_dr60::Route, f32) {
     }
 }
 
-/// The 0.8 default: [`Settings::new`] with the output chain **bypassed** and the tap after stage
+/// The 0.11 default: [`Settings::new`] with the microphone path (stages 1 – 2) **bypassed**
+/// (spec 012 FR-010). Every pre-012 check, golden file and harness scenario builds on this
+/// instead of `Settings::new`, so the earlier specs' checks and the seven golden files stay
+/// exactly what they were (the pattern of specs 008 and 009).
+pub fn settings_011(host_rate_hz: u32) -> Settings {
+    let mut s = Settings::new(host_rate_hz);
+    s.mic = MicSettings::BYPASSED; // 012 FR-010: the earlier checks run with stages 1 – 2 bypassed
+    s
+}
+
+/// The 0.8 default: [`settings_011`] with the output chain **bypassed** and the tap after stage
 /// 10 (spec 009 FR-016). Every pre-009 check, golden file and harness scenario builds on this
 /// instead of `Settings::new`, so the earlier specs' checks and the four golden files stay
 /// exactly what they were (the pattern of specs 002, 003 and 008, whose stages the earlier
 /// checks bypass too).
 pub fn settings_008(host_rate_hz: u32) -> Settings {
-    let mut s = Settings::new(host_rate_hz);
+    let mut s = settings_011(host_rate_hz); // 012 FR-010
     s.output = OutputSettings::BYPASSED; // 009 FR-016: the earlier checks run with stages 11–13 bypassed
     s.tap = Tap::AfterPlayback; // 009 FR-011: 0.8's default output
     s
@@ -220,7 +230,33 @@ pub fn settings(name: &str, host_rate_hz: u32) -> Settings {
             s.output.speaker_enabled = name == "output_only_speaker"; // stage 12 (A-010)
             s.output.earphone_enabled = name == "output_only_earphone"; // stage 13 (A-032)
         }
-        "default_output" | "default_earphone" | "default_loud" => s = Settings::new(host_rate_hz),
+        "default_output" | "default_earphone" | "default_loud" => s = settings_011(host_rate_hz),
+        // Spec 012 (data-model.md › Harness configurations): the microphone path. Until the
+        // default turns it on (T029) the names set `MicSettings::DEVICE` explicitly.
+        "mic_only" | "mic_only_quiet" | "mic_capsule_only" => {
+            s = settings("bypass_all", host_rate_hz);
+            s.mic = MicSettings::DEVICE; // A-046 – A-053 (012 FR-001)
+            match name {
+                "mic_only" => s.tap = Tap::AfterMicAmp, // 012 FR-008
+                "mic_only_quiet" => {
+                    s.tap = Tap::AfterMicAmp;
+                    s.mic.capsule_enabled = false; // 012 FR-007: the hiss off
+                }
+                _ => {
+                    s.tap = Tap::AfterMicCapsule; // 012 FR-008
+                    s.mic.amp_enabled = false;
+                    s.mic.hiss_offset_db = -12.0; // 012 FR-014: pins the offset's gain path
+                }
+            }
+        }
+        "default_mic" | "default_mic_quiet" => {
+            s = Settings::new(host_rate_hz);
+            s.mic = MicSettings::DEVICE; // 012 FR-001
+            s.vas.enabled = false; // 012 US3 AS7: the voice activation bypassed
+            if name == "default_mic_quiet" {
+                s.mic.capsule_enabled = false; // 012 FR-014
+            }
+        }
         // Spec 010: `bypass_all` at the route-output tap (the twin of `output_clamp_only`).
         "bypass_route_output" => {
             s = settings("bypass_all", host_rate_hz);
@@ -248,6 +284,17 @@ pub fn settings(name: &str, host_rate_hz: u32) -> Settings {
 /// control and amplifier alone at [`Tap::AfterVolumeAmp`], where the coupling corners precede
 /// the gain, so a run held at a constant position is the transition's oracle (research R-05).
 pub const STAGE11_CONFIGS: [&str; 2] = ["stage11_only_speaker", "stage11_only_earphone"];
+
+/// The spec 012 configurations (data-model.md › Harness configurations): stages 1 – 2 alone at
+/// the tap after stage 2 (with and without the hiss) and after stage 1 (the hiss at −12 dB),
+/// and the 0.12 default with the voice activation bypassed (with and without the hiss).
+pub const MIC_CONFIGS: [&str; 5] = [
+    "mic_only",
+    "mic_only_quiet",
+    "mic_capsule_only",
+    "default_mic",
+    "default_mic_quiet",
+];
 
 /// The route a spec 011 stage-11-only configuration is read on.
 pub fn stage11_route(name: &str) -> rr_dr60::Route {
@@ -284,6 +331,8 @@ pub fn c_settings(s: &Settings) -> RrDr60Settings {
         Tap::AfterVolumeAmp => RrDr60Tap::AfterVolumeAmp,
         Tap::AfterSpeaker => RrDr60Tap::AfterSpeaker,
         Tap::AfterEarphone => RrDr60Tap::AfterEarphone,
+        Tap::AfterMicCapsule => RrDr60Tap::AfterMicCapsule, // 012 FR-012
+        Tap::AfterMicAmp => RrDr60Tap::AfterMicAmp,
         other => panic!("configs::c_settings: unmapped tap {other:?}"),
     };
     let vas_mode = match s.vas.mode {
@@ -317,6 +366,9 @@ pub fn c_settings(s: &Settings) -> RrDr60Settings {
         output_speaker_enabled: s.output.speaker_enabled,
         output_earphone_enabled: s.output.earphone_enabled,
         output_clamp_enabled: s.output.clamp_enabled, // 010 FR-008
+        mic_capsule_enabled: s.mic.capsule_enabled,   // 012 FR-012
+        mic_amp_enabled: s.mic.amp_enabled,
+        mic_hiss_offset_db: s.mic.hiss_offset_db,
         ..rr_dr60_settings_default(s.host_rate_hz)
     }
 }
@@ -329,6 +381,8 @@ pub fn c_default_008(host_rate_hz: u32) -> RrDr60Settings {
         output_speaker_enabled: false,
         output_earphone_enabled: false,
         tap: RrDr60Tap::AfterPlayback as u32, // 009 FR-011: 0.8's output
+        mic_capsule_enabled: false,           // 012 FR-010: the 0.11 default
+        mic_amp_enabled: false,
         ..rr_dr60_settings_default(host_rate_hz)
     }
 }
@@ -532,6 +586,31 @@ mod tests {
             settings("bypass_route_output", 48_000).tap,
             Tap::RouteOutput
         );
+        // Spec 012 T017 (FR-010): every pre-012 named configuration has stages 1 – 2 bypassed;
+        // the spec 012 names have them on.
+        for name in CONFIGS
+            .iter()
+            .chain(AGC_CONFIGS.iter())
+            .chain(VAS_CONFIGS.iter())
+            .chain(CODEC_CONFIGS.iter())
+            .chain(OUTPUT_CONFIGS.iter())
+            .chain(OUTPUT_CLAMP_CONFIGS.iter())
+            .chain(STAGE11_CONFIGS.iter())
+            .chain(["bypass_route_output"].iter())
+        {
+            assert_eq!(settings(name, 48_000).mic, MicSettings::BYPASSED, "{name}");
+        }
+        for name in MIC_CONFIGS {
+            let c = settings(name, 48_000);
+            assert!(c.mic.capsule_enabled || c.mic.amp_enabled, "{name}");
+        }
+        assert_eq!(settings("mic_only", 6000).tap, Tap::AfterMicAmp);
+        assert_eq!(settings("mic_capsule_only", 6000).tap, Tap::AfterMicCapsule);
+        assert_eq!(
+            c_settings(&settings("mic_capsule_only", 6000)).mic_hiss_offset_db,
+            -12.0
+        );
+        assert!(!c_default_008(48_000).mic_capsule_enabled);
         // Spec 011 T008: stage 11 alone at the tap after it, nothing else on.
         for name in STAGE11_CONFIGS {
             let c = settings(name, 48_000);
@@ -567,7 +646,7 @@ mod tests {
         );
         assert!(!settings("output_only_earphone", 48_000).speech_codec_enabled);
         for name in ["default_output", "default_earphone", "default_loud"] {
-            assert_eq!(settings(name, 48_000), Settings::new(48_000), "{name}");
+            assert_eq!(settings(name, 48_000), settings_011(48_000), "{name}");
         }
         assert_eq!(
             c_settings(&settings("output_only_earphone", 6000)).tap,
