@@ -81,7 +81,11 @@
 //! speaker route there is band-limited by the host rate. The default tap is the route's output
 //! ([`Tap::RouteOutput`]); [`Tap::AfterPlayback`] is version 0.8's output, before the chain. A
 //! bypassed output chain is a combination the device cannot produce. Every figure is modeled on
-//! the circuit (S-002) and the datasheet (S-006), not measured against a unit.
+//! the circuit (S-002) and the datasheet (S-006), not measured against a unit. Since spec 011 a
+//! volume change is a **20 ms transition** of the knob ([`output::VOLUME_TRANSITION_MS`];
+//! A-045): the wiper's continuity is the device's, the 20 ms and the shape are an engine
+//! convention; the position is taken at once after construction, `reset`, `reconfigure`, a
+//! playback start and a route change.
 //!
 //! Since spec 010 the engine has an **output clamp** ([`OutputSettings::clamp_enabled`]), a
 //! host option that is **off by default**: when on, every sample at the route-output tap above

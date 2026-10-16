@@ -242,7 +242,7 @@ pub fn splice(
             stim.clone(),
             pass(same(&y[..c], &a[..c])),
             "",
-            Tolerance::Exact(1.0),
+            Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
         ),
         MeasurementResult::new(
             "FR-001",
@@ -253,7 +253,7 @@ pub fn splice(
             stim.clone(),
             pass(same(&y[c + n - 1..], &b[c + n - 1..])),
             "",
-            Tolerance::Exact(1.0),
+            Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
         ),
         MeasurementResult::new(
             "FR-001",
@@ -264,7 +264,7 @@ pub fn splice(
             stim.clone(),
             k(first),
             "sample",
-            Tolerance::Exact(1.0),
+            Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
         ),
         MeasurementResult::new(
             "FR-002",
@@ -332,7 +332,7 @@ pub fn ratio_reader(
         ),
         ratio_reversals(&q, to > from) as f64,
         "",
-        Tolerance::Exact(0.0),
+        Tolerance::Exact(0.0), // A-045: engineering target (spec 011)
     )]
 }
 
@@ -359,7 +359,7 @@ pub fn partitions(make: Make<'_>, rate: u32, config: &'static str) -> Vec<Measur
             format!("{}, {name} vs 64", describe(level, 0.1, 1.0, s.c)),
             pass(same(&s.run(make, 0.1, &changes, blocks), &want)),
             "",
-            Tolerance::Exact(1.0),
+            Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
         )
     })
     .collect()
@@ -459,7 +459,7 @@ pub fn ceiling(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
             stim.clone(),
             peak,
             "FS",
-            Tolerance::AtMost(1.0),
+            Tolerance::AtMost(1.0), // A-045: engineering target (spec 011)
         ));
         rows.push(MeasurementResult::new(
             "FR-001",
@@ -470,7 +470,7 @@ pub fn ceiling(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
             stim,
             pass(same(&y[..c], &a[..c]) && same(&y[last_at + n - 1..], &b[last_at + n - 1..])),
             "",
-            Tolerance::Exact(1.0),
+            Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
         ));
     }
     rows
@@ -512,7 +512,7 @@ pub fn retarget(make: Make<'_>, rate: u32, config: &'static str) -> Vec<Measurem
             stim.clone(),
             across / max_step,
             "",
-            Tolerance::AtMost(1.0),
+            Tolerance::AtMost(1.0), // A-045: engineering target (spec 011)
         ),
         MeasurementResult::new(
             "FR-001",
@@ -523,7 +523,7 @@ pub fn retarget(make: Make<'_>, rate: u32, config: &'static str) -> Vec<Measurem
             stim.clone(),
             pass(same(&y[c2 + n - 1..], &b[c2 + n - 1..])),
             "",
-            Tolerance::Exact(1.0),
+            Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
         ),
         MeasurementResult::new(
             "FR-003",
@@ -534,7 +534,7 @@ pub fn retarget(make: Make<'_>, rate: u32, config: &'static str) -> Vec<Measurem
             stim,
             pass(same(&once, &twice)),
             "",
-            Tolerance::Exact(1.0),
+            Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
         ),
     ]
 }
@@ -579,7 +579,7 @@ pub fn zeros(make: Make<'_>, rate: u32, config: &'static str) -> Vec<Measurement
             describe(level, 1.0, 0.0, c),
             nonzero as f64,
             "",
-            Tolerance::Exact(0.0),
+            Tolerance::Exact(0.0), // A-045: engineering target (spec 011)
         ),
         MeasurementResult::new(
             "FR-008",
@@ -590,7 +590,7 @@ pub fn zeros(make: Make<'_>, rate: u32, config: &'static str) -> Vec<Measurement
             format!("1 kHz -20 dBFS, 1 -> 0 at sample {c}"),
             analysis::db(tail.max(1e-300)),
             "dBFS",
-            Tolerance::AtMost(-120.0),
+            Tolerance::AtMost(-120.0), // A-045: engineering target (spec 011)
         ),
     ]
 }
@@ -641,7 +641,7 @@ pub fn drag(make: Make<'_>, rate: u32, config: &'static str) -> Vec<MeasurementR
             stim,
             ratio_reversals(&q, true) as f64,
             "",
-            Tolerance::Exact(0.0),
+            Tolerance::Exact(0.0), // A-045: engineering target (spec 011)
         ),
     ]
 }
@@ -791,7 +791,7 @@ pub fn whole_engine(
             name.to_string(),
             pass(same(&f(make), &f(step))),
             "",
-            Tolerance::Exact(1.0),
+            Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
         ));
     };
     agree("after construction", &|m| {
@@ -873,7 +873,7 @@ pub fn whole_engine(
         "0.1 -> 1",
         pass(same(&changed, &held)),
         "",
-        Tolerance::Exact(1.0),
+        Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
     ));
     // The output clamp (spec 010 FR-005): on == clamp(off) through a transition at full scale.
     let out_config = match route {
@@ -912,7 +912,7 @@ pub fn whole_engine(
         "1 kHz 0 dBFS, 0.1 -> 1",
         pass(same(&on, &bounded)),
         "",
-        Tolerance::Exact(1.0),
+        Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
     ));
     // The drain: a transition started in a playback's last block completes inside it; the
     // length is unchanged and 009 FR-008's last-millisecond bound holds (the default engine,
@@ -941,7 +941,7 @@ pub fn whole_engine(
         format!("voiced -20 dBFS, 0.3 -> 1 at {last_block}"),
         late.len() as f64 - plain.len() as f64,
         "samples",
-        Tolerance::Exact(0.0),
+        Tolerance::Exact(0.0), // A-045: engineering target (spec 011)
     ));
     rows.push(MeasurementResult::new(
         "FR-005",
@@ -952,7 +952,7 @@ pub fn whole_engine(
         format!("voiced -20 dBFS, 0.3 -> 1 at {last_block}"),
         analysis::db(tail.max(1e-300)),
         "dBFS",
-        Tolerance::AtMost(-80.0),
+        Tolerance::AtMost(-80.0), // A-045: engineering target (spec 011)
     ));
     // The one-pass after a playback in which the volume changed ramps from its own last
     // position at its next block (each path keeps its own knob): equal to the same one-pass
@@ -980,7 +980,7 @@ pub fn whole_engine(
         "0.3, a playback with a change, then 0.8",
         pass(same(&with_playback, &without)),
         "",
-        Tolerance::Exact(1.0),
+        Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
     ));
     rows
 }
@@ -1038,6 +1038,6 @@ pub fn equivalence_with_change(make: Make<'_>, rate: u32, route: Route) -> Vec<M
         format!("voiced -20 dBFS, {route:?}, 0.1 -> 1 at playback sample {at}"),
         pass(equal),
         "",
-        Tolerance::Exact(1.0),
+        Tolerance::Exact(1.0), // A-045: engineering target (spec 011)
     )]
 }

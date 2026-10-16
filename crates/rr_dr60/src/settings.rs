@@ -56,7 +56,8 @@ pub enum Tap {
     /// After signal-chain stage 11 (the volume control and power amplifier) on either route:
     /// the amplifier's output on the speaker route, the volume control's output on the
     /// earphone route (spec 009 FR-011; A-031). Appended in 0.9. Never bounded by the output
-    /// clamp (spec 010 FR-003).
+    /// clamp (spec 010 FR-003). The gain here moves over a volume change's 20 ms transition
+    /// (spec 011; A-045).
     AfterVolumeAmp,
     /// After signal-chain stage 12 (the speaker template; A-010), the speaker route's output.
     /// Refused at the processing call while the earphone route is selected

@@ -39,6 +39,7 @@ done < <(find crates/rr_dr60/src -name '*.rs' ! -name 'voiceband_coeffs.rs' | so
 check_file crates/rr_dr60_harness/src/checks.rs 'Tolerance::(Range|AtLeast|AtMost|Exact)[(][-0-9]'
 check_file crates/rr_dr60_harness/src/agc_checks.rs 'Tolerance::(Range|AtLeast|AtMost|Exact)[(][-0-9]' # spec 002
 check_file crates/rr_dr60_harness/src/split_checks.rs 'Tolerance::(Range|AtLeast|AtMost|Exact)[(][-0-9]' # spec 006
+check_file crates/rr_dr60_harness/src/volume_ramp_checks.rs 'Tolerance::(Range|AtLeast|AtMost|Exact)[(][-0-9]' # spec 011
 
 # Spec 007 FR-014: every S-/A-ID the stage manifest cites must be a row of its register.
 # (The harness test `us2_cross_check` checks the rest: supersession, completeness, statuses.)
