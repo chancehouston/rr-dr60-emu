@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-15
 
-**Status**: Implemented on branch `010-output-clamp` (2026-10-15; all six phases, both post-implementation reviews applied, the golden blessed once); not yet merged
+**Status**: Implemented, merged to `main` (PR #23, 2026-10-16; merge commit cf94984)
 
 **Input**: User description (abridged; the full text is in the specify session's transcript): "An optional output clamp at the end of the playback chain (feature 010, queued by spec 009 on 2026-10-15). Since spec 009 the engine's default output is the selected route's output. The speaker route's stage 11 is bounded at full scale by the amplifier's clipper, and the speaker template's gain peaks at 1.0, but the template's resonance rings on transients and on clipped material: a full-scale square wave, or a full-scale tone at volume position 1, reads about 1.9 (+5.7 dB over full scale) after the template at 48 kHz (A-042). The earphone route passes the playback filter's reconstruction overshoot scaled by the position. Spec 009 kept this documented, not clamped, and the README tells hosts to limit or clip before converting to integer formats. A host-selectable clamp that bounds the route output to ±1.0 on both routes, after the route's last stage, OFF by default: the default output of 0.9 unchanged bit for bit, every golden file unmoved, no manifest row (an emulator convenience, not a device behavior). Applies at the route-output tap only; the per-stage taps stay unclamped. No state, no latency, no allocation; deterministic. A settings field in Rust and C; version 0.10.0."
 
