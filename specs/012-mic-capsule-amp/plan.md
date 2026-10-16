@@ -16,7 +16,7 @@ Stages 1–2 run at the host rate inside the record path's front, between the in
   4. the roll-off, about 12.9 kHz.
 
   The three sections are a per-rate constrained fit within ±0.1 dB of the prototype (worst 0.075 dB at 48 kHz). The output after stage 2 is bounded by L₊ + L₋.
-- **The circuit model:** stated as a hybrid-π nodal network of S-002 sheet 3.1 in a new design script `tools/mic-chain/design_mic_chain.py`. It solves the transfer to the codec input amplifier's output: 818 / 77 / 12 939 Hz nominal, input corner 680–980 Hz over C1 ±10 %, hFE, the Early voltage and Q3's current. It is cross-checked by ngspice (installed) before the bless. The script prints every figure and writes the coefficients file byte-identically.
+- **The circuit model:** stated as a hybrid-π nodal network of S-002 sheet 3.1 in a new design script `tools/mic-chain/design_mic_chain.py`. It solves the transfer to the codec input amplifier's output: 818 / 77 / 12 939 Hz nominal, input corner 665–985 Hz over C1 ±10 %, hFE, the Early voltage and Q3's current. It is cross-checked by ngspice (installed) before the bless. The script prints every figure and writes the coefficients file byte-identically.
 - **Configurations:** every pre-012 configuration is rebased on a 0.11-default configuration (stages bypassed), so the seven earlier golden files stay byte-identical (R-06).
 - **Interfaces:** two new taps (latency 0), the C structure 112 → 120 bytes, version 0.12.0.
 - **Cost:** in-build on against bypassed ≤ 10 % (asserted); the cross-build A/B against 0.11 with the stages bypassed ≤ 3 % (asserted); the cross-build "on" A/B reported (R-09).

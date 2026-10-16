@@ -12,7 +12,7 @@ uv run tools/mic-chain/design_mic_chain.py --spice   # the ngspice cross-check (
 ```
 
 Expected:
-- **Corners:** about 818 Hz (680–980 over the grid, bounded above by about 1.0 kHz), 77 Hz and 12.9 kHz, a three-pole fit to the transfer at GSX.
+- **Corners:** about 818 Hz (665–985 over the grid, bounded above by about 1.0 kHz), 77 Hz and 12.9 kHz, a three-pole fit to the transfer at GSX.
 - **DC check:** consistent with 1.7 / 1.1 / 2.6 V.
 - **Per-rate fit:** worst error at most 0.1 dB at every rate, with every constraint satisfied.
 - **ngspice:** within 10 % of the nodal input corner.

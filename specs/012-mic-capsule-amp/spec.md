@@ -28,7 +28,7 @@ The spec review re-read the service manual's schematic (S-002, sheet 3.1) at ful
 - Q3 drives the PNP Q2 as a second stage, with R6 (100 kΩ) as its load.
 - The output feeds back to Q1's base through R3 (100 kΩ).
 
-The capsule's signal current reaches that feedback node through C1 (0.15 µF), and part of it is lost into the capsule's 1 kΩ bias resistor R2. That makes a **first-order high-pass near 0.82 kHz** (680–980 Hz; plan review), inside the device's band. Relative to 1 kHz, it cuts 300 Hz by about 7–8 dB and lifts 2.5 kHz by about 2 dB.
+The capsule's signal current reaches that feedback node through C1 (0.15 µF), and part of it is lost into the capsule's 1 kΩ bias resistor R2. That makes a **first-order high-pass near 0.82 kHz** (665–985 Hz; plan review), inside the device's band. Relative to 1 kHz, it cuts 300 Hz by about 7–8 dB and lifts 2.5 kHz by about 2 dB.
 
 The registers had listed C1 as a 10–15 Hz corner (A-029), which this re-read corrects. The coupling corner after the amplifier is a **single** first-order corner near 77 Hz: C4, R7, C5 and R10 form one series loop while the limiter is idle, and the 7 Hz "minor corner" does not exist. Both of the corners the feature description named (72 Hz and 13 kHz) are inaudible in the device's 225–2550 Hz band. The input high-pass is not.
 
@@ -86,7 +86,7 @@ So the input corner, the hiss and the clip points are **modeled on** the circuit
 
 The user's answers to the reviewers' questions:
 
-- **The input high-pass (D1).** It is **modeled and on by default** as part of stage 2. It is confirmed by a stated circuit model in the plan's design script first, and registered (high confidence that it exists, medium in the value, 680–980 Hz, after the plan review).
+- **The input high-pass (D1).** It is **modeled and on by default** as part of stage 2. It is confirmed by a stated circuit model in the plan's design script first, and registered (high confidence that it exists, medium in the value, 665–985 Hz, after the plan review).
 - **A hiss level offset (D3, D15).** **Added**, contrary to the specify choice of "no level setting": a bounded offset in dB, **−18 to +12 dB, default 0**.
   - It absorbs a future capture as a default change rather than a model change.
   - It lets a host whose own microphone already carries a floor turn the hiss down rather than off.
@@ -137,7 +137,7 @@ Taken at the reviewers' defaults:
   - Static figures are checked in the clipper's own units through a probe that exposes the engine's own clipper input and output. Engine-input figures at 1 kHz use a start phase compensated by the input high-pass's phase, which the script prints.
 - **The loop gain is high, not low** (hardware Q5). The impedance into the amplifier's input node is about 135–420 Ω, so the loop gain is about 240–740.
   - The input corner is set mainly by C1 with R2. It is bounded above by 1/(2π·C1·R2′) ≈ 1.0 kHz whatever the transistors.
-  - Nominal **≈ 818 Hz**. Over C1 ±10 %, hFE, the Early voltage and Q3's current the range is **680–980 Hz**.
+  - Nominal **≈ 818 Hz**. Over C1 ±10 %, hFE, the Early voltage and Q3's current the range is **665–985 Hz**.
   - The full transfer to the codec input amplifier's output is three first-order corners (≈ 818 Hz, ≈ 77 Hz, ≈ 12.9 kHz), joint-fit by the script.
   - Below-clip distortion is negligible.
   - The capsule-current-to-full-scale chain now closes: full scale ≈ 82–92 dB SPL for capsules of −35 to −44 dBV/Pa, supporting 90 dB SPL.
@@ -366,7 +366,7 @@ Every figure the engine uses traces to a source or a registered assumption.
   - **Generator.** It MUST be generated deterministically from the engine's seed and the recording counter (FR-009), with no platform math function. The stream MUST be specific to this stage, with a period exceeding the longest recording at 96 kHz, and seed 0 MUST NOT degenerate it. The work per sample MUST be bounded: every rejection loop is capped, and the cap is registered (plan review).
 - **FR-004: The capsule's response.** Flat (a new assumption, low confidence). Stage 1 consists of the hiss until capsule data gives the response content.
 - **FR-005: The amplifier's band.** Stage 2 MUST apply three first-order corners, in the device's order around the clipper (FR-006):
-  - the **input coupling high-pass**: C1 into R2 and the amplifier's virtual ground, about 818 Hz (680–980; bounded above by about 1.0 kHz);
+  - the **input coupling high-pass**: C1 into R2 and the amplifier's virtual ground, about 818 Hz (665–985; bounded above by about 1.0 kHz);
   - the **output coupling**: the series loop C4–R7–C5–R10, about 77 Hz;
   - the **roll-off**: C10 across R15, about 12.9 kHz.
 
@@ -462,7 +462,7 @@ Every figure the engine uses traces to a source or a registered assumption.
 ## Assumptions
 
 - **"Documented" means printed by the design script and registered.** Tests pin to the script's print, never to the engine's own output (spec 005's lesson).
-- **The circuit model.** The input corner depends mainly on C1 and R2. The amplifier's open-loop gain, which depends on transistor parameters the schematic does not give, moves it within 680–980 Hz. The design script states the nodal model and the transistor figures used, and a circuit simulation with generic models cross-checks the corner. The value is low confidence; the existence of the corner is medium confidence (S-002 topology).
+- **The circuit model.** The input corner depends mainly on C1 and R2. The amplifier's open-loop gain, which depends on transistor parameters the schematic does not give, moves it within 665–985 Hz. The design script states the nodal model and the transistor figures used, and a circuit simulation with generic models cross-checks the corner. The value is low confidence; the existence of the corner is medium confidence (S-002 topology).
 - **The hiss's shape.** White pressure noise at the capsule, shaped by stage 2's band. An electret's 1/f rise lies mostly below the input high-pass.
 - **The amplifier's own noise** (mainly Q3, and R2's thermal noise; a floor near −73 dBFS) adds about 0.3 dB to the capsule's at the default and is folded into the figure. The codec's reference (SG) noise reaches the output with the signal's noise gain and is unknown. It is registered as an open question, with S-003's unread pages as the lead.
 - **Below-clip linearity.** The amplifier is linear below its onsets; its low-level distortion is out of scope.

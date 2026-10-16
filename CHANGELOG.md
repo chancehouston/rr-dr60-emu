@@ -10,6 +10,9 @@ Changes to assumed hardware values ([assumption register](docs/hardware/assumpti
 
 ### Documentation
 
+<!-- 0.12.0:start -->
+- Spec 012 (2026-10-16): the microphone path's records: A-046 – A-053 registered; the stage manifest's canonical text and the README's manifest table re-blessed once for the library version 0.12.0 and stages 1–2's entries. Details at T047.
+<!-- 0.12.0:end -->
 <!-- 0.11.0:start -->
 - Spec 011 (2026-10-16): **A-045** registered (the volume transition: a position change moves the control's wiper continuously, which the engine models as a 20 ms movement of the knob along a smoothstep; high confidence that the wiper has no step, medium for the 20 ms and the shape, an engine convention; the check against a real unit is a knob-flick capture, now listed in the hardware-evidence issue template; the wiper's contact noise, lift-off, detents and the knob's speed are named as not modeled); **A-044** amended (a position change moves the knob over 20 ms); the signal-chain row 11 names the transition; spec 009's FR-009 note, its "volume changed mid-block" edge case and its review note T043 N2 point to spec 011 (N2 closed). The stage manifest's canonical text and the README's manifest table were **re-blessed once** for the library version 0.11.0 and stage 11's entry (A-045 cited, the coverage note "the 159 Hz corner's knob shift; the clip level's battery and transistor spread; wiper noise; knob speed; the beeps", model version 0.11.0). The README's output section gains a volume-transition bullet.
 - Spec 011 convergence (2026-10-16): `tools/volume-ramp/ramp_model.py --t1090 <ms> [--from P --to P]` prints, for a measured 10–90 % amplitude time, the smoothstep length that has it and its click level in FR-004's window and band relative to the loud steady tone, the figure A-045's knob-flick capture compares against (the default output and `--check` unchanged); A-045's check against a real unit names it. The README's playback drain figure is corrected: about 78 ms at 6 kHz and 88 ms at the other rates by default since 0.9 (the output chain's settle), 20 / 30 ms with the output chain bypassed.
@@ -29,6 +32,9 @@ Changes to assumed hardware values ([assumption register](docs/hardware/assumpti
 
 ### Added
 
+<!-- 0.12.0:start -->
+- **Microphone capsule and amplifier** ([spec 012](specs/012-mic-capsule-amp/spec.md), 2026-10-16; version **0.12.0**): signal-chain stages 1–2 ahead of the limiter. Details at T047.
+<!-- 0.12.0:end -->
 <!-- 0.11.0:start -->
 - **Volume transition** ([spec 011](specs/011-volume-ramp/spec.md), 2026-10-16; version **0.11.0**). A valid volume change now takes effect as a **20 ms transition** from the next block: the knob moves from where it is to the new position along a smoothstep (starting and ending at rest), the gain follows the loaded law (A-044) at the knob's position, never passes either end and reaches the new position's gain exactly at the transition's last sample; a change during a transition starts a new one from the knob's current position. The click energy of a change between positions 0.1 and 1 is 33.9 – 34.5 dB below an instantaneous step's on the speaker route and 40.6 – 41.2 dB below on the earphone route (floor 30 dB; a linear knob movement would read 18.7 – 19.6 dB on the speaker route), a ten-update drag 34.8 – 38.4 dB below a stepped one, at the seven host rates. A change during a transition restarts the movement from rest, so the knob trails a stream of updates: about 19 ms at 60 Hz, about 105 ms at one update per 64-sample block at 48 kHz; hosts send a position when the control moves, at most once per UI frame. The position is taken at once after construction, `reset` and `reconfigure`, at the start of each playback and on a route change. Reading the volume back (`volume()`, `rr_dr60_get_volume`) returns the host's last setting, not the knob's position during a transition. Cost on the development machine (against the 0.10 build `bd6d827` for the idle figure): +1.1 % with every sample in a transition (+0.7 ns per host sample at 48 kHz, codec bypassed) and +1.4 % idle against 0.10 (budget 15 % and 3 %); on the x86-64 CI runner +3.3 % with every sample in a transition (+4.3 ns) and −0.07 % idle on the speaker route (135.8 → 135.7 ns, within the timing noise), −0.6 % idle on the earphone route.
   - Rust API: `output::VOLUME_TRANSITION_MS` (20) and `output::volume_transition_samples` (N per host rate); test hooks `OutputMutation::{volume_step, volume_shape_linear, volume_ramp_delta}`. No new setting; `RrDr60Settings` is unchanged at 112 bytes.
@@ -92,6 +98,9 @@ Changes to assumed hardware values ([assumption register](docs/hardware/assumpti
 
 ### Changed
 
+<!-- 0.12.0:start -->
+- Spec 012 (2026-10-16): **output change**: stages 1–2 are on by default (the input high-pass near 818 Hz, the capsule's hiss, the amplifier's clipper), and a DC offset in the input no longer reaches the limiter; the C settings structure grows 112 → 120 bytes. Details at T047.
+<!-- 0.12.0:end -->
 <!-- 0.11.0:start -->
 - Spec 011 (2026-10-16): **behavior change**: a volume position change made mid-stream is a 20 ms transition instead of an instantaneous step at the next block (A-045 new; A-044 amended); stage 11's model version is **0.11.0**. A volume set before processing gives exactly 0.10's output, so every golden file is unchanged. Spec 009's checks that asserted a step were restated to count from the transition's last sample (the volume-change timing check and the earphone block-gain check on 8192-sample stimuli, the position-0 exact zeros and decay, and the core route-change test).
 <!-- 0.11.0:end -->

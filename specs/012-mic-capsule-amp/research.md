@@ -49,7 +49,7 @@ These are given for the nominal parts and over a grid of C1 ±10 %, hFE 150–46
 | nominal (hFE 250, VA 50 V, I3 6 µA, C1 0.15 µF) | **818.4 Hz** | **76.8 Hz** | **12 939 Hz** | −7.26 dB | +1.68 dB | 227 kΩ |
 | hFE 150, VA 20 V, I3 5 µA | 701.6 Hz | 77.3 Hz | 12 939 Hz | −6.60 dB | +1.30 dB | 206 kΩ |
 | hFE 400, VA 100 V, I3 7 µA | 878.3 Hz | 76.6 Hz | 12 939 Hz | −7.55 dB | +1.88 dB | 236 kΩ |
-| the full grid with C1 ±10 % | 678–979 Hz | 76.6–77.3 Hz | | | | |
+| the grid, ranks R/S (hFE 210–460) with C1 ±10 % (as printed 2026-10-16) | 666–982 Hz (637 Hz at the Q rank's worst case) | 76.6–77.3 Hz | | | | |
 
 ### What the model shows (plan review Q5)
 
@@ -59,7 +59,7 @@ These are given for the nominal parts and over a grid of C1 ±10 %, hFE 150–46
 - **Below-clip distortion** is negligible.
 - **The level chain closes** (Q10). Full scale (0.495 V rms at GSX ÷ 227 kV/A) is about 2.18 µA rms of capsule current, which is about 82 / 88 / 92 dB SPL for capsules of −35 / −40 / −44 dBV/Pa (at 2.2 kΩ). That supports 90 dB SPL (A-029 replaced: "does not close" is superseded).
 
-**Registered range** (A-046): nominal 818 Hz, **680–980 Hz**, bounded above by about 1.0 kHz. Confidence: high that the corner exists (topology and parts list), medium in the value.
+**Registered range** (A-046): nominal 818 Hz, **665–985 Hz**, bounded above by about 1.0 kHz. Confidence: high that the corner exists (topology and parts list), medium in the value.
 
 ### Cross-checks
 
