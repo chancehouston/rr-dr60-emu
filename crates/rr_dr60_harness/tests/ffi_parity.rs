@@ -1739,6 +1739,12 @@ fn smoke_reference_hash_is_pinned() {
     assert_eq!(clamp[1].1, smoke_reference::SMOKE_EARPHONE_CLAMP_HASH);
     assert_eq!(clamp[0].2, smoke_reference::SMOKE_ROUTE_PLAYBACK_SAMPLES);
     assert_eq!(clamp[1].2, smoke_reference::SMOKE_ROUTE_PLAYBACK_SAMPLES);
+    // Spec 011 T035: the volume-transition case (the square at 0.1, a change before play block
+    // 10 and a retarget before block 11, on the speaker route).
+    let (ramp, ramp_len) = smoke_reference::rust_ramp_reference();
+    println!("smoke volume-transition case: {ramp_len} samples, FNV-1a 64 {ramp:#018x}");
+    assert_eq!(ramp, smoke_reference::SMOKE_SPEAKER_RAMP_HASH);
+    assert_eq!(ramp_len, smoke_reference::SMOKE_ROUTE_PLAYBACK_SAMPLES);
 }
 
 // ---- Spec 009 User Story 4: the output chain through the C API (tasks.md T030) ----
@@ -2049,6 +2055,116 @@ fn c_api_output_clamp_matches_rust_at_all_rates() {
                 );
                 // SAFETY: live handle, destroyed once.
                 unsafe { rr_dr60_destroy(cp2) };
+            }
+        }
+    }
+}
+
+/// Spec 011 T036 (contracts/c-api.md › Parity): a volume change mid-stream through C equals the
+/// Rust engine bit for bit at the seven rates on both routes, in the one-pass (1024-sample
+/// blocks) and in the player (480-sample blocks): 0.1 at the start, 1.0 before block 10, 0.4
+/// before block 11 (a retarget mid-transition).
+#[test]
+fn c_api_volume_transition_matches_rust_at_all_rates() {
+    let changes = [(10usize, 1.0f32), (11, 0.4)];
+    let c_route = |route: Route| if route == Route::Speaker { 0 } else { 1 };
+    for &rate in configs::measurement_rates() {
+        let x = stimulus::voiced(f64::from(rate), 1.0, -20.0, 0x0D60);
+        let s = configs::settings("default_output", rate);
+        let cs = configs::c_settings(&s);
+        for route in [Route::Speaker, Route::Earphone] {
+            // The one-pass.
+            let mut rp = Pipeline::new(s).unwrap();
+            rp.set_route(route);
+            rp.set_volume(0.1).unwrap();
+            let cp = create(&cs);
+            // SAFETY: live handle.
+            unsafe {
+                assert_eq!(rr_dr60_set_route(cp, c_route(route)), RrDr60Status::Ok);
+                assert_eq!(rr_dr60_set_volume(cp, 0.1), RrDr60Status::Ok);
+            }
+            let (mut r_out, mut c_out) = (Vec::new(), Vec::new());
+            for (i, chunk) in x.chunks(1024).enumerate() {
+                for &(at, v) in &changes {
+                    if at == i {
+                        rp.set_volume(v).unwrap();
+                        // SAFETY: live handle.
+                        assert_eq!(unsafe { rr_dr60_set_volume(cp, v) }, RrDr60Status::Ok);
+                    }
+                }
+                let mut y = vec![0.0f32; chunk.len()];
+                let n = rp.process(chunk, &mut y).unwrap().produced;
+                r_out.extend_from_slice(&y[..n]);
+                let mut info = RrDr60BlockInfo::default();
+                // SAFETY: live handle; valid buffers.
+                let status = unsafe {
+                    rr_dr60_process(cp, chunk.as_ptr(), y.as_mut_ptr(), chunk.len(), &mut info)
+                };
+                assert_eq!(status, RrDr60Status::Ok);
+                c_out.extend_from_slice(&y[..info.produced]);
+            }
+            assert_eq!(
+                r_out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                c_out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                "{rate} Hz one-pass {route:?} with a volume transition"
+            );
+            // Record, then play with the changes, both sides.
+            let mut rp = Pipeline::new(s).unwrap();
+            rp.set_route(route);
+            rp.set_volume(0.1).unwrap();
+            rp.start_recording().unwrap();
+            for chunk in x.chunks(480) {
+                let _ = rp.record(chunk, &mut []).unwrap();
+            }
+            let stop = rp.stop_recording(&mut []).unwrap();
+            let rr_dr60::StopResult::Kept { number, .. } = stop.result else {
+                panic!("empty recording")
+            };
+            rp.start_playback(number).unwrap();
+            let cp2 = create(&cs);
+            // SAFETY: live handle.
+            unsafe {
+                assert_eq!(rr_dr60_set_route(cp2, c_route(route)), RrDr60Status::Ok);
+                assert_eq!(rr_dr60_set_volume(cp2, 0.1), RrDr60Status::Ok);
+            }
+            let rec = c_record(cp2, &x, 480);
+            assert!(rec.outcome.kept);
+            // SAFETY: live handle.
+            assert_eq!(
+                unsafe { rr_dr60_start_playback(cp2, rec.outcome.number) },
+                RrDr60Status::Ok
+            );
+            let (mut r_play, mut c_play_out) = (Vec::new(), Vec::new());
+            let mut buf = vec![0.0f32; 480];
+            for block in 0.. {
+                for &(at, v) in &changes {
+                    if at == block {
+                        rp.set_volume(v).unwrap();
+                        // SAFETY: live handle.
+                        assert_eq!(unsafe { rr_dr60_set_volume(cp2, v) }, RrDr60Status::Ok);
+                    }
+                }
+                let info = rp.play(&mut buf).unwrap();
+                r_play.extend_from_slice(&buf[..info.produced]);
+                let mut ci = RrDr60PlayInfo::default();
+                // SAFETY: live handle; valid buffer.
+                let status = unsafe { rr_dr60_play(cp2, buf.as_mut_ptr(), buf.len(), &mut ci) };
+                assert_eq!(status, RrDr60Status::Ok);
+                c_play_out.extend_from_slice(&buf[..ci.produced]);
+                assert_eq!(info.finished, ci.finished);
+                if info.finished {
+                    break;
+                }
+            }
+            assert_eq!(
+                r_play.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                c_play_out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                "{rate} Hz record-then-play {route:?} with a volume transition"
+            );
+            // SAFETY: live handles.
+            unsafe {
+                rr_dr60_destroy(cp);
+                rr_dr60_destroy(cp2);
             }
         }
     }

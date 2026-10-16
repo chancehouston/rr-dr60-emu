@@ -20,3 +20,4 @@ pub mod smoke_reference;
 pub mod split_checks;
 pub mod stimulus;
 pub mod vas_checks;
+pub mod volume_ramp_checks;

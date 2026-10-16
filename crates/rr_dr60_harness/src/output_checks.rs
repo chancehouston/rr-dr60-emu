@@ -442,9 +442,10 @@ pub fn volume_law(rate: u32, route: Route, make: Make<'_>) -> Vec<MeasurementRes
         .collect()
 }
 
-/// FR-009 (SC-004): at position 0 from the next block, every sample at the after-stage-11 tap
-/// on the earphone route is exactly 0.0, and the route output decays below −120 dBFS within
-/// 100 ms on both routes (the time to cross reported).
+/// FR-009 (SC-004): at position 0, every sample at the after-stage-11 tap is exactly 0.0 and
+/// the route output decays below −120 dBFS within 100 ms on both routes (the time to cross
+/// reported), both counted from **transition sample N** since spec 011 (FR-008; the position
+/// moves over N samples first; tasks.md T019).
 pub fn volume_zero(rate: u32, route: Route, make: Make<'_>) -> Vec<MeasurementResult> {
     let fs = f64::from(rate);
     let config = if route == Route::Speaker {
@@ -466,15 +467,17 @@ pub fn volume_zero(rate: u32, route: Route, make: Make<'_>) -> Vec<MeasurementRe
         z.truncate(n);
         z
     };
+    // Spec 011 FR-008: the transition's last sample, N − 1 samples into the second call.
+    let n = rr_dr60::output::volume_transition_samples(rate).expect("a supported rate") as usize;
     let mut rows = Vec::new();
     let z = run_then_zero(configs::settings(config, rate));
     let last_loud = z
         .iter()
         .rposition(|v| f64::from(v.abs()) >= 1e-6)
-        .map_or(0, |i| i + 1);
+        .map_or(0, |i| (i + 1).saturating_sub(n - 1));
     rows.push(MeasurementResult::new(
         "FR-009",
-        "route output below -120 dBFS after position 0, time to cross",
+        "route output below -120 dBFS after position 0, time to cross from sample N",
         T_ENG,
         rate,
         config,
@@ -489,10 +492,10 @@ pub fn volume_zero(rate: u32, route: Route, make: Make<'_>) -> Vec<MeasurementRe
     let mut s = configs::settings(config, rate);
     s.tap = Tap::AfterVolumeAmp;
     let z = run_then_zero(s);
-    let nonzero = z.iter().filter(|v| v.to_bits() != 0).count();
+    let nonzero = z[n - 1..].iter().filter(|v| v.to_bits() != 0).count();
     rows.push(MeasurementResult::new(
         "FR-009",
-        "samples not exactly +0.0 at the after-stage-11 tap after position 0",
+        "samples not exactly +0.0 at the after-stage-11 tap from sample N after position 0",
         T_ENG,
         rate,
         config,
@@ -1126,16 +1129,19 @@ pub fn chain_route_change_timing(rate: u32, make: Make<'_>) -> Vec<MeasurementRe
     rows
 }
 
-/// SC-005 (FR-009): a volume change (1.0 → 0.5) between blocks lands exactly at the next block
-/// at every one of sixteen change points, and the gain never overshoots either position's
-/// value: at the earphone's after-stage-11 tap the output is `K_EAR(p) · u`, where `u` (the
-/// 32 Hz corner's output) does not depend on the position, so the blocks before equal the
-/// position-1 run and the blocks after equal the position-0.5 run, bit for bit.
+/// SC-005 (FR-009): a volume change (1.0 → 0.5) between blocks lands at the next block at every
+/// one of sixteen change points: at the earphone's after-stage-11 tap the output is
+/// `K_EAR(p) · u`, where `u` (the 32 Hz corner's output) does not depend on the position, so
+/// the blocks before equal the position-1 run bit for bit, and since spec 011 the output from
+/// **transition sample N** equals the position-0.5 run bit for bit (the 20 ms transition between
+/// them is checked by `volume_ramp_checks`; tasks.md T019). The stimulus is 8192 samples so at
+/// least 64 samples are compared after sample N at every change point and rate (plan review Q1).
 pub fn chain_volume_change_timing(rate: u32, make: Make<'_>) -> Vec<MeasurementResult> {
     // Both routes at the after-stage-11 tap (coach review T019, N5): on the speaker route
     // `a = knee(k_spk · amp_hpf(u))`, the corner position-independent and the knee memoryless,
     // so the same block-exact equalities hold.
-    let x = tone(-20.0, 4096.0 / f64::from(rate), rate);
+    let x = tone(-20.0, 8192.0 / f64::from(rate), rate);
+    let n = rr_dr60::output::volume_transition_samples(rate).expect("a supported rate") as usize;
     let mut rows = Vec::new();
     for (config, route) in [
         ("output_only_earphone", Route::Earphone),
@@ -1156,7 +1162,12 @@ pub fn chain_volume_change_timing(rate: u32, make: Make<'_>) -> Vec<MeasurementR
             let y = in_blocks(&mut p, &x, |p, i| {
                 p.set_volume(if i < k { 1.0 } else { 0.5 }).unwrap()
             });
-            if y[..64 * k] == full[..64 * k] && y[64 * k..] == half[64 * k..] {
+            let from_n = 64 * k + n - 1;
+            assert!(
+                y.len().saturating_sub(from_n) >= 64,
+                "{rate} Hz: at least 64 samples compared after sample N (change point {k})"
+            );
+            if y[..64 * k] == full[..64 * k] && y[from_n..] == half[from_n..] {
                 landed += 1;
             }
         }
@@ -1166,7 +1177,7 @@ pub fn chain_volume_change_timing(rate: u32, make: Make<'_>) -> Vec<MeasurementR
             T_RULE,
             rate,
             config,
-            "tone 1 kHz -20 dBFS, 64-sample blocks, 16 change points",
+            "tone 1 kHz -20 dBFS, 8192 samples, 64-sample blocks, 16 change points; after from sample N",
             f64::from(landed),
             "of 16",
             Tolerance::Exact(16.0),

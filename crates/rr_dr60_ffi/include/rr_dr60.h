@@ -48,7 +48,7 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 10
+#define RR_DR60_VERSION_MINOR 11
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
@@ -59,6 +59,11 @@
 // double literal: cast it to `float` (`(float)RR_DR60_VOLUME_REFERENCE`), whose nearest value
 // is the engine's default bit for bit.
 #define RR_DR60_VOLUME_REFERENCE 0.13345174
+
+// The length of a volume transition in milliseconds (spec 011 FR-002; A-045): a valid
+// `rr_dr60_set_volume` change moves the knob to the new position over this time at every host
+// rate. Equal to the Rust `output::VOLUME_TRANSITION_MS`. A read-only constant, not a setting.
+#define RR_DR60_VOLUME_TRANSITION_MS 20
 
 // Result of every fallible C API call.
 enum RrDr60Status
@@ -944,7 +949,17 @@ RrDr60Status rr_dr60_get_route(struct RrDr60Pipeline *pipeline, uint32_t *out_ro
 // Sets the volume position (spec 009 FR-003; A-043, A-044): the control's wiper fraction,
 // 0 (silence) to 1 (maximum), at any time including during playback; it takes effect at the
 // next processing call or `rr_dr60_play` block and survives `rr_dr60_reset` and
-// `rr_dr60_reconfigure`. Default `RR_DR60_VOLUME_REFERENCE`; positions above it clip
+// `rr_dr60_reconfigure`. Since 0.11 a change is a 20 ms volume transition
+// (`RR_DR60_VOLUME_TRANSITION_MS`; spec 011, A-045): from the next block the knob moves from
+// where it is to `position`, starting and ending at rest, the gain following the loaded law
+// and never passing either end; a change during a transition starts a new 20 ms movement from
+// the knob's current position, from rest, so the knob trails a stream of updates (about 19 ms
+// at 60 Hz, about 105 ms if the position changes every 64-sample block at 48 kHz): send a
+// position when the control moves, at most once per UI frame. The first block that produces
+// output after `rr_dr60_create`, `rr_dr60_reset`, `rr_dr60_reconfigure` or
+// `rr_dr60_start_playback`, and the first after a route change, take the position at once.
+// The one-pass processing and the playback each keep their own knob position. Default
+// `RR_DR60_VOLUME_REFERENCE`; positions above it clip
 // full-scale material on the speaker route. Real-time safe.
 //
 // Returns `RR_DR60_STATUS_INVALID_VOLUME` for a non-finite position or one outside 0 … 1; the
@@ -955,7 +970,8 @@ RrDr60Status rr_dr60_get_route(struct RrDr60Pipeline *pipeline, uint32_t *out_ro
 // `pipeline` must be NULL or a live handle.
 RrDr60Status rr_dr60_set_volume(struct RrDr60Pipeline *pipeline, float position);
 
-// Writes the volume position to `*out_position` (spec 009 FR-003). Real-time safe.
+// Writes the volume position to `*out_position` (spec 009 FR-003): the last valid setting, not
+// the knob's position during a volume transition (spec 011 FR-011). Real-time safe.
 //
 // # Safety
 //

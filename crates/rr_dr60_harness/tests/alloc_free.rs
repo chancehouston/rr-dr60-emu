@@ -167,6 +167,7 @@ fn processing_never_touches_the_heap() {
         codec_cases(rate, vas_sizes);
         output_cases(rate, vas_sizes);
         output_clamp_cases(rate, vas_sizes);
+        volume_ramp_cases(rate, vas_sizes);
     }
 
     // Spec 007 FR-016, FR-017, SC-004: the manifest reads, Rust and C.
@@ -547,5 +548,62 @@ fn output_clamp_cases(rate: u32, sizes: &[usize]) {
     assert_eq!(
         after, before,
         "{rate} Hz output clamp: heap activity [allocs, deallocs, reallocs]"
+    );
+}
+
+/// Spec 011 FR-009 (tasks.md T022): volume transitions in every block allocate nothing, in the
+/// one-pass (the stage-11-only configurations and the default engine) and in the player, on
+/// both routes, with retargets mid-transition.
+fn volume_ramp_cases(rate: u32, sizes: &[usize]) {
+    let input = vas_input(rate);
+    let mut output = vec![0.0f32; 1024];
+    let mut engines: Vec<(Pipeline, Route)> = [
+        ("stage11_only_speaker", Route::Speaker),
+        ("stage11_only_earphone", Route::Earphone),
+        ("default_output", Route::Speaker),
+        ("default_earphone", Route::Earphone),
+    ]
+    .iter()
+    .map(|&(config, route)| {
+        let settings = configs::memory_capacity(configs::settings(config, rate), 300, 3);
+        (Pipeline::new(settings).unwrap(), route)
+    })
+    .collect();
+    let settings = configs::memory_capacity(configs::settings("default_output", rate), 300, 3);
+    let mut p = Pipeline::new(settings).unwrap();
+    let mut events = vec![VasEvent::default(); p.max_record_events(1024) + 8];
+    let before = counts();
+    for (e, route) in engines.iter_mut() {
+        e.set_route(*route);
+        for (i, &n) in sizes[..64].iter().enumerate() {
+            e.set_volume([0.1, 1.0, 0.4, 0.0][i % 4]).unwrap();
+            let _ = e.process(&input[..n], &mut output[..n]).unwrap();
+        }
+    }
+    p.start_recording().unwrap();
+    for &n in &sizes[..200] {
+        let info = p.record(&input[..n], &mut events).unwrap();
+        assert!(info.stopped.is_none());
+    }
+    let out = p.stop_recording(&mut events).unwrap();
+    assert!(matches!(out.result, rr_dr60::StopResult::Kept { .. }));
+    for route in [Route::Speaker, Route::Earphone] {
+        p.set_route(route);
+        p.start_playback(1).unwrap();
+        let mut block = 0usize;
+        loop {
+            p.set_volume([0.1, 1.0, 0.4][block % 3]).unwrap();
+            let info = p.play(&mut output[..64]).unwrap();
+            block += 1;
+            if info.finished {
+                break;
+            }
+        }
+    }
+    p.reset();
+    let after = counts();
+    assert_eq!(
+        after, before,
+        "{rate} Hz volume transitions: heap activity [allocs, deallocs, reallocs]"
     );
 }

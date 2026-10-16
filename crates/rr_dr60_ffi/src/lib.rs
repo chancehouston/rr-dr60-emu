@@ -45,7 +45,7 @@ use rr_dr60::{
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 10;
+pub const RR_DR60_VERSION_MINOR: u32 = 11;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -1603,10 +1603,25 @@ pub unsafe extern "C" fn rr_dr60_get_route(
 /// is the engine's default bit for bit.
 pub const RR_DR60_VOLUME_REFERENCE: f32 = 0.133_451_74; // A-043: equal to `rr_dr60::output::VOLUME_REFERENCE` bit for bit (a literal so cbindgen emits the define; the unit test pins it)
 
+/// The length of a volume transition in milliseconds (spec 011 FR-002; A-045): a valid
+/// `rr_dr60_set_volume` change moves the knob to the new position over this time at every host
+/// rate. Equal to the Rust `output::VOLUME_TRANSITION_MS`. A read-only constant, not a setting.
+pub const RR_DR60_VOLUME_TRANSITION_MS: u32 = 20; // A-045: equal to `rr_dr60::output::VOLUME_TRANSITION_MS` (a literal so cbindgen emits the define; the unit test pins it)
+
 /// Sets the volume position (spec 009 FR-003; A-043, A-044): the control's wiper fraction,
 /// 0 (silence) to 1 (maximum), at any time including during playback; it takes effect at the
 /// next processing call or `rr_dr60_play` block and survives `rr_dr60_reset` and
-/// `rr_dr60_reconfigure`. Default `RR_DR60_VOLUME_REFERENCE`; positions above it clip
+/// `rr_dr60_reconfigure`. Since 0.11 a change is a 20 ms volume transition
+/// (`RR_DR60_VOLUME_TRANSITION_MS`; spec 011, A-045): from the next block the knob moves from
+/// where it is to `position`, starting and ending at rest, the gain following the loaded law
+/// and never passing either end; a change during a transition starts a new 20 ms movement from
+/// the knob's current position, from rest, so the knob trails a stream of updates (about 19 ms
+/// at 60 Hz, about 105 ms if the position changes every 64-sample block at 48 kHz): send a
+/// position when the control moves, at most once per UI frame. The first block that produces
+/// output after `rr_dr60_create`, `rr_dr60_reset`, `rr_dr60_reconfigure` or
+/// `rr_dr60_start_playback`, and the first after a route change, take the position at once.
+/// The one-pass processing and the playback each keep their own knob position. Default
+/// `RR_DR60_VOLUME_REFERENCE`; positions above it clip
 /// full-scale material on the speaker route. Real-time safe.
 ///
 /// Returns `RR_DR60_STATUS_INVALID_VOLUME` for a non-finite position or one outside 0 … 1; the
@@ -1631,7 +1646,8 @@ pub unsafe extern "C" fn rr_dr60_set_volume(
     }
 }
 
-/// Writes the volume position to `*out_position` (spec 009 FR-003). Real-time safe.
+/// Writes the volume position to `*out_position` (spec 009 FR-003): the last valid setting, not
+/// the knob's position during a volume transition (spec 011 FR-011). Real-time safe.
 ///
 /// # Safety
 ///
@@ -2561,7 +2577,7 @@ mod tests {
         assert!(!d.output_clamp_enabled); // 010 FR-002
         assert_eq!(d.reserved_010, [0; 5]);
         assert_eq!(d.reserved_010_tail, [0; 7]);
-        assert_eq!(RR_DR60_VERSION_MINOR, 10);
+        assert_eq!(RR_DR60_VERSION_MINOR, 11);
         let mut stale = rr_dr60_settings_default(48_000);
         stale.struct_size = 104; // a 0.9 caller (spec 010 FR-008)
         assert_eq!(
@@ -2592,6 +2608,11 @@ mod tests {
         assert_eq!(
             RR_DR60_VOLUME_REFERENCE.to_bits(),
             rr_dr60::output::VOLUME_REFERENCE.to_bits()
+        );
+        // Spec 011 T034: the transition's length is the Rust constant.
+        assert_eq!(
+            RR_DR60_VOLUME_TRANSITION_MS,
+            rr_dr60::output::VOLUME_TRANSITION_MS
         );
         for p in [1.0f32, 0.5, 0.25, RR_DR60_VOLUME_REFERENCE, 0.1, 0.01] {
             assert_eq!(

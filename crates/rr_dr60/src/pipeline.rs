@@ -494,7 +494,20 @@ impl Pipeline {
     /// Sets the volume position (spec 009 FR-003; A-043, A-044): the control's wiper fraction,
     /// 0 (silence) to 1 (maximum), at any time including during playback; takes effect at the
     /// next processing call or `play` block; survives [`reset`](Self::reset) and
-    /// [`reconfigure`](Self::reconfigure). The routes' gains follow the circuit's loaded law
+    /// [`reconfigure`](Self::reconfigure). Since 0.11 a change is a **20 ms volume transition**
+    /// (spec 011; A-045; [`output::VOLUME_TRANSITION_MS`](crate::output::VOLUME_TRANSITION_MS)):
+    /// from the next block the knob moves from where it is to `position`, starting and ending
+    /// at rest, the gain following the loaded law at the knob's position and never passing
+    /// either end, the new position's gain reached exactly at the transition's last sample; a
+    /// change during a transition starts a new 20 ms movement from the knob's current position,
+    /// from rest, so the knob trails a stream of updates (about 19 ms at 60 Hz, 23 ms at 120 Hz,
+    /// about 105 ms if the position changes every 64-sample block at 48 kHz): send a position
+    /// when the control moves, at most once per UI frame, and do not fade by changing the
+    /// volume every block. The first block that produces output after `new`, `reset`,
+    /// `reconfigure` or [`start_playback`](Self::start_playback), and the first after a route
+    /// change, take the position at once. The one-pass processing and the playback each keep
+    /// their own knob position. With stage 11 bypassed the position has no effect. The routes'
+    /// gains follow the circuit's loaded law
     /// ([`output::speaker_gain_db`](crate::output::speaker_gain_db),
     /// [`output::earphone_gain_db`](crate::output::earphone_gain_db)). Default
     /// [`output::VOLUME_REFERENCE`](crate::output::VOLUME_REFERENCE), where full-scale material
@@ -513,7 +526,8 @@ impl Pipeline {
         Ok(())
     }
 
-    /// The volume position (spec 009 FR-003).
+    /// The volume position (spec 009 FR-003): the last valid setting, not the knob's position
+    /// during a volume transition (spec 011 FR-011).
     pub fn volume(&self) -> f32 {
         self.volume
     }

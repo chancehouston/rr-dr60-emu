@@ -548,4 +548,65 @@ mod output {
             "{f:?}"
         );
     }
+
+    /// Spec 011 research R-07 (tasks.md T023): the four volume-transition mutant
+    /// configurations, applied through the test hooks, are each caught by the named row at
+    /// 48 kHz on the earphone route; the committed chain passes the same rows.
+    mod volume_ramp {
+        use super::{failed, mutant};
+        use rr_dr60::__test_hooks::OutputMutation;
+        use rr_dr60_harness::checks::standard;
+        use rr_dr60_harness::volume_ramp_checks as ramp;
+
+        const RATE: u32 = 48_000;
+        const CONFIG: &str = "stage11_only_earphone";
+
+        #[test]
+        fn volume_ramp_step_mutant_fails_fr004_and_the_last_differing_sample() {
+            let make = mutant(OutputMutation {
+                volume_step: true,
+                ..OutputMutation::default()
+            });
+            let f = failed(&ramp::click_reduction(&make, RATE, CONFIG, 0.1, 1.0));
+            assert!(f.iter().any(|p| p.contains("instantaneous step")), "{f:?}");
+            let f = failed(&ramp::splice(&make, RATE, CONFIG, 0.1, 1.0));
+            assert!(
+                f.iter().any(|p| p.contains("last transition sample")),
+                "{f:?}"
+            );
+            assert!(failed(&ramp::click_reduction(&standard, RATE, CONFIG, 0.1, 1.0)).is_empty());
+        }
+
+        #[test]
+        fn volume_ramp_linear_mutant_fails_fr004_on_the_speaker_law() {
+            let make = mutant(OutputMutation {
+                volume_shape_linear: true,
+                ..OutputMutation::default()
+            });
+            let f = failed(&ramp::click_reduction(
+                &make,
+                RATE,
+                "stage11_only_speaker",
+                0.1,
+                1.0,
+            ));
+            assert!(f.iter().any(|p| p.contains("instantaneous step")), "{f:?}");
+        }
+
+        #[test]
+        fn volume_ramp_length_mutants_fail_the_splice() {
+            for (delta, row) in [
+                (1i64, "from transition sample N"),
+                (-1, "last transition sample"),
+            ] {
+                let make = mutant(OutputMutation {
+                    volume_ramp_delta: delta,
+                    ..OutputMutation::default()
+                });
+                let f = failed(&ramp::splice(&make, RATE, CONFIG, 0.1, 1.0));
+                assert!(f.iter().any(|p| p.contains(row)), "{delta:+}: {f:?}");
+            }
+            assert!(failed(&ramp::splice(&standard, RATE, CONFIG, 0.1, 1.0)).is_empty());
+        }
+    }
 }

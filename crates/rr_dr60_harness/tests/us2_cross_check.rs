@@ -852,3 +852,117 @@ fn readme_output_clamp_statements() {
         "the option is named in no stage's strings (010 FR-004)"
     );
 }
+
+/// Spec 011 US3 AS1, AS3 (tasks.md T027; research R-10): the README's volume paragraph states
+/// the transition (its length, the next block, the start-at-once rule, the one-pass, the
+/// read-back, the drag, the constant); the paragraph, A-045's row and the 0.11.0 CHANGELOG
+/// regions pass the denylist and the feature's forbidden words; the rustdoc of `set_volume`
+/// names the transition.
+#[test]
+fn readme_volume_statements() {
+    let text = readme();
+    let section =
+        mc::readme_region(&text, "output-section").expect("README has the output-section markers");
+    let para = section
+        .lines()
+        .find(|l| l.starts_with("- **The volume transition**"))
+        .expect("README output section has the volume transition bullet");
+    assert_eq!(
+        mc::denylist_hit(para),
+        None,
+        "README volume transition bullet"
+    );
+    for phrase in [
+        "20 ms",
+        "next block",
+        "at once",
+        "reset",
+        "reconfigure",
+        "playback",
+        "one-pass",
+        "last setting",
+        "drag",
+        "VOLUME_TRANSITION_MS",
+        "RR_DR60_VOLUME_TRANSITION_MS",
+        "A-045",
+        "engine convention",
+    ] {
+        assert!(
+            para.contains(phrase),
+            "README volume bullet lacks {phrase:?}"
+        );
+    }
+    let forbidden = [
+        "accurate",
+        "protect",
+        "safe for",
+        "hearing",
+        "prevents clicks",
+    ];
+    let lower = para.to_lowercase();
+    for word in forbidden {
+        assert!(
+            !lower.contains(word),
+            "README volume bullet contains {word:?}"
+        );
+    }
+    // A-045's row.
+    let assumptions =
+        std::fs::read_to_string(mc::repo_root().join("docs/hardware/assumptions.md")).unwrap();
+    let row = assumptions
+        .lines()
+        .find(|l| l.starts_with("| A-045 "))
+        .expect("A-045's row");
+    for phrase in [
+        "continuously",
+        "20 ms",
+        "engine convention",
+        "Not modeled",
+        "contact noise",
+    ] {
+        assert!(row.contains(phrase), "A-045 lacks {phrase:?}");
+    }
+    let lower = row.to_lowercase();
+    for word in forbidden {
+        assert!(!lower.contains(word), "A-045 contains {word:?}");
+    }
+    assert_eq!(mc::denylist_hit(row), None, "A-045");
+    // The 0.11.0 CHANGELOG regions: filled, three parts, clean.
+    let changelog = std::fs::read_to_string(mc::repo_root().join("CHANGELOG.md")).unwrap();
+    let mut rest = changelog.as_str();
+    let mut parts = 0;
+    while let Some(entry) = mc::readme_region(rest, "0.11.0") {
+        assert_eq!(
+            mc::denylist_hit(entry),
+            None,
+            "CHANGELOG 0.11.0 entry: {entry}"
+        );
+        let lower = entry.to_lowercase();
+        for word in forbidden {
+            assert!(
+                !lower.contains(word),
+                "CHANGELOG 0.11.0 entry contains {word:?}"
+            );
+        }
+        assert!(
+            !entry.contains("Details at T033"),
+            "the 0.11.0 region is filled, not a skeleton: {entry}"
+        );
+        parts += 1;
+        let end = rest.find("<!-- 0.11.0:end -->").unwrap() + "<!-- 0.11.0:end -->".len();
+        rest = &rest[end..];
+    }
+    assert_eq!(
+        parts, 3,
+        "the 0.11.0 entry has an Added, a Changed and a Documentation part"
+    );
+    // The rustdoc of the volume control names the transition (contracts/rust-api.md).
+    let pipeline =
+        std::fs::read_to_string(mc::repo_root().join("crates/rr_dr60/src/pipeline.rs")).unwrap();
+    let i = pipeline.find("pub fn set_volume").expect("set_volume");
+    let doc = &pipeline[pipeline[..i].rfind("\n\n").unwrap_or(0)..i];
+    assert!(
+        doc.contains("20 ms") && doc.contains("A-045"),
+        "set_volume's rustdoc: {doc}"
+    );
+}

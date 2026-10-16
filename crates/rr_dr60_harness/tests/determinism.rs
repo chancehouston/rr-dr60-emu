@@ -585,3 +585,33 @@ fn output_clamp_partitions() {
         }
     }
 }
+
+/// Spec 011 (tasks.md T022; FR-009): a volume change mid-stream gives the same output for ten
+/// random partitions (each cut at the change) as for 4096-sample blocks, in the stage-11-only
+/// configurations and the default engine on both routes.
+#[test]
+fn volume_ramp_partitions() {
+    use rr_dr60::Route;
+    use rr_dr60_harness::checks::standard;
+    use rr_dr60_harness::volume_ramp_checks::{self as ramp, Blocks, run_with_changes, same};
+    for &rate in configs::measurement_rates() {
+        let c = ramp::change_at(rate);
+        for (config, route) in [
+            ("stage11_only_speaker", Route::Speaker),
+            ("stage11_only_earphone", Route::Earphone),
+            ("default_output", Route::Speaker),
+            ("default_earphone", Route::Earphone),
+        ] {
+            let s = configs::settings(config, rate);
+            let x = rr_dr60_harness::stimulus::voiced(f64::from(rate), 1.5, -20.0, 0x0D60);
+            let changes = [(c, 1.0f32), (c + 1024, 0.4)];
+            let want =
+                run_with_changes(&standard, s, route, 0.1, &changes, &x, Blocks::Fixed(4096));
+            for i in 0..10u64 {
+                let got =
+                    run_with_changes(&standard, s, route, 0.1, &changes, &x, Blocks::Irregular(i));
+                assert!(same(&got, &want), "{rate} Hz {config}, partition {i}");
+            }
+        }
+    }
+}

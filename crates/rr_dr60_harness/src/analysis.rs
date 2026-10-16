@@ -304,6 +304,40 @@ pub const THIRD_OCTAVE_CENTRES_HZ: [f64; 10] = [
     315.0, 400.0, 500.0, 630.0, 800.0, 1000.0, 1250.0, 1600.0, 2000.0, 2500.0,
 ];
 
+/// Spec 011 FR-004's **click energy** of `y` around `centre` (a host-sample index, fractional
+/// allowed): the summed power of the bins of a Hann window of `round(0.5 · rate)` samples
+/// centred on `centre`, at frequencies 20 Hz ≤ f ≤ 2750 Hz with |f − 1000 Hz| > 250 Hz (the same
+/// band at every rate, below 6 kHz's Nyquist). The reduction of a transition against the
+/// instantaneous step is `db(step / transition)` with the step's window centred on the step
+/// and the transition's on its midpoint (research R-02, R-05). Samples outside `y` read as 0.
+pub fn click_energy<T: Copy + Into<f64>>(y: &[T], rate: u32, centre: f64) -> f64 {
+    let fs = f64::from(rate);
+    let len = (0.5 * fs).round() as usize;
+    let start = (centre - len as f64 / 2.0).round() as i64;
+    let mut buf: Vec<Complex64> = (0..len)
+        .map(|n| {
+            let w = 0.5 - 0.5 * (TAU * n as f64 / (len - 1) as f64).cos();
+            let i = start + n as i64;
+            let v = if i >= 0 && (i as usize) < y.len() {
+                y[i as usize].into()
+            } else {
+                0.0
+            };
+            Complex64::new(v * w, 0.0)
+        })
+        .collect();
+    rustfft::FftPlanner::<f64>::new()
+        .plan_fft_forward(len)
+        .process(&mut buf);
+    (0..=len / 2)
+        .filter(|&k| {
+            let f = k as f64 * fs / len as f64;
+            (20.0..=2750.0).contains(&f) && (f - 1000.0).abs() > 250.0
+        })
+        .map(|k| buf[k].norm_sqr())
+        .sum()
+}
+
 /// Long-term third-octave band levels (dB, arbitrary reference) of `x` at `fs`: the power of
 /// the FFT bins between each band's edges (centre × 2^(±1/6)), over the whole signal in one
 /// FFT of the next power of two (spec 008 FR-005; research R-09). Differences between two
@@ -515,6 +549,42 @@ pub fn level_track<T: Copy + Into<f64>, U: Copy + Into<f64>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Spec 011 T009: the click energy against `tools/volume-ramp/ramp_model.py`'s earphone
+    /// figure at 48 kHz (a 1 kHz cosine peaking at the change, 0.1 → 1, the smoothstep over
+    /// 960 samples against the instantaneous step: 40.64 dB, research R-02).
+    #[test]
+    fn click_energy_matches_the_reference_script() {
+        let rate = 48_000u32;
+        let law = |p: f64| from_db(f64::from(rr_dr60::output::earphone_gain_db(p as f32)));
+        let n = 960usize;
+        let (pad, n0) = (24_000usize, 24_000usize);
+        let total = 2 * pad + n;
+        let x: Vec<f64> = (0..total)
+            .map(|i| (TAU * 1000.0 * (i as f64 - n0 as f64) / f64::from(rate)).cos())
+            .collect();
+        let (g0, g1) = (law(0.1), law(1.0));
+        let step: Vec<f64> = (0..total)
+            .map(|i| x[i] * if i < n0 { g0 } else { g1 })
+            .collect();
+        let ramp: Vec<f64> = (0..total)
+            .map(|i| {
+                let g = if i < n0 {
+                    g0
+                } else if i >= n0 + n - 1 {
+                    g1
+                } else {
+                    let u = (i - n0 + 1) as f64 / n as f64;
+                    law(0.1 + 0.9 * u * u * (3.0 - 2.0 * u))
+                };
+                x[i] * g
+            })
+            .collect();
+        let r = db(click_energy(&step, rate, n0 as f64)
+            / click_energy(&ramp, rate, n0 as f64 + (n as f64 - 1.0) / 2.0))
+            / 2.0;
+        assert!((r - 40.64).abs() <= 0.05, "{r} dB");
+    }
 
     fn sinusoid(amp: f64, phase: f64, freq: f64, fs: f64, n: usize) -> Vec<f64> {
         (0..n)

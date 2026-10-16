@@ -440,10 +440,10 @@ stage_table! {
         number: 11, identifier: "volume_amp", name: "Volume control and power amplifier",
         description: "Sets the playback level with the volume control and drives the speaker through a power amplifier that clips near its battery rail; muted while recording.",
         status: Assumed, path: Playback, confidence: Medium,
-        sources: ["S-001", "S-002", "S-006"], assumptions: ["A-031", "A-043", "A-044"],
-        coverage: "the 159 Hz corner's shift with the knob; the clip level's change with the battery and the transistor; the beep tones",
+        sources: ["S-001", "S-002", "S-006"], assumptions: ["A-031", "A-043", "A-044", "A-045"],
+        coverage: "the 159 Hz corner's knob shift; the clip level's battery and transistor spread; wiper noise; knob speed; the beeps",
         controls: "output.volume_amp_enabled; set_volume, volume; set_route, route; Tap::AfterVolumeAmp; EngineState.speaker_muted",
-        model_version: "0.9.0",
+        model_version: "0.11.0",
     },
     {
         number: 12, identifier: "speaker", name: "Speaker",

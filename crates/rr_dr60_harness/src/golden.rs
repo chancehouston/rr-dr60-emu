@@ -241,6 +241,13 @@ pub struct GoldenEntry {
     /// which therefore read unchanged (FR-002).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub n_at_bound: Option<u32>,
+    /// Spec 011 (contracts/golden-format.md): the scenario's volume changes as
+    /// `[sample, position]`, each at a 16-sample block boundary (the input sample, equal to the
+    /// output sample: every block produced its full length, asserted). Present in
+    /// volume-ramp-file entries only; absent (and not serialized) in the six earlier files,
+    /// which therefore read unchanged (FR-006).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changes: Option<Vec<(u64, f32)>>,
 }
 
 /// The VAS part of a golden entry (specs/003-vas/contracts/golden-format.md).
@@ -373,6 +380,7 @@ pub fn entry(stimulus: &str, config: &str, host_rate_hz: u32, output: &[f32]) ->
         route: None,
         volume: None,
         n_at_bound: None,
+        changes: None,
     }
 }
 
@@ -846,6 +854,133 @@ pub fn generate_output_clamp(make: Make<'_>, bless: bool) -> GoldenFile {
         library_version: rr_dr60::VERSION.into(),
         entries,
     }
+}
+
+/// Spec 011 volume-ramp golden scenarios in sorted order (contracts/golden-format.md).
+pub const VOLUME_RAMP_SCENARIOS: [&str; 5] = [
+    "ramp_down",
+    "ramp_drag",
+    "ramp_retarget",
+    "ramp_to_zero",
+    "ramp_up",
+];
+
+/// Spec 011 volume-ramp golden configurations in sorted order (contracts/golden-format.md).
+pub const GOLDEN_VOLUME_RAMP_CONFIGS: [&str; 4] = [
+    "default_earphone",
+    "default_output",
+    "stage11_only_earphone",
+    "stage11_only_speaker",
+];
+
+/// A scenario's starting position and changes at a host rate (contracts/golden-format.md:
+/// c = ⌊rate ÷ 2⌋₁₆, N = 0.02 × rate, G = 16 · round(rate ÷ 960)).
+pub fn volume_ramp_scenario(scenario: &str, rate: u32) -> (f32, Vec<(usize, f32)>) {
+    use crate::volume_ramp_checks::{drag_gap, drag_positions, n_of};
+    let c = rate as usize / 2 / 16 * 16;
+    match scenario {
+        "ramp_up" => (0.1, vec![(c, 1.0)]),
+        "ramp_down" => (1.0, vec![(c, 0.1)]),
+        "ramp_to_zero" => (1.0, vec![(c, 0.0)]),
+        "ramp_retarget" => (0.1, vec![(c, 1.0), (c + n_of(rate) / 2 / 16 * 16, 0.4)]),
+        "ramp_drag" => (
+            0.1,
+            drag_positions()
+                .iter()
+                .enumerate()
+                .map(|(j, &p)| (c + j * drag_gap(rate), p))
+                .collect(),
+        ),
+        other => panic!("unknown scenario {other:?}"),
+    }
+}
+
+/// Spec 011 FR-012 (contracts/golden-format.md): the volume-ramp golden file, 5 scenarios × 4
+/// configurations × 7 rates = 140 entries, 1 s each through the one-pass in 16-sample blocks
+/// (every block producing its full length, asserted), with the route, the starting position
+/// and the changes. With `bless` the generator also asserts, for the two stage-11-only
+/// configurations, the splice identity: bit-identical to a run held at the starting position
+/// before the first change and to a run held at the last position from the last change's
+/// transition sample N (research R-05 (a)).
+pub fn generate_volume_ramp(make: Make<'_>, bless: bool) -> GoldenFile {
+    use crate::volume_ramp_checks::{Blocks, n_of, run_with_changes, same};
+    let mut entries = Vec::new();
+    for &s in &VOLUME_RAMP_SCENARIOS {
+        for &c in &GOLDEN_VOLUME_RAMP_CONFIGS {
+            let route = match c {
+                "default_earphone" | "stage11_only_earphone" => rr_dr60::Route::Earphone,
+                _ => rr_dr60::Route::Speaker,
+            };
+            for rate in configs::all_rates() {
+                let fs = f64::from(rate);
+                let settings = configs::settings(c, rate);
+                let x = match c {
+                    "stage11_only_speaker" => {
+                        stimulus::tone(1000.0, stimulus::amplitude(-30.0), fs, rate as usize)
+                    }
+                    "stage11_only_earphone" => stimulus::tone(1000.0, 1.0, fs, rate as usize),
+                    _ => stimulus::voiced(fs, 1.0, -20.0, 0x0D60),
+                };
+                let (start, changes) = volume_ramp_scenario(s, rate);
+                let y = run_with_changes(
+                    make,
+                    settings,
+                    route,
+                    start,
+                    &changes,
+                    &x,
+                    Blocks::Fixed(16),
+                );
+                if bless && c.starts_with("stage11_only") {
+                    let held = |p: f32| {
+                        run_with_changes(make, settings, route, p, &[], &x, Blocks::Fixed(16))
+                    };
+                    let (first, _) = changes[0];
+                    let (last, p_last) = *changes.last().unwrap();
+                    let from_n = last + n_of(rate) - 1;
+                    assert!(
+                        same(&y[..first], &held(start)[..first])
+                            && same(&y[from_n..], &held(p_last)[from_n..]),
+                        "{s}/{c}/{rate} Hz: the splice identity (011 R-05)"
+                    );
+                }
+                let mut e = entry(s, c, rate, &y);
+                e.route = Some(
+                    match route {
+                        rr_dr60::Route::Earphone => "earphone",
+                        _ => "speaker",
+                    }
+                    .into(),
+                );
+                e.volume = Some(start);
+                e.changes = Some(changes.iter().map(|&(at, p)| (at as u64, p)).collect());
+                entries.push(e);
+            }
+        }
+    }
+    GoldenFile {
+        format: "rr_dr60-golden".into(),
+        version: 1,
+        library_version: rr_dr60::VERSION.into(),
+        entries,
+    }
+}
+
+/// The committed spec 011 volume-ramp golden file.
+///
+/// # Panics
+///
+/// If the embedded file is not valid JSON.
+pub fn committed_volume_ramp() -> GoldenFile {
+    serde_json::from_str(include_str!("../golden/golden-volume-ramp-v1.json"))
+        .expect("valid embedded volume-ramp golden file")
+}
+
+/// Path of the spec 011 volume-ramp golden file. Bless it only with
+/// `RR_DR60_BLESS=volume_ramp cargo test -p rr_dr60_harness --test golden_volume_ramp`, with a
+/// CHANGELOG entry (011 FR-012).
+pub fn path_volume_ramp() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-volume-ramp-v1.json")
 }
 
 /// The committed spec 010 output-clamp golden file.
