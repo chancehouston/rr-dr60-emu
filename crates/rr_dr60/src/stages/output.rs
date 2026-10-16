@@ -90,7 +90,8 @@ pub(crate) fn bound(y: f64, lo: f64, hi: f64) -> f64 {
     // IEEE maxNum / minNum: branchless (one instruction each on aarch64, a short branchless
     // sequence on x86-64); they return one operand exactly, map ±∞ to the ends and would return
     // `lo` for a NaN, which the select below turns into 0.0 (a compare and a conditional move;
-    // research R-01 as built: +0.33 ns per host sample against +3.6 ns for a two-branch form).
+    // research R-01 as built: +0.47 ns per host sample on aarch64 against +3.6 ns for a
+    // two-branch form; +4.25 ns, +2.46 %, on the x86-64 CI runner; SC-005's budget is 3 %).
     let r = y.max(lo).min(hi);
     if y.is_nan() { 0.0 } else { r }
 }

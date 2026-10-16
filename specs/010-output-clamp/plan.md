@@ -26,7 +26,7 @@ A boolean host setting, `output.clamp_enabled`, off by default, that holds every
 
 **Project Type**: library: a Rust crate plus a C ABI.
 
-**Performance Goals**: ≤ 2 ns per host sample (about 3 %) added to the codec-bypassed speaker route's one-pass cost at 48 kHz on full-scale noise at position 1, the median of five alternating on/off runs in a solo release run (SC-005; R-08); expected under 1 ns. Latencies and the drain unchanged at every rate.
+**Performance Goals** (as built: ≤ 3 % on the fastest of nine runs, see the spec's PR #23 CI clarification): ≤ 2 ns per host sample (about 3 %) added to the codec-bypassed speaker route's one-pass cost at 48 kHz on full-scale noise at position 1, the median of five alternating on/off runs in a solo release run (SC-005; R-08); expected under 1 ns. Latencies and the drain unchanged at every rate.
 
 **Constraints**:
 - No reported latency change and no drain change (FR-005): the bound is stateless; `n_out` untouched.

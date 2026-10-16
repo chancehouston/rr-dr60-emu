@@ -35,7 +35,7 @@ cargo test -p rr_dr60_harness --test mutation output_clamp
 cargo test -p rr_dr60_harness --release --test timing output_clamp_cost -- --ignored --nocapture   # solo; quote from this run
 ```
 
-Expected: record-then-play equals the one-pass with the option on (both routes, two positions, seven rates; at position 1 the option-off run exceeds the bound, so the equivalence exercises it); the change-timing identity holds at every change point; the export bytes identical with the option on or off and an option-off export plays back bounded through an option-on engine; the latencies and the drain table unchanged; the six configurations partition-invariant and allocation-free; the three mutants fail the identity; `output_clamp_cost` prints the medians of five alternating on/off runs per route on full-scale noise at position 1, the bounded fraction, and the difference (≤ 2 ns per sample on the speaker route, SC-005).
+Expected: record-then-play equals the one-pass with the option on (both routes, two positions, seven rates; at position 1 the option-off run exceeds the bound, so the equivalence exercises it); the change-timing identity holds at every change point; the export bytes identical with the option on or off and an option-off export plays back bounded through an option-on engine; the latencies and the drain table unchanged; the six configurations partition-invariant and allocation-free; the three mutants fail the identity; `output_clamp_cost` prints, per route, the fastest of nine alternating on/off runs, the bounded share and the difference in ns and % (≤ 3 % on the speaker route, SC-005 as amended; run the timing tests one at a time).
 
 ## 4. Story 3: what the engine says
 

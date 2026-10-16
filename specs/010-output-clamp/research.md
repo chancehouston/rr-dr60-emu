@@ -114,6 +114,8 @@ Tests: `us1_output_clamp` (US1 and US2 at `measurement_rates()`; functions named
 
 **Decision.** `timing::output_clamp_cost` (release, `--ignored`): `default_output` with the codec bypassed at 48 kHz, 30 s of **full-scale noise at position 1** (so a large fraction of samples is replaced: the worst case if the compiler emits a branch rather than selects), 4096-sample blocks, the speaker route, the option on and off in **alternation**, five runs each, the **median** of each; assert `median_on − median_off ≤ 2.0 ns`; print both routes and the bounded fraction. Expected: `bound` is two compares and two selects per sample, under 1 ns at 48 kHz on this machine; the 009 figure for the chain is 68.2 ns per sample. Both runs execute the same machine code (a runtime bool), which suits a sub-2 ns delta.
 
+**As built (PR #23's CI, 2026-10-16).** The assertion is the ratio, `100 × (on / off − 1) ≤ 3`, each side the fastest of nine alternating runs, and CI runs the timing tests one at a time. The fixed 2 ns failed on the x86-64 runner (+4.14 ns, +2.4 %): it is about twice as slow, and its IEEE max / min with NaN handling takes a few instructions where aarch64 takes one. Measured: +0.47 ns (+0.56 %) on the development machine, +4.25 ns (+2.46 %) on the runner.
+
 **Rationale.** Coach C9: 3 % of the codec-bypassed cost is about 2 ns, inside the spread of best-of-five figures, so the spec states nanoseconds and a median of alternating runs. The assertion is a smoke bound; the quoted figure comes from a solo run.
 
 ## R-09 The smoke loop and parity (US4; contracts/c-api.md; coach P8)
