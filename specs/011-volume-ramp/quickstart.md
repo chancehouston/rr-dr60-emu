@@ -7,6 +7,7 @@ Prerequisites: the toolchain of CLAUDE.md (`export PATH="$HOME/.cargo/bin:$PATH"
 ```sh
 uv run tools/volume-ramp/ramp_model.py           # N per rate, FR-004 per rate and route, the drag, the f64 range check, N_OUT / N
 uv run tools/volume-ramp/ramp_model.py --check   # asserts the 30 dB floor, the drag, no reversals, N_OUT / N > 2.87
+uv run tools/volume-ramp/ramp_model.py --t1090 12 --from 1 --to 0   # A-045's knob-flick comparison for a measured 10–90 % time
 ```
 
 ## 1. The earlier specs are untouched
@@ -31,7 +32,8 @@ Expected: at the seven rates on both routes the splice identity holds before the
 ## 3. Story 2: the whole engine
 
 ```sh
-cargo test -p rr_dr60_harness --test us1_volume_ramp -- whole_engine --nocapture  # start-at-once, route change, reset, reconfigure, bypass, clamp, drain, refused position
+cargo test -p rr_dr60_harness --test us1_volume_ramp -- whole_engine --nocapture  # start-at-once, route change, reset, reconfigure, bypass, clamp, drain
+cargo test -p rr_dr60_harness --test volume_ramp_edge_cases refused_position_and_read_back   # a refused position starts nothing; the read-back is the host's setting
 cargo test -p rr_dr60_harness --test us1_volume_ramp -- equivalence
 cargo test -p rr_dr60_harness --test us1_output --test output_matrix --test output_edge_cases --test us1_output_clamp   # the restated 009/010 checks
 cargo test -p rr_dr60_harness --test determinism volume_ramp
