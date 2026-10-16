@@ -10,7 +10,7 @@ The `GoldenFile` form of `golden-output-v1.json` (`route` and `volume` present o
 
 | Field | Type | Meaning |
 |---|---|---|
-| `changes` | `[[u64, f32]]` | the scenario's position changes as `[output sample, position]`, each at a 16-sample block boundary |
+| `changes` | `[[u64, f32]]` | the scenario's position changes as `[sample, position]`, each at a 16-sample block boundary: the input sample at the start of the call, which equals the output sample (the generator asserts that every block up to the last change's transition produced its full length, so the VAS in drop mode dropped nothing there). `#[serde(default, skip_serializing_if = "Option::is_none")]`, so the six earlier files read and write the same bytes |
 
 Entries: **5 scenarios × 4 configurations × 7 host rates = 140**, sorted by (stimulus, config, host_rate_hz); the stimulus name carries the scenario (`ramp_up`, `ramp_down`, `ramp_to_zero`, `ramp_retarget`, `ramp_drag`). Every change sample is rounded down to a multiple of 16 (the block size), written ⌊·⌋₁₆; c = ⌊rate ÷ 2⌋₁₆ (0.5 s), N = 0.02 × rate, G = 16 · round(rate ÷ 960) (the drag interval: 96, 128, 272, 736, 800, 1472, 1600 samples, 16.0 – 17.0 ms):
 

@@ -26,7 +26,7 @@ cargo test -p rr_dr60_harness --test volume_ramp_matrix -- --nocapture
 cargo test -p rr_dr60_harness --test volume_ramp_edge_cases
 ```
 
-Expected: at the seven rates on both routes the splice identity holds before the change and from sample N; the ratio reader is monotonic within 4 ULP; the output is bit-identical across partitions of 1, 64, 4096 and an irregular one; the click reduction is ≥ 30 dB and within ±1 dB of research R-02's table (speaker 33.9 – 34.5 dB, earphone 40.6 – 41.2 dB); a retarget never jumps; a transition to 0 reads exact zeros from N and decays below −120 dBFS within 100 ms of N; the drag is monotonic and ≥ 30 dB below the stepped drag (≈ 37 – 38 dB); the route-output figures are printed.
+Expected: at the seven rates on both routes the splice identity holds before the change and from sample N; the ratio reader is monotonic within 4 ULP; the output is bit-identical across partitions of 1, 64, 4096 and an irregular one; the first differing sample is 1 and the last N − 1; the click reduction is ≥ 30 dB and within ±0.25 dB of research R-02's table (speaker 33.9 – 34.5 dB, earphone 40.6 – 41.2 dB); a full-scale tone on the speaker route never exceeds the ceiling; a retarget never jumps and a retarget within rounding of the knob stays monotonic; a transition to 0 reads exact zeros from N and decays below −120 dBFS within 100 ms of N; the drag is monotonic and ≥ 30 dB below the stepped drag (34.9 – 38.3 dB); the route-output figures are printed.
 
 ## 3. Story 2: the whole engine
 
@@ -38,10 +38,10 @@ cargo test -p rr_dr60_harness --test determinism volume_ramp
 cargo test -p rr_dr60_harness --test alloc_free
 cargo test -p rr_dr60_harness --test mutation volume_ramp
 cargo test -p rr_dr60_harness --release --test timing volume_ramp_cost -- --ignored --nocapture --test-threads=1   # solo; quote from this run
-scripts/ab-timing.sh                                              # the idle A/B against main (output_cost, nine alternating runs each)
+scripts/ab-timing.sh bd6d827                                      # the idle A/B against the 0.10 build (output_cost, nine alternating runs each); once on the CI runner: gh workflow run ab-timing.yml
 ```
 
-Expected: the first block after construction, reset, reconfigure and `start_playback` bit-identical to 0.10; a route change completes the transition; record-then-play equals the one-pass with a constant volume and from the change with a change at the same output sample; the three mutants fail (step: 0 dB, linear: ≈ 19 dB on the speaker law, length ±1: the splice from N); the worst case (480-sample blocks, alternating 0.1 / 1) ≤ 15 % over the step hook, the idle A/B ≤ 3 %, both with nanoseconds.
+Expected: the first block after construction, reset, reconfigure and `start_playback` bit-identical to 0.10; a route change completes the transition; record-then-play equals the one-pass with a constant volume and from the change with a change at the same output sample; the four mutant configurations fail (step: 0 dB, linear: ≈ 19 dB on the speaker law, length ±1: the splice from N); the worst case (480-sample blocks, alternating 0.1 / 1, noise at −20 dB; the constant-position spread ≤ 2 %) ≤ 15 % over the step hook, the idle A/B ≤ 3 %, their product reported against 0.10, all with nanoseconds.
 
 ## 4. Story 3: the records
 
@@ -64,7 +64,8 @@ Expected: the existing hashes unchanged, the new mid-playback case equal to `RR_
 ## 6. The golden file and the gates
 
 ```sh
-RR_DR60_BLESS=volume_ramp cargo test -p rr_dr60_harness --test golden_volume_ramp   # once, last, after the reviews
-cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-features
-cargo llvm-cov --all-features --workspace --fail-under-lines 80
+cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings   # first: the gate without the new golden
+cargo test --all-features -- --skip golden_volume_ramp
+RR_DR60_BLESS=volume_ramp cargo test -p rr_dr60_harness --test golden_volume_ramp   # once, after the reviews
+cargo test --all-features && cargo llvm-cov --all-features --workspace --fail-under-lines 80   # then the full gate with coverage
 ```

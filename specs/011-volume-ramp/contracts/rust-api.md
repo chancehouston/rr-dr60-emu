@@ -6,8 +6,8 @@ All items are in `rr_dr60`; every public item has rustdoc citing its FR and A-04
 
 | Item | Contract |
 |---|---|
-| `output::VOLUME_TRANSITION_MS: u32 = 20` | The length of a volume transition in milliseconds (A-045; FR-002). The same at every supported host rate. |
-| `output::volume_transition_samples(host_rate_hz: u32) -> Option<u32>` | N = 0.02 × host rate for a supported rate (120, 160, 320, 882, 960, 1764, 1920); `None` for an unsupported rate. `const fn`. |
+| `output::VOLUME_TRANSITION_MS: u32 = 20` | The length of a volume transition in milliseconds (A-045; FR-002). The same at every supported host rate. A read-only constant, allowed by FR-011; not listed in the manifest's controls note. |
+| `output::volume_transition_samples(host_rate_hz: u32) -> Option<u32>` | N = host rate × 20 ÷ 1000 in integers for a supported rate (120, 160, 320, 882, 960, 1764, 1920; a const assertion that every supported rate is a multiple of 50); `None` for an unsupported rate. `const fn`. |
 
 No settings field, no new error, no new `Tap`, no change to `Settings`, `OutputSettings` or their presets (FR-011).
 

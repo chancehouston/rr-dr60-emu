@@ -4,7 +4,7 @@
 |---|---|
 | `RrDr60Settings` | **Unchanged**: 112 bytes, alignment 8, every offset as in 0.10 (FR-011); the existing layout assertions unchanged. |
 | `RR_DR60_VERSION_MINOR` | 11 (`RR_DR60_VERSION_MAJOR` 0, `RR_DR60_VERSION_PATCH` 0). |
-| `RR_DR60_VOLUME_TRANSITION_MS` | New define, `20` (A-045): the length of a volume transition in milliseconds. From the literal Rust const, so cbindgen emits it. |
+| `RR_DR60_VOLUME_TRANSITION_MS` | New define, `20` (A-045): the length of a volume transition in milliseconds. From the literal Rust const, so cbindgen emits it; a unit test pins it to `rr_dr60::output::VOLUME_TRANSITION_MS`, as `RR_DR60_VOLUME_REFERENCE` is pinned. Allowed by FR-011 (a constant is not a setting). |
 | `rr_dr60_set_volume` | Unchanged signature and statuses; the comment describes the 20 ms transition, the start-at-once rules and the read-back rule (as the Rust contract). |
 | `rr_dr60_get_volume` | Unchanged; returns the last valid setting. |
 | statuses | none new. |

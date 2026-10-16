@@ -49,21 +49,27 @@ def linear(u):
 
 
 def n_of(rate):
-    n = round(LENGTH_S * rate)
-    assert n == LENGTH_S * rate, rate  # an integer at every supported rate (FR-002)
-    return n
+    assert rate % 50 == 0, rate  # 20 ms is a whole number of samples at every supported rate
+    return rate * 20 // 1000  # FR-002, integer arithmetic as the core
 
 
 def gains(law, shape, p_s, p_t, n):
-    """The transition's gains at k = 1 ... n, held within the two ends and monotonic
-    (research R-01's running bound), the last one the target scalar exactly."""
-    k = np.arange(1, n + 1, dtype=np.float64)
-    p = p_s + (p_t - p_s) * shape(k / n)
-    g = law(p)
-    lo, hi = sorted((law(p_s), law(p_t)))
-    g = np.clip(g, lo, hi)
-    g[-1] = law(p_t)
-    return g
+    """The transition's gains at k = 1 ... n as the core computes them: the law at the knob's
+    position, held within the two ends and against the previous sample (research R-03's range
+    and running hold), the last one the target scalar exactly."""
+    g_s, g_t = law(p_s), law(p_t)
+    up = g_t > g_s
+    out = np.empty(n)
+    prev = g_s
+    for k in range(1, n + 1):
+        if k == n:
+            g = g_t
+        else:
+            g = law(p_s + (p_t - p_s) * shape(k * (1.0 / n)))
+            g = min(max(g, prev), g_t) if up else max(min(g, prev), g_t)
+        out[k - 1] = g
+        prev = g
+    return out
 
 
 def raw_excursions(law, shape, p_s, p_t, n):
@@ -106,11 +112,12 @@ def click_reduction(rate, law, shape, p_s, p_t):
 
 
 def drag(rate, law, shape):
-    """Ten updates 1/60 s apart from 0.1 to 1 (US1 AS8); each update restarts a transition from
-    the knob's current position. Returns the reduction against the stepped drag, the largest
-    per-sample increment, and whether the gain is monotonic."""
+    """Ten updates G = 16 round(rate / 960) samples apart (16.0 - 17.0 ms, on 16-sample block
+    boundaries) from 0.1 to 1 (US1 AS8, the golden's `ramp_drag`); each update restarts a
+    transition from the knob's current position. Returns the reduction against the stepped
+    drag and whether the gain is monotonic."""
     n = n_of(rate)
-    gap = round(rate / 60.0)
+    gap = 16 * round(rate / 960.0)
     win = round(0.5 * rate)
     targets = [0.1 + 0.09 * j for j in range(1, 11)]
     pad = win
@@ -159,7 +166,7 @@ def main():
             lin = click_reduction(rate, law, linear, 0.1, 1.0)
             print(f"{rate:>6} {route:>9} {up:7.2f} {down:7.2f} {lin:7.2f}")
             ok &= min(up, down) >= 30.0  # FR-004's floor
-    print("\nUS1 AS8 drag (ten 1/60 s updates 0.1 -> 1), reduction against the stepped drag (dB):")
+    print("\nUS1 AS8 drag (ten updates 16 round(rate/960) samples apart, 0.1 -> 1), reduction against the stepped drag (dB):")
     for rate in RATES:
         row = []
         for route, law in LAWS.items():
@@ -185,11 +192,44 @@ def main():
     print(f"  pairs with a sample outside the ends' range: {pairs} of {7 * 2 * 420} ({outside} samples)")
     print(f"  reversals: {reversals} (the range bound alone keeps the sequence monotonic)")
     ok &= reversals == 0
-    print("\nN_OUT / N (the drain completes a transition, FR-005):")
+    print("\nSC-003 retarget (0.1 -> 1, then -> 0.4 after floor(N/2) samples): largest per-sample")
+    print("increment of the second transition vs the larger of the two transitions' own largest (speaker law):")
+    for rate in RATES:
+        n = n_of(rate)
+        half = (n // 2) // 16 * 16
+        g1 = gains(g_spk, smoothstep, 0.1, 1.0, n)
+        k = np.arange(1, half + 1, dtype=np.float64)
+        knob_at = 0.1 + 0.9 * smoothstep(half * (1.0 / n))
+        g2 = gains(g_spk, smoothstep, knob_at, 0.4, n)
+        seq = np.concatenate(([g_spk(0.1)], g1[:half], g2))
+        inc_retarget = np.abs(np.diff(seq[half:])).max()
+        own = max(np.abs(np.diff(np.concatenate(([g_spk(0.1)], g1)))).max(),
+                  np.abs(np.diff(np.concatenate(([g_spk(knob_at)], g2)))).max())
+        print(f"  {rate:>6}: at the retarget {inc_retarget:.6g}, own largest {own:.6g}")
+        ok &= inc_retarget <= own
+    print("\nR-03 running hold: retargets to within 1e-12 of the knob (N = 1920, 600 cases each):")
+    rng = np.random.default_rng(11)
+    for scale in (1e-10, 1e-11, 1e-12):
+        rev_raw = 0
+        for _ in range(600):
+            pt = float(np.float32(rng.uniform(0.05, 0.95)))  # a host position (f32)
+            ps = pt + rng.uniform(-1, 1) * scale  # the moving knob, an f64 near it
+            if pt == ps:
+                continue
+            k = np.arange(1, 1921, dtype=np.float64)
+            g = g_spk(ps + (pt - ps) * smoothstep(k * (1.0 / 1920)))
+            g = np.clip(g, *sorted((g_spk(ps), g_spk(pt))))
+            d = np.diff(np.concatenate(([g_spk(ps)], g))) * (1.0 if pt > ps else -1.0)
+            rev_raw += bool((d < 0).any())
+            gh = gains(g_spk, smoothstep, ps, pt, 1920)
+            dh = np.diff(np.concatenate(([g_spk(ps)], gh))) * (1.0 if pt > ps else -1.0)
+            ok &= not (dh < 0).any()
+        print(f"  |to - from| ~ {scale:g}: range hold alone reverses in {rev_raw} of 600; with the running hold 0")
+    print("\nN_OUT / N (the output chain's share of the drain exceeds a transition, FR-005):")
     n_out = [346, 461, 922, 2539, 2764, 5078, 5527]
     ratios = [o / n_of(r) for o, r in zip(n_out, RATES)]
     print("  " + ", ".join(f"{r}: {q:.4f}" for r, q in zip(RATES, ratios)))
-    ok &= min(ratios) > 2.87
+    ok &= all(100 * o > 287 * n_of(r) for o, r in zip(n_out, RATES))
     if check:
         print("\ncheck:", "PASS" if ok else "FAIL")
         sys.exit(0 if ok else 1)
