@@ -133,7 +133,7 @@ The figure against 0.10 for the worst case is the product of the two ratios (the
 
 Configurations: `stage11_only_speaker` (−30 dBFS 1 kHz tone), `stage11_only_earphone` (0 dBFS), `default_output` and `default_earphone` (the one-pass default engine, a voiced −20 dBFS stimulus). 1 s per entry, 16-sample blocks (so the drag's interval stays near 16.7 ms at 6 kHz, where a 64-sample block is 10.7 ms). Blessed once, last, after the post-implementation hardware review (`RR_DR60_BLESS=volume_ramp`); at bless time the generator asserts the splice identity (R-05 (a)) for the stage-11-only entries. Added wherever the six other golden tests run (`ci.yml`, `scripts/ios-device-golden.sh`).
 
-**C parity.** `ffi_parity` gains a case at the seven rates: a recorded tone played back through C and Rust with the position changed mid-playback (0.1 → 1 → 0.4 at fixed blocks), bit-identical; `smoke.c` gains one mid-playback change on the speaker route with a pinned hash (`SMOKE_SPEAKER_RAMP_HASH`).
+**C parity.** `ffi_parity` gains a case at the seven rates: a recorded tone played back through C and Rust with the position changed mid-playback (0.1 → 1 → 0.4 at fixed blocks), bit-identical; `smoke.c` gains one mid-playback change on the speaker route with a pinned hash (`RR_DR60_SMOKE_SPEAKER_RAMP_HASH`, a hand-copied `#define` like the existing ones, pinned on the Rust side by `smoke_reference.rs` and `ffi_parity`).
 
 ## R-10 Records
 
