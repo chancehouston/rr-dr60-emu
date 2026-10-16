@@ -7,11 +7,10 @@ use rr_dr60_harness::golden;
 use sha2::{Digest, Sha256};
 
 /// SHA-256 of `golden/golden-volume-ramp-v1.json` as blessed once by spec 011 (T042, after the
-/// post-implementation reviews). Until the bless the committed file is an empty placeholder
-/// and this test is red by design (the gate before the bless skips it). The golden window then
-/// closes for the feature: a moved hash is a defect, never a re-bless; a later change to the
+/// post-implementation reviews). The golden window is closed for the feature: a moved hash is a defect, never a re-bless; a later change to the
 /// transition is a model change with a CHANGELOG entry (FR-012).
-const GOLDEN_VOLUME_RAMP_V1_SHA256: &str = "placeholder until the 011 T042 bless";
+const GOLDEN_VOLUME_RAMP_V1_SHA256: &str =
+    "d5657f0e37fe46872a3cec883a5e706e0a5d063f04aa2a8f9d96b110cf5d18e4"; // blessed 2026-10-16 (011 T042)
 
 #[test]
 fn golden_volume_ramp_v1_unchanged() {
