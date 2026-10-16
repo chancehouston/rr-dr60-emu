@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-16
 
-**Status**: Draft
+**Status**: Draft (spec reviews applied)
 
 **Input**: User description: "Feature 012: model signal-chain stages 1 and 2, the microphone capsule and the microphone amplifier, ahead of the record-path limiter. Today the engine's input is treated as the mic-amp output (A-036), so nothing models what happens between the sound at the microphone and the codec's input: the capsule's frequency response and self-noise, the amplifier's gain, its coupling high-pass corners (dominant ≈ 72 Hz, first order) and ≈ 13 kHz roll-off, its noise floor (the "hiss" floor), and its clipping on very loud sounds before the limiter can act. Evidence: S-002, A-005, A-006, A-029, A-030, A-036. The user wants the record path to start at the sound reaching the microphone. Each new stage must be independently bypassable and testable, deterministic (seeded noise), real-time safe, traceable to a source or a registered assumption, and every pre-012 configuration must stay bit-identical with the new stages bypassed (the earlier golden files unmoved). Out of scope: noise reduction (stage 6, to be researched deeper), clock and power (stages 14–15, to be researched deeper), handling noise and wind."
 
@@ -12,124 +12,234 @@
 
 ### What the record path lacks today
 
-The record path today starts at the limiter (stage 3). The engine treats its input as the **mic amplifier's output** at a fixed gain: 0 dBFS is the level that reaches the codec's full scale ([A-029](../../docs/hardware/assumptions.md), [A-030](../../docs/hardware/assumptions.md), [A-036](../../docs/hardware/assumptions.md)). So nothing models what happens between the sound arriving at the microphone and that point:
+The record path today starts at the limiter (stage 3), and the engine treats its input as the **mic amplifier's output** at a fixed gain: 0 dBFS is the level that reaches the codec's full scale ([A-029](../../docs/hardware/assumptions.md), [A-030](../../docs/hardware/assumptions.md), [A-036](../../docs/hardware/assumptions.md)). Nothing models what happens between the sound arriving at the microphone and that point:
 
-- **the hiss floor:** the electret capsule's self-noise, which every recording of a quiet room carries;
-- **the band edges:** the amplifier's coupling high-pass, dominated by a first-order corner near 72 Hz, and the roll-off near 13 kHz;
-- **clipping:** the amplifier clips on very loud sounds before the limiter can act on them.
+- **The hiss floor.** The electret capsule's self-noise, which every recording of a quiet room carries.
+- **The band.** How the amplifier shapes the sound.
+- **Clipping.** The amplifier clips very loud sounds before the limiter can act on them.
 
 The stage manifest lists stages 1 and 2 as not modeled.
+
+### A finding from the spec review
+
+The spec review re-read the service manual's schematic (S-002, sheet 3.1) at full resolution and corrected the circuit summary in the registers. The microphone amplifier is a **two-stage transimpedance amplifier**:
+
+- Q1 and Q3 form a differential pair.
+- Q3 drives the PNP Q2 as a second stage, with R6 (100 kΩ) as its load.
+- The output feeds back to Q1's base through R3 (100 kΩ).
+
+The capsule's signal current reaches that feedback node through C1 (0.15 µF), and part of it is lost into the capsule's 1 kΩ bias resistor R2. That makes a **first-order high-pass near 0.85 kHz** (estimated 0.65–1.05 kHz), inside the device's band. Relative to 1 kHz, it cuts 300 Hz by about 7–8 dB and lifts 2.5 kHz by about 2 dB.
+
+The registers had listed C1 as a 10–15 Hz corner (A-029), which this re-read corrects. The coupling corner after the amplifier is a **single** first-order corner near 76 Hz: C4, R7, C5 and R10 form one series loop while the limiter is idle, and the 7 Hz "minor corner" does not exist. Both of the corners the feature description named (72 Hz and 13 kHz) are inaudible in the device's 225–2550 Hz band. The input high-pass is not.
 
 ### What this feature adds
 
 This feature adds both stages to the record path, ahead of the limiter, so the record path starts at the sound reaching the microphone:
 
-- **Stage 1, the microphone capsule:** the two-terminal electret RJM0016 ([S-002](../../docs/hardware/sources.md), A-005), contributing its self-noise and its response.
-- **Stage 2, the microphone amplifier:**
-  - the discrete differential-pair amplifier (S-002, [A-006](../../docs/hardware/assumptions.md));
-  - its coupling corners and the codec input amplifier's roll-off (A-029);
-  - its asymmetric clipping at its supply rails (A-029, as refined by spec 005).
+- **Stage 1, the microphone capsule.** The two-terminal electret RJM0016 ([S-002](../../docs/hardware/sources.md), A-005) contributes its **self-noise, the hiss**:
+  - deterministic Gaussian noise from the engine's seed;
+  - its own stream for each recording;
+  - a level offset setting;
+  - a flat response, because nothing is known about the capsule's own response.
+- **Stage 2, the microphone amplifier**, in the device's order:
+  1. the input coupling high-pass near 0.85 kHz;
+  2. the amplifier's gain, normalized to unity at 1 kHz;
+  3. its asymmetric soft clipping at its supply rails, with negative samples clipping first;
+  4. the output coupling near 76 Hz;
+  5. the codec input amplifier's roll-off near 13 kHz.
 
 ### How it fits the existing record path
 
-- **Order.** The two stages run in the device's order: capsule, then amplifier, then the existing limiter (whose attenuator sits after the amplifier on the schematic), then everything that follows today.
-- **Limiter interaction.** The hiss passes through the limiter like any other sound, so a loud sound that the limiter pulls down pulls the hiss down with it.
-- **Bypass.** Each stage can be bypassed on its own. With both bypassed, every tap is bit-identical to version 0.11 and every earlier golden file is unmoved.
+- **Order.** The record path becomes capsule → amplifier → the existing limiter → everything that follows today.
+- **Limiter interaction.** The hiss passes through the limiter like any other sound. After a loud sound the limiter pulls the hiss down, and the hiss recovers as the limiter releases.
+- **Bypass.** Each stage can be bypassed on its own. With both bypassed, every observation point is bit-identical to version 0.11, and every earlier golden file is unmoved.
+- **Default output.** Both stages are on by default, so the library's default output changes, and the CHANGELOG records it as an output change.
 
 ### Evidence
 
-The evidence is circuit-level, not a measurement. Known from the service manual: the parts, the topology and the resistor and capacitor values. **Not known:**
+The evidence is circuit-level, not a measurement. Known from the service manual: the parts, the topology, the resistor and capacitor values and the DC voltages. **Not known:**
 
 - the capsule's sensitivity, self-noise and response (A-005: low confidence);
-- the amplifier's gain, which is the least certain number in the chain: A-029 records the sound level that reaches full scale as **80–100 dB SPL**.
+- the amplifier's open-loop gain, which places the input corner;
+- the absolute gain, which places full scale between 80 and 100 dB SPL (A-029).
 
-So the hiss floor and the clip points are **modeled on** the circuit with typical part figures. They are documented as such, and they can be refined when a level-calibrated capture from a real unit arrives.
+So the input corner, the hiss and the clip points are **modeled on** the circuit with typical part figures, printed by a design script and registered. They can be refined when a capture from a real unit arrives.
 
 ## Clarifications
 
 ### Session 2026-10-16 (specify)
 
-- Q: What does the engine's input level mean once a microphone sits in front of it? → A: **Today's reference is kept** (the user's choice, option A): 0 dBFS at the input still reaches the codec's full scale, and the new stages add no gain at 1 kHz. The amplifier's uncertain absolute gain enters the engine only as documentation: the README and the registers state that full scale corresponds to **80–100 dB SPL at the microphone** (A-029, low confidence). App makers scale their own microphone input. The user asked that the hardware reviewer be consulted on this choice at the next review.
-- Q: Is the capsule's hiss on by default, and at what level? → A: **On by default at the middle estimate** (the user's choice, option A): a capsule self-noise of 25–30 dB SPL against a full scale of 80–100 dB SPL puts the hiss between about −75 and −50 dBFS; the default is the middle, **about −62 dBFS in the 300–3000 Hz band** (the exact figure fixed by the plan's design script and registered as an assumption). It has its own switch and no level setting. The margin between the hiss's peaks and the voice-activation thresholds is reported, and voice activation stays paused in silence at all five sensitivity levels. The user asked that the hardware reviewer be consulted on this choice at the next review.
+- Q: What does the engine's input level mean once a microphone sits in front of it? → A: **Today's reference is kept** (the user's choice, option A):
+  - 0 dBFS at the input still reaches the codec's full scale **at 1 kHz**, and the new stages are normalized to unity gain at 1 kHz.
+  - The amplifier's uncertain absolute gain enters the engine only as documentation: full scale corresponds to **about 90 dB SPL at the microphone at 1 kHz (80–100, low confidence)**, A-029.
+  - App makers scale their own microphone input; the README gives the arithmetic.
+  - The hardware reviewer, consulted at the user's request, recommends keeping it: the gain is the least certain number in the chain; an SPL-calibrated input would bake that guess into every limiter, voice-activation and codec figure; and an opt-in "SPL at full scale" setting is only an input gain that can be added later without breaking anything.
+- Q: Is the capsule's hiss on by default, and at what level? → A: **On by default at the middle estimate** (the user's choice, option A), about −62 dBFS in the 300–3000 Hz band.
+  - The hardware reviewer, consulted at the user's request, recommends keeping it on, and found that the first derivation had two errors that cancel. Corrected:
+    - small electret capsules of the period specify 32–36 dB SPL(A) of self-noise (S/N 58–62 dB at 94 dB SPL), not 25–30;
+    - the 300–3000 Hz band level is about 6 dB below the A-weighted wideband level;
+    - so 34 dB SPL(A) − 6 dB against a full scale of 90 dB SPL gives **about −62 dBFS (RMS, AES17: a full-scale sine reads 0 dBFS) in the 300–3000 Hz band at stage 2's output**.
+  - The credible range is about **−80 to −48 dBFS**.
+  - The exact figure, its 1 kHz third-octave level and its derivation are printed by the design script and registered.
+
+### Session 2026-10-16 (spec review: the hardware reviewer's D1–D15 and the coach's C1–C17)
+
+The user's answers to the reviewers' questions:
+
+- **The input high-pass (D1).** It is **modeled and on by default** as part of stage 2. It is confirmed by a stated circuit model in the plan's design script first, and registered (medium confidence that it exists, low confidence in the value, 0.65–1.05 kHz).
+- **A hiss level offset (D3, D15).** **Added**, contrary to the specify choice of "no level setting": a bounded offset in dB, **−18 to +12 dB, default 0**.
+  - It absorbs a future capture as a default change rather than a model change.
+  - It lets a host whose own microphone already carries a floor turn the hiss down rather than off.
+  - Above about +9 dB the voice activation stops pausing in a silent room at sensitivity level 5 (documented).
+- **The hiss per recording (D9; the coach's C-question 4).** **Each recording has its own deterministic stream**, derived from the seed and a recording counter.
+  - The counter starts at 0 at construction, reset and reconfigure, and advances by one at each recording start.
+  - This is the hardware reviewer's recommendation. The coach recommended a shared stream, but two recordings of a silent room would then be bit-identical, and with the default seed every app's recordings would carry the same noise.
+
+Taken at the reviewers' defaults:
+
+- **The order inside stage 2 and the bound after it (C1, D2).** The clipper sits between the input high-pass and the output coupling, as on the device.
+  - The clipper's own output never exceeds its limits.
+  - After stage 2 the output can exceed them, because the output coupling recentres an asymmetric clip, as it does on the device, and settles in about 2 ms.
+  - The bound after stage 2 is |y| ≤ L₊ + L₋: the coupling is 1 − LP with a non-negative low-pass impulse response of unity DC gain. That is about +19 dBFS, so the limiter's attenuation range is still never exceeded.
+- **Where the output coupling and the 13 kHz roll-off sit (C1, D5).** Physically they lie after the limiter's attenuator: C5 and R10, and C10 across R15 in the codec input amplifier. They are lumped ahead of the limiter as linear filters moved past a slowly varying gain, registered. The limiter's detector senses after them on the device as well. Not modeled: the corner's shift while the limiter's shunt conducts (C5 and R10 alone, 159 Hz).
+- **One switch for stage 1 (C12).** With the capsule's response flat, stage 1 consists of the hiss. Stage 1 on means hiss on; the offset sets its level. A second switch is added only when capsule data gives the response real content.
+- **Clipper aliasing (C5, D8).** At the 6, 8 and 16 kHz host rates a clipped tone's harmonics fold back. This is documented, not modeled away. Harmonic levels are asserted at 44.1–96 kHz and reported, with the alias level, at the lower rates. The README recommends a host rate of at least 16 kHz for loud material.
+- **Latency (D7; the coach's C14).** The new stages report **no latency**, as the output chain does (spec 009: minimum-phase filters, group delay reported, not added). Every existing latency figure and the one-pass coordinates are unchanged. Stage 2's 1 kHz group delay (about 0.1 ms) is reported per rate.
+
+  The hardware reviewer preferred adding the group delay to the latency. The coach's form and spec 009's precedent were taken: the delay is a fraction of a millisecond, and adding it would move every documented latency figure.
+- **The hiss's distribution (D10).** Gaussian to at least ±5σ, from a generator whose period exceeds the longest recording, seeded so that seed 0 does not degenerate. The stream is specific to this stage, so any later noise source leaves it unchanged.
+- **The clip points (D6, C10).** Stated in dBFS at the engine input at 1 kHz, independent of the limiter's knee setting, and derived from S-002's DC voltages:
+  - **negative samples clip first, at about +7 dBFS** (+5 … +9): Q1 saturates;
+  - **positive samples at about +16.5 dBFS** (+16 … +17.5): Q2 saturates.
+
+  The negative polarity is the one the limiter does not sense (A-036). The onset is soft.
+- **Applied as written:** C2, C3, C4, C6–C9, C11, C13, C15–C17 and D4, D5, D11–D14.
 
 ## User Scenarios & Testing *(mandatory)*
 
-### User Story 1 - A quiet room sounds like the device's microphone (Priority: P1)
+"Documented" figures in this spec are printed by the feature's design script and registered as assumptions. Tests pin to the script's print, never to the engine's own output.
 
-An app maker records a quiet room, or a soft voice in one, through the emulated recorder. Today the engine's own hiss floor is absent: a silent input gives a near-silent recording, and the only noise comes from the codec. With this feature the recording carries the device's microphone hiss, a steady broadband floor at a documented level. The capsule's response and the amplifier's band shape both the hiss and the sound: very low rumble is reduced below about 72 Hz, and content above about 13 kHz is rolled off before the limiter sees it.
+### User Story 1 - The device's microphone sound: its band and its hiss (Priority: P1)
 
-**Why this priority**: The hiss floor is the most audible property of a small 1990s recorder's microphone path in quiet conditions. It is also where this device's recordings are listened to most closely, so it is the core of the feature.
+An app maker records through the emulated recorder. The sound now passes the device's microphone path:
+
+- **Low end.** The input high-pass thins it below about 1 kHz: 300 Hz sits about 7–8 dB below 1 kHz.
+- **High end.** It is lifted slightly toward 2.5 kHz.
+- **Very low rumble.** Removed below about 76 Hz.
+- **Above 13 kHz.** Rolled off before the limiter sees it.
+- **Quiet passages** carry the capsule's hiss, a steady broadband floor at a documented level, shaped by the same band.
+
+**Why this priority**: The band and the hiss are the most audible properties of the microphone path. The band changes every recording, and the hiss is what a quiet room sounds like on the device. Together they are the core of the feature.
 
 **Independent Test**: With every later stage bypassed, read the signal after stage 2 at each host rate:
-- feed silence and measure the hiss floor's level and spectrum;
-- feed tones and an impulse and measure the band edges.
+- feed an impulse and tones with the hiss off for the band;
+- feed silence with the hiss on for the floor.
 
 No other stage is needed.
 
 **Acceptance Scenarios**:
 
-1. **Given** the default configuration with stage 1's hiss on, **When** silence is processed at any supported host rate, **Then** the signal after stage 2 is a steady broadband noise:
-   - its level in the speech band (300–3000 Hz) equals the documented hiss level within ±0.5 dB, measured over at least 10 s;
-   - its spectrum within the band follows the documented shape within ±1 dB per third-octave band;
-   - the in-band level is the same at every host rate within ±0.5 dB.
-2. **Given** stage 1's hiss off and stage 2 on, **When** tones from 20 Hz to the host rate's band edge are processed, **Then** the response after stage 2:
-   - is unity (0 dB ± 0.1 dB) at 1 kHz;
-   - has a first-order high-pass corner at the documented frequency (72 Hz nominal) within ±5 %, together with the documented minor corners;
-   - rolls off at the documented frequency (13 kHz nominal) within ±5 % at the host rates whose band reaches it.
+1. **Given** stage 1 off and stage 2 on, **When** an impulse is processed, **Then** the magnitude response after stage 2:
+   - matches the documented analog prototype (the circuit model's three first-order corners, normalized to 0 dB at 1 kHz) within ±0.1 dB;
+   - holds that tolerance at every third-octave centre from 20 Hz to the lower of 20 kHz and 0.45 × the host rate, wherever the prototype is above −40 dB;
+   - holds at every host rate.
 
-   **Unity at 1 kHz** means the new stages add no gain at mid-band: the level an input reaches the limiter with is unchanged (Clarifications, Q1).
-3. **Given** the same seed and the same input, **When** a recording is made twice, on any platform, in any block partition, **Then** the output is bit-identical. **Given** two different seeds, **Then** the two hiss sequences differ.
-4. **Given** the hiss on, **When** silence or a quiet room is recorded with voice activation on, **Then** the hiss alone does not open voice activation at sensitivity levels 1–5: its peak level stays below the lowest threshold (−46 dBFS at level 5, A-022) by a documented margin.
-5. **Given** the hiss on, **When** the full default engine records silence, **Then** the decoded playback carries the hiss as the speech codec reproduces it. The level is reported per host rate. It is not asserted against the hiss level, because the codec reshapes noise.
-6. **Given** a loud sound that the limiter pulls down by several dB, **When** it is followed by silence, **Then** the hiss after the limiter is pulled down by the same gain and recovers as the limiter releases. The hiss sits ahead of the limiter, as on the device.
+   The prototype's −3 dB frequencies are reported per rate. Each corner is also checked on its own coefficients in unit tests. At the host rates whose band ends below 13 kHz, the roll-off's in-band effect is part of the matched prototype.
+2. **Given** stage 1 on at offset 0 and silence in, **When** at least 10 s are processed at any host rate, **Then** the hiss after stage 2:
+   - has a level in the 300–3000 Hz band (RMS, AES17) equal to the documented figure (about −62 dBFS) within ±0.5 dB;
+   - has third-octave levels at the centres 315–2500 Hz each within ±1 dB of the documented shape (the white source through the band of AS1).
+3. **Given** a hiss level offset of x dB within −18 … +12, **When** silence is processed, **Then** the hiss level is the default figure + x dB within ±0.5 dB. An offset outside the range is refused with the existing invalid-setting status.
+4. **Given** the same seed, the same recording counter and the same input, **When** processed twice, on any platform and in any block partition, **Then** the output is bit-identical. Two seeds give hiss streams whose normalized cross-correlation over 10 s is below 0.01. So do two consecutive recordings of one engine.
+5. **Given** the hiss on, **When** 10 s at 48 kHz are examined after stage 1, **Then**:
+   - the count of samples beyond ±4σ is within ±30 % of the Gaussian expectation;
+   - the documented generator's period exceeds the longest recording at 96 kHz (3.5 × 10⁸ samples);
+   - in a release-only check, every 10 s window of a 60-minute hiss is within ±0.5 dB of the figure.
 
 ---
 
 ### User Story 2 - Very loud sounds overload the microphone amplifier (Priority: P2)
 
-A sound loud enough to drive the amplifier past its supply rails clips there, before the limiter can act. One polarity reaches its rail before the other, because the amplifier's output swing is asymmetric about its bias point (A-029). The clipping is soft at its onset and hard at the rail, and it adds the harmonic distortion a real overload produces, which the limiter alone cannot.
+A sound loud enough to drive the amplifier to its supply rails clips there, before the limiter can act:
 
-**Why this priority**: Overload is the second audible behavior of the microphone path. It also bounds what reaches the limiter: today the limiter's attenuation range can, in principle, be exceeded by an input far above anything the device could see. It matters less than the hiss because it applies only to very loud input.
+- **Negative samples clip first,** about 7 dB above full scale (Q1 saturates).
+- **Positive samples clip about 16.5 dB above full scale** (Q2 saturates).
+- **The onset is soft** and the limit hard, adding the harmonic distortion of a real overload, including even harmonics from the asymmetry.
+- **The output coupling recentres** the clipped waveform and settles in about 2 ms afterwards, as on the device.
 
-**Independent Test**: With every later stage bypassed and the hiss off, read the signal after stage 2. Feed 1 kHz tones and steps at rising levels, and asymmetric test signals.
+**Why this priority**: Overload is the microphone path's second audible behavior. It also bounds what reaches the limiter. It matters less than the band and the hiss because it applies only to very loud input.
+
+**Independent Test**: With every later stage bypassed and the hiss off, read the clipper's own output (through a unit-level probe) and the signal after stage 2, feeding 1 kHz tones and steps at rising levels and asymmetric test signals.
 
 **Acceptance Scenarios**:
 
-1. **Given** a 1 kHz tone, **When** its level is raised step by step, **Then** the amplifier's output:
-   - follows the input within 0.1 dB up to the documented onset of clipping for each polarity;
-   - reaches the documented limit for each polarity and never exceeds it;
-   - has its first polarity's onset at the documented level, within A-029's range of 7–16 dB above the limiter's knee, the second polarity's onset at its own documented level, and each within ±0.5 dB of the documented figure.
-2. **Given** a tone 6 dB above the first clip onset, **When** it is processed, **Then** the total harmonic distortion after stage 2 is reported at each host rate, and the even harmonics (from the asymmetry) are present at a documented level within ±2 dB.
-3. **Given** any input, however large, **When** it passes stage 2, **Then** the signal the limiter receives is bounded by the amplifier's limits. The limiter's attenuation range is therefore never exceeded by any input.
-4. **Given** clipping in progress, **When** the input falls back below the onset, **Then** the output follows the input again from the next sample, with no recovery tail, unless the documented model includes one.
+1. **Given** a 1 kHz tone starting on a host-grid peak, **When** its level is raised step by step, **Then** the clipper's output:
+   - follows the linear path within 0.1 dB up to each polarity's onset;
+   - never exceeds that polarity's limit;
+   - has onsets and limits each within ±0.5 dB of the documented figures (about +7 dBFS negative, about +16.5 dBFS positive), whatever the limiter's knee setting.
+
+   The **onset** of a polarity is the 1 kHz input level at which that polarity's output peak falls 0.1 dB below the linear peak. The **limit** is the polarity's largest output for any input. Which polarity clips first is documented relative to the engine input's sign and A-036's sensed polarity.
+2. **Given** any input, including +40 dBFS tones, steps and non-sinusoidal signals, **When** it passes stage 2, **Then** no sample after stage 2 exceeds L₊ + L₋ (about +19 dBFS). The limiter's attenuation range is therefore never exceeded.
+3. **Given** a tone 6 dB above the first onset, **When** it is processed, **Then** the 2nd and 3rd harmonic levels after stage 2 are within ±2 dB of the documented figures at the host rates whose Nyquist frequency exceeds the 7th harmonic (44.1–96 kHz). At 6, 8 and 16 kHz they are reported with the level of the aliased products.
+4. **Given** clipping in progress, **When** the input falls back below the onset, **Then**:
+   - the clipper's output equals the linear path's from the next sample (the clipper is memoryless);
+   - the signal after stage 2 returns to within ±0.1 dB of the linear response within the output coupling's documented settling time (about 2 ms).
 
 ---
 
 ### User Story 3 - The microphone path in the whole engine (Priority: P2)
 
-An app maker uses the engine as before: record then play, or the one-pass call. The new stages are part of the record path. Each can be bypassed on its own, its output can be read on its own, and everything else keeps its contracts: record-then-play equals the one-pass, the engine is deterministic and allocation-free, reset and reconfigure return the stages to rest, and the cost stays within budget.
+An app maker uses the engine as before, recording then playing or using the one-pass call. The new stages are part of the record path:
 
-**Why this priority**: The stages must fit the engine's existing guarantees, or app makers cannot rely on them. These checks are the same kind every earlier stage passed.
+- each can be bypassed and observed on its own;
+- the hiss passes the limiter, the voice activation and the speech codec as the device's would;
+- every engine contract holds: record-then-play equals the one-pass, the engine is deterministic and allocation-free, and the cost stays within budget.
+
+**Why this priority**: The stages must fit the engine's existing guarantees, or app makers cannot rely on them. With the hiss on by default from P1, the bit-identity, equivalence, determinism and allocation checks (AS1–AS3, AS8) are checked at the P1 checkpoint as well.
 
 **Independent Test**: The existing whole-engine harnesses, run with the new stages on and off at the seven host rates: equivalence, determinism, allocation, mutation, timing and golden files.
 
 **Acceptance Scenarios**:
 
-1. **Given** both new stages bypassed, **When** any pre-012 configuration is processed, **Then** every tap is bit-identical to version 0.11, the earlier golden files and their guards are unmoved, and the C smoke loop's earlier hashes are unchanged.
-2. **Given** the new stages on, **When** an input is recorded then played, **Then** the result equals the one-pass output under the existing coordinates. The hiss of a recording depends only on the seed and the samples fed, not on whether the one-pass or the record path ran.
-3. **Given** a reset, a reconfigure, or the start of each recording, **When** processing resumes, **Then**:
-   - the new stages' filters start at rest;
-   - the hiss sequence restarts from the seed, so each recording's hiss is reproducible (A-037: no state carries between recordings).
-4. **Given** each new stage, **When** it alone is switched off, **Then** that stage passes its input through unchanged, and the other stage is unaffected. The hiss can be switched off without switching off stage 1's response.
-5. **Given** the new stages, **When** their outputs are requested as observation points, **Then** the signal after stage 1 and after stage 2 can each be read, with their latency reported.
-6. **Given** the new stages on, **When** the cost per host sample at 48 kHz is measured (codec bypassed, a solo release run, the fastest of nine alternating runs), **Then** it rises by at most the documented budget against version 0.11, on the development machine and on the CI runner.
-7. **Given** the new stages on, **When** the engine processes any block, **Then** it allocates nothing, and its per-sample work is bounded.
+1. **Given** both new stages bypassed, **When** any pre-012 configuration is processed (every earlier harness configuration, every earlier golden file's entries including their default entries, and the C smoke loop's earlier cases, all built on a 0.11-default configuration), **Then**:
+   - every observation point is bit-identical to version 0.11;
+   - the earlier golden files and their guards are unmoved;
+   - the earlier smoke hashes are unchanged.
+2. **Given** the new stages on, **When** the first recording after construction, reset or reconfigure is recorded and then played, **Then** it equals the one-pass output under the existing coordinates. Both use recording counter 0.
+   - The stop's flush and frame completion feed zero-valued input through stages 1–2, so the hiss continues through them exactly as through the one-pass's trailing zeros.
+   - Recording k carries the stream for counter k.
+3. **Given** a reset, a reconfigure, or the start of each recording, **When** processing resumes, **Then** the new stages' filters start at rest, and the hiss starts at the beginning of the stream for the current counter.
+   - A recording's hiss depends only on the seed, the counter, the host rate and the number of host samples processed since its start.
+   - A zero-length call processes none.
+4. **Given** each new stage, **When** it alone is switched off, **Then** it passes its input unchanged and the other stage is unaffected.
+5. **Given** the observation points after stage 1 and after stage 2, **When** selected, **Then** each can be read with latency 0.
+   - After stage 1 carries the input plus unshaped hiss.
+   - After stage 2 carries the shaped, clipped signal.
+   - No earlier observation point changes its meaning or its latency.
+6. **Given** the hiss on (offset 0) and silence in, **When** a seeded 60 s run is made at each sensitivity level and host rate with the voice activation on (drop mode), **Then**:
+   - the recording keeps exactly the hang time of device samples (A-025), pauses once and never resumes, asserted from the events;
+   - the report prints the RMS margin (threshold − hiss RMS at the voice-activation input, AES17) and the exceedance count;
+   - the documented margin at level 5 is at least 10 dB (about 16 dB at offset 0).
+
+   A 600 s run belongs to the release-only set. The offsets at which the gate stops pausing at levels 4 and 5 are reported.
+7. **Given** the default configuration with the voice activation bypassed, **When** 10 s of silence are recorded and played, **Then** the decoded hiss level relative to the input hiss is reported per host rate (not asserted: the speech codec reshapes noise). Spectral levels are computed at 8 kHz after resampling both sides (the spec 008 lesson). With the voice activation on (default), the recording holds the hang time of hiss plus the stop feed, and its length is reported.
+8. **Given** twin engines with the same seed, one with the limiter bypassed, **When** a loud 1 kHz burst above the knee is followed by silence, **Then** over the hiss-only segment the on/off sample ratio equals the limiter's gain sample by sample, so the hiss is pulled down and recovers with the limiter's release.
+9. **Given** the new stages on, **When** the cost per host sample at 48 kHz is measured, **Then**:
+   - **Conditions:** speaker route, codec bypassed, −20 dBFS noise, release build, timing tests one at a time, each side the fastest of nine alternating runs.
+   - **With both stages on,** it rises by at most 10 % against the 0.11 build.
+   - **With both stages bypassed,** it rises by at most 3 %.
+   - **Where:** asserted on the development machine; run once on the CI runner through the PR's `ab-timing` label before the merge and quoted.
+10. **Given** the new stages on, **When** the engine processes any block, **Then** it allocates nothing and its per-sample work is bounded.
 
 ---
 
 ### User Story 4 - The microphone path is documented and traceable (Priority: P3)
 
-A reader of the README, the stage manifest or the registers learns what stages 1 and 2 model, from which evidence, at what confidence, and what they do not model. Every figure the engine uses traces to a source or a registered assumption.
+A reader of the README, the stage manifest or the registers learns:
+- what stages 1 and 2 model, from which evidence and at what confidence;
+- what they do not model;
+- how to scale a microphone into the engine.
+
+Every figure the engine uses traces to a source or a registered assumption.
 
 **Why this priority**: The project's fidelity and claims policies require it, but it follows the behavior it documents.
 
@@ -137,103 +247,160 @@ A reader of the README, the stage manifest or the registers learns what stages 1
 
 **Acceptance Scenarios**:
 
-1. **Given** the stage manifest, **When** stages 1 and 2 are read, **Then** each is "assumed", cites its sources and assumptions, names what it does not model, and carries model version 0.12.0. The counts become 12 assumed and 3 not modeled.
+1. **Given** the stage manifest, **When** stages 1 and 2 are read, **Then** each:
+   - is "assumed" and carries model version 0.12.0;
+   - cites its sources and assumptions;
+   - names what it does not model.
+
+   The counts become 12 assumed and 3 not modeled.
 2. **Given** the README, **When** the microphone section is read, **Then** it states:
-   - the hiss level and how to switch it off;
-   - the band edges and the clip points;
-   - the input level reference and the SPL range it corresponds to;
+   - the input level reference (0 dBFS at 1 kHz = the codec's full scale ≈ 90 dB SPL, 80–100, low), with the host-gain arithmetic;
+   - the input high-pass and how it thins the sound;
+   - the hiss level, its offset and switch, and the advice to turn it down or off when the host's microphone already carries a floor at or above about −65 dBFS;
+   - that the default voice activation keeps only the hang time of hiss in a silent room, and the offsets at which it stops pausing;
+   - the clip points, and that loud material should use a host rate of at least 16 kHz;
    - that the figures are modeled on the circuit with typical part values, not measured.
-3. **Given** the assumption register, **When** A-005, A-006 and A-029 are read, **Then** they record what this feature adopted. Each new figure has its own registered assumption, with confidence and with how a capture from a real unit would check it. The hardware-evidence issue template lists those captures.
+3. **Given** the registers, **When** read, **Then** they record what this feature adopted and changed:
+   - **Corrected:** A-005, A-006 (topology), A-029 (the corners, the self-noise figure, the level anchor), A-022 (its noise placement re-derived), A-019 and A-028 (the detector no longer sees the host's DC), A-036 (the input is acoustic-referred; stages 1–2 non-inverting by convention; the first-clipping polarity), signal-chain rows 1–2, and the S-002 summary in the sources register (R6; R1 is the record lamp's resistor).
+   - **New assumptions, one per new figure:**
+     - the input high-pass;
+     - the output coupling and C4/C5's tolerance;
+     - the stage-2 lumping ahead of the limiter;
+     - the hiss anchor and shape;
+     - the hiss's distribution and per-recording streams;
+     - the amplifier's added noise and the unknown codec reference noise;
+     - the clip limits, softness and polarity.
+   - **Seed documentation.** The seed's documentation (Rust and C) no longer says the seed has no effect.
+   - **Issue template.** The hardware-evidence issue template lists the captures that would check each new figure.
 
 ### Edge Cases
 
-- **A silent input.** Today it gives exact zeros through the record path. With the hiss on, it gives the hiss. Checks of earlier features that rely on exact silence run with the hiss off, or with the stages bypassed.
-- **DC and very low frequencies in the input.** The amplifier's coupling corners block DC, so a DC offset in the host's input no longer reaches the limiter or the clamp; today it does. The step response of each corner is part of the documented response.
-- **Host rates whose band ends below 13 kHz** (6, 8 and 16 kHz). The roll-off lies above the band, so only its in-band effect is modeled. The response within each band follows the documented analog prototype within the stated tolerances.
-- **Input far above full scale** (for example +40 dBFS). The amplifier bounds it (US2 AS3). The output after stage 2 is the clipped waveform, and nothing downstream sees more.
-- **Non-finite input samples.** Handled as the engine handles them today at its first stage. The hiss generator's state is never affected by the input's values.
-- **Very long recordings** (60 minutes). The hiss neither repeats audibly within a recording (the noise sequence's period exceeds any recording) nor drifts in level.
-- **The sensitivity setting.** It does not reach stages 1–2: on the device it acts in the firmware after the codec (A-033). Changing it changes neither the hiss nor the clip points.
-- **The limiter's polarity rule.** A-036's sensed polarity (positive samples at the limiter's input) is unchanged: the new stages are non-inverting as modeled. The acoustic polarity of the capsule and the amplifier stays unknown and documented as such.
-- **Both new stages on, the hiss on, and the limiter bypassed.** The hiss still reaches the codec input filter and the clamp. Nothing assumes the limiter is present.
+- **A silent input.** Until now it gave exact zeros through the record path. With the hiss on it gives the hiss. Checks of earlier features that rely on exact silence run on the 0.11-default configuration (US3 AS1).
+- **DC and very low frequencies in the input.** The couplings block DC, so a DC offset in the host's input no longer reaches the limiter, the clamp or the voice activation (it did in 0.11). Each corner's step response is part of the documented response.
+- **Host rates whose band ends below 13 kHz** (6, 8 and 16 kHz). The roll-off lies above the band; its in-band effect is matched by the prototype rule (US1 AS1).
+- **Input far above full scale** (for example +40 dBFS). The clipper bounds it, and the output after stage 2 is bounded by L₊ + L₋ (US2 AS2).
+- **Non-finite or subnormal input samples.** They become 0.0 at the engine's input, as today, so such a sample carries the hiss alone. The hiss generator's state never depends on the input's values.
+- **Loud input, then silence, with the hiss off.** The stages' state reaches exactly zero with no subnormal output (spec 001's rule).
+- **The sensitivity setting.** It does not reach stages 1–2: on the device it acts in the firmware after the codec (A-033). It changes neither the hiss nor the band nor the clip points, but its threshold's margin to the hiss is reported (US3 AS6).
+- **The hiss offset at its top** (+12 dB, about −50 dBFS). Voice activation stops pausing in a silent room at levels 4–5. This is documented, not refused.
+- **A host microphone with its own floor.** Gaining up a phone microphone brings its self-noise and the room to a level comparable to the hiss. The README advises lowering the offset or switching stage 1 off.
+- **A reconfigure between recordings.** The recording counter returns to 0, so the next recording repeats the first one's hiss unless the seed changes. This is documented.
+- **Both new stages on, the hiss on, the limiter bypassed.** The hiss still reaches the codec input filter and the clamp. Nothing assumes the limiter is present.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
-- **FR-001: Order.** The record path MUST run the microphone capsule (stage 1), then the microphone amplifier (stage 2), then the existing limiter (stage 3) and the stages after it. Both the one-pass and the record path MUST include them.
-- **FR-002: Input level reference.** With the new stages on, 0 dBFS at the engine's input MUST still be the level that reaches the codec's full scale through unity mid-band gain (Clarifications, Q1). The README and the registers MUST state the sound level at the microphone that this corresponds to, as the range A-029 records (80–100 dB SPL), low confidence.
+- **FR-001: Order.** The record path MUST run stage 1 (the capsule), then stage 2 (the amplifier), then the existing limiter and the stages after it. Both the one-pass and the record path MUST include them.
+- **FR-002: Input level reference.** With the new stages on, 0 dBFS at the engine's input MUST be the 1 kHz level that reaches the codec's full scale: the stages are normalized to unity gain at 1 kHz. The README and the registers MUST state:
+  - that this corresponds to about 90 dB SPL at the microphone (80–100, low confidence, A-029);
+  - the arithmetic for a host's microphone gain;
+  - that the limiter's knee, the clip points and the voice-activation thresholds are input-referred one to one at 1 kHz only.
 - **FR-003: The hiss.**
-  - **Source.** Stage 1 MUST add a steady broadband noise representing the capsule's self-noise (the amplifier's own noise being negligible beside it, A-029).
-  - **Level and shape.** Its in-band level and its spectral shape MUST be documented figures, the same in the speech band at every host rate, generated from the engine's seed by a deterministic generator with no platform math function.
-  - **Default.** It MUST be on by default, at the middle of the estimated range: about −62 dBFS in the 300–3000 Hz band, the exact figure documented and registered (Clarifications, Q2). There is no level setting.
-  - **Switch.** The hiss MUST be switchable off independently of the rest of stage 1.
-- **FR-004: The capsule's response.** Stage 1 MUST apply the capsule's documented response. Without capsule data, the default is flat in the device band (A-005, low confidence), and the documented response states that.
-- **FR-005: The amplifier's band.** Stage 2 MUST apply:
-  - the coupling high-pass corners of A-029 (the dominant first-order corner near 72 Hz and the minor corners);
-  - the roll-off near 13 kHz;
-  - unity gain at 1 kHz under FR-002's reference.
+  - **Source.** Stage 1 MUST add Gaussian noise (to at least ±5σ) representing the capsule's self-noise.
+  - **Default level.** It MUST be documented as about −62 dBFS (RMS, AES17) in the 300–3000 Hz band at stage 2's output (Clarifications), together with its 1 kHz third-octave level, its derivation and its credible range (−80 … −48 dBFS).
+  - **Offset.** It MUST have a level offset of −18 to +12 dB, default 0. Values outside the range are refused with the existing invalid-setting status.
+  - **Generator.** It MUST be generated deterministically from the engine's seed and the recording counter (FR-009), with no platform math function. The stream MUST be specific to this stage, with a period exceeding the longest recording at 96 kHz, and seed 0 MUST NOT degenerate it.
+- **FR-004: The capsule's response.** Flat (a new assumption, low confidence). Stage 1 consists of the hiss until capsule data gives the response content.
+- **FR-005: The amplifier's band.** Stage 2 MUST apply three first-order corners, in the device's order around the clipper (FR-006):
+  - the **input coupling high-pass**: C1 into R2 and the amplifier's virtual ground, about 0.85 kHz (0.65–1.05);
+  - the **output coupling**: the series loop C4–R7–C5–R10 with the amplifier's output impedance, about 76 Hz (69–76);
+  - the **roll-off**: C10 across R15, about 13 kHz.
 
-  The corner frequencies MUST be computed from the S-002 component values and documented.
-- **FR-006: The amplifier's clipping.** Stage 2 MUST clip at the amplifier's documented limits, which are asymmetric (one polarity before the other), with a soft onset, within A-029's range of 7–16 dB above the limiter's knee for the first polarity. The output after stage 2 MUST never exceed either limit.
-- **FR-007: Bypass and switches.** Each new stage MUST be bypassable on its own. A bypassed stage passes its input unchanged. The hiss MUST have its own switch (FR-003).
-- **FR-008: Observation points.** The signal after stage 1 and after stage 2 MUST each be selectable as an output observation point, with its latency reported. No earlier observation point changes its meaning.
-- **FR-009: State and reproducibility.**
-  - The new stages' state MUST start at rest after construction, reset, reconfigure and the start of each recording.
-  - The hiss sequence MUST restart from the seed at those points.
-  - A recording's hiss MUST depend only on the seed and the number of samples processed since that restart.
-  - Record-then-play MUST equal the one-pass under the existing coordinates.
-- **FR-010: Bit-identity with the stages bypassed.** With both new stages bypassed, every observation point MUST be bit-identical to version 0.11 for every configuration, and the earlier golden files and their guards MUST stay unmoved.
+  It MUST normalize the gain to unity at 1 kHz. The corners MUST come from a stated circuit model of S-002's values and DC voltages, printed by the design script, the input corner cross-checked by a circuit simulation. The output coupling and the roll-off sit after the limiter's attenuator on the device; they MUST be documented as lumped ahead of it (a new assumption).
+- **FR-006: The amplifier's clipping.**
+  - **Placement.** Between the input high-pass and the output coupling, stage 2 MUST apply a memoryless clipper with a soft onset.
+  - **Limits.** Negative engine samples are limited first (onset about +7 dBFS, +5 … +9) and positive samples at about +16.5 dBFS (+16 … +17.5). These are dBFS at the engine input at 1 kHz, derived from S-002's DC voltages, independent of the limiter's knee setting.
+  - **Bounds.** The clipper's output MUST never exceed its limits, and the signal after stage 2 MUST never exceed L₊ + L₋.
+- **FR-007: Switches.** Each new stage MUST be bypassable on its own; a bypassed stage passes its input unchanged. Stage 1 on means the hiss is on, at the offset's level.
+- **FR-008: Observation points.** The signal after stage 1 and after stage 2 MUST each be selectable as an output observation point, with latency 0. No earlier observation point changes its meaning or its latency. Stage 2's 1 kHz group delay MUST be reported per host rate.
+- **FR-009: State, streams and equivalence.**
+  - **Rest.** The new stages' filters MUST start at rest after construction, reset, reconfigure and the start of each recording.
+  - **Counter.** A recording counter MUST start at 0 at construction, reset and reconfigure and advance by one at each recording start. Each recording's hiss MUST be the stream for (seed, counter), from its beginning. The one-pass MUST use the stream for counter 0 from construction, reset or reconfigure.
+  - **Dependence.** A recording's hiss MUST depend only on the seed, the counter, the host rate and the number of host samples processed since its start. A zero-length call processes none.
+  - **The stop.** The stop's flush and frame completion (spec 006 FR-005, spec 008 FR-013) MUST feed zero-valued input through stages 1–2; "silence" in the stop report means zero input, not zero output.
+  - **Equivalence.** The first recording after construction, reset or reconfigure MUST equal the one-pass under the existing coordinates.
+- **FR-010: Bit-identity with the stages bypassed.**
+  - With both new stages bypassed, every observation point MUST be bit-identical to version 0.11 for every configuration.
+  - Every pre-012 harness configuration, including the earlier golden files' default entries and the C smoke loop's earlier cases, MUST be built on a 0.11-default configuration and stay byte-identical.
+  - The library's default output changes (stages 1–2 on; a DC offset no longer passes), and the CHANGELOG MUST record it as an output change.
+  - Figures quoted for "the default engine" in the README and the registers MUST be restated or labelled "0.11 default".
 - **FR-011: Determinism, real-time safety and cost.**
-  - The new stages MUST be deterministic across platforms and block partitions and allocation-free per block, with bounded per-sample work.
-  - With both on, the cost per host sample at 48 kHz (codec bypassed) MUST rise by at most 10 % against version 0.11, measured as each side's fastest of nine alternating solo release runs. The figure is reported on the development machine and on the CI runner.
-- **FR-012: Host interfaces.** The new switches and observation points MUST be available to C callers as well as Rust callers. The version MUST be 0.12.0.
-- **FR-013: Records.** The README's microphone section, the stage manifest (stages 1–2: assumed, model version 0.12.0), the assumption register (A-005, A-006, A-029 updated; a new assumption for each new figure), the signal-chain table, the CHANGELOG and the hardware-evidence issue template MUST state the behavior, its figures, its evidence and its confidence. Every literal in the implementation MUST trace to a source or an assumption.
-- **FR-014: Golden file.** The feature MUST have its own golden file covering the new stages at the seven host rates, with the hiss on and off, blessed once after the reviews.
+  - The new stages MUST be deterministic across platforms and block partitions, allocation-free per block, and bounded in per-sample work.
+  - Cost is measured per host sample at 48 kHz: speaker route, codec bypassed, −20 dBFS noise, release build, timing tests one at a time, each side the fastest of nine alternating runs.
+  - It MUST rise by at most **10 %** against the 0.11 build with both stages on, and by at most **3 %** with both bypassed.
+  - Nanoseconds and ratios are reported. The figure is asserted on the development machine and run once on the CI runner through the PR's `ab-timing` label before the merge.
+- **FR-012: Host interfaces.** The new switches, the offset and the observation points MUST be available to C callers as well as Rust callers.
+  - **C structure.** The settings structure MUST grow from 112 bytes (8-byte aligned) with the new fields at recorded offsets and explicit reserved tails. 0.11's size is refused with the existing status.
+  - **Taps.** The new observation points take the next C tap values.
+  - **Stored form.** It is unchanged (version 2). Stages 1–2 precede the memory, so reconfiguring them needs no empty memory.
+  - **Version.** The version MUST be 0.12.0.
+- **FR-013: Records.** The README's microphone section, the stage manifest (stages 1–2: assumed, model version 0.12.0), the registers listed in US4 AS3, the signal-chain table, the CHANGELOG and the hardware-evidence issue template MUST state the behavior, its figures, its evidence and its confidence. Every literal in the implementation MUST trace to a source or an assumption.
+- **FR-014: Golden file.** The feature MUST have its own golden file:
+  - **Coverage:** the new stages at the seven host rates, with stage 1 on and off, on the default and the stages-only configurations;
+  - **Pinning:** the hiss sequences and the band pinned by hash;
+  - **Blessing:** blessed once, after the post-implementation reviews.
 
 ### Out of Scope
 
 - **Noise reduction** (stage 6): claimed by one secondary account only; to be researched before any model.
-- **The clock and the power supply** (stages 14–15): may not matter audibly; to be researched first.
-- **Handling noise, wind, and the capsule's own acoustic overload** at very high sound levels.
-- **Directivity:** the capsule is assumed omnidirectional.
-- **The case's acoustics** around the capsule.
-- **The microphone-sensitivity setting:** a firmware function after the codec, already covered by A-022 and A-033.
-- **Unit-to-unit variation** of the capsule and the transistors.
+- **The clock and the power supply** (stages 14–15): may not matter audibly; to be researched first. This includes any tones from the switching converter in the idle noise.
+- **Handling noise, wind, the capsule's acoustic overload** at very high sound levels, **directivity** (omnidirectional assumed) and the case's acoustics around the capsule.
+- **The amplifier's distortion below clipping** (about 0.3–1 % second harmonic at 0 dBFS from the low loop gain): inaudible after the codec.
+- **The output coupling's shift under limiting** (159 Hz while the limiter's shunt conducts).
+- **The codec's idle-channel noise** (A-030): not added; it lies below the hiss.
+- **The microphone-sensitivity setting** (A-022, A-033).
+- **Unit-to-unit variation** of the capsule, the capacitors (C4 and C5 vary by +80/−20 %) and the transistors. Ranges are documented; one value is modeled.
+- **An SPL-calibrated input setting**: it can be added later without a breaking change.
 
 ### Key Entities
 
-- **Microphone capsule (stage 1):** the electret element. Its response (flat by default) and its self-noise (the hiss), with a switch for the stage and a separate switch for the hiss.
-- **Microphone amplifier (stage 2):** the discrete amplifier and the coupling network up to the codec input. Its band (high-pass corners, 13 kHz roll-off), its unity mid-band gain under FR-002's reference, and its asymmetric clip limits, with a switch.
-- **Hiss sequence:** the deterministic noise derived from the engine's seed, restarted at the points in FR-009.
-- **Observation points:** after stage 1 and after stage 2.
-- **Level reference:** the statement of what an input level means, and the SPL range that reaches full scale (FR-002).
+- **Microphone capsule (stage 1):** the electret element. Its hiss, at a documented level plus an offset, with a switch; its response is flat.
+- **Microphone amplifier (stage 2):** the input high-pass, the gain normalized at 1 kHz, the asymmetric soft clipper, the output coupling and the roll-off, with a switch.
+- **Hiss stream:** deterministic Gaussian noise for (seed, recording counter), restarted at the points in FR-009.
+- **Recording counter:** counts recording starts since construction, reset or reconfigure.
+- **Observation points:** after stage 1 (input plus unshaped hiss) and after stage 2.
+- **Configurations:** the stages-only configuration (stages 1–2 on, everything later bypassed) and the 0.11-default configuration (stages 1–2 bypassed) on which every pre-012 configuration is built.
+- **Level reference:** 0 dBFS at 1 kHz is the codec's full scale, about 90 dB SPL (80–100, low).
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
-- **SC-001: The hiss.** At the seven host rates, its level in the 300–3000 Hz band after stage 2 is within ±0.5 dB of the documented figure, and its third-octave shape is within ±1 dB of the documented shape.
-- **SC-002: The band.** At the seven host rates, the response after stage 2 is 0 ± 0.1 dB at 1 kHz, and the documented corners are within ±5 % where each rate's band reaches them.
-- **SC-003: Clipping.** The clip onsets and limits are within ±0.5 dB of the documented figures for each polarity at every host rate. No sample after stage 2 exceeds a limit, for any input, including +40 dBFS and non-sinusoidal signals.
-- **SC-004: Bit-identity.** With both new stages bypassed, every earlier golden file and guard is unmoved, and every observation point of every pre-012 configuration is bit-identical to 0.11.
-- **SC-005: Determinism.** Same seed and input give bit-identical output on every supported platform and partition; different seeds give different hiss.
-- **SC-006: Cost.** At most +10 % per host sample at 48 kHz with both stages on (codec bypassed), on the development machine and the CI runner.
+- **SC-001: The hiss.** At the seven host rates and offset 0:
+  - its 300–3000 Hz level after stage 2 is within ±0.5 dB of the documented figure;
+  - its third-octave shape (315–2500 Hz) is within ±1 dB;
+  - each offset moves it by its value within ±0.5 dB.
+- **SC-002: The band.** At the seven host rates, the response after stage 2 matches the documented prototype within ±0.1 dB at every third-octave centre where the prototype is above −40 dB, up to the lower of 20 kHz and 0.45 × the rate.
+- **SC-003: Clipping.**
+  - The clipper's onsets and limits are within ±0.5 dB of the documented figures for each polarity.
+  - The clipper never exceeds its limits.
+  - The output after stage 2 never exceeds L₊ + L₋, for any input, including +40 dBFS and non-sinusoidal signals.
+- **SC-004: Bit-identity.** With both new stages bypassed, every earlier golden file and guard is unmoved and every observation point of every pre-012 configuration is bit-identical to 0.11.
+- **SC-005: Determinism.**
+  - Same seed, counter and input give bit-identical output on every supported platform and partition.
+  - Different seeds or counters give hiss streams correlated below 0.01.
+- **SC-006: Cost.** At most +10 % with both stages on and +3 % with both bypassed, per host sample at 48 kHz, under FR-011's conditions. Asserted on the development machine and quoted from the CI runner.
 - **SC-007: Records.**
   - The manifest counts 12 assumed and 3 not modeled.
   - Every new figure has a registered assumption.
-  - The README states the level reference and the SPL range, the hiss level and switch, the band and the clip points.
+  - The README states every item of US4 AS2.
   - Coverage stays at or above 80 % and within 1 point of 0.11.
+- **SC-008: Equivalence and streams.** At the seven host rates with stages 1–2 on:
+  - the first recording after construction, reset or reconfigure equals the one-pass bit for bit;
+  - two engines with the same seed carry bit-identical hiss in their k-th recordings.
+- **SC-009: The C surface.**
+  - The C structure's new size and offsets are asserted, and 0.11's size is refused.
+  - The new switches, the offset and the taps work from C.
+  - The C smoke loop's new cases match the Rust path's pinned hashes.
+- **SC-010: The voice-activation margin.** With the hiss at offset 0, voice activation pauses once and never resumes in a 60 s silent run at every sensitivity level and host rate, and the documented margin at level 5 is at least 10 dB.
 
 ## Assumptions
 
-- **Unity mid-band gain.** The new stages are designed to give unity gain at 1 kHz under FR-002's reference, so the levels at which the limiter, the clamp and voice activation act keep their present meaning. The amplifier's absolute gain is represented by the level reference, not by a gain applied to the input (Clarifications, Q1).
-- **The hiss's shape.** The capsule's self-noise is modeled as broadband noise shaped by the amplifier's band. An electret's self-noise is roughly flat in the speech band. The low-frequency rise of real electret noise is largely removed by the 72 Hz corner.
-- **The amplifier's own noise** is negligible beside the capsule's (A-029) and is not modeled separately.
-- **The clip points** are chosen within A-029's range by a design script that prints every figure, as for earlier stages. They are modeled on the circuit's supply and bias voltages (S-002's measured DC voltages), not measured.
-- **The capsule's response** is flat in the device band until capsule data or a capture says otherwise. The device's band (about 225–2550 Hz after the codec filter) hides most of an electret's response deviations.
-- **No new evidence.** No physical unit and no capture is available; every new figure is low or medium confidence, and the records say so.
-- **Version and interfaces.**
-  - The version is 0.12.0.
-  - The C settings structure grows for the new switches, a breaking change for C callers, as in earlier features.
-  - New observation points are added at the end of the existing list.
+- **"Documented" means printed by the design script and registered.** Tests pin to the script's print, never to the engine's own output (spec 005's lesson).
+- **The circuit model.** The input corner depends on the amplifier's open-loop gain, which depends on transistor parameters the schematic does not give. The design script states the nodal model and the transistor figures used, and a circuit simulation with generic models cross-checks the corner. The value is low confidence; the existence of the corner is medium confidence (S-002 topology).
+- **The hiss's shape.** White pressure noise at the capsule, shaped by stage 2's band. An electret's 1/f rise lies mostly below the input high-pass.
+- **The amplifier's own noise** adds about 0.2–1 dB to the capsule's and is folded into the figure. The codec's reference (SG) noise reaches the output with the signal's noise gain and is unknown. It is registered as an open question, with S-003's unread pages as the lead.
+- **Below-clip linearity.** The amplifier is linear below its onsets; its low-level distortion is out of scope.
+- **No new evidence.** No physical unit and no capture are available. Every new figure is low or medium confidence, and the records say so.
+- **Version and interfaces.** The version is 0.12.0. The C settings structure grows (a breaking change for C callers, as in earlier features). New observation points are added at the end of the existing list.

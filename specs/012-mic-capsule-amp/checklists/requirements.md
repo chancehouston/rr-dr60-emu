@@ -31,6 +31,7 @@
 
 ## Notes
 
-- Q1 (the input level reference, FR-002) and Q2 (the hiss default and level, FR-003) were answered at specify (both option A) and recorded in the spec's Clarifications. The user asked that the hardware reviewer be consulted on both at the next review.
+- Q1 (the input level reference, FR-002) and Q2 (the hiss default and level, FR-003) were answered at specify (both option A) and recorded in the spec's Clarifications; the hardware reviewer, consulted at the user's request, recommends keeping both (Q2's derivation corrected).
+- Spec review (2026-10-16): the hardware reviewer's D1–D15 and the coach's C1–C17 applied; the user chose to model the ≈ 0.85 kHz input high-pass (D1), to add a hiss level offset (−18 … +12 dB), and a hiss stream per recording. Re-validated after the rewrite: all items pass.
 - As in specs 001–011, the spec names the project's own surfaces where the project's rules require them: "C callers" (FR-012, the constitution's stable C API), "golden file", "observation points", "the seven host rates", "solo release runs" (the measurement conventions). No language, crate layout or API shape is specified; those belong to the plan.
 - The audience is the project's (app makers and the engine's maintainers); the user stories are written for app makers.
