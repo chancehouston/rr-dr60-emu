@@ -1,0 +1,28 @@
+# Spec 011 FR-009 (research R-08): the idle-cost A/B of the volume transition on the CI runner,
+# run once by hand before the merge (`gh workflow run ab-timing.yml --ref <branch>`); never on
+# push or pull request. The figures are quoted in the PR.
+name: ab-timing
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: "Baseline revision (default: bd6d827, version 0.10)"
+        required: false
+        default: "bd6d827"
+
+permissions:
+  contents: read
+
+jobs:
+  ab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - name: Idle A/B
+        run: scripts/ab-timing.sh "${{ inputs.baseline }}"

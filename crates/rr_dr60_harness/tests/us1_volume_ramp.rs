@@ -118,3 +118,39 @@ fn route_output_reported() {
             .collect(),
     );
 }
+
+// ---- User Story 2: the whole engine (tasks.md T020, T021) ----
+
+/// US2 AS1 – AS3, AS5, AS6 (FR-005): the start-at-once rules against 0.10's step, the stage-11
+/// bypass, the output clamp, the drain, the one-pass after a playback.
+#[test]
+fn whole_engine() {
+    let m = OutputMutation {
+        volume_step: true,
+        ..OutputMutation::default()
+    };
+    let step = move |s| Pipeline::__with_output_mutation(s, &m).unwrap();
+    let mut rows = Vec::new();
+    for &r in configs::measurement_rates() {
+        for route in [Route::Speaker, Route::Earphone] {
+            rows.extend(ramp::whole_engine(&standard, &step, r, route));
+        }
+    }
+    finish(rows);
+}
+
+/// US2 AS4 (FR-007, SC-005): record-then-play equals the one-pass with a change at the same
+/// output sample, and with a constant volume (spec 009's check), on both routes.
+#[test]
+fn equivalence() {
+    let mut rows = Vec::new();
+    for &r in configs::measurement_rates() {
+        for route in [Route::Speaker, Route::Earphone] {
+            rows.extend(ramp::equivalence_with_change(&standard, r, route));
+            rows.extend(rr_dr60_harness::output_checks::chain_equivalence(
+                r, route, 0.5, &standard,
+            ));
+        }
+    }
+    finish(rows);
+}

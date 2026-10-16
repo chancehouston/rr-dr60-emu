@@ -117,6 +117,8 @@ Every other check sets its route and volume before the first block, so a fresh e
 
 The figure against 0.10 for the worst case is the product of the two ratios (the step hook already carries the idle code; plan review Q11), reported.
 
+**As measured** (2026-10-16, the development machine, solo release runs; T026): the worst case (`volume_ramp_cost`) **+0.68 ns, +1.08 %** on the speaker route (64.3 vs 63.6 ns per host sample against the step hook) and +0.42 ns, +0.68 % on the earphone route (62.8 vs 62.4); the constant-position spread 0.16 % / 0.04 % (flat, as the reviewer predicted for −20 dB noise); on full-scale noise the same comparison reads −4.25 % on the speaker route (the confound R-08 names: the step baseline spends half its samples at position 1, where the knee costs more). The idle A/B (`scripts/ab-timing.sh bd6d827`, `output_cost`, nine alternating runs each): **+1.0 ns, +1.4 %** on the speaker route (72.3 → 73.3 ns) and +0.1 ns, +0.16 % on the earphone route (64.5 → 64.6). The figure against 0.10 with every sample in a transition is the product, about **+2.5 %** on the speaker route. The CI runner's A/B is run before the merge (T043).
+
 **Estimate** (hardware review D6): one divide (the law) and about eight other operations per transition sample, off the filters' recurrence, so the out-of-order core overlaps most of it: +2 – 5 ns on about 63 ns (3 – 8 %); idle under 1 ns.
 
 ## R-09 The golden file and the C parity

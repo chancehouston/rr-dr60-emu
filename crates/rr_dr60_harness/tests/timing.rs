@@ -449,3 +449,97 @@ fn output_clamp_cost() {
         assert_eq!(a.drain_samples(), b.drain_samples(), "{rate} Hz");
     }
 }
+
+/// Spec 011 FR-009, US2 AS7, SC-006 (tasks.md T024; research R-08): the volume transition's
+/// worst case, every sample inside a transition (480-sample blocks at 48 kHz with the position
+/// alternated between 0.1 and 1 before every block; N = 960), against the `volume_step` hook
+/// (0.10's step) at the same partition, codec bypassed, on noise at −20 dB, where the cost does
+/// not depend on the position (the knee's upper branches cost about 5 ns at position 1 on
+/// full-scale noise; under the alternation the knob cycles between 0.4 and 0.7 while the step
+/// spends half its samples at 1). Each side the fastest of nine alternating runs; ≤ 15 % on the
+/// speaker route; the constant-position spread (≤ 2 %), the full-scale figure and both routes
+/// printed. The idle budget (≤ 3 %) is the build A/B of `scripts/ab-timing.sh`. Quote the
+/// figures from a solo run.
+#[test]
+#[ignore = "release-mode timing; run with --ignored"]
+fn volume_ramp_cost() {
+    use rr_dr60::__test_hooks::OutputMutation;
+    use rr_dr60::Route;
+    if skip_in_debug() {
+        return;
+    }
+    let full = stimulus::noise(9, 30 * 48_000);
+    let quiet: Vec<f32> = full.iter().map(|v| v * 0.1).collect(); // −20 dB
+    let mut s = configs::settings("default_output", 48_000);
+    s.speech_codec_enabled = false; // the codec-bypassed one-pass (009 SC-007's denominator)
+    let m = OutputMutation {
+        volume_step: true,
+        ..OutputMutation::default()
+    };
+    let step = move |s| Pipeline::__with_output_mutation(s, &m).unwrap();
+    let standard = |s| Pipeline::new(s).unwrap();
+    let alternating = |make: &dyn Fn(rr_dr60::Settings) -> Pipeline, x: &[f32], route: Route| {
+        let mut p = make(s);
+        p.set_route(route);
+        p.set_volume(0.1).unwrap();
+        let mut buf = x.to_vec();
+        let t = Instant::now();
+        for (i, chunk) in buf.chunks_mut(480).enumerate() {
+            p.set_volume(if i % 2 == 0 { 1.0 } else { 0.1 }).unwrap();
+            let _ = p.process_in_place(chunk);
+        }
+        t.elapsed().as_nanos() as f64 / x.len() as f64
+    };
+    let constant = |position: f32, route: Route| {
+        let mut best = f64::MAX;
+        for _ in 0..5 {
+            let mut p = Pipeline::new(s).unwrap();
+            p.set_route(route);
+            p.set_volume(position).unwrap();
+            let mut buf = quiet.clone();
+            let t = Instant::now();
+            for chunk in buf.chunks_mut(4096) {
+                let _ = p.process_in_place(chunk);
+            }
+            best = best.min(t.elapsed().as_nanos() as f64 / quiet.len() as f64);
+        }
+        best
+    };
+    for route in [Route::Speaker, Route::Earphone] {
+        let at: Vec<f64> = [0.1f32, 0.55, 1.0]
+            .iter()
+            .map(|&p| constant(p, route))
+            .collect();
+        let lo = at.iter().copied().fold(f64::MAX, f64::min);
+        let hi = at.iter().copied().fold(0.0, f64::max);
+        let spread = 100.0 * (hi / lo - 1.0);
+        let (mut ramp, mut base) = (f64::MAX, f64::MAX);
+        let (mut ramp_fs, mut base_fs) = (f64::MAX, f64::MAX);
+        for _ in 0..9 {
+            ramp = ramp.min(alternating(&standard, &quiet, route));
+            base = base.min(alternating(&step, &quiet, route));
+            ramp_fs = ramp_fs.min(alternating(&standard, &full, route));
+            base_fs = base_fs.min(alternating(&step, &full, route));
+        }
+        let over = 100.0 * (ramp / base - 1.0);
+        println!(
+            "volume transition, {route:?} route, 48 kHz, 480 blocks alternating 0.1 / 1 (100 % of samples in a transition; the knob cycles 0.4 – 0.7), noise -20 dB, codec bypassed: best of nine {ramp:.1} ns per host sample, {base:.1} with the step hook, {:+.2} ns ({over:+.2} %); full-scale noise {ramp_fs:.1} vs {base_fs:.1} ns ({:+.2} %, reported); constant positions 0.1 / 0.55 / 1: {:.1} / {:.1} / {:.1} ns (spread {spread:.2} %) (011 FR-009: budget 15 % on the speaker route)",
+            ramp - base,
+            100.0 * (ramp_fs / base_fs - 1.0),
+            at[0],
+            at[1],
+            at[2],
+        );
+        assert!(
+            spread <= 2.0,
+            "{route:?}: the cost depends on the position ({spread:.2} %): the comparison is confounded"
+        );
+        if route == Route::Speaker {
+            assert!(
+                over <= 15.0,
+                "the volume transition adds {over:.2} % ({:.2} ns) (011 FR-009)",
+                ramp - base
+            );
+        }
+    }
+}

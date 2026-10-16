@@ -699,3 +699,345 @@ pub fn route_output(
         Tolerance::Report,
     )]
 }
+
+// ---- Spec 011 User Story 2: the transition through the whole engine (tasks.md T020, T021) ----
+
+/// Records `x` in one block and stops; the recording's number.
+fn record(p: &mut rr_dr60::Pipeline, x: &[f32]) -> u32 {
+    p.start_recording().expect("idle with room");
+    let info = p.record(x, &mut []).expect("recording");
+    assert!(info.stopped.is_none(), "the memory filled");
+    match p.stop_recording(&mut []).expect("recording").result {
+        rr_dr60::StopResult::Kept { number, .. } => number,
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Plays recording `number` to the end in blocks of `block`, applying `changes`
+/// (`(output sample, position)`, each at a block boundary) before the block that starts there.
+fn play_with_changes(
+    p: &mut rr_dr60::Pipeline,
+    number: u32,
+    block: usize,
+    changes: &[(usize, f32)],
+) -> Vec<f32> {
+    p.start_playback(number).expect("idle, existing recording");
+    let mut out = Vec::new();
+    let mut buf = vec![0.0f32; block];
+    loop {
+        for &(at, v) in changes {
+            if at == out.len() {
+                p.set_volume(v).expect("a valid position");
+            }
+        }
+        let info = p.play(&mut buf).expect("playing");
+        out.extend_from_slice(&buf[..info.produced]);
+        if info.finished {
+            break;
+        }
+    }
+    out
+}
+
+/// Processes `x` through `p` in blocks of 64; the produced output.
+fn process_64(p: &mut rr_dr60::Pipeline, x: &[f32]) -> Vec<f32> {
+    let mut y = Vec::with_capacity(x.len());
+    for chunk in x.chunks(64) {
+        let mut out = vec![0.0f32; chunk.len()];
+        let n = p.process(chunk, &mut out).expect("ok").produced;
+        y.extend_from_slice(&out[..n]);
+    }
+    y
+}
+
+/// US2 AS1 – AS3, AS5, AS6, FR-005 (research R-04): every "take the position at once" rule,
+/// checked against the `volume_step` hook (0.10's arithmetic: wherever the rule takes the
+/// position at once, the engine and the hook agree bit for bit), and the drain, the stage-11
+/// bypass, the output clamp and the one-pass after a playback.
+pub fn whole_engine(
+    make: Make<'_>,
+    step: Make<'_>,
+    rate: u32,
+    route: Route,
+) -> Vec<MeasurementResult> {
+    let config: &'static str = match route {
+        Route::Earphone => "stage11_only_earphone",
+        _ => "stage11_only_speaker",
+    };
+    let level = level_dbfs(route);
+    let s = configs::memory_capacity(configs::settings(config, rate), 30, 3);
+    let latency = make(s).latency_samples() as usize;
+    let half = change_at(rate);
+    let x = stimulus::tone_peaking_at(level, rate, 2 * half, half, latency);
+    let other = match route {
+        Route::Earphone => Route::Speaker,
+        _ => Route::Earphone,
+    };
+    let fresh = |m: Make<'_>, p0: f32| {
+        let mut p = m(s);
+        p.set_route(route);
+        p.set_volume(p0).unwrap();
+        p
+    };
+    type Script<'s> = &'s dyn Fn(Make<'_>) -> Vec<f32>;
+    let mut rows = Vec::new();
+    let mut agree = |name: &str, f: Script<'_>| {
+        rows.push(MeasurementResult::new(
+            "FR-005",
+            "takes the position at once (equal to 0.10's step)",
+            T_RAMP,
+            rate,
+            config,
+            name.to_string(),
+            pass(same(&f(make), &f(step))),
+            "",
+            Tolerance::Exact(1.0),
+        ));
+    };
+    agree("after construction", &|m| {
+        process_64(&mut fresh(m, 0.3), &x)
+    });
+    agree("after reset", &|m| {
+        let mut p = fresh(m, 0.3);
+        let _ = process_64(&mut p, &x[..half]);
+        p.set_volume(0.8).unwrap();
+        p.reset();
+        process_64(&mut p, &x[half..])
+    });
+    agree("after reconfigure", &|m| {
+        let mut p = fresh(m, 0.3);
+        let _ = process_64(&mut p, &x[..half]);
+        p.set_volume(0.8).unwrap();
+        p.reconfigure(s).unwrap();
+        process_64(&mut p, &x[half..])
+    });
+    agree("after a zero-length call", &|m| {
+        let mut p = fresh(m, 0.3);
+        let _ = p.process(&[], &mut []).unwrap();
+        p.set_volume(0.8).unwrap();
+        process_64(&mut p, &x)
+    });
+    agree("a route and a position change in one gap", &|m| {
+        let mut p = fresh(m, 0.3);
+        let _ = process_64(&mut p, &x[..half]);
+        p.set_route(other);
+        p.set_volume(0.8).unwrap();
+        process_64(&mut p, &x[half..])
+    });
+    agree("a route change mid-transition", &|m| {
+        let mut p = fresh(m, 0.1);
+        let _ = process_64(&mut p, &x[..half]);
+        p.set_volume(1.0).unwrap();
+        let _ = process_64(&mut p, &x[half..half + 64]);
+        p.set_route(other);
+        process_64(&mut p, &x[half + 64..])
+    });
+    agree("the start of each playback", &|m| {
+        let mut p = fresh(m, 0.3);
+        let number = record(&mut p, &x);
+        let _ = play_with_changes(&mut p, number, 480, &[(4800, 1.0)]);
+        p.set_volume(0.8).unwrap();
+        play_with_changes(&mut p, number, 480, &[])
+    });
+    // A change during the drain starts a transition; the next playback starts at once.
+    agree("a change during the drain, then the next playback", &|m| {
+        let mut p = fresh(m, 0.3);
+        let number = record(&mut p, &x);
+        let pre = p.drain_samples() as usize;
+        let first = play_with_changes(&mut p, number, 16, &[]);
+        let in_drain = (first.len() - pre / 2) / 16 * 16;
+        let again = play_with_changes(&mut p, number, 16, &[(in_drain, 0.9)]);
+        assert_eq!(again.len(), first.len(), "the drain length does not move");
+        p.set_volume(0.5).unwrap();
+        play_with_changes(&mut p, number, 16, &[])
+    });
+    // Stage 11 bypassed: the position has no effect.
+    let mut bypassed = configs::settings("output_only_speaker", rate);
+    bypassed.output.volume_amp_enabled = false;
+    let changed = run_with_changes(
+        make,
+        bypassed,
+        route,
+        0.1,
+        &[(half, 1.0)],
+        &x,
+        Blocks::Fixed(64),
+    );
+    let held = run_with_changes(make, bypassed, route, 0.1, &[], &x, Blocks::Fixed(64));
+    rows.push(MeasurementResult::new(
+        "FR-005",
+        "stage 11 bypassed: a position change has no effect",
+        T_RAMP,
+        rate,
+        "output_only_speaker, stage 11 off",
+        "0.1 -> 1",
+        pass(same(&changed, &held)),
+        "",
+        Tolerance::Exact(1.0),
+    ));
+    // The output clamp (spec 010 FR-005): on == clamp(off) through a transition at full scale.
+    let out_config = match route {
+        Route::Earphone => "output_only_earphone",
+        _ => "output_only_speaker",
+    };
+    let off_s = configs::settings(out_config, rate);
+    let mut on_s = off_s;
+    on_s.output.clamp_enabled = true;
+    let loud = stimulus::tone_peaking_at(0.0, rate, 2 * half, half, latency);
+    let off = run_with_changes(
+        make,
+        off_s,
+        route,
+        0.1,
+        &[(half, 1.0)],
+        &loud,
+        Blocks::Fixed(64),
+    );
+    let on = run_with_changes(
+        make,
+        on_s,
+        route,
+        0.1,
+        &[(half, 1.0)],
+        &loud,
+        Blocks::Fixed(64),
+    );
+    let bounded: Vec<f32> = off.iter().map(|v| v.clamp(-1.0, 1.0)).collect();
+    rows.push(MeasurementResult::new(
+        "FR-005",
+        "output clamp through a transition: on == clamp(off)",
+        T_RAMP,
+        rate,
+        out_config,
+        "1 kHz 0 dBFS, 0.1 -> 1",
+        pass(same(&on, &bounded)),
+        "",
+        Tolerance::Exact(1.0),
+    ));
+    // The drain: a transition started in a playback's last block completes inside it; the
+    // length is unchanged and 009 FR-008's last-millisecond bound holds (the default engine,
+    // the VAS off, as 009's drain check).
+    let mut d = configs::memory_capacity(configs::settings("default_output", rate), 30, 3);
+    d.vas.enabled = false;
+    let voiced = stimulus::voiced(f64::from(rate), 1.0, -20.0, 0x0D60);
+    let mut p = make(d);
+    p.set_route(route);
+    p.set_volume(0.3).unwrap();
+    let number = record(&mut p, &voiced);
+    let plain = play_with_changes(&mut p, number, 480, &[]);
+    let drain = p.drain_samples() as usize;
+    let last_block = (plain.len() - drain - 1) / 480 * 480;
+    let late = play_with_changes(&mut p, number, 480, &[(last_block, 1.0)]);
+    let ms = (f64::from(rate) / 1000.0).ceil() as usize;
+    let tail = late[late.len() - ms..]
+        .iter()
+        .fold(0.0f64, |m, &v| m.max(f64::from(v).abs()));
+    rows.push(MeasurementResult::new(
+        "FR-005",
+        "drain length unchanged by a transition in the last block",
+        T_RAMP,
+        rate,
+        "default_output (VAS off)",
+        format!("voiced -20 dBFS, 0.3 -> 1 at {last_block}"),
+        late.len() as f64 - plain.len() as f64,
+        "samples",
+        Tolerance::Exact(0.0),
+    ));
+    rows.push(MeasurementResult::new(
+        "FR-005",
+        "the drain's last millisecond (009 FR-008)",
+        T_RAMP,
+        rate,
+        "default_output (VAS off)",
+        format!("voiced -20 dBFS, 0.3 -> 1 at {last_block}"),
+        analysis::db(tail.max(1e-300)),
+        "dBFS",
+        Tolerance::AtMost(-80.0),
+    ));
+    // The one-pass after a playback in which the volume changed ramps from its own last
+    // position at its next block (each path keeps its own knob): equal to the same one-pass
+    // with no playback between.
+    let with_playback = {
+        let mut p = fresh(make, 0.3);
+        let _ = process_64(&mut p, &x[..half]);
+        let number = record(&mut p, &x[..half]);
+        let _ = play_with_changes(&mut p, number, 480, &[(480, 0.6)]);
+        p.set_volume(0.8).unwrap();
+        process_64(&mut p, &x[half..])
+    };
+    let without = {
+        let mut p = fresh(make, 0.3);
+        let _ = process_64(&mut p, &x[..half]);
+        p.set_volume(0.8).unwrap();
+        process_64(&mut p, &x[half..])
+    };
+    rows.push(MeasurementResult::new(
+        "FR-007",
+        "the one-pass ramps from its own knob after a playback",
+        T_RAMP,
+        rate,
+        config,
+        "0.3, a playback with a change, then 0.8",
+        pass(same(&with_playback, &without)),
+        "",
+        Tolerance::Exact(1.0),
+    ));
+    rows
+}
+
+/// US2 AS4, FR-007, SC-005: with a change at the same output sample, record-then-play equals
+/// the one-pass bit for bit from that sample on, in the default engine with the VAS off under
+/// spec 008's rule (the one-pass skipped by the codec delay d; the change at playback sample
+/// P and at one-pass sample P + d). The constant-volume equivalence is spec 009's
+/// `output_checks::chain_equivalence`.
+pub fn equivalence_with_change(make: Make<'_>, rate: u32, route: Route) -> Vec<MeasurementResult> {
+    use rr_dr60::speech_codec::{DELAY_SAMPLES, LOOKAHEAD_SAMPLES};
+    let mut s = configs::settings("default_output", rate);
+    s.vas.enabled = false;
+    let x = stimulus::voiced(f64::from(rate), 2.0, -20.0, 0x0D60);
+    let d = crate::codec_checks::delay_host(rate);
+    let per_device = crate::split_checks::host_per_device(rate);
+    let mut p = make(s);
+    p.set_route(route);
+    p.set_volume(0.1).unwrap();
+    p.start_recording().unwrap();
+    for chunk in x.chunks(crate::split_checks::RECORD_BLOCK) {
+        let info = p.record(chunk, &mut []).unwrap();
+        assert!(info.stopped.is_none());
+    }
+    let stop = p.stop_recording(&mut []).unwrap();
+    let rr_dr60::StopResult::Kept { number, .. } = stop.result else {
+        panic!("empty recording")
+    };
+    let at = floor16(rate as usize / 2);
+    let mut got = play_with_changes(&mut p, number, 16, &[(at, 1.0)]);
+    got.truncate(got.len() - p.drain_samples() as usize);
+    let pre_encoder = p.record_latency_samples() as usize - d;
+    let tail = pre_encoder
+        + (stop.silence_fed_samples as usize + (DELAY_SAMPLES - LOOKAHEAD_SAMPLES) as usize + 1)
+            * per_device;
+    let mut y = x.clone();
+    y.extend(core::iter::repeat_n(0.0f32, tail));
+    let want = run_with_changes(
+        make,
+        s,
+        route,
+        0.1,
+        &[(at + d, 1.0)],
+        &y,
+        Blocks::Fixed(4096),
+    );
+    let n = got.len();
+    let equal = want.len() >= d + n && same(&got, &want[d..d + n]);
+    vec![MeasurementResult::new(
+        "FR-007",
+        "record-then-play equals the one-pass with a change at the same output sample",
+        T_RAMP,
+        rate,
+        "default_output (VAS off)",
+        format!("voiced -20 dBFS, {route:?}, 0.1 -> 1 at playback sample {at}"),
+        pass(equal),
+        "",
+        Tolerance::Exact(1.0),
+    )]
+}
