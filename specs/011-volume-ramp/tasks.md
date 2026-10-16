@@ -169,3 +169,10 @@ description: "Task list for 011 Volume Ramp (a smooth transition for volume posi
 
 - **MVP = Phase 1 + US1**: the transition in the core with its oracles at the seven rates is a usable, demonstrable increment (constitution VII); stop and validate at the US1 checkpoint.
 - Then US2 (the whole-engine guarantees and the cost), US3 (the records), the C surface, and Phase 6's gates, reviews and the single bless, in that order; each checkpoint keeps the six SHA guards unmoved.
+
+## Phase 7: Convergence
+
+- [ ] T045 Give `tools/volume-ramp/ramp_model.py` an option that takes a measured 10–90 % amplitude time (or a transition length in ms), derives the smoothstep length that has it, and prints FR-004's click figure on both laws for that length, so the knob-flick comparison A-045's verification cell and the spec's Assumptions entry describe can be run (the 20 ms output and `--check` unchanged); or, if that is rejected, reword A-045's verification to a procedure the script supports, per FR-010 (partial)
+- [ ] T046 Add the read-back rule to the 0.11.0 Added entry in `CHANGELOG.md`: `volume()` / `rr_dr60_get_volume` return the host's last setting, not the knob's position during a transition (as the README, the Rust rustdoc and the C comment already say), per FR-013 (partial)
+- [ ] T047 Record in `tasks.md`'s US2 checkpoint notes that the plan's core start-at-once tests in `paths.rs`, `pipeline.rs` and `transport.rs` were covered instead by `stages/output.rs::start_at_once_rules` and the harness's `volume_ramp_checks::whole_engine` (reset and reconfigure against a new engine), or add those core tests, per plan: Testing (core) / Source Code `pipeline.rs` (partial)
+- [ ] T048 Point `specs/011-volume-ramp/quickstart.md`'s US2 line at `volume_ramp_edge_cases` (`refused_position_and_read_back`) for the refused position, which `whole_engine` does not cover, per quickstart US2 validation (contradicts)
