@@ -177,10 +177,13 @@ fn route_change_lands_at_the_next_block_from_rest() {
 
 /// "Output above full scale": stage 11's output on the speaker route never exceeds full scale
 /// (the clipper), and a steady tone below the knee never does after the template (its gain is
-/// at most 1.0); a transient or a clipped signal can, through the template's resonance (the impulse response's L1 norm is above
-/// 1), and on the earphone route the output exceeds full scale only when the chain's input does
-/// (the playback filter's reconstruction overshoot of a full-scale square wave), scaled by the
-/// position. Documented, not clamped (spec amended at implementation).
+/// at most 1.0); a transient or a clipped signal can, through the template's resonance (the
+/// impulse response's L1 norm is above 1, the route's provable bound), and on the earphone
+/// route through the playback filter's reconstruction overshoot and the coupling corners'
+/// overshoot on square-edged material (a first-order high-pass overshoots a square edge even
+/// when the input stays within ±1.0; spec 010 corrected the earlier "only when the chain's
+/// input does"), scaled by the position. Documented, not bounded by default; spec 010 adds the
+/// host's output clamp (`output.clamp_enabled`).
 #[test]
 fn output_above_full_scale_is_documented_not_clamped() {
     let rate = 48_000;

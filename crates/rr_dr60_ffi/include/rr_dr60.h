@@ -48,7 +48,7 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 9
+#define RR_DR60_VERSION_MINOR 10
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
@@ -187,7 +187,8 @@ enum RrDr60Tap
  {
   // After signal-chain stage 4 (record band-limit).
   RR_DR60_TAP_AFTER_RECORD = 0,
-  // After signal-chain stage 10 (playback band-limit). The default.
+  // After signal-chain stage 10 (playback band-limit). The default through 0.8; never
+  // bounded by the output clamp (spec 010 FR-003: the option is inert in the one-pass here).
   RR_DR60_TAP_AFTER_PLAYBACK = 1,
   // After signal-chain stage 3 (the limiter), at the host rate: the limiter's output sample
   // for sample. No rate conversion, no later stage, latency 0, no events (spec 005 FR-001).
@@ -199,18 +200,20 @@ enum RrDr60Tap
   RR_DR60_TAP_AFTER_DECODER = 4,
   // The selected route's output: after the speaker (stage 12) or the earphone output (stage
   // 13), at the route's full swing (spec 009 FR-011; A-042). The default since 0.9; to keep
-  // 0.8's output set `RR_DR60_TAP_AFTER_PLAYBACK`. Appended in 0.9.
+  // 0.8's output set `RR_DR60_TAP_AFTER_PLAYBACK`. Appended in 0.9. With
+  // `output_clamp_enabled` the only tap that is bounded (spec 010 FR-003); the selected
+  // route's last per-stage tap then differs from it wherever a sample was bounded.
   RR_DR60_TAP_ROUTE_OUTPUT = 5,
   // After signal-chain stage 11 (the volume control and power amplifier) on either route
-  // (spec 009 FR-011). Appended in 0.9.
+  // (spec 009 FR-011). Appended in 0.9. Never bounded by the output clamp (spec 010).
   RR_DR60_TAP_AFTER_VOLUME_AMP = 6,
   // After signal-chain stage 12 (the speaker template); refused with
   // `RR_DR60_STATUS_TAP_NOT_ON_ROUTE` while the earphone route is selected (spec 009
-  // FR-011). Appended in 0.9.
+  // FR-011). Appended in 0.9. Never bounded by the output clamp (spec 010).
   RR_DR60_TAP_AFTER_SPEAKER = 7,
   // After signal-chain stage 13 (the earphone output); refused with
   // `RR_DR60_STATUS_TAP_NOT_ON_ROUTE` while the speaker route is selected (spec 009
-  // FR-011). Appended in 0.9.
+  // FR-011). Appended in 0.9. Never bounded by the output clamp (spec 010).
   RR_DR60_TAP_AFTER_EARPHONE = 8,
 };
 #ifndef __cplusplus
@@ -403,7 +406,7 @@ typedef struct RrDr60Pipeline RrDr60Pipeline;
 // the two reserved slots at 32 and 36, `adc_clamp_enabled` at 72) and the two memory fields
 // are appended at 76 and 80 (spec 006 contracts/c-api.md).
 typedef struct RrDr60Settings {
-  // Must be `sizeof(RrDr60Settings)`: 104 since 0.9 (96 in 0.8, 88 in 0.6 and 0.7, 80 in
+  // Must be `sizeof(RrDr60Settings)`: 112 since 0.10 (104 in 0.9, 96 in 0.8, 88 in 0.6 and 0.7, 80 in
   // 0.5, 72 in 0.3 and 0.4, rejected as `STRUCT_SIZE`). Lets the struct grow in later
   // versions.
   uint32_t struct_size;
@@ -484,6 +487,23 @@ typedef struct RrDr60Settings {
   // Signal-chain stage 13, the earphone output's two coupling corners (A-032), on (true,
   // default) or bypassed. Appended in 0.9 at offset 98.
   bool output_earphone_enabled;
+  // Ignored; reserved since 0.10 (the 0.9 layout's tail padding, offsets 99 – 103, made
+  // explicit so that a 0.9 caller's `struct_size = 104` is refused instead of the option
+  // being read from uninitialized bytes; spec 010 FR-008). Write 0.
+  uint8_t reserved_010[5];
+  // The **output clamp** (spec 010 FR-001): when `true`, every sample at
+  // `RR_DR60_TAP_ROUTE_OUTPUT` above +1.0 is replaced by +1.0 and every sample below −1.0 by
+  // −1.0 (the route's full scale, A-042), on both routes, also when every output stage is
+  // bypassed; the play calls always return the route output, so they are always bounded.
+  // The taps after stages 11, 12 and 13, `RR_DR60_TAP_AFTER_PLAYBACK` and every earlier tap
+  // are never bounded. **Off by default** (`false`): an emulator convenience, not a device
+  // behavior, for hosts writing integer buffers (+1.0 maps to 32767 in a 16-bit conversion);
+  // on material above the bound it adds distortion of its own that the device does not
+  // have. Appended in 0.10 at offset 104.
+  bool output_clamp_enabled;
+  // Ignored; reserved since 0.10 (this layout's tail, offsets 105 – 111, explicit so that
+  // the next version can append at 112 and refuse 112). Write 0.
+  uint8_t reserved_010_tail[7];
 } RrDr60Settings;
 
 // The result of one `rr_dr60_process` call (spec 003 FR-004, FR-005).

@@ -152,3 +152,57 @@ pub fn rust_playback_hash() -> (u64, usize) {
     let r = rust_reference();
     (r.playback_hash, r.playback_samples)
 }
+
+/// Spec 010 US4 (T027, T031): the two output-clamp cases' hashes, a ±1.0 square wave (24 up,
+/// 24 down at 48 kHz; exactly representable) recorded once in the 0.9 default with the option
+/// on and played at position 1 on the speaker route and on the earphone route, every sample
+/// within [−1, 1]. Pinned once from the Rust path (`rust_clamp_references`);
+/// `ffi_parity::smoke_reference_hash_is_pinned` checks them.
+pub const SMOKE_SPEAKER_CLAMP_HASH: u64 = 0x5a7f_9b91_a49f_806e; // measured 2026-10-15 from the Rust path (53 168 samples; 010 T031)
+/// See [`SMOKE_SPEAKER_CLAMP_HASH`].
+pub const SMOKE_EARPHONE_CLAMP_HASH: u64 = 0xfbaf_bb6b_1150_7362; // measured 2026-10-15 from the Rust path (53 168 samples; 010 T031)
+
+/// The clamp cases' stimulus: a full-scale ±1.0 square wave, 24 samples up and 24 down.
+pub fn clamp_stimulus() -> Vec<f32> {
+    (0..SMOKE_SAMPLES)
+        .map(|i| if i % 48 < 24 { 1.0 } else { -1.0 })
+        .collect()
+}
+
+/// The two clamp cases `(route, hash, length, samples beyond the bound in the option-off
+/// playback on the speaker route)` from the Rust path: one recording of the full-scale square
+/// in the 0.9 default with the option on, played at position 1 on each route; and the same
+/// recording through an option-off engine on the speaker route, whose playback exceeds the
+/// bound (so the loop shows the option acting).
+pub fn rust_clamp_references() -> ([(rr_dr60::Route, u64, usize); 2], usize) {
+    use rr_dr60::Route;
+    let record = |clamp: bool| -> (Pipeline, u32) {
+        let mut s = rr_dr60::Settings::new(SMOKE_RATE);
+        s.output.clamp_enabled = clamp;
+        let mut p = Pipeline::new(s).expect("rate");
+        p.start_recording().expect("idle");
+        for chunk in clamp_stimulus().chunks(SMOKE_BLOCK) {
+            let info = p.record(chunk, &mut []).expect("recording");
+            assert!(info.stopped.is_none());
+        }
+        let out = p.stop_recording(&mut []).expect("recording");
+        let rr_dr60::StopResult::Kept { number, .. } = out.result else {
+            unreachable!("the stimulus is recorded")
+        };
+        (p, number)
+    };
+    let (mut on, number) = record(true);
+    let cases = [Route::Speaker, Route::Earphone].map(|route| {
+        on.set_route(route);
+        on.set_volume(1.0).expect("a valid position");
+        let play = crate::split_checks::play_to_end(&mut on, number, SMOKE_BLOCK);
+        assert!(play.iter().all(|v| v.abs() <= 1.0), "{route:?}: bounded");
+        (route, fnv1a64(&play), play.len())
+    });
+    let (mut off, number_off) = record(false);
+    off.set_route(Route::Speaker);
+    off.set_volume(1.0).expect("a valid position");
+    let play = crate::split_checks::play_to_end(&mut off, number_off, SMOKE_BLOCK);
+    let beyond = play.iter().filter(|v| v.abs() > 1.0).count();
+    (cases, beyond)
+}

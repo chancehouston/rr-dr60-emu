@@ -798,6 +798,7 @@ mod tests {
             volume_amp_enabled,
             speaker_enabled,
             earphone_enabled,
+            clamp_enabled: _, // not a stage (spec 010 FR-004): no bypass control to touch
         } = output;
         let AgcSettings {
             enabled: agc_enabled,

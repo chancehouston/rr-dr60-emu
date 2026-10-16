@@ -166,6 +166,7 @@ fn processing_never_touches_the_heap() {
         // Spec 008 FR-016 (T022): the speech codec in the one-pass and in the paths.
         codec_cases(rate, vas_sizes);
         output_cases(rate, vas_sizes);
+        output_clamp_cases(rate, vas_sizes);
     }
 
     // Spec 007 FR-016, FR-017, SC-004: the manifest reads, Rust and C.
@@ -486,5 +487,65 @@ fn output_cases(rate: u32, sizes: &[usize]) {
     assert_eq!(
         after, before,
         "{rate} Hz default_output: heap activity [allocs, deallocs, reallocs] with the output chain"
+    );
+}
+
+/// Spec 010 FR-007 (tasks.md T015): the output clamp adds no heap activity: the one-pass in
+/// the six clamp configurations at their route and position, and record / play through
+/// `default_output_clamp` with the controls moved between play blocks.
+fn output_clamp_cases(rate: u32, sizes: &[usize]) {
+    use rr_dr60::output::VOLUME_REFERENCE;
+    let input = vas_input(rate);
+    let mut output = vec![0.0f32; 1024];
+    // Construction allocates (the memory's store, spec 006); the count starts after it.
+    let mut engines: Vec<(Pipeline, Route, f32)> = configs::OUTPUT_CLAMP_CONFIGS
+        .iter()
+        .map(|config| {
+            let settings = configs::memory_capacity(configs::settings(config, rate), 300, 3);
+            let (route, volume) = configs::output_clamp_route_volume(config);
+            (Pipeline::new(settings).unwrap(), route, volume)
+        })
+        .collect();
+    let settings =
+        configs::memory_capacity(configs::settings("default_output_clamp", rate), 300, 3);
+    let mut p = Pipeline::new(settings).unwrap();
+    let mut events = vec![VasEvent::default(); p.max_record_events(1024) + 8];
+    let before = counts();
+    for (p, route, volume) in engines.iter_mut() {
+        p.set_route(*route);
+        p.set_volume(*volume).unwrap();
+        for &n in &sizes[..64] {
+            let _ = p.process(&input[..n], &mut output[..n]).unwrap();
+        }
+    }
+    p.set_volume(1.0).unwrap();
+    p.start_recording().unwrap();
+    for &n in &sizes[..200] {
+        let info = p.record(&input[..n], &mut events).unwrap();
+        assert!(info.stopped.is_none());
+    }
+    let out = p.stop_recording(&mut events).unwrap();
+    assert!(matches!(out.result, rr_dr60::StopResult::Kept { .. }));
+    p.start_playback(1).unwrap();
+    let mut block = 0usize;
+    loop {
+        p.set_route(if block % 7 < 4 {
+            Route::Speaker
+        } else {
+            Route::Earphone
+        });
+        p.set_volume([VOLUME_REFERENCE, 0.5, 1.0][block % 3])
+            .unwrap();
+        let info = p.play(&mut output[..512]).unwrap();
+        block += 1;
+        if info.finished {
+            break;
+        }
+    }
+    p.reset();
+    let after = counts();
+    assert_eq!(
+        after, before,
+        "{rate} Hz output clamp: heap activity [allocs, deallocs, reallocs]"
     );
 }

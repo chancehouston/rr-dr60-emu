@@ -234,6 +234,13 @@ pub struct GoldenEntry {
     /// `route`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub volume: Option<f32>,
+    /// Spec 010 (contracts/golden-format.md): the count of output samples exactly equal to
+    /// +1.0 or −1.0, bounded or already there (a ±1.0 square at the identity rate counts every
+    /// sample). Present in
+    /// output-clamp-file entries only; absent (and not serialized) in the five earlier files,
+    /// which therefore read unchanged (FR-002).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub n_at_bound: Option<u32>,
 }
 
 /// The VAS part of a golden entry (specs/003-vas/contracts/golden-format.md).
@@ -365,6 +372,7 @@ pub fn entry(stimulus: &str, config: &str, host_rate_hz: u32, output: &[f32]) ->
         frames_sha256: None,
         route: None,
         volume: None,
+        n_at_bound: None,
     }
 }
 
@@ -735,6 +743,126 @@ pub fn path_vas() -> PathBuf {
 pub fn committed_codec() -> GoldenFile {
     serde_json::from_str(include_str!("../golden/golden-codec-v1.json"))
         .expect("valid embedded codec golden file")
+}
+
+/// Spec 010 output-clamp golden stimuli, in sorted order (specs/010-output-clamp/contracts/
+/// golden-format.md): the 1 kHz sine of amplitude 1.5 (the primary stimulus), the full-scale
+/// square (a half-period of round(rate ÷ 2000) samples) and the 1 kHz tone at 0 dBFS; 2 s each,
+/// made by `output_clamp_checks::stimulus_by_name`.
+pub const OUTPUT_CLAMP_STIMULI: [&str; 3] = ["sine_1k_1p5", "square_1k_fs", "tone_1k_0"];
+
+/// Spec 010 output-clamp golden configurations in the file's sorted order
+/// (`configs::OUTPUT_CLAMP_CONFIGS`; the route and position from
+/// `configs::output_clamp_route_volume`).
+pub const GOLDEN_OUTPUT_CLAMP_CONFIGS: [&str; 6] = [
+    "default_earphone_clamp",
+    "default_output_clamp",
+    "default_output_ref_clamp",
+    "output_clamp_only",
+    "output_only_earphone_clamp",
+    "output_only_speaker_clamp",
+];
+
+/// Spec 010 FR-010 (contracts/golden-format.md): the output-clamp golden file, 3 stimuli × 6
+/// configurations × 7 rates = 126 entries with the route, the position, the one-pass output's
+/// SHA and `n_at_bound`. With `bless` the generator also asserts, for every entry, the identity
+/// against the option-off twin (`on == clamp(off)` sample for sample), zero twin samples beyond
+/// the bound for `default_output_ref_clamp` on the two tones, and record-then-play equal to the
+/// one-pass for the three `default_*` configurations (spec 008 FR-009's rule); a compare run
+/// does one one-pass per entry.
+pub fn generate_output_clamp(make: Make<'_>, bless: bool) -> GoldenFile {
+    use crate::output_clamp_checks::{self, Expect};
+    use crate::split_checks::{self, PLAY_BLOCK, RECORD_BLOCK};
+    let mut entries = Vec::new();
+    for &s in &OUTPUT_CLAMP_STIMULI {
+        for &c in &GOLDEN_OUTPUT_CLAMP_CONFIGS {
+            let (route, volume) = configs::output_clamp_route_volume(c);
+            for rate in configs::all_rates() {
+                let x = output_clamp_checks::stimulus_by_name(s, rate, 2.0);
+                let settings = configs::settings(c, rate);
+                let one_pass = |x: &[f32]| {
+                    let mut p = make(settings);
+                    p.set_route(route);
+                    p.set_volume(volume).expect("a valid position");
+                    let mut y = vec![0.0; x.len()];
+                    let produced = p.process(x, &mut y).expect("equal lengths").produced;
+                    y.truncate(produced);
+                    y
+                };
+                let y = one_pass(&x);
+                let mut e = entry(s, c, rate, &y);
+                e.route = Some(
+                    match route {
+                        rr_dr60::Route::Earphone => "earphone",
+                        _ => "speaker",
+                    }
+                    .into(),
+                );
+                e.volume = Some(volume);
+                e.n_at_bound = Some(y.iter().filter(|v| v.abs() == 1.0).count() as u32);
+                if bless {
+                    let expect = if c == "default_output_ref_clamp" && s != "square_1k_fs" {
+                        Expect::Within
+                    } else {
+                        Expect::Report
+                    };
+                    let rows = output_clamp_checks::identity(make, rate, c, s, 2.0, expect);
+                    crate::checks::assert_all(&rows);
+                    if c.starts_with("default_") {
+                        let mut p = make(settings);
+                        p.set_route(route);
+                        p.set_volume(volume).expect("a valid position");
+                        let run =
+                            split_checks::record_then_play(&mut p, &x, RECORD_BLOCK, PLAY_BLOCK);
+                        let d = (rr_dr60::speech_codec::DELAY_SAMPLES * rate / 6000) as usize;
+                        let per_device = split_checks::host_per_device(rate);
+                        let pre_encoder = p.record_latency_samples() as usize - d;
+                        let drain = (rr_dr60::speech_codec::DELAY_SAMPLES
+                            - rr_dr60::speech_codec::LOOKAHEAD_SAMPLES)
+                            as usize;
+                        let tail = pre_encoder
+                            + (run.stop.silence_fed_samples as usize + drain + 1) * per_device;
+                        let mut padded = x.clone();
+                        padded.extend(core::iter::repeat_n(0.0f32, tail));
+                        let want = one_pass(&padded);
+                        let got = &run.pre_drain;
+                        assert!(
+                            want.len() >= d + got.len()
+                                && got
+                                    .iter()
+                                    .zip(&want[d..d + got.len()])
+                                    .all(|(a, b)| a.to_bits() == b.to_bits()),
+                            "{s}/{c}/{rate} Hz: record-then-play differs from the one-pass with the option on (010 FR-006)"
+                        );
+                    }
+                }
+                entries.push(e);
+            }
+        }
+    }
+    GoldenFile {
+        format: "rr_dr60-golden".into(),
+        version: 1,
+        library_version: rr_dr60::VERSION.into(),
+        entries,
+    }
+}
+
+/// The committed spec 010 output-clamp golden file.
+///
+/// # Panics
+///
+/// If the embedded file is not valid JSON.
+pub fn committed_output_clamp() -> GoldenFile {
+    serde_json::from_str(include_str!("../golden/golden-output-clamp-v1.json"))
+        .expect("valid embedded output-clamp golden file")
+}
+
+/// Path of the spec 010 output-clamp golden file. Bless it only with
+/// `RR_DR60_BLESS=output_clamp cargo test -p rr_dr60_harness --test golden_output_clamp`, with a
+/// CHANGELOG entry (010 FR-010).
+pub fn path_output_clamp() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-output-clamp-v1.json")
 }
 
 /// The committed spec 009 output-chain golden file.

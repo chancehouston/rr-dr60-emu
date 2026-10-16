@@ -523,3 +523,65 @@ fn output_chain_routes_and_volumes_are_partition_invariant() {
         assert_ne!(a, c, "{rate} Hz: the route change changes the sound");
     }
 }
+
+/// Spec 010 FR-007 (tasks.md T015; US2 AS4): the six output-clamp configurations are
+/// partition-invariant on the full-scale square at their route and position, and
+/// record-then-play of the three `default_*` names is the same twice.
+#[test]
+fn output_clamp_partitions() {
+    use rr_dr60_harness::output_clamp_checks::stimulus_by_name;
+    let mut rng = Pcg32::new(0x0D60, 10);
+    let run = |s: rr_dr60::Settings,
+               route: rr_dr60::Route,
+               volume: f32,
+               x: &[f32],
+               rng: Option<&mut Pcg32>| {
+        let mut p = Pipeline::new(s).unwrap();
+        p.set_route(route);
+        p.set_volume(volume).unwrap();
+        let mut out = Vec::with_capacity(x.len());
+        let mut pos = 0;
+        let mut rng = rng;
+        while pos < x.len() {
+            let n = match rng.as_deref_mut() {
+                Some(r) => (r.below(8193) as usize).min(x.len() - pos),
+                None => x.len() - pos,
+            };
+            let mut y = vec![0.0; n];
+            let produced = p.process(&x[pos..pos + n], &mut y).unwrap().produced;
+            out.extend_from_slice(&y[..produced]);
+            pos += n;
+        }
+        out
+    };
+    for &rate in configs::measurement_rates() {
+        let x = stimulus_by_name("square_1k_fs", rate, 1.0);
+        for config in configs::OUTPUT_CLAMP_CONFIGS {
+            let s = configs::settings(config, rate);
+            let (route, volume) = configs::output_clamp_route_volume(config);
+            let want = run(s, route, volume, &x, None);
+            for i in 0..10 {
+                assert_eq!(
+                    run(s, route, volume, &x, Some(&mut rng)),
+                    want,
+                    "{rate} Hz {config}, partition {i}"
+                );
+            }
+            if config.starts_with("default_") {
+                let play = || {
+                    let mut p = Pipeline::new(s).unwrap();
+                    p.set_route(route);
+                    p.set_volume(volume).unwrap();
+                    let run = rr_dr60_harness::split_checks::record_then_play(
+                        &mut p,
+                        &x,
+                        rr_dr60_harness::split_checks::RECORD_BLOCK,
+                        rr_dr60_harness::split_checks::PLAY_BLOCK,
+                    );
+                    run.pre_drain
+                };
+                assert_eq!(play(), play(), "{rate} Hz {config}: record-then-play twice");
+            }
+        }
+    }
+}

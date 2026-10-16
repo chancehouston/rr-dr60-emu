@@ -845,17 +845,55 @@ pub fn chain_equivalence(
     volume: f32,
     make: Make<'_>,
 ) -> Vec<MeasurementResult> {
+    chain_equivalence_in(rate, "default_output", route, volume, make)
+}
+
+/// The "(VAS off)" label of a configuration name, as a static string (the row's `config`).
+fn vas_off_label(config: &str) -> &'static str {
+    match config {
+        "default_output" => "default_output (VAS off)",
+        "default_output_clamp" => "default_output_clamp (VAS off)",
+        "default_earphone_clamp" => "default_earphone_clamp (VAS off)",
+        _ => "(VAS off)",
+    }
+}
+
+/// [`chain_equivalence`] in the named configuration (spec 010 T013: the clamp configurations
+/// reuse the check; the 009 callers pass `default_output`).
+pub fn chain_equivalence_in(
+    rate: u32,
+    config: &'static str,
+    route: Route,
+    volume: f32,
+    make: Make<'_>,
+) -> Vec<MeasurementResult> {
+    let x = stimulus::voiced(f64::from(rate), 2.0, -20.0, 0x0D60);
+    chain_equivalence_with(rate, config, route, volume, &x, "voiced -20 dBFS", make)
+}
+
+/// [`chain_equivalence_in`] on an explicit stimulus `x` (which must end in sound, for the
+/// VAS-on case) labelled `stim` (spec 010 T013: the full-scale square engages the bound).
+#[allow(clippy::too_many_arguments)]
+pub fn chain_equivalence_with(
+    rate: u32,
+    config: &'static str,
+    route: Route,
+    volume: f32,
+    x: &[f32],
+    stim: &str,
+    make: Make<'_>,
+) -> Vec<MeasurementResult> {
     let mut rows = Vec::new();
     let d = codec_checks::delay_host(rate);
     let per_device = split_checks::host_per_device(rate);
-    let x = stimulus::voiced(f64::from(rate), 2.0, -20.0, 0x0D60);
-    let mut no_vas = configs::settings("default_output", rate);
+    let x = x.to_vec();
+    let mut no_vas = configs::settings(config, rate);
     no_vas.vas.enabled = false;
     // Both with the VAS off and with it on (the voiced stimulus ends in sound, which the
     // VAS-on rule needs; coach review T019, N6).
     let cases = [
-        ("default_output (VAS off)", no_vas),
-        ("default_output", configs::settings("default_output", rate)),
+        (vas_off_label(config), no_vas),
+        (config, configs::settings(config, rate)),
     ];
     for (config, settings) in cases {
         let mut p = make(settings);
@@ -891,7 +929,7 @@ pub fn chain_equivalence(
                 .iter()
                 .zip(&want[d..d + n])
                 .all(|(a, b)| a.to_bits() == b.to_bits());
-        let label = format!("voiced -20 dBFS, {route:?}, position {volume}");
+        let label = format!("{stim}, {route:?}, position {volume}");
         rows.push(MeasurementResult::new(
             "FR-010",
             "the one-pass's skipped prefix (the codec delay) is exactly 0.0",
@@ -948,10 +986,11 @@ pub fn chain_after_playback_equals_0_8(rate: u32, make: Make<'_>) -> Vec<Measure
 }
 
 /// The sixteen change points (blocks of 64 in a 4096-sample input) the timing checks use.
-const CHANGE_POINTS: [usize; 16] = [1, 2, 3, 5, 8, 13, 21, 34, 40, 45, 50, 55, 58, 60, 62, 63];
+pub(crate) const CHANGE_POINTS: [usize; 16] =
+    [1, 2, 3, 5, 8, 13, 21, 34, 40, 45, 50, 55, 58, 60, 62, 63];
 
 /// Runs `x` in 64-sample blocks, calling `between(p, block_index)` before each block.
-fn in_blocks(
+pub(crate) fn in_blocks(
     p: &mut Pipeline,
     x: &[f32],
     mut between: impl FnMut(&mut Pipeline, usize),

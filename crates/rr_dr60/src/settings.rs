@@ -34,6 +34,8 @@ pub enum Tap {
     /// 0.8's default output** (spec 009 FR-011). Stages 11 – 13 are not run, whatever their
     /// settings. The default through 0.8; since 0.9 the default is [`Tap::RouteOutput`], and a
     /// host that wants 0.8's output sets this tap explicitly. [`Tap::AFTER_STAGE_10`] aliases it.
+    /// Never bounded by the output clamp (spec 010 FR-003): the option is inert in the one-pass
+    /// at this tap.
     AfterPlayback,
     /// After signal-chain stage 9 (the speech decoder), before stage 10: "the codec's output"
     /// (spec 008 FR-015). The speech encoder and decoder run in line with their 180-sample
@@ -44,20 +46,27 @@ pub enum Tap {
     /// speaker route, after the earphone output (stage 13) on the earphone route, at the
     /// route's own full swing (A-042). **The default since 0.9**, because the device plays
     /// through its speaker (A-031, A-010, A-032). Follows the route selected with
-    /// `Pipeline::set_route`. Appended in 0.9.
+    /// `Pipeline::set_route`. Appended in 0.9. With the output clamp on
+    /// ([`OutputSettings::clamp_enabled`], spec 010 FR-003) this is the only tap that is
+    /// bounded; the selected route's last per-stage tap ([`Tap::AfterSpeaker`] or
+    /// [`Tap::AfterEarphone`], or [`Tap::AfterPlayback`] with the chain bypassed) then differs
+    /// from it wherever a sample was bounded.
     #[default]
     RouteOutput,
     /// After signal-chain stage 11 (the volume control and power amplifier) on either route:
     /// the amplifier's output on the speaker route, the volume control's output on the
-    /// earphone route (spec 009 FR-011; A-031). Appended in 0.9.
+    /// earphone route (spec 009 FR-011; A-031). Appended in 0.9. Never bounded by the output
+    /// clamp (spec 010 FR-003).
     AfterVolumeAmp,
     /// After signal-chain stage 12 (the speaker template; A-010), the speaker route's output.
     /// Refused at the processing call while the earphone route is selected
-    /// ([`Error::TapNotOnRoute`](crate::Error::TapNotOnRoute)). Appended in 0.9.
+    /// ([`Error::TapNotOnRoute`](crate::Error::TapNotOnRoute)). Appended in 0.9. Never bounded
+    /// by the output clamp (spec 010 FR-003).
     AfterSpeaker,
     /// After signal-chain stage 13 (the earphone output; A-032), the earphone route's output.
     /// Refused at the processing call while the speaker route is selected
-    /// ([`Error::TapNotOnRoute`](crate::Error::TapNotOnRoute)). Appended in 0.9.
+    /// ([`Error::TapNotOnRoute`](crate::Error::TapNotOnRoute)). Appended in 0.9. Never bounded
+    /// by the output clamp (spec 010 FR-003).
     AfterEarphone,
 }
 
@@ -326,6 +335,9 @@ impl Default for MemorySettings {
 ///
 /// The route and the volume position are controls, not settings (`Pipeline::set_route`,
 /// `Pipeline::set_volume`).
+///
+/// `clamp_enabled` is not a stage: it is the **output clamp** of spec 010, a host option that
+/// is off by default (see the field).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct OutputSettings {
@@ -335,6 +347,24 @@ pub struct OutputSettings {
     pub speaker_enabled: bool,
     /// Stage 13 (the earphone output) on (`true`, default; A-032) or bypassed.
     pub earphone_enabled: bool,
+    /// The **output clamp** (spec 010 FR-001): when `true`, every sample at
+    /// [`Tap::RouteOutput`] above +1.0 is replaced by +1.0 and every sample below −1.0 by
+    /// −1.0 (the route's full scale, A-042); samples within the bound pass unchanged. **Off by
+    /// default** (`false`): the device has no such bound, and the option is **an emulator
+    /// convenience, not a device behavior**, for hosts that write integer buffers (+1.0 maps to
+    /// 32767 in a 16-bit conversion; a host that scales by 32768 saturates +1.0 to 32767).
+    ///
+    /// It applies at the route-output tap only, on both routes, and also when every output
+    /// stage is bypassed; the taps after stages 11, 12 and 13, [`Tap::AfterPlayback`] and every
+    /// earlier tap are never bounded (spec 010 FR-003). The play calls always return the route
+    /// output, so with the option on they are always bounded, whatever `tap` names; in the
+    /// one-pass the option is inert at every tap but [`Tap::RouteOutput`]. It has no state and
+    /// adds no latency. On material above the bound (high volume positions, clipped or
+    /// transient material) it replaces the excess with flat tops, which adds distortion of its
+    /// own that the device does not have. At the default volume position the harness's
+    /// speech-like and noise stimuli stay below full scale; loud material near the speaker
+    /// template's resonance (about 800 Hz) can exceed it (see A-042). Appended in 0.10.
+    pub clamp_enabled: bool,
 }
 
 impl OutputSettings {
@@ -343,6 +373,7 @@ impl OutputSettings {
         volume_amp_enabled: true, // A-031 adopted (009 FR-002)
         speaker_enabled: true,    // A-010 revised (009 FR-002)
         earphone_enabled: true,   // A-032 adopted (009 FR-002)
+        clamp_enabled: false,     // 010 FR-002: the device has no such bound
     };
     /// Every output stage bypassed: the engine of version 0.8 at [`Tap::AfterPlayback`]. Not a
     /// device configuration (spec 009 FR-002, FR-016: the earlier specs' checks run with it).
@@ -350,6 +381,7 @@ impl OutputSettings {
         volume_amp_enabled: false,
         speaker_enabled: false,
         earphone_enabled: false,
+        clamp_enabled: false, // 010 FR-002: version 0.8's output
     };
 }
 
@@ -501,6 +533,10 @@ mod tests {
             (b.volume_amp_enabled, b.speaker_enabled, b.earphone_enabled),
             (false, false, false)
         );
+        // 010 FR-002: the output clamp is off in both presets and in the default.
+        assert!(!d.clamp_enabled);
+        assert!(!b.clamp_enabled);
+        assert!(!Settings::new(48_000).output.clamp_enabled);
         assert_eq!(Settings::new(48_000).output, OutputSettings::DEVICE);
         for t in [
             Tap::AfterPlayback,

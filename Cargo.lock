@@ -179,25 +179,25 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "rr_dr60"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "rr_dr60_detmath",
 ]
 
 [[package]]
 name = "rr_dr60_detmath"
-version = "0.9.0"
+version = "0.10.0"
 
 [[package]]
 name = "rr_dr60_ffi"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "rr_dr60",
 ]
 
 [[package]]
 name = "rr_dr60_harness"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "regex",
  "rr_dr60",

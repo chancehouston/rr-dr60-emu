@@ -83,6 +83,17 @@
 //! bypassed output chain is a combination the device cannot produce. Every figure is modeled on
 //! the circuit (S-002) and the datasheet (S-006), not measured against a unit.
 //!
+//! Since spec 010 the engine has an **output clamp** ([`OutputSettings::clamp_enabled`]), a
+//! host option that is **off by default**: when on, every sample at the route-output tap above
+//! +1.0 is replaced by +1.0 and every sample below −1.0 by −1.0 (the route's full scale,
+//! A-042), on both routes, after any output-chain bypass; the play calls always return the
+//! route output, so they are always bounded with the option on, while the per-stage taps and
+//! every earlier tap are never bounded. It is **an emulator convenience, not a device
+//! behavior**, for hosts that write integer buffers (+1.0 maps to 32767 in a 16-bit
+//! conversion); on material above the bound it replaces the excess with flat tops, which adds
+//! distortion of its own that the device does not have. See the README's output section for
+//! the figures and the headroom alternative.
+//!
 //! Stages 4 and 10 are modeled on the OKI MSM7702 voice-band codec at the device's internal
 //! rate of 6 kHz (A-026, verified from the service manual, S-002). They follow the codec
 //! family's datasheet templates scaled to that clock (A-027, medium confidence): the record
@@ -266,6 +277,12 @@ pub mod __test_hooks {
         /// The speaker route's per-block scalar scaled by this (1.0: as committed; 1.1 drives
         /// full-scale material 0.8 dB into the knee at the reference position).
         pub gain_scale: f64,
+        /// The output clamp's bound (spec 010 research R-06; 1.0: as committed, A-042; 0.5 or
+        /// 1 + 2⁻²³ fail the identity check).
+        pub clamp_bound: f64,
+        /// The output clamp applied to positive samples only (false: as committed; true fails
+        /// the identity check on the negative half-cycles).
+        pub clamp_positive_only: bool,
     }
 
     impl Default for OutputMutation {
@@ -275,6 +292,8 @@ pub mod __test_hooks {
                 knee_start: crate::stages::output_coeffs::KNEE_START,
                 n_out_delta: 0,
                 gain_scale: 1.0,
+                clamp_bound: 1.0,
+                clamp_positive_only: false,
             }
         }
     }

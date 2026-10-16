@@ -1039,6 +1039,43 @@ pub fn discrete_template_response(template: OutputTemplate, f_hz: f64, fs: f64) 
     db(h.norm())
 }
 
+/// The L1 norm (the sum of absolute values) of the discrete impulse response of a template's
+/// transducer sections alone, over 2 s at `fs` (spec 010 research R-04; FR-011): the speaker
+/// template's resonance and shelf (stages 12), or the earphone's two corners (stage 13). For the
+/// speaker route this is a **provable bound** on the route output, because stage 11 is held at
+/// 1.0 by the clipper: 1.75 at 6 kHz up to 2.29 at 96 kHz (data-model.md › Expected report).
+/// The sections are the design's discrete realization (`template_sections`), which the Rust's
+/// committed coefficients match within 0.000 dB (spec 009).
+pub fn impulse_l1(template: OutputTemplate, fs: f64) -> f64 {
+    let sections = template_sections(template, fs);
+    let skip = if template == OutputTemplate::Speaker {
+        2
+    } else {
+        1
+    };
+    let n = (2.0 * fs) as usize;
+    // Direct-form recursions, one state pair per section.
+    let mut states: Vec<[f64; 2]> = vec![[0.0; 2]; sections.len() - skip];
+    let mut l1 = 0.0;
+    for i in 0..n {
+        let mut y = if i == 0 { 1.0 } else { 0.0 };
+        for (sec, st) in sections[skip..].iter().zip(states.iter_mut()) {
+            // Transposed direct form II: y = b0·x + s1; s1 = b1·x − a1·y + s2; s2 = b2·x − a2·y.
+            let x = y;
+            if sec.len() == 3 {
+                y = sec[0] * x + st[0];
+                st[0] = sec[1] * x - sec[2] * y;
+            } else {
+                y = sec[0] * x + st[0];
+                st[0] = sec[1] * x - sec[3] * y + st[1];
+                st[1] = sec[2] * x - sec[4] * y;
+            }
+        }
+        l1 += y.abs();
+    }
+    l1
+}
+
 /// The template's response without the volume-control corner: the speaker template alone
 /// (stage 12) or the earphone's two corners alone (stage 13), in dB.
 pub fn discrete_stage_response(template: OutputTemplate, f_hz: f64, fs: f64) -> f64 {
@@ -1058,6 +1095,29 @@ pub fn discrete_stage_response(template: OutputTemplate, f_hz: f64, fs: f64) -> 
 #[cfg(test)]
 mod output_template_tests {
     use super::*;
+
+    /// Spec 010 T003 (research R-04): the speaker template's impulse-response L1 norm, the
+    /// hardware reviewer's figures recomputed.
+    #[test]
+    fn speaker_template_impulse_l1_matches_the_reviewed_figures() {
+        for (fs, want) in [
+            (6000.0, 1.75),
+            (8000.0, 1.88),
+            (16_000.0, 2.09),
+            (44_100.0, 2.24),
+            (48_000.0, 2.25),
+            (88_200.0, 2.28),
+            (96_000.0, 2.29),
+        ] {
+            let l1 = impulse_l1(OutputTemplate::Speaker, fs);
+            assert!(
+                (l1 - want).abs() <= 0.02,
+                "{fs} Hz: L1 {l1:.4}, want {want}"
+            );
+        }
+        // The earphone corners' L1 is above 1 too (a high-pass overshoots a square edge).
+        assert!(impulse_l1(OutputTemplate::Earphone, 48_000.0) > 1.0);
+    }
 
     /// 009 T007: the helper's earphone 1 kHz reading at 48 kHz is within FR-007's −0.5 … 0 dB,
     /// the speaker template's peak is 1.0 within 1e-9 at every rate, and each corner's −3 dB

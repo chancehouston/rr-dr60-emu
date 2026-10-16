@@ -186,7 +186,7 @@ fn validate(s: &RrDr60Settings) -> (RrDr60Status, RrDr60SettingField) {
 /// processing; a 72-byte (0.4-layout) struct is rejected as `STRUCT_SIZE`.
 #[test]
 fn c_api_005_layout_defaults_and_reserved_fields() {
-    assert_eq!(size_of::<RrDr60Settings>(), 104); // spec 009 contracts/c-api.md (96 in 0.8)
+    assert_eq!(size_of::<RrDr60Settings>(), 112); // spec 010 contracts/c-api.md (104 in 0.9)
     assert_eq!(std::mem::offset_of!(RrDr60Settings, agc_knee_dbfs), 28);
     assert_eq!(std::mem::offset_of!(RrDr60Settings, reserved_agc_1), 32);
     assert_eq!(std::mem::offset_of!(RrDr60Settings, reserved_agc_2), 36);
@@ -199,7 +199,7 @@ fn c_api_005_layout_defaults_and_reserved_fields() {
         80
     ); // 006
     let d = rr_dr60_settings_default(48_000);
-    assert_eq!(d.struct_size, 104); // spec 009
+    assert_eq!(d.struct_size, 112); // spec 010
     assert_eq!(d.agc_knee_dbfs, -1.0); // A-028
     assert_eq!(d.agc_attack_ms, 3.0); // A-034
     assert_eq!(d.agc_release_ms, 1370.0); // A-035
@@ -1728,6 +1728,17 @@ fn smoke_reference_hash_is_pinned() {
             "{route:?} at {volume}"
         );
     }
+    // Spec 010 T031: the two clamp cases (a full-scale square, the option on, position 1).
+    let (clamp, beyond) = smoke_reference::rust_clamp_references();
+    for (route, hash, len) in clamp {
+        println!("smoke clamp case {route:?} at 1: {len} samples, FNV-1a 64 {hash:#018x}");
+    }
+    println!("smoke clamp case, option off, speaker route: {beyond} samples beyond the bound");
+    assert!(beyond > 0, "the option-off playback exceeds the bound");
+    assert_eq!(clamp[0].1, smoke_reference::SMOKE_SPEAKER_CLAMP_HASH);
+    assert_eq!(clamp[1].1, smoke_reference::SMOKE_EARPHONE_CLAMP_HASH);
+    assert_eq!(clamp[0].2, smoke_reference::SMOKE_ROUTE_PLAYBACK_SAMPLES);
+    assert_eq!(clamp[1].2, smoke_reference::SMOKE_ROUTE_PLAYBACK_SAMPLES);
 }
 
 // ---- Spec 009 User Story 4: the output chain through the C API (tasks.md T030) ----
@@ -1956,4 +1967,89 @@ fn manifest_refusals() {
         );
     }
     assert!(id.is_null());
+}
+
+// ---- Spec 010 User Story 4: the output clamp through the C API (tasks.md T027) ----
+
+/// Spec 010 US4 scenario 1 (FR-008; SC-006): at the measurement rates the C handle and the
+/// Rust engine, fed the full-scale square through the one-pass in the six clamp configurations
+/// at their route and position, give bit-identical output with every C sample within [−1, 1];
+/// record / stop / play through C in the three `default_*` names equals Rust's.
+#[test]
+fn c_api_output_clamp_matches_rust_at_all_rates() {
+    use rr_dr60_harness::output_clamp_checks::stimulus_by_name;
+    for &rate in configs::measurement_rates() {
+        let x = stimulus_by_name("square_1k_fs", rate, 1.0);
+        for config in configs::OUTPUT_CLAMP_CONFIGS {
+            let s = configs::settings(config, rate);
+            let cs = configs::c_settings(&s);
+            assert!(cs.output_clamp_enabled, "{config}");
+            let (route, volume) = configs::output_clamp_route_volume(config);
+            let mut rp = Pipeline::new(s).unwrap();
+            rp.set_route(route);
+            rp.set_volume(volume).unwrap();
+            let cp = create(&cs);
+            // SAFETY: live handle.
+            assert_eq!(
+                unsafe { rr_dr60_set_route(cp, if route == Route::Speaker { 0 } else { 1 }) },
+                RrDr60Status::Ok
+            );
+            // SAFETY: live handle.
+            assert_eq!(unsafe { rr_dr60_set_volume(cp, volume) }, RrDr60Status::Ok);
+            let (mut r_out, mut c_out) = (Vec::new(), Vec::new());
+            for chunk in x.chunks(1024) {
+                let mut y = vec![0.0f32; chunk.len()];
+                let n = rp.process(chunk, &mut y).unwrap().produced;
+                r_out.extend_from_slice(&y[..n]);
+                let mut info = RrDr60BlockInfo::default();
+                // SAFETY: live handle; valid buffers.
+                let status = unsafe {
+                    rr_dr60_process(cp, chunk.as_ptr(), y.as_mut_ptr(), chunk.len(), &mut info)
+                };
+                assert_eq!(status, RrDr60Status::Ok);
+                c_out.extend_from_slice(&y[..info.produced]);
+            }
+            assert_eq!(
+                r_out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                c_out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                "{rate} Hz one-pass {config}"
+            );
+            assert!(
+                c_out.iter().all(|v| v.abs() <= 1.0),
+                "{rate} Hz {config}: bounded"
+            );
+            // SAFETY: live handle, destroyed once.
+            unsafe { rr_dr60_destroy(cp) };
+            if config.starts_with("default_") {
+                let mut rp = Pipeline::new(s).unwrap();
+                rp.set_route(route);
+                rp.set_volume(volume).unwrap();
+                let run = split_checks::record_then_play(&mut rp, &x, 480, 480);
+                let mut r_play = run.pre_drain.clone();
+                r_play.extend_from_slice(&run.drain);
+                let cp2 = create(&cs);
+                // SAFETY: live handle.
+                assert_eq!(
+                    unsafe { rr_dr60_set_route(cp2, if route == Route::Speaker { 0 } else { 1 }) },
+                    RrDr60Status::Ok
+                );
+                // SAFETY: live handle.
+                assert_eq!(unsafe { rr_dr60_set_volume(cp2, volume) }, RrDr60Status::Ok);
+                let rec = c_record(cp2, &x, 480);
+                assert!(rec.outcome.kept);
+                let c_play_out = c_play(cp2, rec.outcome.number, 480);
+                assert_eq!(
+                    r_play.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                    c_play_out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                    "{rate} Hz record-then-play {config}"
+                );
+                assert!(
+                    c_play_out.iter().all(|v| v.abs() <= 1.0),
+                    "{rate} Hz {config}: play bounded"
+                );
+                // SAFETY: live handle, destroyed once.
+                unsafe { rr_dr60_destroy(cp2) };
+            }
+        }
+    }
 }

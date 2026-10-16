@@ -45,7 +45,7 @@ use rr_dr60::{
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 9;
+pub const RR_DR60_VERSION_MINOR: u32 = 10;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -158,7 +158,8 @@ pub enum RrDr60SettingField {
 pub enum RrDr60Tap {
     /// After signal-chain stage 4 (record band-limit).
     AfterRecord = 0,
-    /// After signal-chain stage 10 (playback band-limit). The default.
+    /// After signal-chain stage 10 (playback band-limit). The default through 0.8; never
+    /// bounded by the output clamp (spec 010 FR-003: the option is inert in the one-pass here).
     AfterPlayback = 1,
     /// After signal-chain stage 3 (the limiter), at the host rate: the limiter's output sample
     /// for sample. No rate conversion, no later stage, latency 0, no events (spec 005 FR-001).
@@ -170,18 +171,20 @@ pub enum RrDr60Tap {
     AfterDecoder = 4,
     /// The selected route's output: after the speaker (stage 12) or the earphone output (stage
     /// 13), at the route's full swing (spec 009 FR-011; A-042). The default since 0.9; to keep
-    /// 0.8's output set `RR_DR60_TAP_AFTER_PLAYBACK`. Appended in 0.9.
+    /// 0.8's output set `RR_DR60_TAP_AFTER_PLAYBACK`. Appended in 0.9. With
+    /// `output_clamp_enabled` the only tap that is bounded (spec 010 FR-003); the selected
+    /// route's last per-stage tap then differs from it wherever a sample was bounded.
     RouteOutput = 5,
     /// After signal-chain stage 11 (the volume control and power amplifier) on either route
-    /// (spec 009 FR-011). Appended in 0.9.
+    /// (spec 009 FR-011). Appended in 0.9. Never bounded by the output clamp (spec 010).
     AfterVolumeAmp = 6,
     /// After signal-chain stage 12 (the speaker template); refused with
     /// `RR_DR60_STATUS_TAP_NOT_ON_ROUTE` while the earphone route is selected (spec 009
-    /// FR-011). Appended in 0.9.
+    /// FR-011). Appended in 0.9. Never bounded by the output clamp (spec 010).
     AfterSpeaker = 7,
     /// After signal-chain stage 13 (the earphone output); refused with
     /// `RR_DR60_STATUS_TAP_NOT_ON_ROUTE` while the speaker route is selected (spec 009
-    /// FR-011). Appended in 0.9.
+    /// FR-011). Appended in 0.9. Never bounded by the output clamp (spec 010).
     AfterEarphone = 8,
 }
 
@@ -406,7 +409,7 @@ pub struct RrDr60MemoryStatus {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RrDr60Settings {
-    /// Must be `sizeof(RrDr60Settings)`: 104 since 0.9 (96 in 0.8, 88 in 0.6 and 0.7, 80 in
+    /// Must be `sizeof(RrDr60Settings)`: 112 since 0.10 (104 in 0.9, 96 in 0.8, 88 in 0.6 and 0.7, 80 in
     /// 0.5, 72 in 0.3 and 0.4, rejected as `STRUCT_SIZE`). Lets the struct grow in later
     /// versions.
     pub struct_size: u32,
@@ -487,11 +490,34 @@ pub struct RrDr60Settings {
     /// Signal-chain stage 13, the earphone output's two coupling corners (A-032), on (true,
     /// default) or bypassed. Appended in 0.9 at offset 98.
     pub output_earphone_enabled: bool,
+    /// Ignored; reserved since 0.10 (the 0.9 layout's tail padding, offsets 99 – 103, made
+    /// explicit so that a 0.9 caller's `struct_size = 104` is refused instead of the option
+    /// being read from uninitialized bytes; spec 010 FR-008). Write 0.
+    pub reserved_010: [u8; 5],
+    /// The **output clamp** (spec 010 FR-001): when `true`, every sample at
+    /// `RR_DR60_TAP_ROUTE_OUTPUT` above +1.0 is replaced by +1.0 and every sample below −1.0 by
+    /// −1.0 (the route's full scale, A-042), on both routes, also when every output stage is
+    /// bypassed; the play calls always return the route output, so they are always bounded.
+    /// The taps after stages 11, 12 and 13, `RR_DR60_TAP_AFTER_PLAYBACK` and every earlier tap
+    /// are never bounded. **Off by default** (`false`): an emulator convenience, not a device
+    /// behavior, for hosts writing integer buffers (+1.0 maps to 32767 in a 16-bit conversion);
+    /// on material above the bound it adds distortion of its own that the device does not
+    /// have. Appended in 0.10 at offset 104.
+    pub output_clamp_enabled: bool,
+    /// Ignored; reserved since 0.10 (this layout's tail, offsets 105 – 111, explicit so that
+    /// the next version can append at 112 and refuse 112). Write 0.
+    pub reserved_010_tail: [u8; 7],
 }
 
 // spec 006 contracts/c-api.md: the 0.6 layout is 88 bytes; the 0.5 offsets are kept and the two
 // memory fields sit at 76 and 80 (the unit tests assert every offset).
-const _: () = assert!(size_of::<RrDr60Settings>() == 104); // spec 009 contracts/c-api.md: 96 → 104
+const _: () = assert!(size_of::<RrDr60Settings>() == 112); // spec 010 contracts/c-api.md: 104 → 112
+// Spec 010 FR-008: the struct is 8-aligned (`seed: u64`); the explicit tail ends it, so no
+// implicit padding can hide a stale caller's uninitialized byte again.
+const _: () = assert!(align_of::<RrDr60Settings>() == 8);
+const _: () = assert!(
+    core::mem::offset_of!(RrDr60Settings, reserved_010_tail) + 7 == size_of::<RrDr60Settings>()
+);
 // spec 003 contracts/c-api.md: the C event type and the core's `repr(C)` `VasEvent` share one
 // layout, so `rr_dr60_process_with_events` can pass the caller's buffer straight through.
 const _: () = assert!(
@@ -670,6 +696,7 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Sett
     out.output.volume_amp_enabled = s.output_volume_amp_enabled; // 009 FR-002
     out.output.speaker_enabled = s.output_speaker_enabled;
     out.output.earphone_enabled = s.output_earphone_enabled;
+    out.output.clamp_enabled = s.output_clamp_enabled; // 010 FR-008
     Ok(out)
 }
 
@@ -712,6 +739,9 @@ pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings 
         output_volume_amp_enabled: defaults.output.volume_amp_enabled, // A-031 (009 FR-002)
         output_speaker_enabled: defaults.output.speaker_enabled,       // A-010 (009 FR-002)
         output_earphone_enabled: defaults.output.earphone_enabled,     // A-032 (009 FR-002)
+        reserved_010: [0; 5],
+        output_clamp_enabled: defaults.output.clamp_enabled, // false (010 FR-002)
+        reserved_010_tail: [0; 7],
     }
 }
 
@@ -2488,9 +2518,10 @@ mod tests {
     /// the 0.6 layout is 88 bytes with every 0.5 offset kept and the two memory fields appended
     /// at 76 and 80.
     #[test]
-    fn settings_layout_is_88_bytes_with_the_contract_offsets() {
+    fn settings_layout_is_112_bytes_with_the_contract_offsets() {
         use std::mem::offset_of;
-        assert_eq!(size_of::<RrDr60Settings>(), 104); // spec 009 contracts/c-api.md
+        assert_eq!(size_of::<RrDr60Settings>(), 112); // spec 010 contracts/c-api.md
+        assert_eq!(align_of::<RrDr60Settings>(), 8); // `seed: u64`
         assert_eq!(offset_of!(RrDr60Settings, struct_size), 0);
         assert_eq!(offset_of!(RrDr60Settings, host_rate_hz), 4);
         assert_eq!(offset_of!(RrDr60Settings, record_stage_enabled), 8);
@@ -2521,7 +2552,25 @@ mod tests {
         assert_eq!(offset_of!(RrDr60Settings, output_volume_amp_enabled), 96);
         assert_eq!(offset_of!(RrDr60Settings, output_speaker_enabled), 97);
         assert_eq!(offset_of!(RrDr60Settings, output_earphone_enabled), 98);
+        // Spec 010 contracts/c-api.md: 104 → 112, the option at 104 behind the explicit 0.9
+        // tail padding, followed by this layout's explicit tail.
+        assert_eq!(offset_of!(RrDr60Settings, reserved_010), 99);
+        assert_eq!(offset_of!(RrDr60Settings, output_clamp_enabled), 104);
+        assert_eq!(offset_of!(RrDr60Settings, reserved_010_tail), 105);
+        let d = rr_dr60_settings_default(48_000);
+        assert!(!d.output_clamp_enabled); // 010 FR-002
+        assert_eq!(d.reserved_010, [0; 5]);
+        assert_eq!(d.reserved_010_tail, [0; 7]);
+        assert_eq!(RR_DR60_VERSION_MINOR, 10);
         let mut stale = rr_dr60_settings_default(48_000);
+        stale.struct_size = 104; // a 0.9 caller (spec 010 FR-008)
+        assert_eq!(
+            to_settings(&stale),
+            Err((
+                RrDr60Status::InvalidArgument,
+                RrDr60SettingField::StructSize
+            ))
+        );
         stale.struct_size = 96; // a 0.8 caller
         assert_eq!(
             to_settings(&stale),
@@ -2675,7 +2724,7 @@ mod tests {
     #[test]
     fn settings_default_has_the_0_6_values() {
         let s = rr_dr60_settings_default(48_000);
-        assert_eq!(s.struct_size, 104); // spec 009
+        assert_eq!(s.struct_size, 112); // spec 010
         assert_eq!(s.memory_capacity_s, 3600); // S-001: 60 minutes
         assert_eq!(s.memory_max_recordings, 99); // S-001: 99 items
         assert!(s.agc_enabled); // A-020
@@ -3405,11 +3454,11 @@ mod tests {
 
     /// 008 T040 (contracts/c-api.md): the codec control at 88, default `true`; a 0.7-layout
     /// `struct_size` of 88 is `STRUCT_SIZE`; the decoder tap is 4; the encoding values are the
-    /// form's. (The size is 104 since 0.9, spec 009 contracts/c-api.md.)
+    /// form's. (The size is 112 since 0.10, spec 010 contracts/c-api.md.)
     #[test]
     fn codec_settings_tap_and_encoding_values() {
         let s = rr_dr60_settings_default(48_000);
-        assert_eq!(s.struct_size, 104);
+        assert_eq!(s.struct_size, 112);
         assert!(s.speech_codec_enabled);
         assert_eq!(s.reserved_008, 0);
         let mut old = s;

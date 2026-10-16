@@ -371,3 +371,81 @@ fn output_cost() {
         }
     }
 }
+
+/// Spec 010 SC-005 (tasks.md T017; research R-08): the output clamp adds at most 2 ns per host
+/// sample to the codec-bypassed speaker route's one-pass cost at 48 kHz on full-scale noise at
+/// position 1 (a large share of samples replaced). The budget is SC-005's "about 3 %" of the
+/// option-off cost, asserted as a ratio so it means the same on every machine (2 ns was 3 % of
+/// the development machine's 68 ns; the x86-64 CI runner is about twice as slow, and its IEEE
+/// max / min with NaN handling takes a few instructions where aarch64 takes one). Each side is
+/// the fastest of nine alternating runs (the noise-robust estimator of 009's `output_cost`);
+/// both routes, the nanoseconds and the bounded share printed; the latencies unchanged. Quote
+/// the figures from a solo run.
+#[test]
+#[ignore = "release-mode timing; run with --ignored"]
+fn output_clamp_cost() {
+    use rr_dr60::Route;
+    if skip_in_debug() {
+        return;
+    }
+    let x: Vec<f32> = stimulus::noise(10, 30 * 48_000)
+        .iter()
+        .map(|v| (v * 4.0).clamp(-1.0, 1.0))
+        .collect();
+    let mut off = configs::settings("default_output", 48_000);
+    off.speech_codec_enabled = false; // the codec-bypassed one-pass (009 SC-007's denominator)
+    let mut on = off;
+    on.output.clamp_enabled = true;
+    let one = |s: rr_dr60::Settings, route: Route| -> f64 {
+        let mut p = Pipeline::new(s).unwrap();
+        p.set_route(route);
+        p.set_volume(1.0).unwrap();
+        let mut buf = x.clone();
+        let t = Instant::now();
+        for chunk in buf.chunks_mut(4096) {
+            let _ = p.process_in_place(chunk);
+        }
+        t.elapsed().as_nanos() as f64 / x.len() as f64
+    };
+    for route in [Route::Speaker, Route::Earphone] {
+        let (mut m_on, mut m_off) = (f64::MAX, f64::MAX);
+        for _ in 0..9 {
+            m_on = m_on.min(one(on, route));
+            m_off = m_off.min(one(off, route));
+        }
+        let mut p = Pipeline::new(on).unwrap();
+        p.set_route(route);
+        p.set_volume(1.0).unwrap();
+        let mut buf = x.clone();
+        let _ = p.process_in_place(&mut buf);
+        let share = 100.0 * buf.iter().filter(|v| v.abs() == 1.0).count() as f64 / buf.len() as f64;
+        let over = 100.0 * (m_on / m_off - 1.0);
+        println!(
+            "output clamp, {route:?} route, 48 kHz, 4096 blocks, full-scale noise at position 1: best of nine {m_on:.1} ns per host sample on, {m_off:.1} off, {:+.2} ns ({over:+.2} %); {share:.1} % of samples at the bound (010 SC-005: budget about 3 % on the speaker route, 2 ns on the development machine)",
+            m_on - m_off
+        );
+        if route == Route::Speaker {
+            assert!(
+                over <= 3.0,
+                "the output clamp adds {over:.2} % ({:.2} ns) (010 SC-005)",
+                m_on - m_off
+            );
+        }
+    }
+    for rate in configs::all_rates() {
+        let a = Pipeline::new(configs::settings("default_output_clamp", rate)).unwrap();
+        let b = Pipeline::new(configs::settings("default_output", rate)).unwrap();
+        assert_eq!(a.latency_samples(), b.latency_samples(), "{rate} Hz");
+        assert_eq!(
+            a.record_latency_samples(),
+            b.record_latency_samples(),
+            "{rate} Hz"
+        );
+        assert_eq!(
+            a.playback_latency_samples(),
+            b.playback_latency_samples(),
+            "{rate} Hz"
+        );
+        assert_eq!(a.drain_samples(), b.drain_samples(), "{rate} Hz");
+    }
+}
