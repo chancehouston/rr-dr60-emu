@@ -88,6 +88,8 @@ RECORD = Template(
     loss_lo_db=-0.15,
     loss_hi_db=0.2,
     band_lo_hz=BAND_LO,
+    # A-027 (amended 2026-10-17): the MSM7702's own sheet (S-003) gives 0.5 dB typ; the shipped
+    # filters are kept at the S-005 proxy value (0.306 dB realized, inside S-003's 0 ... 0.8 dB).
     edge_typ_db=0.4,
     gdd_limits_ms={375: 1.0, 450: 0.47, 750: 0.17, 1000: 0.17, 1500: 0.17, 1950: 0.17, 2100: 1.0},
     gdd_typ_ms={375: 0.25, 450: 0.15, 750: 0.03, 1000: 0.03, 1500: 0.03, 1950: 0.067, 2100: 0.093},
@@ -97,7 +99,9 @@ PLAYBACK = Template(
     const="PLAYBACK_SOS",
     sections=3,
     has_highpass=False,
-    loss_lo_db=-0.15,  # carried from the transmit row (engineering target, 004 FR-015)
+    loss_lo_db=-0.15,  # carried from the transmit row (004 FR-015); S-003 prints it for receive too
+    # A-027 (amended 2026-10-17): S-003 gives +0.20 dB and 0.47 dB typ; the shipped filters are
+    # kept at the S-005 proxy values (realized max +0.001 dB, 0.478 dB at 2550 Hz).
     loss_hi_db=0.25,
     band_lo_hz=0.0,
     edge_typ_db=0.56,

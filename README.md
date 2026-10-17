@@ -12,7 +12,7 @@
 
 ## What is this?
 
-The Panasonic RR-DR60 is a mid-1990s pocket IC voice recorder. Long after it was discontinued, it became legendary among paranormal investigators as an "EVP recorder", and working units are now sought after on the second-hand market.
+The Panasonic RR-DR60 is a late-1990s pocket IC voice recorder (its earliest dated document is from 1998). Long after it was discontinued, it became legendary among paranormal investigators as an "EVP recorder", and working units are now sought after on the second-hand market.
 
 `rr-dr60-emu` aims to recreate that recorder's sound in software: audio goes in, and the goal is to get back what an RR-DR60 would have recorded and played back. The emulator models each stage of the device:
 
@@ -47,7 +47,7 @@ The engine's **stage manifest** ([spec 007](specs/007-stage-manifest/spec.md)) i
 | 3 | Limiter (AGC) | assumed | low | S-001, S-002; A-007, A-019, A-020, A-028, A-030, A-034, A-035, A-036, A-037 | a soft knee, if the circuit has one | 0.5.0 |
 | 4 | Codec input: filter, ADC and µ-law | assumed | medium | S-002, S-003, S-005, S-007; A-003, A-015, A-016, A-026, A-027, A-030 | µ-law quantization, idle noise, the input amp's clipping ahead of the filter, and aliasing of input above 3 kHz | 0.5.0 |
 | 5 | Voice-activated pause (VAS) | assumed | low | S-001, S-002; A-008, A-021, A-022, A-023, A-024, A-025, A-033, A-037 | a digital gain from the sensitivity setting, if the device applies one | 0.5.0 |
-| 6 | Noise reduction | not modeled | — | S-002, S-004; A-009 |  |  |
+| 6 | Noise reduction | not modeled | — | S-001, S-002, S-004, S-012, S-013; A-009 |  |  |
 | 7 | Speech encoder (CELP, 4 kbit/s) | assumed | low | S-002, S-008, S-009, S-010, S-011; A-004, A-040, A-041 | the device's own coder (frame length, look-ahead, codebooks and bit allocation unidentified); 8-bit µ-law input (A-003) | 0.8.0 |
 | 8 | Flash memory | assumed | low | S-001, S-002; A-037, A-038, A-039 | item locking (F.LOCK) | 0.8.0 |
 | 9 | Speech decoder (CELP) | assumed | low | S-002, S-008, S-009, S-010, S-011; A-004, A-040, A-041 | the device's own decoder (frame length, look-ahead, codebooks and its postfilter unidentified; A-040, A-041) | 0.8.0 |
@@ -55,8 +55,8 @@ The engine's **stage manifest** ([spec 007](specs/007-stage-manifest/spec.md)) i
 | 11 | Volume control and power amplifier | assumed | medium | S-001, S-002, S-006; A-031, A-043, A-044, A-045 | the 159 Hz corner's knob shift; the clip level's battery and transistor spread; wiper noise; knob speed; the beeps | 0.11.0 |
 | 12 | Speaker | assumed | low | S-001, S-002; A-010, A-042 | this driver's own response (the model is a generic small-speaker template, not a capture); nonlinearity, enclosure, room | 0.9.0 |
 | 13 | Earphone output | assumed | low | S-001, S-002; A-012, A-032, A-042 | the follower's clipping cut-off on loud material; its corners' spread with the transistor's gain; loads other than 16 Ω | 0.9.0 |
-| 14 | Clock | not modeled | — | S-002; A-011 |  |  |
-| 15 | Power supply | not modeled | — | S-001, S-002; A-013 |  |  |
+| 14 | Clock | not modeled | — | S-002, S-003, S-016; A-011 |  |  |
+| 15 | Power supply | not modeled | — | S-001, S-002, S-006, S-014, S-015, S-017; A-013, A-056, A-057, A-058 |  |  |
 <!-- manifest-table:end -->
 
 Nothing in this table claims the emulator sounds like a real RR-DR60 yet. It claims that each stage is built to a stated, traceable description, and that the harness checks the build against that description.

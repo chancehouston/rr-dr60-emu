@@ -1,7 +1,8 @@
 //! # rr_dr60
 //!
 //! A portable software emulator of the audio signal chain of the Panasonic
-//! RR-DR60 digital voice recorder (mid-1990s IC recorder).
+//! RR-DR60 digital voice recorder (a late-1990s IC recorder; its earliest dated document is
+//! from 1998).
 //!
 //! This version models the record path as the microphone path (stages 1 – 2), the limiter
 //! (stage 3), the host-to-device rate conversion, the record band-limit (stage 4), the ADC's
