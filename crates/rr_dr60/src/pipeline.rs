@@ -354,20 +354,24 @@ impl Pipeline {
             memory,
             Route::default(),
             crate::output::VOLUME_REFERENCE, // A-043
+            0,                               // 012 FR-009: the recording counter starts at 0
         ))
     }
 
     /// Builds every path around an existing memory (`new` and `reconfigure`). Infallible once
     /// the settings are validated and the plan exists, so `reconfigure` can move the memory in
-    /// without a window in which the pipeline has none.
+    /// without a window in which the pipeline has none. `counter` is the recording counter
+    /// carried in (spec 012 FR-009); the one-pass hiss is keyed to it.
     fn with_memory(
         settings: Settings,
         plan: &RatePlan,
         memory: Memory,
         route: Route,
         volume: f32,
+        counter: u64,
     ) -> Self {
-        let one_pass = OnePass::new(&settings, plan);
+        let mut one_pass = OnePass::new(&settings, plan);
+        one_pass.rec.rekey(counter); // 012 FR-009: the next recording's stream
         let latency = latency_samples(plan, &settings, &one_pass);
         Self {
             settings,
@@ -376,7 +380,7 @@ impl Pipeline {
             recorder: RecordPath::new(&settings, plan, false, true),
             player: PlaybackPath::new(&settings, plan, false),
             memory,
-            transport: Transport::default(),
+            transport: Transport::with_counter(counter),
             route,
             volume,
             plan_l_m: paths::l_m(plan),
@@ -616,13 +620,16 @@ impl Pipeline {
     /// (FR-017; spec 006 FR-019): the limiter's capacitor is discharged, every filter, the VAS
     /// and the conversions reset, in the one-pass stream and in both split paths. A recording
     /// in progress is discarded without flush (its samples leave the store); a playback stops
-    /// without drain. The memory's recordings and the route are kept.
+    /// without drain. The memory's recordings and the route are kept, and so is the recording
+    /// counter (spec 012 FR-009): the one-pass hiss restarts at the counter's current stream,
+    /// the next recording's.
     pub fn reset(&mut self) {
         self.one_pass.reset();
         self.recorder.reset();
         self.player.reset();
         self.memory.discard_in_progress();
         self.transport.reset();
+        self.one_pass.rec.rekey(self.transport.counter); // 012 FR-009
     }
 
     /// Applies new settings and resets all path state, as if the pipeline had been created
@@ -662,7 +669,14 @@ impl Pipeline {
         } else {
             self.memory.copied_to(&settings.memory, encoding)?
         };
-        *self = Self::with_memory(settings, &plan, memory, self.route, self.volume);
+        *self = Self::with_memory(
+            settings,
+            &plan,
+            memory,
+            self.route,
+            self.volume,
+            self.transport.counter, // 012 FR-009: the counter never rewinds
+        );
         Ok(())
     }
 
@@ -818,7 +832,7 @@ mod validation_tests {
     /// The spec 006 configuration: the defaults with the speech codec bypassed (spec 008 FR-021:
     /// the earlier specs' rules are checked with the codec off; the codec has its own tests).
     fn settings_006(rate: u32) -> Settings {
-        let mut s = Settings::new(rate);
+        let mut s = crate::test_util::settings_011(rate); // 012 FR-010
         s.output = crate::settings::OutputSettings::BYPASSED; // 009 FR-016: the earlier checks run with stages 11–13 bypassed
         s.tap = Tap::AfterPlayback; // 009 FR-011: 0.8's output
         s.speech_codec_enabled = false;
@@ -840,7 +854,7 @@ mod validation_tests {
             y
         };
         for rate in crate::SUPPORTED_HOST_RATES {
-            let mut stages_on = Settings::new(rate);
+            let mut stages_on = crate::test_util::settings_011(rate); // 012 FR-010
             stages_on.tap = Tap::AfterAgc;
             let mut stages_off = stages_on;
             stages_off.record_stage_enabled = false;
@@ -1015,7 +1029,7 @@ mod limiter_tests {
     /// The spec 006 configuration: the defaults with the speech codec bypassed (spec 008 FR-021:
     /// the earlier specs' rules are checked with the codec off; the codec has its own tests).
     fn settings_006(rate: u32) -> Settings {
-        let mut s = Settings::new(rate);
+        let mut s = crate::test_util::settings_011(rate); // 012 FR-010
         s.output = crate::settings::OutputSettings::BYPASSED; // 009 FR-016: the earlier checks run with stages 11–13 bypassed
         s.tap = Tap::AfterPlayback; // 009 FR-011: 0.8's output
         s.speech_codec_enabled = false;
@@ -1094,7 +1108,7 @@ mod limiter_tests {
     fn tap_after_agc_is_the_limiter_output_at_the_host_rate() {
         for rate in [6000, 48_000] {
             let fs = f64::from(rate);
-            let mut s = Settings::new(rate);
+            let mut s = crate::test_util::settings_011(rate); // 012 FR-010
             s.tap = Tap::AfterAgc;
             let p = Pipeline::new(s).unwrap();
             assert_eq!(p.latency_samples(), 0, "{rate} Hz");
@@ -1259,7 +1273,7 @@ mod vas_event_tests {
     /// The VAS-isolated configuration (spec 003 definitions): the limiter, stages 4 and 10 and
     /// the clamp off.
     fn vas_only(rate: u32) -> Settings {
-        let mut s = Settings::new(rate);
+        let mut s = crate::test_util::settings_011(rate); // 012 FR-010
         s.agc.enabled = false;
         s.record_stage_enabled = false;
         s.playback_stage_enabled = false;
@@ -1524,7 +1538,7 @@ mod narrowing_tests {
     /// The spec 006 configuration: the defaults with the speech codec bypassed (spec 008 FR-021:
     /// the earlier specs' rules are checked with the codec off; the codec has its own tests).
     fn settings_006(rate: u32) -> Settings {
-        let mut s = Settings::new(rate);
+        let mut s = crate::test_util::settings_011(rate); // 012 FR-010
         s.output = crate::settings::OutputSettings::BYPASSED; // 009 FR-016: the earlier checks run with stages 11–13 bypassed
         s.tap = Tap::AfterPlayback; // 009 FR-011: 0.8's output
         s.speech_codec_enabled = false;
@@ -1626,7 +1640,7 @@ mod narrowing_tests {
             let x: Vec<f32> = (0..(0.5 * fs) as usize)
                 .map(|n| (amp * sin(w * n as f64)) as f32)
                 .collect();
-            let mut s = Settings::new(rate);
+            let mut s = crate::test_util::settings_011(rate); // 012 FR-010
             s.tap = Tap::AfterAgc;
             let (wide, _, _) = run(&mut Pipeline::with_device_narrowing(s, false).unwrap(), &x);
             let (narrow, _, _) = run(&mut Pipeline::with_device_narrowing(s, true).unwrap(), &x);
@@ -1777,7 +1791,7 @@ mod codec_tests {
 
     /// The codec alone at the decoder tap (the harness's `codec_only`).
     fn codec_only(rate: u32) -> Settings {
-        let mut s = Settings::new(rate);
+        let mut s = crate::test_util::settings_011(rate); // 012 FR-010
         s.agc.enabled = false;
         s.record_stage_enabled = false;
         s.playback_stage_enabled = false;

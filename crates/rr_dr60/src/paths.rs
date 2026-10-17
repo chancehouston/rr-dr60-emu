@@ -3,7 +3,7 @@
 //! data-model.md › Paths).
 //!
 //! ```text
-//! host in → [limiter] → host→device → [stage 4] → [clamp] → [VAS] → narrow to f32 ─┐
+//! host in → [mic 1–2] → [limiter] → host→device → [stage 4] → [clamp] → [VAS] → narrow to f32 ─┐
 //!           RecordPath (RecordHalf = stage 4, clamp, VAS, narrowing)               │
 //!                                                                                  ▼
 //! host out ← device→host ← [stage 10] ← widen ←────────────────── PlaybackPath (PlaybackHalf)
@@ -28,6 +28,7 @@ use crate::settings::{DEVICE_RATE_HZ, Settings, Tap, VasMode};
 use crate::stages::biquad::Biquad;
 use crate::stages::clamp::ClampStage;
 use crate::stages::limiter::Limiter;
+use crate::stages::mic::{MicFront, MicStop};
 use crate::stages::output::OutputChain;
 use crate::stages::vas::{VasDecision, VasStage};
 use crate::stages::voiceband::{PlaybackStage, RecordStage};
@@ -380,10 +381,14 @@ enum FrontStop {
     Limiter,
 }
 
-/// The record path: the limiter at the host rate (spec 005 research R-01), the host-to-device
-/// conversion and a [`RecordHalf`], with the event counters (spec 006 FR-001; research R-01).
+/// The record path: the front at the host rate (stages 1 – 2, spec 012 FR-001; the limiter,
+/// spec 005 research R-01), the host-to-device conversion and a [`RecordHalf`], with the event
+/// counters (spec 006 FR-001; research R-01).
 #[derive(Clone, Debug)]
 pub(crate) struct RecordPath {
+    /// Stages 1 – 2 at the host rate, ahead of the limiter (spec 012 FR-001), each skipped when
+    /// off (FR-007).
+    mic: MicFront,
     /// Stage 3 at the host rate, before the conversion.
     pub(crate) limiter: Limiter,
     /// Stage 3 runs: the AGC is enabled (spec 002 FR-002; spec 005 FR-002).
@@ -442,6 +447,7 @@ impl RecordPath {
             0
         };
         Self {
+            mic: MicFront::new(&settings.mic, settings.seed, settings.host_rate_hz),
             limiter: Limiter::new(&settings.agc, settings.host_rate_hz),
             run_limiter: settings.agc.enabled,
             // The "after AGC" tap never converts, so its decimator is not built (001 R-01).
@@ -491,7 +497,7 @@ impl RecordPath {
     /// The 64-bit post-VAS sample this host sample produced, if any (+0.0 for a muted one).
     #[inline]
     fn step(&mut self, x: f32) -> Option<f64> {
-        let x = self.limited(x);
+        let x = self.front(x);
         let d = match &mut self.down {
             None => x,
             Some(down) => down.push(x)?,
@@ -511,16 +517,18 @@ impl RecordPath {
     #[inline]
     pub(crate) fn front_only(&mut self, x: f32) -> f32 {
         narrow_out(match self.front_stop {
-            // Spec 012 T014: the microphone stages are identities until US1 (T026, T027).
-            FrontStop::Capsule | FrontStop::Amp => sanitize_in(x),
-            FrontStop::Limiter => self.limited(x),
+            FrontStop::Capsule => self.mic.process_upto(sanitize_in(x), MicStop::Capsule),
+            FrontStop::Amp => self.mic.process_upto(sanitize_in(x), MicStop::Amp),
+            FrontStop::Limiter => self.front(x),
         })
     }
 
-    /// Stage 3 at the host rate (spec 005 R-01). Bypassed: no arithmetic (spec 002 FR-002).
+    /// The front at the host rate: the input sanitized, stages 1 – 2 (spec 012 FR-001), then
+    /// stage 3 (spec 005 R-01). A bypassed stage does no arithmetic (spec 002 FR-002; spec 012
+    /// FR-010).
     #[inline]
-    fn limited(&mut self, x: f32) -> f64 {
-        let x = sanitize_in(x);
+    fn front(&mut self, x: f32) -> f64 {
+        let x = self.mic.process(sanitize_in(x));
         if self.run_limiter {
             self.limiter.process(x)
         } else {
@@ -587,9 +595,17 @@ impl RecordPath {
         self.half.force_open(on);
     }
 
-    /// Back to the freshly created state (the limiter discharged, the decimator and the half
-    /// cleared, the counters at zero). No allocation (spec 006 FR-004).
+    /// Keys stage 1's hiss to recording counter `counter`, from its beginning (spec 012
+    /// FR-009); no effect with stage 1 off.
+    pub(crate) fn rekey(&mut self, counter: u64) {
+        self.mic.rekey(counter);
+    }
+
+    /// Back to the freshly created state (stages 1 – 2 at rest with the hiss at the beginning
+    /// of its current stream, spec 012 FR-009; the limiter discharged, the decimator and the
+    /// half cleared, the counters at zero). No allocation (spec 006 FR-004).
     pub(crate) fn reset(&mut self) {
+        self.mic.reset();
         self.limiter.reset();
         if let Some(down) = &mut self.down {
             down.reset();

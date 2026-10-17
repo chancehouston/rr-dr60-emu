@@ -231,8 +231,8 @@ pub fn settings(name: &str, host_rate_hz: u32) -> Settings {
             s.output.earphone_enabled = name == "output_only_earphone"; // stage 13 (A-032)
         }
         "default_output" | "default_earphone" | "default_loud" => s = settings_011(host_rate_hz),
-        // Spec 012 (data-model.md › Harness configurations): the microphone path. Until the
-        // default turns it on (T029) the names set `MicSettings::DEVICE` explicitly.
+        // Spec 012 (data-model.md › Harness configurations): the microphone path alone, on
+        // `bypass_all` (whose base, `settings_011`, has it bypassed).
         "mic_only" | "mic_only_quiet" | "mic_capsule_only" => {
             s = settings("bypass_all", host_rate_hz);
             s.mic = MicSettings::DEVICE; // A-046 – A-053 (012 FR-001)
@@ -250,8 +250,7 @@ pub fn settings(name: &str, host_rate_hz: u32) -> Settings {
             }
         }
         "default_mic" | "default_mic_quiet" => {
-            s = Settings::new(host_rate_hz);
-            s.mic = MicSettings::DEVICE; // 012 FR-001
+            s = Settings::new(host_rate_hz); // the 0.12 default: stages 1 – 2 on (012 FR-001)
             s.vas.enabled = false; // 012 US3 AS7: the voice activation bypassed
             if name == "default_mic_quiet" {
                 s.mic.capsule_enabled = false; // 012 FR-014

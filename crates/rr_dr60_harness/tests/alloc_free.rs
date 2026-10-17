@@ -168,6 +168,7 @@ fn processing_never_touches_the_heap() {
         output_cases(rate, vas_sizes);
         output_clamp_cases(rate, vas_sizes);
         volume_ramp_cases(rate, vas_sizes);
+        mic_cases(rate, vas_sizes);
     }
 
     // Spec 007 FR-016, FR-017, SC-004: the manifest reads, Rust and C.
@@ -606,4 +607,66 @@ fn volume_ramp_cases(rate: u32, sizes: &[usize]) {
         after, before,
         "{rate} Hz volume transitions: heap activity [allocs, deallocs, reallocs]"
     );
+}
+
+/// Spec 012 FR-011 (tasks.md T031): stages 1 – 2 allocate nothing per block, in the one-pass
+/// (every microphone configuration, Rust and C), in the recorder (a start rekeys the hiss and
+/// advances the counter), in the stop's flush, and in `reset` (which rekeys the one-pass).
+fn mic_cases(rate: u32, sizes: &[usize]) {
+    let input = vas_input(rate);
+    let mut output = vec![0.0f32; 1024];
+    let mut engines: Vec<(Pipeline, *mut RrDr60Pipeline)> = configs::MIC_CONFIGS
+        .iter()
+        .map(|&config| {
+            let settings = configs::memory_capacity(configs::settings(config, rate), 300, 3);
+            let c_settings = configs::c_settings(&settings);
+            let mut handle: *mut RrDr60Pipeline = std::ptr::null_mut();
+            // SAFETY: valid pointers.
+            assert_eq!(
+                unsafe { rr_dr60_create(&c_settings, &mut handle) },
+                RrDr60Status::Ok
+            );
+            (Pipeline::new(settings).unwrap(), handle)
+        })
+        .collect();
+    let settings = configs::memory_capacity(configs::settings("default_mic", rate), 300, 3);
+    let mut p = Pipeline::new(settings).unwrap();
+    let mut events = vec![VasEvent::default(); p.max_record_events(1024) + 8];
+    let before = counts();
+    for (e, handle) in engines.iter_mut() {
+        for &n in &sizes[..64] {
+            let _ = e.process(&input[..n], &mut output[..n]).unwrap();
+            // SAFETY: live handle; buffers valid for n floats and non-overlapping.
+            let status = unsafe {
+                rr_dr60_process(
+                    *handle,
+                    input.as_ptr(),
+                    output.as_mut_ptr(),
+                    n,
+                    std::ptr::null_mut(),
+                )
+            };
+            assert!(status == RrDr60Status::Ok);
+        }
+        e.reset();
+    }
+    for _ in 0..2 {
+        p.start_recording().unwrap();
+        for &n in &sizes[..100] {
+            let info = p.record(&input[..n], &mut events).unwrap();
+            assert!(info.stopped.is_none());
+        }
+        let out = p.stop_recording(&mut events).unwrap();
+        assert!(matches!(out.result, rr_dr60::StopResult::Kept { .. }));
+    }
+    p.reset();
+    let after = counts();
+    assert_eq!(
+        after, before,
+        "{rate} Hz microphone path: heap activity [allocs, deallocs, reallocs]"
+    );
+    for (_, handle) in engines {
+        // SAFETY: handle came from rr_dr60_create.
+        unsafe { rr_dr60_destroy(handle) };
+    }
 }

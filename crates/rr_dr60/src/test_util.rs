@@ -6,6 +6,17 @@ extern crate std;
 use std::f64::consts::TAU;
 use std::vec::Vec;
 
+use crate::settings::{MicSettings, Settings};
+
+/// The 0.11 default (spec 012 FR-010; research R-06): [`Settings::new`] with the microphone path
+/// (stages 1 – 2) **bypassed**. The core's tests of the earlier specs' behaviour build on it, as
+/// the harness's `configs::settings_011` does, so they keep checking what they checked.
+pub(crate) fn settings_011(host_rate_hz: u32) -> Settings {
+    let mut s = Settings::new(host_rate_hz);
+    s.mic = MicSettings::BYPASSED; // 012 FR-010
+    s
+}
+
 /// Least-squares fit of `a·cos(ωn) + b·sin(ωn)` over `x`. Returns (amplitude, residual
 /// signal after removing the fitted sinusoid).
 pub(crate) fn fit(x: &[f64], freq: f64, fs: f64) -> (f64, Vec<f64>) {

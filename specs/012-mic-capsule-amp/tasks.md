@@ -230,21 +230,21 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
 
 ### Tests for User Story 1 (write first; expected red until T026–T029)
 
-- [ ] T021 [US1] Create `crates/rr_dr60_harness/src/mic_checks.rs` (`pub mod mic_checks` in `lib.rs`), the US1 checks, with constants copied from T004 and T005's print (dated):
+- [x] T021 [US1] Create `crates/rr_dr60_harness/src/mic_checks.rs` (`pub mod mic_checks` in `lib.rs`), the US1 checks, with constants copied from T004 and T005's print (dated):
   - **`band(rate)`:** an impulse through `mic_only_quiet`; `analysis::prototype_deviation` within ±0.1 dB at every centre above −40 dB (US1 AS1, SC-002). Each section's −3 dB point and the 1 kHz group delay are printed.
   - **`hiss_level(rate, offset)`:** 10 s of silence through `mic_only`; the band level within ±0.5 dB of the figure (+ offset) and the third-octave shape at 315–2500 Hz within ±1 dB (US1 AS2, AS3, SC-001).
   - **`streams(rate)`:** at `mic_capsule_only` over 480 000 samples, the cross-correlation for seeds 0 / 1 and for counters 0 / 1 (by recording twice) below 5/√N at lag 0 and 6/√N over ±64 (US1 AS4).
   - **`determinism(rate)`:** the same seed, counter and input in four partitions (1, 64, 4096 and an irregular one) are bit-identical.
 
   Each check returns `MeasurementResult` rows.
-- [ ] T022 [P] [US1] Create `crates/rr_dr60_harness/tests/us1_mic.rs`: the T021 checks at `configs::measurement_rates()`, plus an offset sweep (−18, −6, 0, +12) and the refused offsets. Run it: **red** (the stages are identities).
-- [ ] T023 [P] [US1] Core tests in `crates/rr_dr60/src/stages/mic.rs`, written before the implementation:
+- [x] T022 [P] [US1] Create `crates/rr_dr60_harness/tests/us1_mic.rs`: the T021 checks at `configs::measurement_rates()`, plus an offset sweep (−18, −6, 0, +12) and the refused offsets. Run it: **red** (the stages are identities).
+- [x] T023 [P] [US1] Core tests in `crates/rr_dr60/src/stages/mic.rs`, written before the implementation:
   - the keying (`key(seed, counter)` matches the script's two-bijection formula on fixed vectors; seed 0 gives a non-zero state);
   - the retry cap through a `force_retry_cap` hook returns a deterministic value;
   - release-only `#[ignore]`: on 10⁸ draws, the 4σ count within ±5 % of 6 334 and the 5σ count within ±40 % of 57 (US1 AS5);
   - each fitted section's −3 dB point equals the script's print;
   - the bypass identity.
-- [ ] T024 [P] [US1] Counter tests in `crates/rr_dr60/src/transport.rs` for **every row of research R-05's table**:
+- [x] T024 [P] [US1] Counter tests in `crates/rr_dr60/src/transport.rs` for **every row of research R-05's table**:
   - construction 0; `reset` and an accepted `reconfigure` keep it; a successful start rekeys and then increments;
   - a refused start (memory full, no slots, recording in progress) does not advance;
   - an empty recording discarded at the stop has consumed its stream;
@@ -255,24 +255,24 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
 
 ### Implementation for User Story 1
 
-- [ ] T025 [US1] `crates/rr_dr60/src/stages/mic.rs`, `MicCapsule`:
+- [x] T025 [US1] `crates/rr_dr60/src/stages/mic.rs`, `MicCapsule`:
   - **State.** xoshiro256++ state; `key(seed, counter)` = mix64(seed ^ MIC_STREAM) ^ mix64(counter ^ MIC_COUNTER_SALT), then four SplitMix64 outputs (A-049).
   - **The ziggurat.** Layer and sign from bits 0–7, mantissa from bits 11–63, tail uniforms `(r >> 11) + 1`, `detmath::{exp, ln}` in the tail and the wedge, each rejection loop capped at `RETRY_CAP` (8) returning the last candidate.
   - **The gain.** σ_r·`detmath::exp(offset·ln(10)/20)`, computed at construction.
   - **Methods:** `process(x)`, `rekey(counter)`, and `reset` (rekeys to the stored counter).
-- [ ] T026 [US1] `crates/rr_dr60/src/stages/mic.rs`, `MicAmp` without the clipper: HP_in (normalization folded in) → **identity in place of the clipper (US2 adds it)** → HP_out → LP, from `mic_coeffs` per rate, using `stages::first_order::FirstOrder` (state flushed below 1e-30), with `reset`. `MicFront { capsule: Option<MicCapsule>, amp: Option<MicAmp> }` is decided at construction from the switches.
-- [ ] T027 [US1] `crates/rr_dr60/src/paths.rs`:
+- [x] T026 [US1] `crates/rr_dr60/src/stages/mic.rs`, `MicAmp` without the clipper: HP_in (normalization folded in) → **identity in place of the clipper (US2 adds it)** → HP_out → LP, from `mic_coeffs` per rate, using `stages::first_order::FirstOrder` (state flushed below 1e-30), with `reset`. `MicFront { capsule: Option<MicCapsule>, amp: Option<MicAmp> }` is decided at construction from the switches.
+- [x] T027 [US1] `crates/rr_dr60/src/paths.rs`:
   - `RecordPath::limited` becomes `front`: `sanitize_in` → capsule → amp → limiter, each step skipped when off;
   - `front_only(upto)` serves the two taps and `AfterAgc`;
   - `RecordPath::rekey(counter)`;
   - `reset` puts the sections at rest and rekeys to the stored counter.
-- [ ] T028 [US1] `crates/rr_dr60/src/transport.rs` and `pipeline.rs`:
+- [x] T028 [US1] `crates/rr_dr60/src/transport.rs` and `pipeline.rs`:
   - **The counter** (`u64`, 0 at construction, carried through `reconfigure`).
   - **`start_recording`.** After `memory.open()` succeeds: `recorder.reset()`, `recorder.rekey(counter)`, then `counter += 1`.
   - **The one-pass record path.** Keyed to the counter's current value at construction, `reset` and `reconfigure`.
   - **Docs.** `StopOutcome::silence_fed_samples` rustdoc: zero-valued input; with stage 1 on the recording carries hiss there.
   - **Run:** T023 and T024 green.
-- [ ] T029 [US1] **Flip the default:** `Settings::new` uses `MicSettings::DEVICE`.
+- [x] T029 [US1] **Flip the default:** `Settings::new` uses `MicSettings::DEVICE`.
   - Remove T017's explicit `DEVICE` from the mic configurations.
   - **The audit** (R-06):
     - add `test_util::settings_011` to `crates/rr_dr60/src/test_util.rs`;
@@ -280,17 +280,17 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
     - rebase each one that checks pre-012 behaviour (for example `pipeline.rs`'s "the first 180 outputs == 0.0");
     - keep and restate each one that checks the default.
   - **The seed's docs.** Update `Settings::seed`'s rustdoc: it seeds the capsule's hiss, keyed per recording.
-- [ ] T030 [US1] **The bit-identity proof at the flip** (FR-010, SC-004, US3 AS1):
+- [x] T030 [US1] **The bit-identity proof at the flip** (FR-010, SC-004, US3 AS1):
   - the seven golden tests, `crates/rr_dr60_ffi/tests/c/run_smoke.sh`, `ffi_parity` and `cargo test --all-features` are green with the default on;
   - `us1_mic` is green (T022);
   - the core tests are green, including the release-only `cargo test -p rr_dr60 --release stages::mic -- --ignored`.
-- [ ] T031 [US1] Early whole-engine checks (US3 AS1–AS3; the hiss is on by default from here), added to `mic_checks.rs` and `us1_mic.rs`:
+- [x] T031 [US1] Early whole-engine checks (US3 AS1–AS3; the hiss is on by default from here), added to `mic_checks.rs` and `us1_mic.rs`:
   - **`equivalence(rate)`:** the first recording after construction, after `reset` and after `reconfigure` equals the one-pass under spec 008's coordinates, with the stop's flush carrying the hiss (SC-008);
   - **`rest_and_rekey(rate)`:** after `reset` the sections are at rest and the hiss restarts at the current counter's stream;
   - **`taps(rate)`:** `AfterMicCapsule` is the input plus white hiss and `AfterMicAmp` the shaped signal, both latency 0; every earlier tap's latency is unchanged.
 
   Also: `crates/rr_dr60_harness/tests/determinism.rs` gains `mic_partitions`, and `alloc_free.rs` gains the mic configurations.
-- [ ] T032 [P] [US1] Create `crates/rr_dr60_harness/tests/mic_matrix.rs`: the seven-rate report of the US1 rows (band deviations, −3 dB points, group delay, hiss level and shape, offsets, cross-correlations). Release-only `#[ignore]`: the 60-minute 10 s-window stability at 48 kHz (US1 AS5).
+- [x] T032 [P] [US1] Create `crates/rr_dr60_harness/tests/mic_matrix.rs`: the seven-rate report of the US1 rows (band deviations, −3 dB points, group delay, hiss level and shape, offsets, cross-correlations). Release-only `#[ignore]`: the 60-minute 10 s-window stability at 48 kHz (US1 AS5).
 
 **Checkpoint**: SC-001, SC-002, SC-004, SC-005, SC-008. The default carries the band and the hiss; the seven guards are unmoved. Commit: `feat(012): stages 1–2's band and hiss, on by default (US1)`.
 

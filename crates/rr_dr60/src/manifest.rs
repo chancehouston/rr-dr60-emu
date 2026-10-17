@@ -799,14 +799,12 @@ mod tests {
             output,
             mic,
         } = Settings::new(6000);
-        // Spec 012: stages 1 and 2's two controls. The default turns them on in T029 and the
-        // manifest models the stages in T008; until then they are mapped but not asserted.
+        // Spec 012 FR-007: stages 1 and 2's two controls (on by default since 0.12, T029).
         let MicSettings {
             capsule_enabled,
             amp_enabled,
             hiss_offset_db: _, // a level, not a bypass control
         } = mic;
-        let _ = (capsule_enabled, amp_enabled);
         let OutputSettings {
             volume_amp_enabled,
             speaker_enabled,
@@ -832,6 +830,8 @@ mod tests {
             max_recordings: _,
         } = memory;
         let controls: &[(u32, bool)] = &[
+            (1, capsule_enabled), // spec 012 FR-007
+            (2, amp_enabled),     // spec 012 FR-007
             (3, agc_enabled),
             (4, record_stage_enabled),
             (4, adc_clamp_enabled),
@@ -879,6 +879,8 @@ mod tests {
             Tap::AfterMicAmp => 2,     // spec 012 FR-008
         };
         for t in [
+            Tap::AfterMicCapsule, // spec 012 FR-008
+            Tap::AfterMicAmp,     // spec 012 FR-008
             Tap::AfterAgc,
             Tap::AfterRecord,
             Tap::AfterVas,

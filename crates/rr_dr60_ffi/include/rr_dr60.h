@@ -434,7 +434,9 @@ typedef struct RrDr60Settings {
   bool playback_stage_enabled;
   // An `RrDr60Tap` value.
   uint32_t tap;
-  // Seed for stochastic stages. No effect on output in this version.
+  // Seed for stochastic stages: since 0.12 the capsule's hiss (stage 1; spec 012 FR-009,
+  // A-049), one deterministic stream per recording keyed by the seed and the recording
+  // counter. No effect with `mic_capsule_enabled` false.
   uint64_t seed;
   // Signal-chain stage 3 (the limiter) on (true, default; assumed always active, A-020) or
   // bypassed. Below its knee the limiter is the identity; above it the output is held at the

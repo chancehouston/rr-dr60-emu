@@ -509,8 +509,13 @@ pub struct Settings {
     /// Output tap point. Default [`Tap::RouteOutput`] since 0.9 (the selected route's output;
     /// spec 009 FR-010); [`Tap::AfterPlayback`] gives 0.8's default output.
     pub tap: Tap,
-    /// Seed for stochastic stages (FR-009). No stage is stochastic in this version, so the
-    /// seed has no effect on output.
+    /// Seed for stochastic stages (FR-009). Since 0.12 it seeds the **capsule's hiss** (stage 1;
+    /// spec 012 FR-003, FR-009; A-049): each recording's hiss is its own deterministic stream,
+    /// keyed by the seed and the recording counter (the number of recordings started since
+    /// construction, which never rewinds), and the one-pass processing uses the stream of the
+    /// next recording. The same seed, counter and input give bit-identical output on every
+    /// platform and in any block partition; a host that wants a different hiss in every session
+    /// sets a different seed. With stage 1 off the seed has no effect.
     pub seed: u64,
     /// Signal-chain stage 3 (AGC) settings. Default [`AgcSettings::DEVICE`] (spec 002).
     pub agc: AgcSettings,
@@ -556,8 +561,7 @@ impl Settings {
             memory: MemorySettings::DEVICE, // S-001: 60 min, 99 items (006 FR-010)
             speech_codec_enabled: true,     // A-004 adopted (008 FR-002): the device has no bypass
             output: OutputSettings::DEVICE, // A-031, A-010, A-032 (009 FR-002)
-            // Spec 012 T012: inert until the default flips on in T029.
-            mic: MicSettings::BYPASSED,
+            mic: MicSettings::DEVICE,       // A-046 – A-053 (012 FR-001)
         }
     }
 
@@ -589,6 +593,7 @@ mod tests {
         assert!(s.playback_stage_enabled); // A-002
         assert_eq!(s.tap, Tap::RouteOutput); // 009 FR-010
         assert_eq!(s.seed, 0); // FR-009
+        assert_eq!(s.mic, MicSettings::DEVICE); // 012 FR-001: on by default since 0.12
         assert_eq!(Tap::default(), Tap::RouteOutput);
         assert_eq!(Tap::AFTER_STAGE_10, Tap::AfterPlayback); // 009 FR-011
     }
