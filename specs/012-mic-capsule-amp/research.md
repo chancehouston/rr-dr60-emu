@@ -311,10 +311,10 @@ The gate pauses reliably when threshold − hiss RMS ≥ about 9 dB, and fails b
 
 - **Setup.** Twin engines with the same seed, one with the limiter bypassed, are read at `Tap::AfterAgc`. A +9 dBFS 1 kHz burst, starting on the host-grid peak, is followed by 3 s of silence.
 - **Assertions over the silence:**
-  - (a) the on/off ratio is at most 1 and non-decreasing;
-  - (b) the ratio trajectory is identical for seeds 0 and 1 within 4 f32 ULP (spec 011's reader).
+  - (a) the on/off ratio is at most 1 and non-decreasing (spec 011's reader, 4 f32 ULP);
+  - (b) *(restated at implementation, 2026-10-16)* the limiter's state (`__test_hooks::limiter_state`, every sample) over the release equals, within 1e-6 relative, that of a **reconstruction**: an engine with stage 1 off, fed the first engine's own stage-1 output (read at `Tap::AfterMicCapsule`, the same seed) during the burst and exact zeros during the silence. As measured: the state releases from about 1.07 V to 0.78 V and the two agree within 7e-10 (the reconstruction's `f32` input rounding).
 
-  This proves the hiss is only scaled and never drives the detector, without reimplementing the gain law in the harness. The release figures themselves remain spec 005's.
+  The original (b), "the ratio trajectory is identical for seeds 0 and 1 within 4 f32 ULP", cannot hold: each seed's hiss moves the burst's peaks by about 1e-3 relative, so the charge at the burst's end differs and the seeds' trajectories differ by about 700 – 5 800 ULP (reported). The reconstruction isolates the claim: if the hiss in the silence charged the detector, the hiss-on state would fall behind. The release figures themselves remain spec 005's.
 
 ### The codec (AS7)
 

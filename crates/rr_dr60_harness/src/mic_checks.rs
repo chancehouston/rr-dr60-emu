@@ -1236,3 +1236,363 @@ pub fn recovery(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
         ),
     ]
 }
+
+// ---------------------------------------------------------------------------------------------
+// US3: the whole engine (tasks.md T037; spec 012 US3 AS6 – AS8, SC-010; research R-07, R-08).
+// ---------------------------------------------------------------------------------------------
+
+/// Trace: the voice activation's thresholds and hang (A-022, A-025) with the hiss (A-048).
+pub const T_VAS: &[&str] = &["A-022", "A-025", "A-048"];
+/// Trace: the limiter (A-028, A-035) with the hiss (A-048).
+pub const T_LIMITER: &[&str] = &["A-028", "A-035", "A-048"];
+/// Trace: the speech codec (A-004, A-040) with the hiss (A-048).
+pub const T_CODEC: &[&str] = &["A-004", "A-040", "A-048"];
+
+/// The silent run's length for the voice activation's margin, s (US3 AS6).
+pub const VAS_SECONDS: f64 = 60.0;
+/// The level-5 margin's floor, dB (SC-010).
+pub const VAS_MARGIN_MIN_DB: f64 = 10.0;
+/// The level-5 RMS margin the script prints, dB, 2026-10-16 (research R-07; A-022).
+pub const VAS_MARGIN_LEVEL5_DB: f64 = 17.0;
+/// The ratio reader's tolerance in `f32` ULP (spec 011's reader; US3 AS8).
+pub const RATIO_ULP: f64 = 4.0;
+
+/// The 0.12 default at the tap after the voice activation (the codec does not run there), at
+/// sensitivity `level` and hiss offset `offset_db`.
+pub fn vas_default(rate: u32, level: u8, offset_db: f32) -> Settings {
+    let mut s = Settings::new(rate);
+    s.tap = rr_dr60::Tap::AfterVas;
+    s.vas.sensitivity = level;
+    s.mic.hiss_offset_db = offset_db;
+    s
+}
+
+/// US3 AS6, SC-010 (FR-003): `seconds` of silence through the 0.12 default with the voice
+/// activation on (drop mode), at each sensitivity level, read at `Tap::AfterVas`. From the
+/// events: no resume (no splice event), paused at the end, and the output exactly as long as
+/// the same run with the hiss off (which keeps the hang time and pauses, spec 003): the hiss
+/// never holds the gate open. The RMS margin (threshold − the hiss's level at the
+/// voice-activation input, read at `Tap::AfterRecord`, AES17) and the count of samples above the
+/// threshold are reported; at level 5 the margin is at least 10 dB.
+pub fn vas_margin(make: Make<'_>, rate: u32, seconds: f64) -> Vec<MeasurementResult> {
+    let fs = f64::from(rate);
+    let x = stimulus::silence((seconds * fs) as usize);
+    let stim = format!("silence {seconds} s");
+    let mut quiet = vas_default(rate, 3, 0.0);
+    quiet.mic.capsule_enabled = false;
+    let reference = crate::vas_checks::run(make, quiet, &x);
+    let mut at_input = vas_default(rate, 3, 0.0);
+    at_input.tap = rr_dr60::Tap::AfterRecord;
+    let z = run(make, at_input, &x);
+    let settle = rate as usize / 2;
+    let hiss_dbfs = analysis::rms_dbfs(&z[settle..]);
+    let mut rows = vec![MeasurementResult::new(
+        "US3 AS6",
+        "hiss RMS at the voice-activation input (AES17)",
+        T_VAS,
+        rate,
+        "default (AfterRecord)",
+        stim.clone(),
+        hiss_dbfs,
+        "dBFS",
+        Tolerance::Report,
+    )];
+    for level in 1..=5u8 {
+        let s = vas_default(rate, level, 0.0);
+        let r = crate::vas_checks::run(make, s, &x);
+        let threshold = crate::vas_checks::effective_threshold_dbfs(&s.vas);
+        let config = "default (AfterVas)";
+        let st = format!("{stim}, level {level} ({threshold} dBFS)");
+        let row = |property: &'static str, value: f64, unit: &'static str, tol: Tolerance| {
+            MeasurementResult::new(
+                "SC-010",
+                property,
+                T_VAS,
+                rate,
+                config,
+                st.clone(),
+                value,
+                unit,
+                tol,
+            )
+        };
+        rows.push(row(
+            "splice events (resumes)",
+            r.events.len() as f64,
+            "events",
+            Tolerance::Exact(0.0), // SC-010: never resumes
+        ));
+        rows.push(row(
+            "paused at the end",
+            f64::from(u8::from(r.info.paused)),
+            "flag",
+            Tolerance::Exact(1.0), // SC-010: pauses
+        ));
+        rows.push(row(
+            "output length re the hiss-off run (the hang time kept)",
+            r.y.len() as f64 - reference.y.len() as f64,
+            "samples",
+            Tolerance::Exact(0.0), // SC-010 (A-025): exactly the hang time
+        ));
+        rows.push(row(
+            "RMS margin (threshold - hiss)",
+            threshold - hiss_dbfs,
+            "dB",
+            if level == 5 {
+                Tolerance::AtLeast(VAS_MARGIN_MIN_DB) // SC-010
+            } else {
+                Tolerance::Report
+            },
+        ));
+        rows.push(row(
+            "samples above the threshold at the voice-activation input",
+            analysis::exceedance_count(&z, analysis::from_db(threshold)) as f64,
+            "samples",
+            Tolerance::Report,
+        ));
+    }
+    rows
+}
+
+/// Whether `seconds` of silence at sensitivity `level` and hiss offset `offset_db` are kept in
+/// full (the gate never pauses).
+fn never_pauses(make: Make<'_>, rate: u32, level: u8, offset_db: f32, seconds: f64) -> bool {
+    let x = stimulus::silence((seconds * f64::from(rate)) as usize);
+    let r = crate::vas_checks::run(make, vas_default(rate, level, offset_db), &x);
+    r.events.is_empty() && !r.info.paused && r.y.len() == x.len()
+}
+
+/// US3 AS6 (reported): the hiss offset at which the gate stops pausing in a `seconds` silent run
+/// at sensitivity `level`, by bisection over −18 … +12 dB to 0.12 dB; +∞ when it still pauses at
+/// +12 dB. The script's estimate is about +10.5 dB at level 5 and beyond the range at level 4.
+pub fn vas_offset_bisection(
+    make: Make<'_>,
+    rate: u32,
+    level: u8,
+    seconds: f64,
+) -> Vec<MeasurementResult> {
+    let (lo_end, hi_end) = (-18.0f32, 12.0f32);
+    let value = if !never_pauses(make, rate, level, hi_end, seconds) {
+        f64::INFINITY
+    } else {
+        let (mut lo, mut hi) = (lo_end, hi_end);
+        for _ in 0..8 {
+            let m = 0.5 * (lo + hi);
+            if never_pauses(make, rate, level, m, seconds) {
+                hi = m;
+            } else {
+                lo = m;
+            }
+        }
+        f64::from(hi)
+    };
+    vec![MeasurementResult::new(
+        "US3 AS6",
+        "hiss offset at which the gate stops pausing (inf: beyond +12 dB)",
+        T_VAS,
+        rate,
+        "default (AfterVas)",
+        format!("silence {seconds} s, level {level}"),
+        value,
+        "dB",
+        Tolerance::Report,
+    )]
+}
+
+/// The ratio `on / off` over the samples of `range` where `off` is not zero.
+fn ratio_track(on: &[f32], off: &[f32], range: core::ops::Range<usize>) -> Vec<(usize, f64)> {
+    range
+        .filter(|&i| off[i] != 0.0)
+        .map(|i| (i, f64::from(on[i]) / f64::from(off[i])))
+        .collect()
+}
+
+/// The limiter's state relative difference allowed between the hiss-on engine and its
+/// hiss-free reconstruction over the release: the two bursts differ only by the `f32` rounding
+/// of the reconstruction's input (2⁻²⁴ relative), which moves the charge by about that much
+/// (engineering target).
+pub const STATE_REL_TOL: f64 = 1e-6;
+
+/// US3 AS8 (research R-08, restated 2026-10-16): the limiter only scales the hiss and the hiss
+/// never drives its detector. The 0.12 default (voice activation off) at `Tap::AfterAgc`; a
+/// +9 dBFS 1 kHz burst of 0.5 s (host-grid peak phase) then 3 s of silence.
+///
+/// - **Scaling:** twin engines with the same seed, one with the limiter bypassed; over the
+///   silence the on/off ratio is the limiter's gain on the hiss: at most 1 and non-decreasing
+///   within 4 `f32` ULP.
+/// - **The detector:** a second engine with stage 1 off is fed the first engine's own stage-1
+///   output (read at `Tap::AfterMicCapsule`, the same seed) during the burst and exact zeros
+///   during the silence; the two limiter states (`__test_hooks::limiter_state`, read every
+///   sample) agree over the release within 1e-6 relative. If the hiss in the silence charged the
+///   detector, the hiss-on state would fall behind.
+/// - **Reported:** the two seeds' ratio trajectories differ by hundreds to thousands of ULP:
+///   each seed's hiss moves the burst's peaks slightly, so the charge at the burst's end
+///   differs (the spec's original "agree within 4 ULP across seeds" cannot hold; restated).
+pub fn limiter_ratio(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
+    use rr_dr60::__test_hooks::limiter_state;
+    let fs = f64::from(rate);
+    let burst = rate as usize / 2;
+    let mut x = stimulus::tone_at_phase(1000.0, 9.0, stimulus::peak_phase(1000.0, rate), fs, burst);
+    x.extend(stimulus::silence(3 * rate as usize));
+    let base = |seed: u64| {
+        let mut on = Settings::new(rate);
+        on.vas.enabled = false;
+        on.tap = rr_dr60::Tap::AfterAgc;
+        on.seed = seed;
+        on
+    };
+    let track = |seed: u64| {
+        let on = base(seed);
+        let mut off = on;
+        off.agc.enabled = false;
+        ratio_track(&run(make, on, &x), &run(make, off, &x), burst + 1..x.len())
+    };
+    let q0 = track(0);
+    let q1 = track(1);
+    let eps = RATIO_ULP * f64::from(f32::EPSILON);
+    let above_one = q0.iter().filter(|&&(_, r)| r > 1.0 + eps).count();
+    let reversals = q0
+        .windows(2)
+        .filter(|w| w[1].1 < w[0].1 - eps * w[0].1.abs().max(w[1].1.abs()))
+        .count();
+    let by_index: std::collections::HashMap<usize, f64> = q1.iter().copied().collect();
+    let mut worst_seeds = 0.0f64;
+    for &(i, a) in &q0 {
+        if let Some(&b) = by_index.get(&i) {
+            let d = (a - b).abs() / (f64::from(f32::EPSILON) * a.abs().max(b.abs()));
+            worst_seeds = worst_seeds.max(d);
+        }
+    }
+    // The detector: the hiss-on engine against its hiss-free reconstruction, state by state.
+    let mut cap = base(0);
+    cap.tap = rr_dr60::Tap::AfterMicCapsule;
+    let mut recon_in = run(make, cap, &x[..burst]);
+    recon_in.extend(stimulus::silence(x.len() - burst));
+    let mut quiet = base(0);
+    quiet.mic.capsule_enabled = false;
+    let states = |s: Settings, input: &[f32]| {
+        let mut p = make(s);
+        let mut y = [0.0f32];
+        input
+            .iter()
+            .map(|&v| {
+                let _ = p.process(&[v], &mut y).expect("an idle pipeline");
+                limiter_state(&p)
+            })
+            .collect::<Vec<f64>>()
+    };
+    let a = states(base(0), &x);
+    let b = states(quiet, &recon_in);
+    let worst_state = a[burst..]
+        .iter()
+        .zip(&b[burst..])
+        .filter(|(u, v)| u.abs().max(v.abs()) > 0.0)
+        .map(|(u, v)| (u - v).abs() / u.abs().max(v.abs()))
+        .fold(0.0f64, f64::max);
+    let first = q0.first().map_or(f64::NAN, |q| q.1);
+    let last = q0.last().map_or(f64::NAN, |q| q.1);
+    let stim = format!(
+        "1 kHz +9 dBFS 0.5 s then silence 3 s; ratio {first:.4} -> {last:.4}, {} samples; state {:.4e} -> {:.4e} V, worst relative difference {worst_state:.3e}",
+        q0.len(),
+        a[burst],
+        a[a.len() - 1]
+    );
+    let row = |property: &'static str, value: f64, unit: &'static str, tol: Tolerance| {
+        MeasurementResult::new(
+            "US3 AS8",
+            property,
+            T_LIMITER,
+            rate,
+            "default (AfterAgc)",
+            stim.clone(),
+            value,
+            unit,
+            tol,
+        )
+    };
+    vec![
+        row(
+            "ratio samples above 1 (+4 ULP)",
+            above_one as f64,
+            "samples",
+            Tolerance::Exact(0.0), // FR-001 (US3 AS8): the limiter never amplifies the hiss
+        ),
+        row(
+            "ratio reversals beyond 4 ULP",
+            reversals as f64,
+            "",
+            Tolerance::Exact(0.0), // FR-001 (US3 AS8): the gain only releases
+        ),
+        row(
+            "samples read",
+            q0.len() as f64,
+            "samples",
+            Tolerance::AtLeast(1.0), // FR-001 (US3 AS8): the reading is not empty
+        ),
+        row(
+            "limiter state over the release re the hiss-free reconstruction (relative)",
+            worst_state,
+            "",
+            Tolerance::AtMost(STATE_REL_TOL), // FR-001 (US3 AS8): the hiss never drives the detector
+        ),
+        row(
+            "seeds 0 / 1: largest ratio difference (the burst's charge differs)",
+            worst_seeds,
+            "ULP",
+            Tolerance::Report,
+        ),
+    ]
+}
+
+/// US3 AS7 (reported): the 0.12 default with the voice activation off records and plays 10 s of
+/// silence; the decoded hiss's 300 – 3000 Hz level against the same run with the speech codec
+/// bypassed, both resampled to 8 kHz (spec 008's lesson). With the voice activation on (the
+/// default), the recording's length is reported (the hang time of hiss plus the stop feed).
+pub fn decoded_hiss(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
+    let fs = f64::from(rate);
+    let x = stimulus::silence(10 * rate as usize);
+    let small = |s: Settings| configs::memory_capacity(s, 30, 3);
+    let play = |s: Settings| {
+        crate::split_checks::record_then_play(&mut make(small(s)), &x, 4801, 997).pre_drain
+    };
+    let coded = play(configs::settings("default_mic", rate));
+    let mut bypassed = configs::settings("default_mic", rate);
+    bypassed.speech_codec_enabled = false;
+    let reference = play(bypassed);
+    let level = |y: &[f32]| {
+        let r = analysis::resample_to(&y[rate as usize / 2..], fs, 8000.0);
+        analysis::band_level_aes17(&r, 8000.0, 300.0, 3000.0)
+    };
+    let (lc, lr) = (level(&coded), level(&reference));
+    let mut p = make(small(Settings::new(rate)));
+    p.start_recording().expect("room");
+    let _ = p.record(&x, &mut []).expect("recording");
+    let length = match p.stop_recording(&mut []).expect("recording").result {
+        rr_dr60::StopResult::Kept { length, .. } => length as f64,
+        _ => 0.0,
+    };
+    vec![
+        MeasurementResult::new(
+            "US3 AS7",
+            "decoded hiss re the codec-bypassed hiss, 300-3000 Hz at 8 kHz",
+            T_CODEC,
+            rate,
+            "default_mic",
+            format!("silence 10 s recorded and played; the bypassed hiss {lr:.2} dBFS"),
+            lc - lr,
+            "dB",
+            Tolerance::Report,
+        ),
+        MeasurementResult::new(
+            "US3 AS7",
+            "recording length with the voice activation on",
+            T_VAS,
+            rate,
+            "default",
+            "silence 10 s recorded",
+            length / 6000.0,
+            "s",
+            Tolerance::AtLeast(1.0), // A-025: at least the hang time is kept
+        ),
+    ]
+}

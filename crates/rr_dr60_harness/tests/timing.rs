@@ -547,3 +547,134 @@ fn volume_ramp_cost() {
         }
     }
 }
+
+/// The `mic_cost` ceiling in percent: 10 % (spec 012 FR-011, SC-006) on the development
+/// machine; `RR_DR60_MIC_COST_CEILING` overrides it (ci.yml sets 25 on the shared runner, whose
+/// x86-64 select sequences cost several times more, spec 010).
+fn mic_cost_ceiling() -> f64 {
+    std::env::var("RR_DR60_MIC_COST_CEILING")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10.0) // 012 FR-011
+}
+
+/// Spec 012 FR-011, SC-006 (tasks.md T040; research R-09): stages 1 – 2's cost in one build.
+/// The speaker route at 48 kHz, codec bypassed, 4096-sample blocks, `default_output` (0.11's
+/// default, stages 1 – 2 bypassed) against the same with `MicSettings::DEVICE`, on −20 dBFS
+/// noise; each side the fastest of nine alternating runs. At most 10 % (the CI ceiling 25 %);
+/// full-scale noise, the offsets −18 / +12 dB and the split between the two stages reported.
+/// Quote the figures from a solo run.
+#[test]
+#[ignore = "release-mode timing; run with --ignored"]
+fn mic_cost() {
+    use rr_dr60::{MicSettings, Route};
+    if skip_in_debug() {
+        return;
+    }
+    let full = stimulus::noise(9, 30 * 48_000);
+    let quiet: Vec<f32> = full.iter().map(|v| v * 0.1).collect(); // −20 dB
+    let mut off = configs::settings("default_output", 48_000);
+    off.speech_codec_enabled = false; // 009 SC-007's denominator: the codec-bypassed one-pass
+    let mut on = off;
+    on.mic = MicSettings::DEVICE;
+    let once = |s: rr_dr60::Settings, x: &[f32]| {
+        let mut p = Pipeline::new(s).unwrap();
+        p.set_route(Route::Speaker);
+        let mut buf = x.to_vec();
+        let t = Instant::now();
+        for chunk in buf.chunks_mut(4096) {
+            let _ = p.process_in_place(chunk);
+        }
+        t.elapsed().as_nanos() as f64 / x.len() as f64
+    };
+    let pair = |a: rr_dr60::Settings, b: rr_dr60::Settings, x: &[f32]| {
+        let (mut ta, mut tb) = (f64::MAX, f64::MAX);
+        for _ in 0..9 {
+            ta = ta.min(once(a, x));
+            tb = tb.min(once(b, x));
+        }
+        (ta, tb)
+    };
+    let (with, without) = pair(on, off, &quiet);
+    let over = 100.0 * (with / without - 1.0);
+    let (with_fs, without_fs) = pair(on, off, &full);
+    let mut low = on;
+    low.mic.hiss_offset_db = -18.0;
+    let mut high = on;
+    high.mic.hiss_offset_db = 12.0;
+    let (t_low, t_high) = pair(low, high, &quiet);
+    let mut capsule = off;
+    capsule.mic.capsule_enabled = true;
+    let mut amp = off;
+    amp.mic.amp_enabled = true;
+    let (t_capsule, t_amp) = pair(capsule, amp, &quiet);
+    println!(
+        "  split (reported): stage 1 alone {t_capsule:.1} ns ({:+.2}), stage 2 alone {t_amp:.1} ns ({:+.2})",
+        t_capsule - without,
+        t_amp - without
+    );
+    let ceiling = mic_cost_ceiling();
+    println!(
+        "microphone path, speaker route, 48 kHz, 4096 blocks, codec bypassed, noise -20 dB: {with:.1} ns per host sample with stages 1-2, {without:.1} bypassed, {:+.2} ns ({over:+.2} %); full-scale noise {with_fs:.1} vs {without_fs:.1} ns ({:+.2} %, reported); offsets -18 / +12 dB: {t_low:.1} / {t_high:.1} ns (reported) (012 FR-011: budget 10 %, ceiling here {ceiling} %)",
+        with - without,
+        100.0 * (with_fs / without_fs - 1.0),
+    );
+    assert!(
+        over <= ceiling,
+        "stages 1-2 add {over:.2} % ({:.2} ns) (012 FR-011)",
+        with - without
+    );
+}
+
+/// Spec 012 FR-011 (tasks.md T040; research R-09): `output_cost`'s body with stages 1 – 2 on,
+/// printing the same line, for `scripts/ab-timing.sh c9f9994 output_cost_mic` (the on-against-
+/// 0.11 A/B, reported). Stage 2 lifts the stimulus toward the limiter's knee (RMS 0.240, peak
+/// 0.784), so the limiter's state is asserted to be 0.0 at the end of every run: a charged
+/// limiter must never pass as microphone cost.
+#[test]
+#[ignore = "release-mode timing; run with --ignored"]
+fn output_cost_mic() {
+    use rr_dr60::{MicSettings, OutputSettings, Route};
+    if skip_in_debug() {
+        return;
+    }
+    let x = stimulus::noise(9, 30 * 48_000);
+    let mut on = configs::settings("default_output", 48_000);
+    on.speech_codec_enabled = false; // the codec-bypassed one-pass is SC-007's denominator
+    on.mic = MicSettings::DEVICE; // 012 FR-011: stages 1 – 2 on
+    let mut off = on;
+    off.output = OutputSettings::BYPASSED;
+    off.tap = rr_dr60::Tap::AfterPlayback;
+    let cost = |s: rr_dr60::Settings, route: Route| {
+        let mut best = f64::MAX;
+        for _ in 0..5 {
+            let mut p = Pipeline::new(s).unwrap();
+            p.set_route(route);
+            p.set_volume(1.0).unwrap();
+            let mut buf = x.clone();
+            let t = Instant::now();
+            for chunk in buf.chunks_mut(4096) {
+                let _ = p.process_in_place(chunk);
+            }
+            best = best.min(t.elapsed().as_nanos() as f64 / x.len() as f64);
+            assert_eq!(
+                rr_dr60::__test_hooks::limiter_state(&p),
+                0.0,
+                "the limiter charged: the figure would not be the microphone path's (012 R-09)"
+            );
+        }
+        best
+    };
+    let bypassed = cost(off, Route::Speaker);
+    for route in [Route::Speaker, Route::Earphone] {
+        let with = cost(on, route);
+        let over = 100.0 * (with / bypassed - 1.0);
+        println!(
+            "output chain, {route:?} route, 48 kHz, 4096 blocks: {with:.1} ns per host sample with the chain, {bypassed:.1} bypassed, {over:+.1} % (009 SC-007: budget 25 %; stages 1-2 on, 012 R-09)"
+        );
+        assert!(
+            over <= 25.0,
+            "{route:?}: the chain adds {over:.1} % (009 SC-007)"
+        );
+    }
+}

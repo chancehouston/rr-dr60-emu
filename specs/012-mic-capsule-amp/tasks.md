@@ -340,19 +340,19 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
 
 ### Tests for User Story 3 (write first)
 
-- [ ] T037 [US3] `crates/rr_dr60_harness/src/mic_checks.rs`:
+- [x] T037 [US3] `crates/rr_dr60_harness/src/mic_checks.rs`:
   - **`vas_margin(rate, level, seconds)`:** the 0.12 default with the voice activation on (drop mode), read at `Tap::AfterVas`. Silence for 60 s. From the events: exactly the hang time kept, one pause, never resumed. The RMS margin at the voice-activation input (AES17) and the exceedance count are printed. The level-5 margin is at least 10 dB (US3 AS6, SC-010).
   - **`vas_offset_bisection(rate, level)`:** the offset at which the gate stops pausing, at 6 kHz only under `cfg(coverage)`.
   - **`limiter_ratio(rate)`:** twin engines (limiter on and bypassed) and two seeds; a +9 dBFS 1 kHz burst then 3 s of silence. Over the silence the ratio is at most 1 and non-decreasing, and the two seeds' trajectories agree within 4 f32 ULP (US3 AS8).
   - **`decoded_hiss(rate)`:** `default_mic` with the voice activation bypassed; record and play 10 s of silence; the decoded band level relative to the input's, at 8 kHz after resampling, is reported. With the voice activation on, the recording length is reported (US3 AS7).
 
   Add them to `us1_mic.rs` (named `whole_engine_*`) and to `mic_matrix.rs` (all rates; 600 s release-only). Run them: **red** where the wiring is missing, otherwise green; record which.
-- [ ] T038 [P] [US3] `crates/rr_dr60_harness/tests/mutation.rs`, `mod mic`: the five mutants each fail their row.
+- [x] T038 [P] [US3] `crates/rr_dr60_harness/tests/mutation.rs`, `mod mic`: the five mutants each fail their row.
   - `no_input_hp` fails the band;
   - `symmetric_clip` and `swapped_polarity` fail the static curve;
   - `shared_stream` fails the counter cross-correlation;
   - `hiss_db_delta = 3.0` fails the hiss level.
-- [ ] T039 [P] [US3] `crates/rr_dr60_harness/tests/mic_edge_cases.rs`: every spec edge case.
+- [x] T039 [P] [US3] `crates/rr_dr60_harness/tests/mic_edge_cases.rs`: every spec edge case.
   - silence gives the hiss, and silence with stage 1 off gives zeros;
   - DC is blocked (a DC step decays to zero after stage 2);
   - +40 dBFS is bounded;
@@ -365,10 +365,10 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
 
 ### Implementation for User Story 3
 
-- [ ] T040 [US3] `crates/rr_dr60_harness/tests/timing.rs`:
+- [x] T040 [US3] `crates/rr_dr60_harness/tests/timing.rs`:
   - **`mic_cost`** (`#[ignore]`, release): the speaker route at 48 kHz, codec bypassed, 4096 blocks, `default_output` with the stages on against bypassed, on −20 dBFS noise; a full-scale spread and an offset spread reported; the fastest of nine alternating runs. Assert ≤ 10 % on the development machine; the CI ceiling is 25 % (read an env var set by `ci.yml`'s timing step).
   - **`output_cost_mic`:** `output_cost`'s body with stages 1–2 on, printing the same line format; it asserts `limiter_state() == 0.0` at the end (R-09).
-- [ ] T041 [US3] Timing scripts and workflow:
+- [x] T041 [US3] Timing scripts and workflow:
   - `scripts/ab-timing.sh`: an optional second argument (the head build's test name, default `output_cost`); the default baseline becomes `c9f9994`; the comment says what each mode measures;
   - `.github/workflows/ab-timing.yml`: baseline `c9f9994` and a second step `scripts/ab-timing.sh c9f9994 output_cost_mic`;
   - `.github/workflows/ci.yml`: the release timing step sets the environment variable that `mic_cost` reads, so the 25 % CI ceiling applies there (spec FR-011; the analysis finding U1).

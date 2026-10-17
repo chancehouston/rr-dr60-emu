@@ -134,3 +134,16 @@ fn sixty_minute_hiss_is_stable_at_48k() {
     ]);
     assert!(rows.is_empty(), "windows outside ±0.5 dB: {rows:?}");
 }
+
+/// US3 AS6 (release-only): the voice-activation margin on a 600 s silent run at every level and
+/// all seven rates (the 60 s runs are `us1_mic`'s `whole_engine_vas_margin`).
+#[test]
+#[ignore = "release-only: 600 s per level and rate (cargo test --release --test mic_matrix -- --ignored)"]
+fn vas_margin_600_s_at_seven_rates() {
+    finish(
+        configs::all_rates()
+            .iter()
+            .flat_map(|&r| mic::vas_margin(&standard, r, 600.0))
+            .collect(),
+    );
+}

@@ -109,3 +109,45 @@ fn whole_engine_rest_and_rekey() {
 fn whole_engine_taps() {
     finish(each(|r| mic::taps(&standard, r)));
 }
+
+/// US3 AS6, SC-010: the voice activation pauses once and never resumes on the hiss at every
+/// level; the level-5 margin is at least 10 dB (60 s runs).
+#[test]
+fn whole_engine_vas_margin() {
+    finish(each(|r| mic::vas_margin(&standard, r, mic::VAS_SECONDS)));
+}
+
+/// US3 AS6 (reported): the offsets at which the gate stops pausing at levels 4 and 5 (6 kHz
+/// only under coverage: the hiss level at the voice-activation input does not depend on the
+/// rate).
+#[test]
+fn whole_engine_vas_offset_bisection() {
+    let rates: &[u32] = if cfg!(coverage) {
+        &[6000]
+    } else {
+        configs::measurement_rates()
+    };
+    finish(
+        rates
+            .iter()
+            .flat_map(|&r| {
+                [4u8, 5]
+                    .iter()
+                    .flat_map(move |&l| mic::vas_offset_bisection(&standard, r, l, 10.0))
+                    .collect::<Vec<_>>()
+            })
+            .collect(),
+    );
+}
+
+/// US3 AS8: the limiter only scales the hiss.
+#[test]
+fn whole_engine_limiter_ratio() {
+    finish(each(|r| mic::limiter_ratio(&standard, r)));
+}
+
+/// US3 AS7 (reported): the decoded hiss and the recording length.
+#[test]
+fn whole_engine_decoded_hiss() {
+    finish(each(|r| mic::decoded_hiss(&standard, r)));
+}
