@@ -431,12 +431,12 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
 
 ## Phase 7: The C surface (FR-012; contracts/c-api.md)
 
-- [ ] T048 New cases in `crates/rr_dr60_ffi/tests/c/smoke.c`, written red with placeholder hashes:
+- [x] T048 New cases in `crates/rr_dr60_ffi/tests/c/smoke.c`, written red with placeholder hashes:
   - (a) the 0.12 default one-pass at 48 kHz on a ±0.125 square wave plus silence;
   - (b) two recordings of silence with the hiss on and a `rr_dr60_reset` between them; the hashes differ;
   - (c) `struct_size = 112` refused;
   - (d) offsets 13.0 and NaN refused.
-- [ ] T049 Compute the hashes in `crates/rr_dr60_harness/src/smoke_reference.rs` (`SMOKE_MIC_DEFAULT_HASH`, `SMOKE_MIC_REC0_HASH`, `SMOKE_MIC_REC1_HASH`) from the Rust path. Pin them in `smoke.c` and in `ffi_parity`'s `smoke_reference_hash_is_pinned`. `crates/rr_dr60_harness/tests/ffi_parity.rs` gains `c_api_mic_matches_rust_at_all_rates`: the five mic configurations at the seven rates on an exactly representable stimulus. The C loop and `ffi_parity` are green.
+- [x] T049 Compute the hashes in `crates/rr_dr60_harness/src/smoke_reference.rs` (`SMOKE_MIC_DEFAULT_HASH`, `SMOKE_MIC_REC0_HASH`, `SMOKE_MIC_REC1_HASH`) from the Rust path. Pin them in `smoke.c` and in `ffi_parity`'s `smoke_reference_hash_is_pinned`. `crates/rr_dr60_harness/tests/ffi_parity.rs` gains `c_api_mic_matches_rust_at_all_rates`: the five mic configurations at the seven rates on an exactly representable stimulus. The C loop and `ffi_parity` are green.
 
 **Checkpoint**: SC-009. Commit: `feat(ffi): the microphone fields' smoke and parity cases (012)`.
 

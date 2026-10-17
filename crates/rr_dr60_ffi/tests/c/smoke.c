@@ -47,10 +47,32 @@ static RrDr60Settings settings_011(uint32_t host_rate_hz) {
 /* Spec 011 T035: the volume-transition case (the square at 0.1 on the speaker route, 1.0 before
    play block 10, 0.4 before block 11), pinned from the Rust path (smoke_reference.rs). */
 #define RR_DR60_SMOKE_SPEAKER_RAMP_HASH 0xcc0133ffc64ac96eULL
+/* Spec 012 T048 (contracts/c-api.md › Smoke loop): the microphone cases, pinned from the Rust
+   path (smoke_reference.rs): the 0.12 default one-pass on the square plus silence, and two
+   recordings of silence (the hiss) with a reset between them. */
+#define RR_DR60_SMOKE_MIC_DEFAULT_HASH 0x863aa823f42bc8ceULL
+#define RR_DR60_SMOKE_MIC_DEFAULT_SAMPLES 72000
+#define RR_DR60_SMOKE_MIC_REC0_HASH 0x0bd8b3aa3dd4132fULL
+#define RR_DR60_SMOKE_MIC_REC1_HASH 0x2c9342b7e52bca17ULL
+#define RR_DR60_SMOKE_MIC_REC_SAMPLES 53168
 #define RR_DR60_SMOKE_FRAMES 51
 #define RR_DR60_SMOKE_SILENCE_FED 149
 
 static int failures = 0;
+
+/* FNV-1a 64 over the little-endian bytes of n floats (the harness's smoke_reference::fnv1a64). */
+static uint64_t fnv_floats(const float *x, size_t n) {
+  uint64_t h = 0xcbf29ce484222325ULL;
+  for (size_t i = 0; i < n; i++) {
+    uint8_t le[4];
+    memcpy(le, &x[i], 4);
+    for (int b = 0; b < 4; b++) {
+      h ^= le[b];
+      h *= 0x00000100000001b3ULL;
+    }
+  }
+  return h;
+}
 
 #define CHECK(cond, ...)                                  \
   do {                                                    \
@@ -832,6 +854,84 @@ int main(int argc, char **argv) {
     rr_dr60_destroy(a);
     rr_dr60_destroy(b);
     rr_dr60_destroy(c);
+  }
+
+  /* Spec 012 T048 (FR-012, SC-009; contracts/c-api.md › Smoke loop): the microphone path. */
+  {
+    RrDr60Settings m = rr_dr60_settings_default(FS);
+    CHECK(m.mic_capsule_enabled && m.mic_amp_enabled && m.mic_hiss_offset_db == 0.0f,
+          "the 0.12 default turns stages 1 - 2 on at offset 0 (012 FR-001)");
+    RrDr60Pipeline *mq = NULL;
+    RrDr60SettingField mf;
+    /* (c) The 0.11 size (112 bytes) is refused, naming STRUCT_SIZE. */
+    RrDr60Settings old = m;
+    old.struct_size = 112;
+    CHECK(rr_dr60_settings_validate(&old, &mf) == RR_DR60_STATUS_INVALID_ARGUMENT &&
+              mf == RR_DR60_SETTING_FIELD_STRUCT_SIZE,
+          "validate(struct_size = 112) names STRUCT_SIZE (012 FR-012)");
+    CHECK(rr_dr60_create(&old, &mq) == RR_DR60_STATUS_INVALID_ARGUMENT && mq == NULL, "create(struct_size = 112)");
+    /* (d) Offsets 13.0 and NaN are refused, with the capsule on or off. */
+    for (int capsule = 0; capsule < 2; capsule++) {
+      const float bad_offsets[2] = {13.0f, NAN};
+      for (int k = 0; k < 2; k++) {
+        RrDr60Settings b = m;
+        b.mic_capsule_enabled = capsule != 0;
+        b.mic_hiss_offset_db = bad_offsets[k];
+        CHECK(rr_dr60_settings_validate(&b, &mf) == RR_DR60_STATUS_INVALID_SETTING &&
+                  mf == RR_DR60_SETTING_FIELD_MIC_HISS_OFFSET_DB,
+              "validate(offset %g, capsule %d) names MIC_HISS_OFFSET_DB (012 FR-003)", (double)bad_offsets[k], capsule);
+        CHECK(rr_dr60_create(&b, &mq) == RR_DR60_STATUS_INVALID_SETTING && mq == NULL, "create(bad offset)");
+      }
+    }
+    /* (a) The 0.12 default one-pass on the square (1 s) plus 0.5 s of silence, 480-sample blocks. */
+    static float min_[FS + FS / 2], mout[FS + FS / 2], mall[FS + FS / 2];
+    for (size_t i = 0; i < (size_t)(FS + FS / 2); i++) min_[i] = i < (size_t)FS ? (i % 48 < 24 ? 0.125f : -0.125f) : 0.0f;
+    CHECK(rr_dr60_create(&m, &mq) == RR_DR60_STATUS_OK && mq != NULL, "create (0.12 default)");
+    size_t mn = 0;
+    for (size_t at = 0; at < (size_t)(FS + FS / 2); at += 480) {
+      RrDr60BlockInfo bi;
+      CHECK(rr_dr60_process(mq, min_ + at, mout, 480, &bi) == RR_DR60_STATUS_OK, "process (0.12 default)");
+      memcpy(mall + mn, mout, bi.produced * sizeof(float));
+      mn += bi.produced;
+    }
+    uint64_t mh = fnv_floats(mall, mn);
+    CHECK(mn == RR_DR60_SMOKE_MIC_DEFAULT_SAMPLES, "0.12 default one-pass: %zu samples (Rust: %d)", mn,
+          RR_DR60_SMOKE_MIC_DEFAULT_SAMPLES);
+    CHECK(mh == RR_DR60_SMOKE_MIC_DEFAULT_HASH, "0.12 default one-pass hash %016llx differs from the Rust path's %016llx",
+          (unsigned long long)mh, (unsigned long long)RR_DR60_SMOKE_MIC_DEFAULT_HASH);
+    rr_dr60_destroy(mq);
+    /* (b) Two recordings of 1 s of silence (the hiss) with a reset between them: each plays back
+       the Rust path's bits, and they differ (the recording counter advanced; 012 FR-009). */
+    mq = NULL;
+    CHECK(rr_dr60_create(&m, &mq) == RR_DR60_STATUS_OK && mq != NULL, "create (recordings)");
+    static float zeros[480];
+    static float mplay[2][8 * FS];
+    size_t mlen[2] = {0, 0};
+    for (int r = 0; r < 2; r++) {
+      if (r == 1) CHECK(rr_dr60_reset(mq) == RR_DR60_STATUS_OK, "reset between the recordings");
+      CHECK(rr_dr60_start_recording(mq) == RR_DR60_STATUS_OK, "start recording %d", r);
+      for (size_t at = 0; at < (size_t)FS; at += 480)
+        CHECK(rr_dr60_record(mq, zeros, 480, NULL, NULL, 0) == RR_DR60_STATUS_OK, "record silence");
+      RrDr60StopOutcome mso;
+      CHECK(rr_dr60_stop_recording(mq, &mso, NULL, 0) == RR_DR60_STATUS_OK && mso.kept, "stop recording %d", r);
+      CHECK(rr_dr60_start_playback(mq, mso.number) == RR_DR60_STATUS_OK, "play recording %u", mso.number);
+      for (;;) {
+        RrDr60PlayInfo pi;
+        CHECK(mlen[r] + 480 <= 8 * (size_t)FS, "hiss playback longer than expected");
+        CHECK(rr_dr60_play(mq, mplay[r] + mlen[r], 480, &pi) == RR_DR60_STATUS_OK, "play (hiss)");
+        mlen[r] += pi.produced;
+        if (pi.finished) break;
+      }
+    }
+    uint64_t h0 = fnv_floats(mplay[0], mlen[0]), h1 = fnv_floats(mplay[1], mlen[1]);
+    CHECK(mlen[0] == RR_DR60_SMOKE_MIC_REC_SAMPLES && mlen[1] == RR_DR60_SMOKE_MIC_REC_SAMPLES,
+          "hiss recordings: %zu and %zu samples (Rust: %d)", mlen[0], mlen[1], RR_DR60_SMOKE_MIC_REC_SAMPLES);
+    CHECK(h0 == RR_DR60_SMOKE_MIC_REC0_HASH && h1 == RR_DR60_SMOKE_MIC_REC1_HASH,
+          "hiss recordings' hashes %016llx / %016llx differ from the Rust path's %016llx / %016llx",
+          (unsigned long long)h0, (unsigned long long)h1, (unsigned long long)RR_DR60_SMOKE_MIC_REC0_HASH,
+          (unsigned long long)RR_DR60_SMOKE_MIC_REC1_HASH);
+    CHECK(h0 != h1, "the two recordings carry different hiss (012 FR-009)");
+    rr_dr60_destroy(mq);
   }
 
   /* Spec 007 US3: the stage manifest through the C API (contracts/c-api.md › Smoke test). */

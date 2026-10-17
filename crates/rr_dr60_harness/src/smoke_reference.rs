@@ -248,3 +248,54 @@ pub fn rust_ramp_reference() -> (u64, usize) {
     }
     (fnv1a64(&play), play.len())
 }
+
+/// Spec 012 T048, T049 (contracts/c-api.md › Smoke loop): the microphone cases' hashes, pinned
+/// once from the Rust path (`rust_mic_references`); `ffi_parity::smoke_reference_hash_is_pinned`
+/// checks them and `smoke.c` embeds them. (a) the 0.12 default one-pass at 48 kHz on the smoke
+/// square (1 s) followed by 0.5 s of silence, in 480-sample blocks; (b) two recordings of 1 s of
+/// silence in the 0.12 default, a `reset` between them, each played to the end: the hiss of
+/// counters 0 and 1.
+pub const SMOKE_MIC_DEFAULT_HASH: u64 = 0x863a_a823_f42b_c8ce; // measured 2026-10-16 from the Rust path (72 000 samples; 012 T049)
+/// The (a) case's output length in host samples.
+pub const SMOKE_MIC_DEFAULT_SAMPLES: usize = 72_000; // 1.5 s at 48 kHz: the 0.5 s of silence is shorter than the hang time (A-025), so nothing is dropped
+/// The (b) case's first recording's playback hash.
+pub const SMOKE_MIC_REC0_HASH: u64 = 0x0bd8_b3aa_3dd4_132f; // measured 2026-10-16 from the Rust path (53 168 samples; 012 T049)
+/// The (b) case's second recording's playback hash.
+pub const SMOKE_MIC_REC1_HASH: u64 = 0x2c93_42b7_e52b_ca17; // measured 2026-10-16 from the Rust path (53 168 samples; 012 T049)
+/// The (b) case's playback length (each recording).
+pub const SMOKE_MIC_REC_SAMPLES: usize = 53_168; // the recording (one hang time of hiss, frame-padded) plus the drain at 48 kHz (012 T049)
+
+/// The microphone cases from the Rust path: `((hash, length) of (a), [(hash, length); 2] of (b))`.
+pub fn rust_mic_references() -> ((u64, usize), [(u64, usize); 2]) {
+    let s = rr_dr60::Settings::new(SMOKE_RATE); // the 0.12 default (012 FR-001)
+    let mut x = stimulus();
+    x.extend(std::iter::repeat_n(0.0f32, SMOKE_SAMPLES / 2));
+    let mut p = Pipeline::new(s).expect("rate");
+    let mut out = Vec::new();
+    let mut buf = vec![0.0f32; SMOKE_BLOCK];
+    for chunk in x.chunks(SMOKE_BLOCK) {
+        let n = p.process(chunk, &mut buf).expect("idle").produced;
+        out.extend_from_slice(&buf[..n]);
+    }
+    let one_pass = (fnv1a64(&out), out.len());
+    let mut p = Pipeline::new(s).expect("rate");
+    let zeros = vec![0.0f32; SMOKE_BLOCK];
+    let recordings = [0, 1].map(|r| {
+        if r == 1 {
+            p.reset();
+        }
+        p.start_recording().expect("idle");
+        for _ in 0..SMOKE_SAMPLES / SMOKE_BLOCK {
+            let info = p.record(&zeros, &mut []).expect("recording");
+            assert!(info.stopped.is_none());
+        }
+        let rr_dr60::StopResult::Kept { number, .. } =
+            p.stop_recording(&mut []).expect("recording").result
+        else {
+            unreachable!("the hiss is recorded")
+        };
+        let play = crate::split_checks::play_to_end(&mut p, number, SMOKE_BLOCK);
+        (fnv1a64(&play), play.len())
+    });
+    (one_pass, recordings)
+}
