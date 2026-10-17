@@ -16,6 +16,16 @@
 #define PI 3.14159265358979323846 /* M_PI is not part of strict C11 */
 #define N (FS / 2)
 #define FS6 6000 /* the device rate (A-026): the rate conversion boundary is the identity */
+
+/* Spec 012 FR-010 (T016): the 0.11 default, the library's default with the microphone path
+ * (stages 1 - 2) bypassed. Every pre-012 case builds on it, so its pinned hash stays the 0.11
+ * output; the 012 cases call rr_dr60_settings_default directly. */
+static RrDr60Settings settings_011(uint32_t host_rate_hz) {
+  RrDr60Settings s = rr_dr60_settings_default(host_rate_hz);
+  s.mic_capsule_enabled = false;
+  s.mic_amp_enabled = false;
+  return s;
+}
 #define N6 (FS6 / 10)
 /* The Rust path's reference for the smoke stimulus with the 0.8 default settings (the speech codec
  * on), pinned by the harness's `ffi_parity::smoke_reference_hash_is_pinned` (spec 006 and 008 US4
@@ -37,10 +47,32 @@
 /* Spec 011 T035: the volume-transition case (the square at 0.1 on the speaker route, 1.0 before
    play block 10, 0.4 before block 11), pinned from the Rust path (smoke_reference.rs). */
 #define RR_DR60_SMOKE_SPEAKER_RAMP_HASH 0xcc0133ffc64ac96eULL
+/* Spec 012 T048 (contracts/c-api.md › Smoke loop): the microphone cases, pinned from the Rust
+   path (smoke_reference.rs): the 0.12 default one-pass on the square plus silence, and two
+   recordings of silence (the hiss) with a reset between them. */
+#define RR_DR60_SMOKE_MIC_DEFAULT_HASH 0x533e91177f8cc1d6ULL
+#define RR_DR60_SMOKE_MIC_DEFAULT_SAMPLES 72000
+#define RR_DR60_SMOKE_MIC_REC0_HASH 0x0ef2704a75660621ULL
+#define RR_DR60_SMOKE_MIC_REC1_HASH 0x442ddc90fb8b3e11ULL
+#define RR_DR60_SMOKE_MIC_REC_SAMPLES 53168
 #define RR_DR60_SMOKE_FRAMES 51
 #define RR_DR60_SMOKE_SILENCE_FED 149
 
 static int failures = 0;
+
+/* FNV-1a 64 over the little-endian bytes of n floats (the harness's smoke_reference::fnv1a64). */
+static uint64_t fnv_floats(const float *x, size_t n) {
+  uint64_t h = 0xcbf29ce484222325ULL;
+  for (size_t i = 0; i < n; i++) {
+    uint8_t le[4];
+    memcpy(le, &x[i], 4);
+    for (int b = 0; b < 4; b++) {
+      h ^= le[b];
+      h *= 0x00000100000001b3ULL;
+    }
+  }
+  return h;
+}
 
 #define CHECK(cond, ...)                                  \
   do {                                                    \
@@ -145,9 +177,9 @@ int main(int argc, char **argv) {
   static float in[N], out[N];
   for (size_t i = 0; i < N; i++) in[i] = (float)(0.1 * sin(2.0 * PI * 1000.0 * (double)i / FS));
 
-  RrDr60Settings s = rr_dr60_settings_default(FS);
+  RrDr60Settings s = settings_011(FS);
   CHECK(s.struct_size == sizeof(RrDr60Settings), "struct_size %u", s.struct_size);
-  CHECK(s.struct_size == 112, "struct_size %u (must be 112 since 0.10, spec 010 contracts/c-api.md)", s.struct_size);
+  CHECK(s.struct_size == 120, "struct_size %u (must be 120 since 0.12, spec 012 contracts/c-api.md)", s.struct_size);
   CHECK(s.output_volume_amp_enabled && s.output_speaker_enabled && s.output_earphone_enabled,
         "output chain on by default (spec 009 FR-002; A-031, A-010, A-032)");
   CHECK(s.speech_codec_enabled, "speech codec on by default (spec 008 FR-002, A-004)");
@@ -200,7 +232,7 @@ int main(int argc, char **argv) {
    * for sample and the reported latency is 0. */
   static float in6[N6], out6[N6];
   for (size_t i = 0; i < N6; i++) in6[i] = (float)(0.25 * sin(2.0 * PI * 1000.0 * (double)i / FS6));
-  RrDr60Settings s6 = rr_dr60_settings_default(FS6);
+  RrDr60Settings s6 = settings_011(FS6);
   s6.agc_enabled = false;
   s6.vas_enabled = false;
   s6.record_stage_enabled = false;
@@ -235,7 +267,7 @@ int main(int argc, char **argv) {
    * the 6 kHz identity rate, tapped after the record stage and the clamp, peaks at exactly 1.0
    * (the clipped onset; the limiter then holds it below full scale); with the clamp bypassed the
    * onset exceeds 1.0. */
-  RrDr60Settings record_path = rr_dr60_settings_default(FS6);
+  RrDr60Settings record_path = settings_011(FS6);
   record_path.vas_enabled = false;
   record_path.speech_codec_enabled = false; /* spec 005's check (008 FR-021) */
   record_path.tap = RR_DR60_TAP_AFTER_RECORD;
@@ -259,17 +291,17 @@ int main(int argc, char **argv) {
   RrDr60Pipeline *sentinel = (RrDr60Pipeline *)(uintptr_t)0x1;
   RrDr60Pipeline *q = sentinel;
   CHECK(rr_dr60_create(NULL, &q) == RR_DR60_STATUS_NULL_POINTER && q == sentinel, "create(NULL)");
-  RrDr60Settings bad = rr_dr60_settings_default(22050);
+  RrDr60Settings bad = settings_011(22050);
   CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_UNSUPPORTED_HOST_RATE && q == sentinel, "22050 Hz");
   /* Spec 004 FR-002: 7000 Hz is not one of the seven supported rates; the pipeline stays NULL. */
-  bad = rr_dr60_settings_default(7000);
+  bad = settings_011(7000);
   q = NULL;
   CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_UNSUPPORTED_HOST_RATE && q == NULL, "7000 Hz");
   q = sentinel;
-  bad = rr_dr60_settings_default(FS);
-  bad.tap = 9; /* 0 – 8 are taps since 0.9 (spec 009 contracts/c-api.md) */
-  CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_INVALID_ARGUMENT && q == sentinel, "tap = 9");
-  bad = rr_dr60_settings_default(FS);
+  bad = settings_011(FS);
+  bad.tap = 11; /* 0 – 10 are taps since 0.12 (spec 012 contracts/c-api.md) */
+  CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_INVALID_ARGUMENT && q == sentinel, "tap = 11");
+  bad = settings_011(FS);
   bad.struct_size = 4;
   CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_INVALID_ARGUMENT && q == sentinel, "struct_size = 4");
   CHECK(rr_dr60_process(NULL, in, out, 64, NULL) == RR_DR60_STATUS_NULL_POINTER, "process(NULL handle)");
@@ -285,14 +317,14 @@ int main(int argc, char **argv) {
   CHECK(memcmp(buf, out, sizeof out) == 0, "in-place output differs from copy mode");
 
   /* Reconfigure rows (contracts/c-api.md): errors leave the old configuration working. */
-  bad = rr_dr60_settings_default(22050);
+  bad = settings_011(22050);
   CHECK(rr_dr60_reconfigure(p, &bad) == RR_DR60_STATUS_UNSUPPORTED_HOST_RATE, "reconfigure 22050 Hz");
   uint32_t latency_after = 0;
   CHECK(rr_dr60_latency_samples(p, &latency_after) == RR_DR60_STATUS_OK && latency_after == latency,
         "failed reconfigure changed latency (%u -> %u)", latency, latency_after);
   CHECK(rr_dr60_process(p, in, out, 64, NULL) == RR_DR60_STATUS_OK, "process after failed reconfigure");
   CHECK(rr_dr60_reconfigure(p, NULL) == RR_DR60_STATUS_NULL_POINTER, "reconfigure(NULL)");
-  RrDr60Settings bypass = rr_dr60_settings_default(FS);
+  RrDr60Settings bypass = settings_011(FS);
   bypass.agc_enabled = false;
   bypass.vas_enabled = false;
   bypass.record_stage_enabled = false;
@@ -306,7 +338,7 @@ int main(int argc, char **argv) {
         "bypass_all latency %u should be below default %u", latency_after, latency);
 
   /* Spec 005 limiter settings (FR-010, FR-015; contracts/c-api.md). */
-  RrDr60Settings agc = rr_dr60_settings_default(FS);
+  RrDr60Settings agc = settings_011(FS);
   agc.vas_enabled = false; /* the spec 005 `default_agc` configuration (spec 003 FR-020) */
   agc.speech_codec_enabled = false; /* spec 008 FR-021 */
   agc.agc_release_ms = 3000.0f;
@@ -326,7 +358,7 @@ int main(int argc, char **argv) {
   q = sentinel;
   CHECK(rr_dr60_create(&agc, &q) == RR_DR60_STATUS_INVALID_SETTING && q == sentinel,
         "create(attack 0 ms)");
-  agc = rr_dr60_settings_default(FS);
+  agc = settings_011(FS);
   agc.agc_knee_dbfs = 4.0f; /* above the +3 dBFS cap (005 FR-010) */
   CHECK(rr_dr60_settings_validate(&agc, &field) == RR_DR60_STATUS_INVALID_SETTING &&
             field == RR_DR60_SETTING_FIELD_AGC_KNEE_DBFS,
@@ -335,7 +367,7 @@ int main(int argc, char **argv) {
   CHECK(rr_dr60_create(&agc, &q) == RR_DR60_STATUS_INVALID_SETTING && q == sentinel, "create(knee 4 dBFS)");
   /* A struct from the 0.4 layout (72 bytes): rejected as STRUCT_SIZE after reading only its
    * first field (spec 005 contracts/c-api.md). */
-  agc = rr_dr60_settings_default(FS);
+  agc = settings_011(FS);
   agc.struct_size = 72;
   CHECK(rr_dr60_settings_validate(&agc, &field) == RR_DR60_STATUS_INVALID_ARGUMENT &&
             field == RR_DR60_SETTING_FIELD_STRUCT_SIZE,
@@ -347,7 +379,7 @@ int main(int argc, char **argv) {
    * "after VAS" tap, and an invalid sensitivity. VAS-isolated configuration: the limiter, both
    * band-limit stages and the clamp off. Burst 1 s, gap 5 s, burst 1 s, 1 kHz at -30 dBFS
    * (threshold + 10 dB; the threshold is -40 dBFS since spec 005, A-022 revised). */
-  RrDr60Settings vas = rr_dr60_settings_default(FS);
+  RrDr60Settings vas = settings_011(FS);
   vas.agc_enabled = false;
   vas.record_stage_enabled = false;
   vas.playback_stage_enabled = false;
@@ -404,7 +436,7 @@ int main(int argc, char **argv) {
    * Rust harness feeds the same bits and `ffi_parity` pins the FNV-1a 64 hash of the Rust
    * playback that both C playbacks must reproduce (US4 scenario 1). */
   {
-    RrDr60Settings old = rr_dr60_settings_default(FS);
+    RrDr60Settings old = settings_011(FS);
     old.struct_size = 80; /* the 0.5 layout */
     RrDr60SettingField f = RR_DR60_SETTING_FIELD_NONE;
     CHECK(rr_dr60_settings_validate(&old, &f) == RR_DR60_STATUS_INVALID_ARGUMENT &&
@@ -414,7 +446,7 @@ int main(int argc, char **argv) {
     CHECK(rr_dr60_settings_validate(&old, &f) == RR_DR60_STATUS_INVALID_ARGUMENT &&
               f == RR_DR60_SETTING_FIELD_STRUCT_SIZE,
           "validate(struct_size = 88) names STRUCT_SIZE (008)");
-    RrDr60Settings zero = rr_dr60_settings_default(FS);
+    RrDr60Settings zero = settings_011(FS);
     zero.memory_capacity_s = 0;
     CHECK(rr_dr60_settings_validate(&zero, &f) == RR_DR60_STATUS_INVALID_SETTING &&
               f == RR_DR60_SETTING_FIELD_MEMORY_CAPACITY_S,
@@ -424,7 +456,7 @@ int main(int argc, char **argv) {
 
     static float sq[FS];
     for (size_t i = 0; i < FS; i++) sq[i] = (i % 48) < 24 ? 0.125f : -0.125f;
-    RrDr60Settings d = rr_dr60_settings_default(FS);
+    RrDr60Settings d = settings_011(FS);
     /* The 0.8 record-then-play case keeps 0.8's output: the output chain bypassed and the tap
        after stage 10 (spec 009 FR-016); 009 T031 adds the route cases with their own hashes. */
     d.output_volume_amp_enabled = false;
@@ -597,7 +629,7 @@ int main(int argc, char **argv) {
      * (the clipper engaged) and on the earphone route at both; each playback's hash equals the
      * Rust path's pinned reference. The volume refusals and the route-tap refusal too. */
     {
-      RrDr60Settings on = rr_dr60_settings_default(FS);
+      RrDr60Settings on = settings_011(FS);
       RrDr60Pipeline *r = NULL;
       CHECK(rr_dr60_create(&on, &r) == RR_DR60_STATUS_OK && r != NULL, "create (009 route cases)");
       float vol = -1.0f;
@@ -653,7 +685,7 @@ int main(int argc, char **argv) {
               (unsigned long long)h, (unsigned long long)want[k]);
       }
       /* The named route tap with the other route selected is refused at the processing call. */
-      RrDr60Settings spk_tap = rr_dr60_settings_default(FS);
+      RrDr60Settings spk_tap = settings_011(FS);
       spk_tap.tap = RR_DR60_TAP_AFTER_SPEAKER;
       RrDr60Pipeline *t = NULL;
       CHECK(rr_dr60_create(&spk_tap, &t) == RR_DR60_STATUS_OK && t != NULL, "create (speaker tap)");
@@ -676,7 +708,7 @@ int main(int argc, char **argv) {
     {
       static float fsq[FS];
       for (size_t i = 0; i < FS; i++) fsq[i] = (i % 48) < 24 ? 1.0f : -1.0f;
-      RrDr60Settings stale = rr_dr60_settings_default(FS);
+      RrDr60Settings stale = settings_011(FS);
       stale.struct_size = 104; /* the 0.9 layout */
       RrDr60Pipeline *q2 = (RrDr60Pipeline *)(uintptr_t)0x1;
       CHECK(rr_dr60_create(&stale, &q2) == RR_DR60_STATUS_INVALID_ARGUMENT, "create(struct_size = 104) refused (010)");
@@ -684,11 +716,11 @@ int main(int argc, char **argv) {
       CHECK(rr_dr60_settings_validate(&stale, &sf) == RR_DR60_STATUS_INVALID_ARGUMENT &&
                 sf == RR_DR60_SETTING_FIELD_STRUCT_SIZE,
             "validate(struct_size = 104) names STRUCT_SIZE (010)");
-      RrDr60Settings cl = rr_dr60_settings_default(FS);
+      RrDr60Settings cl = settings_011(FS);
       CHECK(!cl.output_clamp_enabled, "the output clamp is off by default (010 FR-002)");
       cl.output_clamp_enabled = true;
       RrDr60Pipeline *handles2[2] = {NULL, NULL};
-      RrDr60Settings cfgs[2] = {cl, rr_dr60_settings_default(FS)};
+      RrDr60Settings cfgs[2] = {cl, settings_011(FS)};
       for (int h = 0; h < 2; h++) {
         CHECK(rr_dr60_create(&cfgs[h], &handles2[h]) == RR_DR60_STATUS_OK && handles2[h] != NULL, "create (010 case %d)", h);
         CHECK(rr_dr60_start_recording(handles2[h]) == RR_DR60_STATUS_OK, "start_recording (010 case %d)", h);
@@ -791,7 +823,7 @@ int main(int argc, char **argv) {
           "erase, then no such recording");
 
     /* A 1 s-capacity handle: the recording stops by itself with MEMORY_FULL; then NOT_RECORDING. */
-    RrDr60Settings one = rr_dr60_settings_default(FS);
+    RrDr60Settings one = settings_011(FS);
     one.memory_capacity_s = 1;
     one.vas_enabled = false;
     RrDr60Pipeline *c = NULL;
@@ -824,6 +856,84 @@ int main(int argc, char **argv) {
     rr_dr60_destroy(c);
   }
 
+  /* Spec 012 T048 (FR-012, SC-009; contracts/c-api.md › Smoke loop): the microphone path. */
+  {
+    RrDr60Settings m = rr_dr60_settings_default(FS);
+    CHECK(m.mic_capsule_enabled && m.mic_amp_enabled && m.mic_hiss_offset_db == 0.0f,
+          "the 0.12 default turns stages 1 - 2 on at offset 0 (012 FR-001)");
+    RrDr60Pipeline *mq = NULL;
+    RrDr60SettingField mf;
+    /* (c) The 0.11 size (112 bytes) is refused, naming STRUCT_SIZE. */
+    RrDr60Settings old = m;
+    old.struct_size = 112;
+    CHECK(rr_dr60_settings_validate(&old, &mf) == RR_DR60_STATUS_INVALID_ARGUMENT &&
+              mf == RR_DR60_SETTING_FIELD_STRUCT_SIZE,
+          "validate(struct_size = 112) names STRUCT_SIZE (012 FR-012)");
+    CHECK(rr_dr60_create(&old, &mq) == RR_DR60_STATUS_INVALID_ARGUMENT && mq == NULL, "create(struct_size = 112)");
+    /* (d) Offsets 13.0 and NaN are refused, with the capsule on or off. */
+    for (int capsule = 0; capsule < 2; capsule++) {
+      const float bad_offsets[2] = {13.0f, NAN};
+      for (int k = 0; k < 2; k++) {
+        RrDr60Settings b = m;
+        b.mic_capsule_enabled = capsule != 0;
+        b.mic_hiss_offset_db = bad_offsets[k];
+        CHECK(rr_dr60_settings_validate(&b, &mf) == RR_DR60_STATUS_INVALID_SETTING &&
+                  mf == RR_DR60_SETTING_FIELD_MIC_HISS_OFFSET_DB,
+              "validate(offset %g, capsule %d) names MIC_HISS_OFFSET_DB (012 FR-003)", (double)bad_offsets[k], capsule);
+        CHECK(rr_dr60_create(&b, &mq) == RR_DR60_STATUS_INVALID_SETTING && mq == NULL, "create(bad offset)");
+      }
+    }
+    /* (a) The 0.12 default one-pass on the square (1 s) plus 0.5 s of silence, 480-sample blocks. */
+    static float min_[FS + FS / 2], mout[FS + FS / 2], mall[FS + FS / 2];
+    for (size_t i = 0; i < (size_t)(FS + FS / 2); i++) min_[i] = i < (size_t)FS ? (i % 48 < 24 ? 0.125f : -0.125f) : 0.0f;
+    CHECK(rr_dr60_create(&m, &mq) == RR_DR60_STATUS_OK && mq != NULL, "create (0.12 default)");
+    size_t mn = 0;
+    for (size_t at = 0; at < (size_t)(FS + FS / 2); at += 480) {
+      RrDr60BlockInfo bi;
+      CHECK(rr_dr60_process(mq, min_ + at, mout, 480, &bi) == RR_DR60_STATUS_OK, "process (0.12 default)");
+      memcpy(mall + mn, mout, bi.produced * sizeof(float));
+      mn += bi.produced;
+    }
+    uint64_t mh = fnv_floats(mall, mn);
+    CHECK(mn == RR_DR60_SMOKE_MIC_DEFAULT_SAMPLES, "0.12 default one-pass: %zu samples (Rust: %d)", mn,
+          RR_DR60_SMOKE_MIC_DEFAULT_SAMPLES);
+    CHECK(mh == RR_DR60_SMOKE_MIC_DEFAULT_HASH, "0.12 default one-pass hash %016llx differs from the Rust path's %016llx",
+          (unsigned long long)mh, (unsigned long long)RR_DR60_SMOKE_MIC_DEFAULT_HASH);
+    rr_dr60_destroy(mq);
+    /* (b) Two recordings of 1 s of silence (the hiss) with a reset between them: each plays back
+       the Rust path's bits, and they differ (the recording counter advanced; 012 FR-009). */
+    mq = NULL;
+    CHECK(rr_dr60_create(&m, &mq) == RR_DR60_STATUS_OK && mq != NULL, "create (recordings)");
+    static float zeros[480];
+    static float mplay[2][8 * FS];
+    size_t mlen[2] = {0, 0};
+    for (int r = 0; r < 2; r++) {
+      if (r == 1) CHECK(rr_dr60_reset(mq) == RR_DR60_STATUS_OK, "reset between the recordings");
+      CHECK(rr_dr60_start_recording(mq) == RR_DR60_STATUS_OK, "start recording %d", r);
+      for (size_t at = 0; at < (size_t)FS; at += 480)
+        CHECK(rr_dr60_record(mq, zeros, 480, NULL, NULL, 0) == RR_DR60_STATUS_OK, "record silence");
+      RrDr60StopOutcome mso;
+      CHECK(rr_dr60_stop_recording(mq, &mso, NULL, 0) == RR_DR60_STATUS_OK && mso.kept, "stop recording %d", r);
+      CHECK(rr_dr60_start_playback(mq, mso.number) == RR_DR60_STATUS_OK, "play recording %u", mso.number);
+      for (;;) {
+        RrDr60PlayInfo pi;
+        CHECK(mlen[r] + 480 <= 8 * (size_t)FS, "hiss playback longer than expected");
+        CHECK(rr_dr60_play(mq, mplay[r] + mlen[r], 480, &pi) == RR_DR60_STATUS_OK, "play (hiss)");
+        mlen[r] += pi.produced;
+        if (pi.finished) break;
+      }
+    }
+    uint64_t h0 = fnv_floats(mplay[0], mlen[0]), h1 = fnv_floats(mplay[1], mlen[1]);
+    CHECK(mlen[0] == RR_DR60_SMOKE_MIC_REC_SAMPLES && mlen[1] == RR_DR60_SMOKE_MIC_REC_SAMPLES,
+          "hiss recordings: %zu and %zu samples (Rust: %d)", mlen[0], mlen[1], RR_DR60_SMOKE_MIC_REC_SAMPLES);
+    CHECK(h0 == RR_DR60_SMOKE_MIC_REC0_HASH && h1 == RR_DR60_SMOKE_MIC_REC1_HASH,
+          "hiss recordings' hashes %016llx / %016llx differ from the Rust path's %016llx / %016llx",
+          (unsigned long long)h0, (unsigned long long)h1, (unsigned long long)RR_DR60_SMOKE_MIC_REC0_HASH,
+          (unsigned long long)RR_DR60_SMOKE_MIC_REC1_HASH);
+    CHECK(h0 != h1, "the two recordings carry different hiss (012 FR-009)");
+    rr_dr60_destroy(mq);
+  }
+
   /* Spec 007 US3: the stage manifest through the C API (contracts/c-api.md › Smoke test). */
   {
     RrDr60ManifestHeader h;
@@ -852,7 +962,7 @@ int main(int argc, char **argv) {
     }
     /* US3 scenario 3: a kept pointer survives a create/destroy cycle. */
     {
-      RrDr60Settings ms = rr_dr60_settings_default(FS);
+      RrDr60Settings ms = settings_011(FS);
       RrDr60Pipeline *mp = NULL;
       CHECK(rr_dr60_create(&ms, &mp) == RR_DR60_STATUS_OK, "create for the pointer-lifetime check");
       rr_dr60_destroy(mp);

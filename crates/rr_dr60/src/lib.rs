@@ -3,11 +3,14 @@
 //! A portable software emulator of the audio signal chain of the Panasonic
 //! RR-DR60 digital voice recorder (mid-1990s IC recorder).
 //!
-//! This version models the record path as the limiter (stage 3), the host-to-device rate
-//! conversion, the record band-limit (stage 4), the ADC's full-scale saturation, the VAS
-//! (stage 5), and the playback path as the playback band-limit (stage 10) and the
-//! device-to-host conversion:
+//! This version models the record path as the microphone path (stages 1 – 2), the limiter
+//! (stage 3), the host-to-device rate conversion, the record band-limit (stage 4), the ADC's
+//! full-scale saturation, the VAS (stage 5), and the playback path as the playback band-limit
+//! (stage 10) and the device-to-host conversion (the later stages are described below):
 //!
+//! - **Stages 1 – 2**, the microphone capsule and amplifier, since spec 012: the capsule's hiss
+//!   and the amplifier's band and clipping ahead of the limiter, on by default; see
+//!   [`MicSettings`] and the paragraph below.
 //! - **Stage 3**, the record-path automatic gain control, is a **limiter**: below
 //!   its knee (about the codec's full scale) it is the identity, above it the
 //!   output is held at a ceiling after a dead time of a few milliseconds, and it
@@ -87,6 +90,22 @@
 //! convention; the position is taken at once after construction, `reset`, `reconfigure`, a
 //! playback start and a route change.
 //!
+//! Since spec 012 the record path starts at the microphone: **stages 1 – 2** run at the host
+//! rate ahead of the limiter, on by default ([`MicSettings`]). Stage 1 is the capsule's
+//! **hiss**, a deterministic Gaussian noise at about −62 dBFS in the 300 – 3000 Hz band after
+//! stage 2 (A-048), with its own stream for each recording from [`Settings::seed`] and a
+//! recording counter that never rewinds (A-049). Stage 2 is the microphone amplifier: an input
+//! high-pass near 818 Hz (A-046), an asymmetric soft clipper that limits negative samples
+//! first and softly, toward +9 dBFS, and positive samples near +17 dBFS (A-051), and an output
+//! coupling near 77 Hz and a
+//! roll-off near 12.9 kHz (A-047, lumped ahead of the limiter, A-053), normalized to unity gain
+//! at 1 kHz, so 0 dBFS at 1 kHz still reaches the codec's full scale (about 90 dB SPL at the
+//! microphone, A-029). The default output therefore changes from 0.11: the low end is thinner,
+//! silence carries the hiss, and a DC offset in the input no longer reaches the limiter. The
+//! taps [`Tap::AfterMicCapsule`] and [`Tap::AfterMicAmp`] read the stages alone, with latency 0;
+//! [`MicSettings::BYPASSED`] gives the 0.11 engine. The figures are modeled on the circuit
+//! (S-002) with typical part values, not measured against a unit.
+//!
 //! Since spec 010 the engine has an **output clamp** ([`OutputSettings::clamp_enabled`]), a
 //! host option that is **off by default**: when on, every sample at the route-output tap above
 //! +1.0 is replaced by +1.0 and every sample below −1.0 by −1.0 (the route's full scale,
@@ -102,9 +121,10 @@
 //! rate of 6 kHz (A-026, verified from the service manual, S-002). They follow the codec
 //! family's datasheet templates scaled to that clock (A-027, medium confidence): the record
 //! stage is a band-pass (about 225 to 2550 Hz) and the playback stage a low-pass that passes
-//! DC. The limiter is modeled on the circuit, not measured against a unit: its dead time,
-//! release and knee carry low confidence. The speech codec is a class match, not the device's
-//! coder. None of these values has yet been measured against a real unit. See
+//! DC. The microphone path and the limiter are modeled on the circuit, not measured against a
+//! unit: the input corner, the hiss level, the clip limits and the limiter's dead time,
+//! release and knee carry low or medium confidence. The speech codec is a class match, not the
+//! device's coder. None of these values has yet been measured against a real unit. See
 //! `docs/hardware/assumptions.md`.
 //!
 //! The crate describes signal processing only: gain control, band-limiting,
@@ -174,6 +194,7 @@ mod error;
 mod form;
 pub mod manifest;
 mod memory;
+pub mod mic;
 pub mod output;
 mod paths;
 mod pipeline;
@@ -194,8 +215,8 @@ pub use manifest::{
 pub use memory::{Encoding, MemoryStatus};
 pub use pipeline::{BlockInfo, Pipeline, VasEvent};
 pub use settings::{
-    AgcSettings, DEVICE_RATE_HZ, MemorySettings, OutputSettings, Route, SUPPORTED_HOST_RATES,
-    Settings, Tap, VasMode, VasSettings,
+    AgcSettings, DEVICE_RATE_HZ, MemorySettings, MicSettings, OutputSettings, Route,
+    SUPPORTED_HOST_RATES, Settings, Tap, VasMode, VasSettings,
 };
 pub use transport::{
     EngineState, PlayInfo, RecordInfo, State, StopOutcome, StopReason, StopResult,
@@ -299,6 +320,31 @@ pub mod __test_hooks {
         /// Added to the transition's length N in host samples (0: as committed; ±1 are the
         /// length mutants that fail the splice identity at sample N or N − 1).
         pub volume_ramp_delta: i64,
+    }
+
+    /// A deliberate alteration of the microphone path (stages 1 – 2) for the spec 012 mutation
+    /// tests and the clipper-off twin (`Pipeline::__with_mic_mutation`; tasks.md T033).
+    /// `Default` is the committed path.
+    #[derive(Clone, Copy, Debug, PartialEq, Default)]
+    pub struct MicMutation {
+        /// The input high-pass skipped (an identity in its place, without the 1 kHz
+        /// normalization).
+        pub no_input_hp: bool,
+        /// A symmetric clipper: L₊ = L₋ (both polarities limited at the negative limit).
+        pub symmetric_clip: bool,
+        /// The limits exchanged between the polarities.
+        pub swapped_polarity: bool,
+        /// The recording counter ignored: every stream keyed to counter 0.
+        pub shared_stream: bool,
+        /// The hiss level moved by this many dB (0: as committed).
+        pub hiss_db_delta: f32,
+        /// The clipper removed: the linear twin of US2 AS4's oracle.
+        pub clipper_off: bool,
+        /// The ziggurat's cap path taken on every draw (A-049).
+        pub force_retry_cap: bool,
+        /// Added to both clipper knees k₊ and k₋ (0: as committed; ±0.05 is the knee mutant,
+        /// hardware review B4).
+        pub knee_delta: f32,
     }
 
     impl Default for OutputMutation {

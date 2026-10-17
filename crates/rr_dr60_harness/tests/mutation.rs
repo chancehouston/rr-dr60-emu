@@ -610,3 +610,108 @@ mod output {
         }
     }
 }
+
+/// Spec 012 (tasks.md T038; research R-11): the five microphone-path mutants each fail their
+/// row at 48 kHz, and the committed path passes the same rows: the input high-pass removed
+/// fails the band; a symmetric or a polarity-swapped clipper fails the static curve's limits;
+/// a stream shared by every recording fails the counters' cross-correlation; the hiss 3 dB high
+/// fails the hiss level.
+mod mic {
+    use rr_dr60::__test_hooks::MicMutation;
+    use rr_dr60::{Pipeline, Settings};
+    use rr_dr60_harness::checks::{MeasurementResult, standard};
+    use rr_dr60_harness::mic_checks as mic;
+
+    const RATE: u32 = 48_000;
+
+    fn failed(results: &[MeasurementResult]) -> Vec<&'static str> {
+        results
+            .iter()
+            .filter(|r| !r.passed)
+            .map(|r| r.property)
+            .collect()
+    }
+
+    fn mutant(m: MicMutation) -> impl Fn(Settings) -> Pipeline {
+        move |s| Pipeline::__with_mic_mutation(s, &m).unwrap()
+    }
+
+    #[test]
+    fn no_input_hp_fails_the_band() {
+        let make = mutant(MicMutation {
+            no_input_hp: true,
+            ..MicMutation::default()
+        });
+        let f = failed(&mic::band(&make, RATE));
+        assert!(f.contains(&"deviation from the prototype"), "{f:?}");
+        assert!(failed(&mic::band(&standard, RATE)).is_empty());
+    }
+
+    #[test]
+    fn symmetric_clip_fails_the_static_curve() {
+        let make = mutant(MicMutation {
+            symmetric_clip: true,
+            ..MicMutation::default()
+        });
+        let f = failed(&mic::static_curve(&make, RATE));
+        assert!(f.contains(&"largest output re L+ (clipper units)"), "{f:?}");
+        assert!(failed(&mic::static_curve(&standard, RATE)).is_empty());
+    }
+
+    #[test]
+    fn swapped_polarity_fails_the_static_curve() {
+        let make = mutant(MicMutation {
+            swapped_polarity: true,
+            ..MicMutation::default()
+        });
+        let f = failed(&mic::static_curve(&make, RATE));
+        assert!(f.contains(&"largest output re L+ (clipper units)"), "{f:?}");
+        assert!(
+            f.contains(&"smallest output re -L- (clipper units)"),
+            "{f:?}"
+        );
+    }
+
+    /// Hardware review B4: a knee moved by ±0.05 (both polarities) fails the static curve's
+    /// onset rows in clipper units, which the engine-input tolerance alone would pass.
+    #[test]
+    fn knee_moved_fails_the_static_curve() {
+        for delta in [-0.05f32, 0.05] {
+            let make = mutant(MicMutation {
+                knee_delta: delta,
+                ..MicMutation::default()
+            });
+            let f = failed(&mic::static_curve(&make, RATE));
+            assert!(f.contains(&"positive onset re L+"), "{delta}: {f:?}");
+            assert!(f.contains(&"negative onset re L-"), "{delta}: {f:?}");
+        }
+    }
+
+    #[test]
+    fn shared_stream_fails_the_counters_cross_correlation() {
+        let make = mutant(MicMutation {
+            shared_stream: true,
+            ..MicMutation::default()
+        });
+        let f = failed(&mic::streams(&make, RATE));
+        assert!(
+            f.contains(&"normalized cross-correlation at lag 0, x sqrt(N)"),
+            "{f:?}"
+        );
+        assert!(failed(&mic::streams(&standard, RATE)).is_empty());
+    }
+
+    #[test]
+    fn hiss_3_db_high_fails_the_hiss_level() {
+        let make = mutant(MicMutation {
+            hiss_db_delta: 3.0,
+            ..MicMutation::default()
+        });
+        let f = failed(&mic::hiss_level(&make, RATE, 0.0));
+        assert!(
+            f.contains(&"hiss level, 300-3000 Hz (AES17) re the figure + offset"),
+            "{f:?}"
+        );
+        assert!(failed(&mic::hiss_level(&standard, RATE, 0.0)).is_empty());
+    }
+}

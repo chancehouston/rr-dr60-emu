@@ -3,7 +3,7 @@
 //! data-model.md › Paths).
 //!
 //! ```text
-//! host in → [limiter] → host→device → [stage 4] → [clamp] → [VAS] → narrow to f32 ─┐
+//! host in → [mic 1–2] → [limiter] → host→device → [stage 4] → [clamp] → [VAS] → narrow to f32 ─┐
 //!           RecordPath (RecordHalf = stage 4, clamp, VAS, narrowing)               │
 //!                                                                                  ▼
 //! host out ← device→host ← [stage 10] ← widen ←────────────────── PlaybackPath (PlaybackHalf)
@@ -28,6 +28,7 @@ use crate::settings::{DEVICE_RATE_HZ, Settings, Tap, VasMode};
 use crate::stages::biquad::Biquad;
 use crate::stages::clamp::ClampStage;
 use crate::stages::limiter::Limiter;
+use crate::stages::mic::{MicFront, MicStop};
 use crate::stages::output::OutputChain;
 use crate::stages::vas::{VasDecision, VasStage};
 use crate::stages::voiceband::{PlaybackStage, RecordStage};
@@ -369,10 +370,25 @@ impl EventCounters {
     }
 }
 
-/// The record path: the limiter at the host rate (spec 005 research R-01), the host-to-device
-/// conversion and a [`RecordHalf`], with the event counters (spec 006 FR-001; research R-01).
+/// Where the front of the record path is read at a host-rate tap (spec 012 FR-008).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FrontStop {
+    /// After stage 1, the capsule (`Tap::AfterMicCapsule`).
+    Capsule,
+    /// After stage 2, the microphone amplifier (`Tap::AfterMicAmp`).
+    Amp,
+    /// After stage 3, the limiter (`Tap::AfterAgc`), and the default for every other tap.
+    Limiter,
+}
+
+/// The record path: the front at the host rate (stages 1 – 2, spec 012 FR-001; the limiter,
+/// spec 005 research R-01), the host-to-device conversion and a [`RecordHalf`], with the event
+/// counters (spec 006 FR-001; research R-01).
 #[derive(Clone, Debug)]
 pub(crate) struct RecordPath {
+    /// Stages 1 – 2 at the host rate, ahead of the limiter (spec 012 FR-001), each skipped when
+    /// off (FR-007).
+    mic: MicFront,
     /// Stage 3 at the host rate, before the conversion.
     pub(crate) limiter: Limiter,
     /// Stage 3 runs: the AGC is enabled (spec 002 FR-002; spec 005 FR-002).
@@ -386,7 +402,10 @@ pub(crate) struct RecordPath {
     plan_m: u64,
     #[cfg_attr(not(any(test, feature = "__test-hooks")), allow(dead_code))]
     host_rate_hz: u32,
-    tap_after_agc: bool,
+    front_tap: bool,
+    /// Where `front_only` reads (spec 012 FR-008): after stage 1, after stage 2 or after the
+    /// limiter.
+    front_stop: FrontStop,
     /// The latency to the encoder's input (spec 006 FR-016): the conversion and stage 4.
     latency: u32,
     /// The speech codec runs after this path (spec 008 FR-015).
@@ -408,10 +427,10 @@ impl RecordPath {
         honour_tap: bool,
         device_positions: bool,
     ) -> Self {
-        let tap_after_agc = honour_tap && settings.tap == Tap::AfterAgc;
+        let front_tap = honour_tap && settings.tap.is_front();
         let (l, m) = l_m(plan);
         let half = RecordHalf::new(settings, honour_tap);
-        let latency = if tap_after_agc {
+        let latency = if front_tap {
             0
         } else {
             host_latency(plan, half.group_delay_1k_samples(), settings.host_rate_hz)
@@ -428,10 +447,11 @@ impl RecordPath {
             0
         };
         Self {
+            mic: MicFront::new(&settings.mic, settings.seed, settings.host_rate_hz),
             limiter: Limiter::new(&settings.agc, settings.host_rate_hz),
             run_limiter: settings.agc.enabled,
             // The "after AGC" tap never converts, so its decimator is not built (001 R-01).
-            down: if tap_after_agc {
+            down: if front_tap {
                 None
             } else {
                 resample::decimator(plan)
@@ -445,7 +465,12 @@ impl RecordPath {
             plan_l: l,
             plan_m: m,
             host_rate_hz: settings.host_rate_hz,
-            tap_after_agc,
+            front_tap,
+            front_stop: match settings.tap {
+                Tap::AfterMicCapsule => FrontStop::Capsule,
+                Tap::AfterMicAmp => FrontStop::Amp,
+                _ => FrontStop::Limiter,
+            },
             latency,
             codec_runs,
             codec_delay,
@@ -472,7 +497,7 @@ impl RecordPath {
     /// The 64-bit post-VAS sample this host sample produced, if any (+0.0 for a muted one).
     #[inline]
     fn step(&mut self, x: f32) -> Option<f64> {
-        let x = self.limited(x);
+        let x = self.front(x);
         let d = match &mut self.down {
             None => x,
             Some(down) => down.push(x)?,
@@ -486,17 +511,24 @@ impl RecordPath {
         }
     }
 
-    /// The limiter alone, at the host rate: the one-pass output at the "after AGC" tap
-    /// (spec 005 FR-001). No conversion, no chain, no events.
+    /// The front of the record path alone, at the host rate: the one-pass output at the taps
+    /// after stage 1, after stage 2 and after the limiter (spec 005 FR-001; spec 012 FR-008).
+    /// No conversion, no chain, no events.
     #[inline]
-    pub(crate) fn limiter_only(&mut self, x: f32) -> f32 {
-        narrow_out(self.limited(x))
+    pub(crate) fn front_only(&mut self, x: f32) -> f32 {
+        narrow_out(match self.front_stop {
+            FrontStop::Capsule => self.mic.process_upto(sanitize_in(x), MicStop::Capsule),
+            FrontStop::Amp => self.mic.process_upto(sanitize_in(x), MicStop::Amp),
+            FrontStop::Limiter => self.front(x),
+        })
     }
 
-    /// Stage 3 at the host rate (spec 005 R-01). Bypassed: no arithmetic (spec 002 FR-002).
+    /// The front at the host rate: the input sanitized, stages 1 – 2 (spec 012 FR-001), then
+    /// stage 3 (spec 005 R-01). A bypassed stage does no arithmetic (spec 002 FR-002; spec 012
+    /// FR-010).
     #[inline]
-    fn limited(&mut self, x: f32) -> f64 {
-        let x = sanitize_in(x);
+    fn front(&mut self, x: f32) -> f64 {
+        let x = self.mic.process(sanitize_in(x));
         if self.run_limiter {
             self.limiter.process(x)
         } else {
@@ -532,7 +564,7 @@ impl RecordPath {
     /// at most ⌊frames·l/m⌋ + 1 device samples (+ 2 at the non-integer rates); the "+ 2" also
     /// covers a splice on the block's first device sample (engineering target, 003 R-15).
     pub(crate) fn max_events(&self, frames: usize) -> usize {
-        if self.tap_after_agc {
+        if self.front_tap {
             return 0;
         }
         let device = frames as u128 * u128::from(self.plan_l) / u128::from(self.plan_m);
@@ -563,9 +595,17 @@ impl RecordPath {
         self.half.force_open(on);
     }
 
-    /// Back to the freshly created state (the limiter discharged, the decimator and the half
-    /// cleared, the counters at zero). No allocation (spec 006 FR-004).
+    /// Keys stage 1's hiss to recording counter `counter`, from its beginning (spec 012
+    /// FR-009); no effect with stage 1 off.
+    pub(crate) fn rekey(&mut self, counter: u64) {
+        self.mic.rekey(counter);
+    }
+
+    /// Back to the freshly created state (stages 1 – 2 at rest with the hiss at the beginning
+    /// of its current stream, spec 012 FR-009; the limiter discharged, the decimator and the
+    /// half cleared, the counters at zero). No allocation (spec 006 FR-004).
     pub(crate) fn reset(&mut self) {
+        self.mic.reset();
         self.limiter.reset();
         if let Some(down) = &mut self.down {
             down.reset();
@@ -574,12 +614,25 @@ impl RecordPath {
         self.counters.reset();
     }
 
+    /// Test-only: stages 1 – 2 altered by `m` (spec 012 T033).
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn mutate_mic(&mut self, m: &crate::__test_hooks::MicMutation) {
+        self.mic.mutate(m);
+    }
+
+    /// Test-only: the clipper's input and output for host sample `x` (spec 012 T033): stage 1,
+    /// then stage 2's input high-pass and clipper; `None` with stage 2 off.
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn mic_clip_trace(&mut self, x: f32) -> Option<(f64, f64)> {
+        self.mic.clip_trace(sanitize_in(x))
+    }
+
     /// Test-only: stage 4 with other coefficients (the SC-007 mutation tests, spec 004 T024);
     /// the latency follows.
     #[cfg(feature = "__test-hooks")]
     pub(crate) fn replace_record_stage(&mut self, stage: RecordStage, plan: &RatePlan) {
         self.half.record = stage;
-        if !self.tap_after_agc {
+        if !self.front_tap {
             self.latency =
                 host_latency(plan, self.half.group_delay_1k_samples(), self.host_rate_hz);
         }
@@ -602,7 +655,7 @@ pub(crate) struct PlaybackPath {
     plan_m: u64,
     host_rate_hz: u32,
     delay_host: u32,
-    tap_after_agc: bool,
+    front_tap: bool,
     latency: u32,
     drain: u32,
 }
@@ -611,12 +664,12 @@ impl PlaybackPath {
     /// A playback path for validated `settings` and its `plan`. Allocates (the interpolator);
     /// construction time only.
     pub(crate) fn new(settings: &Settings, plan: &RatePlan, honour_tap: bool) -> Self {
-        let tap_after_agc = honour_tap && settings.tap == Tap::AfterAgc;
+        let front_tap = honour_tap && settings.tap.is_front();
         let (l, m) = l_m(plan);
         let half = PlaybackHalf::new(settings, honour_tap);
         let mut path = Self {
             half,
-            up: if tap_after_agc {
+            up: if front_tap {
                 None
             } else {
                 resample::interpolator(plan)
@@ -627,7 +680,7 @@ impl PlaybackPath {
             plan_m: m,
             host_rate_hz: settings.host_rate_hz,
             delay_host: plan.delay_host_samples(),
-            tap_after_agc,
+            front_tap,
             latency: 0,
             drain: 0,
         };
@@ -637,7 +690,7 @@ impl PlaybackPath {
 
     /// The latency and the drain length from the plan and the half (spec 006 FR-008, FR-016).
     fn derive_figures(&mut self, plan: &RatePlan) {
-        if self.tap_after_agc {
+        if self.front_tap {
             self.latency = 0;
             self.drain = 0;
             return;

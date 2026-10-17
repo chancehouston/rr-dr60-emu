@@ -1212,8 +1212,9 @@ mod tests {
         }
 
         let mut m = base;
-        m.stages[0].coverage = "x";
-        assert!(has(&cross_check(&m, &r), Rule::StatusDerivation, Some(1)));
+        // Stage 6 (noise reduction) is not modeled since spec 012 modeled stages 1 – 2.
+        m.stages[5].coverage = "x";
+        assert!(has(&cross_check(&m, &r), Rule::StatusDerivation, Some(6)));
         let mut m = base;
         m.stages[2].controls = "";
         assert!(has(&cross_check(&m, &r), Rule::StatusDerivation, Some(3)));

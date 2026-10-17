@@ -1,8 +1,8 @@
 rr_dr60 manifest
-library_version: 0.11.0
+library_version: 0.12.0
 device_rate_hz: 6000
 stage_count: 15
-counts: not_modeled=5 assumed=10 sourced=0 checked=0
+counts: not_modeled=3 assumed=12 sourced=0 checked=0
 basis: Modeled on the RR-DR60 owner's and service manuals and the codec family datasheets; no stage has been checked against a real unit.
 evidence_link: https://github.com/chancehouston/rr-dr60-emu/issues/new?template=hardware_evidence.yml
 assumptions_link: https://github.com/chancehouston/rr-dr60-emu/blob/main/docs/hardware/assumptions.md
@@ -10,27 +10,27 @@ sources_link: https://github.com/chancehouston/rr-dr60-emu/blob/main/docs/hardwa
 
 stage 1 mic_capsule
 name: Microphone capsule
-description: Turns sound pressure into an electrical signal with a two-terminal electret capsule.
-status: not_modeled
+description: Turns sound pressure into an electrical signal with a two-terminal electret capsule, adding the capsule's own steady hiss.
+status: assumed
 path: record
-confidence: not_applicable
+confidence: low
 sources: S-002
-assumptions: A-005
-coverage:
-controls:
-model_version:
+assumptions: A-005, A-048, A-049, A-050, A-052
+coverage: directivity; handling noise and wind; acoustic overload; the case's acoustics; the capsule's own response; unit spread
+controls: mic.capsule_enabled, mic.hiss_offset_db; Tap::AfterMicCapsule
+model_version: 0.12.0
 
 stage 2 mic_amp
 name: Microphone amplifier
-description: Amplifies the microphone signal ahead of the codec and carries the AGC's attenuator.
-status: not_modeled
+description: Amplifies the microphone signal ahead of the codec: a high-pass near 820 Hz thins the low end, and very loud sounds clip at its supply rails.
+status: assumed
 path: record
-confidence: not_applicable
+confidence: low
 sources: S-002
-assumptions: A-006, A-029
-coverage:
-controls:
-model_version:
+assumptions: A-006, A-029, A-046, A-047, A-051, A-053
+coverage: the output coupling's 159 Hz shift under limiting; below-clip distortion; part and transistor spread
+controls: mic.amp_enabled; Tap::AfterMicAmp
+model_version: 0.12.0
 
 stage 3 limiter
 name: Limiter (AGC)
@@ -40,7 +40,7 @@ path: record
 confidence: low
 sources: S-001, S-002
 assumptions: A-007, A-019, A-020, A-028, A-030, A-034, A-035, A-036, A-037
-coverage: a soft knee, if the circuit has one; the DC block and 13 kHz roll-off ahead of the peak circuit
+coverage: a soft knee, if the circuit has one
 controls: agc.enabled, agc.knee_dbfs, agc.attack_ms, agc.release_ms; Tap::AfterAgc
 model_version: 0.5.0
 

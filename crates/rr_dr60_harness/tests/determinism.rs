@@ -89,6 +89,8 @@ fn in_place_equals_copy() {
     }
 }
 
+/// FR-009: with stage 1 off (the spec 001 configuration builds on the 0.11 default, spec 012
+/// FR-010) no stage is stochastic, so the seed has no effect.
 #[test]
 fn seed_does_not_change_output() {
     let x = golden::stimulus("noise_seed_0d60", 44_100);
@@ -614,4 +616,44 @@ fn volume_ramp_partitions() {
             }
         }
     }
+}
+
+/// Spec 012 SC-005 (US1 AS4; tasks.md T031): stages 1 – 2 with the hiss on are block-partition
+/// invariant: random partitions (including sizes 0 and 1) of a voiced stimulus followed by
+/// silence through every microphone configuration (the 0.12 default with the voice activation
+/// bypassed among them) give the one-block output bit for bit, at the measurement rates. Ten
+/// partitions each; two under coverage instrumentation.
+#[test]
+fn mic_partitions() {
+    let mut rng = Pcg32::new(0x0D60, 12);
+    let partitions = if cfg!(coverage) { 2 } else { 10 };
+    for &rate in configs::measurement_rates() {
+        let fs = f64::from(rate);
+        let mut x = rr_dr60_harness::stimulus::voiced(fs, 0.3, -20.0, 7);
+        x.extend(rr_dr60_harness::stimulus::silence(rate as usize / 5));
+        for name in configs::MIC_CONFIGS {
+            let s = configs::settings(name, rate);
+            let want = one_block(s, &x);
+            for i in 0..partitions {
+                assert_eq!(
+                    partitioned(s, &x, &mut rng),
+                    want,
+                    "{rate} Hz {name}, partition {i}"
+                );
+            }
+        }
+    }
+}
+
+/// Spec 012 FR-003, FR-009 (A-049): with stage 1 on the seed selects the hiss: the same seed
+/// gives the same output, another seed another hiss.
+#[test]
+fn seed_selects_the_hiss() {
+    let x = golden::stimulus("noise_seed_0d60", 44_100);
+    let mut a = configs::settings("default_mic", 44_100);
+    let mut b = a;
+    a.seed = 0;
+    b.seed = u64::MAX;
+    assert_eq!(one_block(a, &x), one_block(a, &x));
+    assert_ne!(one_block(a, &x), one_block(b, &x));
 }

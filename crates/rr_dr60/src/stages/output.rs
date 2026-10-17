@@ -526,12 +526,14 @@ mod tests {
     };
     use std::vec::Vec;
 
+    /// The 0.11 default (spec 012 FR-010): the output chain's checks run with stages 1 – 2
+    /// bypassed.
     fn settings(rate: u32) -> Settings {
-        Settings::new(rate)
+        crate::test_util::settings_011(rate)
     }
 
     fn settings_output(rate: u32, o: OutputSettings) -> Settings {
-        let mut s = Settings::new(rate);
+        let mut s = crate::test_util::settings_011(rate); // 012 FR-010
         s.output = o;
         s
     }

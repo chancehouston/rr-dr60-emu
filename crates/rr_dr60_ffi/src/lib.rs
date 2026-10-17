@@ -45,7 +45,7 @@ use rr_dr60::{
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 11;
+pub const RR_DR60_VERSION_MINOR: u32 = 12;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -150,6 +150,9 @@ pub enum RrDr60SettingField {
     MemoryCapacityS = 14,
     /// `memory_max_recordings` is outside 1 to 9 999 (spec 006 FR-010).
     MemoryMaxRecordings = 15,
+    /// `mic_hiss_offset_db` is outside −18 to +12, or not finite; checked whether or not the
+    /// capsule is on (spec 012 FR-003). Appended in 0.12.
+    MicHissOffsetDb = 16,
 }
 
 /// Output tap point, passed as `uint32_t` in [`RrDr60Settings::tap`].
@@ -186,6 +189,13 @@ pub enum RrDr60Tap {
     /// `RR_DR60_STATUS_TAP_NOT_ON_ROUTE` while the speaker route is selected (spec 009
     /// FR-011). Appended in 0.9. Never bounded by the output clamp (spec 010).
     AfterEarphone = 8,
+    /// After signal-chain stage 1 (the capsule), at the host rate: the input plus the capsule's
+    /// unshaped hiss. Nothing after it runs; latency 0, no events (spec 012 FR-008). Appended
+    /// in 0.12.
+    AfterMicCapsule = 9,
+    /// After signal-chain stage 2 (the microphone amplifier), at the host rate. Nothing after
+    /// it runs; latency 0, no events (spec 012 FR-008). Appended in 0.12.
+    AfterMicAmp = 10,
 }
 
 /// `RR_DR60_TAP_AFTER_PLAYBACK` under the stage's name: after stage 10, before the output chain
@@ -409,7 +419,7 @@ pub struct RrDr60MemoryStatus {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RrDr60Settings {
-    /// Must be `sizeof(RrDr60Settings)`: 112 since 0.10 (104 in 0.9, 96 in 0.8, 88 in 0.6 and 0.7, 80 in
+    /// Must be `sizeof(RrDr60Settings)`: 120 since 0.12 (112 in 0.10 and 0.11, 104 in 0.9, 96 in 0.8, 88 in 0.6 and 0.7, 80 in
     /// 0.5, 72 in 0.3 and 0.4, rejected as `STRUCT_SIZE`). Lets the struct grow in later
     /// versions.
     pub struct_size: u32,
@@ -422,7 +432,9 @@ pub struct RrDr60Settings {
     pub playback_stage_enabled: bool,
     /// An `RrDr60Tap` value.
     pub tap: u32,
-    /// Seed for stochastic stages. No effect on output in this version.
+    /// Seed for stochastic stages: since 0.12 the capsule's hiss (stage 1; spec 012 FR-009,
+    /// A-049), one deterministic stream per recording keyed by the seed and the recording
+    /// counter. No effect with `mic_capsule_enabled` false.
     pub seed: u64,
     /// Signal-chain stage 3 (the limiter) on (true, default; assumed always active, A-020) or
     /// bypassed. Below its knee the limiter is the identity; above it the output is held at the
@@ -507,16 +519,35 @@ pub struct RrDr60Settings {
     /// Ignored; reserved since 0.10 (this layout's tail, offsets 105 – 111, explicit so that
     /// the next version can append at 112 and refuse 112). Write 0.
     pub reserved_010_tail: [u8; 7],
+    /// Signal-chain stage 1, the capsule's self-noise (the hiss, A-048), on (true, default) or
+    /// bypassed (spec 012). Appended in 0.12 at offset 112.
+    pub mic_capsule_enabled: bool,
+    /// Signal-chain stage 2, the microphone amplifier (the input high-pass, the clipper, the
+    /// output coupling and the roll-off; A-046, A-047, A-051), on (true, default) or bypassed
+    /// (spec 012). Appended in 0.12 at offset 113.
+    pub mic_amp_enabled: bool,
+    /// Ignored; reserved since 0.12 (offsets 114 – 115, explicit). Write 0.
+    pub reserved_012: [u8; 2],
+    /// The hiss level offset in dB, −18 to +12, default 0 (spec 012 FR-003); validated whether
+    /// or not the capsule is on. Appended in 0.12 at offset 116.
+    pub mic_hiss_offset_db: f32,
 }
 
 // spec 006 contracts/c-api.md: the 0.6 layout is 88 bytes; the 0.5 offsets are kept and the two
 // memory fields sit at 76 and 80 (the unit tests assert every offset).
-const _: () = assert!(size_of::<RrDr60Settings>() == 112); // spec 010 contracts/c-api.md: 104 → 112
+const _: () = assert!(size_of::<RrDr60Settings>() == 120); // spec 012 contracts/c-api.md: 112 → 120
 // Spec 010 FR-008: the struct is 8-aligned (`seed: u64`); the explicit tail ends it, so no
 // implicit padding can hide a stale caller's uninitialized byte again.
 const _: () = assert!(align_of::<RrDr60Settings>() == 8);
+const _: () = assert!(core::mem::offset_of!(RrDr60Settings, reserved_010_tail) + 7 == 112);
+// Spec 012 contracts/c-api.md: the 0.12 fields at their recorded offsets, the f32 ending the
+// struct with no implicit padding.
+const _: () = assert!(core::mem::offset_of!(RrDr60Settings, mic_capsule_enabled) == 112);
+const _: () = assert!(core::mem::offset_of!(RrDr60Settings, mic_amp_enabled) == 113);
+const _: () = assert!(core::mem::offset_of!(RrDr60Settings, reserved_012) == 114);
+const _: () = assert!(core::mem::offset_of!(RrDr60Settings, mic_hiss_offset_db) == 116);
 const _: () = assert!(
-    core::mem::offset_of!(RrDr60Settings, reserved_010_tail) + 7 == size_of::<RrDr60Settings>()
+    core::mem::offset_of!(RrDr60Settings, mic_hiss_offset_db) + 4 == size_of::<RrDr60Settings>()
 );
 // spec 003 contracts/c-api.md: the C event type and the core's `repr(C)` `VasEvent` share one
 // layout, so `rr_dr60_process_with_events` can pass the caller's buffer straight through.
@@ -595,6 +626,7 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
                 Setting::VasOnsetMs => RrDr60SettingField::VasOnsetMs,
                 Setting::MemoryCapacityS => RrDr60SettingField::MemoryCapacityS,
                 Setting::MemoryMaxRecordings => RrDr60SettingField::MemoryMaxRecordings,
+                Setting::MicHissOffsetDb => RrDr60SettingField::MicHissOffsetDb, // 012 FR-012
                 _ => RrDr60SettingField::None,
             };
             (RrDr60Status::InvalidSetting, field)
@@ -666,6 +698,8 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Sett
         6 => Tap::AfterVolumeAmp,
         7 => Tap::AfterSpeaker,
         8 => Tap::AfterEarphone,
+        9 => Tap::AfterMicCapsule, // 012 FR-012
+        10 => Tap::AfterMicAmp,    // 012 FR-012
         _ => return Err(invalid(RrDr60SettingField::Tap)),
     };
     let vas_mode = match s.vas_mode {
@@ -697,6 +731,9 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Sett
     out.output.speaker_enabled = s.output_speaker_enabled;
     out.output.earphone_enabled = s.output_earphone_enabled;
     out.output.clamp_enabled = s.output_clamp_enabled; // 010 FR-008
+    out.mic.capsule_enabled = s.mic_capsule_enabled; // 012 FR-012
+    out.mic.amp_enabled = s.mic_amp_enabled;
+    out.mic.hiss_offset_db = s.mic_hiss_offset_db;
     Ok(out)
 }
 
@@ -742,6 +779,10 @@ pub extern "C" fn rr_dr60_settings_default(host_rate_hz: u32) -> RrDr60Settings 
         reserved_010: [0; 5],
         output_clamp_enabled: defaults.output.clamp_enabled, // false (010 FR-002)
         reserved_010_tail: [0; 7],
+        mic_capsule_enabled: defaults.mic.capsule_enabled, // A-048 (012 FR-012)
+        mic_amp_enabled: defaults.mic.amp_enabled,         // A-046, A-047, A-051 (012 FR-012)
+        reserved_012: [0; 2],
+        mic_hiss_offset_db: defaults.mic.hiss_offset_db, // 0 (012 FR-003)
     }
 }
 
@@ -2486,13 +2527,25 @@ mod tests {
         let mut s = rr_dr60_settings_default(48_000);
         assert_eq!(s.struct_size as usize, size_of::<RrDr60Settings>());
         assert!(to_settings(&s).is_ok());
-        s.tap = 9; // 0 – 8 are taps since 0.9 (spec 009 contracts/c-api.md)
+        s.tap = 11; // 0 – 10 are taps since 0.12 (spec 012 contracts/c-api.md)
         assert_eq!(
             to_settings(&s),
             Err((RrDr60Status::InvalidArgument, RrDr60SettingField::Tap))
         );
         s.tap = RrDr60Tap::AfterVas as u32;
         assert_eq!(to_settings(&s).unwrap().tap, Tap::AfterVas);
+        // Spec 012 FR-012: the hiss offset maps to its own field when refused.
+        let mut h = rr_dr60_settings_default(48_000);
+        h.mic_hiss_offset_db = 13.0;
+        let p = to_settings(&h).unwrap();
+        assert_eq!(
+            error_to_status_and_field(p.validate().unwrap_err()),
+            (
+                RrDr60Status::InvalidSetting,
+                RrDr60SettingField::MicHissOffsetDb
+            )
+        );
+        assert_eq!(RrDr60SettingField::MicHissOffsetDb as u32, 16);
         s.vas_mode = 7;
         assert_eq!(
             to_settings(&s),
@@ -2534,9 +2587,9 @@ mod tests {
     /// the 0.6 layout is 88 bytes with every 0.5 offset kept and the two memory fields appended
     /// at 76 and 80.
     #[test]
-    fn settings_layout_is_112_bytes_with_the_contract_offsets() {
+    fn settings_layout_is_120_bytes_with_the_contract_offsets() {
         use std::mem::offset_of;
-        assert_eq!(size_of::<RrDr60Settings>(), 112); // spec 010 contracts/c-api.md
+        assert_eq!(size_of::<RrDr60Settings>(), 120); // spec 012 contracts/c-api.md
         assert_eq!(align_of::<RrDr60Settings>(), 8); // `seed: u64`
         assert_eq!(offset_of!(RrDr60Settings, struct_size), 0);
         assert_eq!(offset_of!(RrDr60Settings, host_rate_hz), 4);
@@ -2573,12 +2626,28 @@ mod tests {
         assert_eq!(offset_of!(RrDr60Settings, reserved_010), 99);
         assert_eq!(offset_of!(RrDr60Settings, output_clamp_enabled), 104);
         assert_eq!(offset_of!(RrDr60Settings, reserved_010_tail), 105);
+        // Spec 012 contracts/c-api.md: 112 → 120, the microphone path's fields after the 0.11
+        // size (the bools at 112 and 113, an explicit reserved pair, the offset at 116).
+        assert_eq!(offset_of!(RrDr60Settings, mic_capsule_enabled), 112);
+        assert_eq!(offset_of!(RrDr60Settings, mic_amp_enabled), 113);
+        assert_eq!(offset_of!(RrDr60Settings, reserved_012), 114);
+        assert_eq!(offset_of!(RrDr60Settings, mic_hiss_offset_db), 116);
         let d = rr_dr60_settings_default(48_000);
         assert!(!d.output_clamp_enabled); // 010 FR-002
         assert_eq!(d.reserved_010, [0; 5]);
         assert_eq!(d.reserved_010_tail, [0; 7]);
-        assert_eq!(RR_DR60_VERSION_MINOR, 11);
+        assert_eq!(d.reserved_012, [0; 2]);
+        assert_eq!(d.mic_hiss_offset_db, 0.0); // 012 FR-003
+        assert_eq!(RR_DR60_VERSION_MINOR, 12);
         let mut stale = rr_dr60_settings_default(48_000);
+        stale.struct_size = 112; // a 0.10 or 0.11 caller (spec 012 FR-012)
+        assert_eq!(
+            to_settings(&stale),
+            Err((
+                RrDr60Status::InvalidArgument,
+                RrDr60SettingField::StructSize
+            ))
+        );
         stale.struct_size = 104; // a 0.9 caller (spec 010 FR-008)
         assert_eq!(
             to_settings(&stale),
@@ -2715,7 +2784,12 @@ mod tests {
             s.tap = v;
             assert_eq!(to_settings(&s).unwrap().tap, t, "{v}");
         }
-        s.tap = 9;
+        // Spec 012 FR-012: taps 9 and 10 after the microphone stages; 11 is refused.
+        for (v, t) in [(9, Tap::AfterMicCapsule), (10, Tap::AfterMicAmp)] {
+            s.tap = v;
+            assert_eq!(to_settings(&s).unwrap().tap, t, "{v}");
+        }
+        s.tap = 11;
         assert!(to_settings(&s).is_err());
         assert_eq!(RrDr60Status::InvalidVolume as u32, 23);
         assert_eq!(RrDr60Status::TapNotOnRoute as u32, 24);
@@ -2745,7 +2819,7 @@ mod tests {
     #[test]
     fn settings_default_has_the_0_6_values() {
         let s = rr_dr60_settings_default(48_000);
-        assert_eq!(s.struct_size, 112); // spec 010
+        assert_eq!(s.struct_size, 120); // spec 012
         assert_eq!(s.memory_capacity_s, 3600); // S-001: 60 minutes
         assert_eq!(s.memory_max_recordings, 99); // S-001: 99 items
         assert!(s.agc_enabled); // A-020
@@ -3475,11 +3549,11 @@ mod tests {
 
     /// 008 T040 (contracts/c-api.md): the codec control at 88, default `true`; a 0.7-layout
     /// `struct_size` of 88 is `STRUCT_SIZE`; the decoder tap is 4; the encoding values are the
-    /// form's. (The size is 112 since 0.10, spec 010 contracts/c-api.md.)
+    /// form's. (The size is 120 since 0.12, spec 012 contracts/c-api.md.)
     #[test]
     fn codec_settings_tap_and_encoding_values() {
         let s = rr_dr60_settings_default(48_000);
-        assert_eq!(s.struct_size, 112);
+        assert_eq!(s.struct_size, 120);
         assert!(s.speech_codec_enabled);
         assert_eq!(s.reserved_008, 0);
         let mut old = s;

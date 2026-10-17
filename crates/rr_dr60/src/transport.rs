@@ -111,7 +111,9 @@ pub struct StopOutcome {
     /// Post-VAS device samples of silence produced after the last represented input sample
     /// (spec 008 FR-013): the padding to the frame boundary plus the 60-sample look-ahead,
     /// `120·F − n′ + 60` for F frames and n′ kept samples; 0 with the speech codec bypassed
-    /// (spec 006's stop, byte for byte) and when the recording was discarded.
+    /// (spec 006's stop, byte for byte) and when the recording was discarded. "Silence" means
+    /// **zero-valued input**: the stop feeds zeros through the whole record path, so with stage 1
+    /// on the recording carries the capsule's hiss there (spec 012 FR-009).
     pub silence_fed_samples: u64,
 }
 
@@ -169,6 +171,9 @@ pub(crate) struct Transport {
     decoded_read: usize,
     /// The index of the frame being played (spec 008 FR-008).
     frame_index: u64,
+    /// The recording counter (spec 012 FR-009): successful recording starts since
+    /// construction. It never rewinds: `reset` and `reconfigure` keep it.
+    pub(crate) counter: u64,
 }
 
 impl Default for Transport {
@@ -182,14 +187,27 @@ impl Default for Transport {
             decoded: [0.0; FRAME],
             decoded_read: FRAME,
             frame_index: 0,
+            counter: 0, // 012 FR-009: 0 at construction
         }
     }
 }
 
 impl Transport {
-    /// Back to idle (spec 006 FR-019: `reset`).
+    /// Idle, with the recording counter carried in (spec 012 FR-009: `reconfigure`).
+    pub(crate) fn with_counter(counter: u64) -> Self {
+        Self {
+            counter,
+            ..Self::default()
+        }
+    }
+
+    /// Back to idle (spec 006 FR-019: `reset`), keeping the recording counter (spec 012
+    /// FR-009: it never rewinds).
     pub(crate) fn reset(&mut self) {
-        *self = Self::default();
+        *self = Self {
+            counter: self.counter,
+            ..Self::default()
+        };
     }
 }
 
@@ -211,7 +229,12 @@ impl Pipeline {
     /// Starts a recording (spec 006 FR-003, FR-004, FR-012): the record path is reset (the
     /// limiter discharged, the VAS unpaused, the filters and the conversion cleared; A-037),
     /// the speech encoder with it (spec 008 FR-018), and the recording in progress is opened as
-    /// number `count + 1`. Real-time safe.
+    /// number `count + 1`. Since 0.12 the capsule's hiss is keyed to the **recording counter**
+    /// and the counter then advances (spec 012 FR-009; A-049): each recording carries its own
+    /// stream from its beginning. The counter counts successful starts since construction and
+    /// never rewinds: [`reset`](Self::reset) and [`reconfigure`](Self::reconfigure) keep it, a
+    /// refused start does not advance it, and the one-pass processing uses its current value
+    /// (the next recording's stream). Real-time safe.
     ///
     /// # Errors
     ///
@@ -222,6 +245,9 @@ impl Pipeline {
         self.refuse_if_active()?;
         self.memory.open()?;
         self.recorder.reset();
+        // 012 FR-009: the recorder's hiss is stream `counter`; the counter never rewinds.
+        self.recorder.rekey(self.transport.counter);
+        self.transport.counter = self.transport.counter.wrapping_add(1);
         if let Some(enc) = &mut self.encoder {
             enc.reset();
         }
@@ -814,7 +840,7 @@ mod tests {
     /// The spec 006 configuration: the defaults with the speech codec bypassed (spec 008
     /// FR-021: these tests state the 006 rules, which the codec's own tests restate for frames).
     fn settings_006(rate: u32) -> Settings {
-        let mut s = Settings::new(rate);
+        let mut s = crate::test_util::settings_011(rate); // 012 FR-010
         s.output = crate::settings::OutputSettings::BYPASSED; // 009 FR-016: the earlier checks run with stages 11–13 bypassed
         s.tap = crate::settings::Tap::AfterPlayback; // 009 FR-011: 0.8's output
         s.speech_codec_enabled = false;
@@ -1670,7 +1696,7 @@ mod codec_tests {
     /// The codec with everything else bypassed (the harness's `codec_only`, the tap ignored by
     /// the paths), a `secs` second memory of `max` recordings.
     fn codec_only(rate: u32, secs: u32, max: u32) -> Settings {
-        let mut s = Settings::new(rate);
+        let mut s = crate::test_util::settings_011(rate); // 012 FR-010
         s.agc.enabled = false;
         s.record_stage_enabled = false;
         s.playback_stage_enabled = false;
@@ -2286,5 +2312,208 @@ mod codec_tests {
             past_the_length > 0,
             "no tone length produced an event past the length"
         );
+    }
+}
+
+/// 012 T024 (spec 012 FR-009; research R-05's table): the recording counter and the hiss
+/// streams it keys. The configuration is stage 1 alone at 6 kHz (the identity rate: no
+/// conversion, every other stage bypassed), so a recording stores the capsule's output sample
+/// for sample and the oracle is the stage itself keyed to `(seed, counter)`.
+#[cfg(test)]
+mod counter_tests {
+    extern crate std;
+    use super::*;
+    use crate::settings::{MicSettings, OutputSettings, Settings, Tap};
+    use crate::stages::mic::MicCapsule;
+    use alloc::vec::Vec;
+
+    fn capsule_settings(seed: u64) -> Settings {
+        let mut s = Settings::new(6000);
+        s.record_stage_enabled = false;
+        s.playback_stage_enabled = false;
+        s.adc_clamp_enabled = false;
+        s.agc.enabled = false;
+        s.vas.enabled = false;
+        s.speech_codec_enabled = false;
+        s.output = OutputSettings::BYPASSED;
+        s.mic = MicSettings::DEVICE;
+        s.mic.amp_enabled = false;
+        s.tap = Tap::AfterMicCapsule;
+        s.seed = seed;
+        s.memory.capacity_s = 1;
+        s.memory.max_recordings = 4;
+        s
+    }
+
+    /// The capsule's stream for `(seed, counter)`: `n` samples on zero input.
+    fn oracle(s: &Settings, counter: u64, n: usize) -> Vec<f32> {
+        let mut c = MicCapsule::new(&s.mic, s.seed, s.host_rate_hz).unwrap();
+        c.rekey(counter);
+        (0..n).map(|_| c.process(0.0) as f32).collect()
+    }
+
+    fn one_pass_n(p: &mut Pipeline, n: usize) -> Vec<f32> {
+        let x = std::vec![0.0f32; n];
+        let mut y = std::vec![0.0f32; n];
+        assert_eq!(p.process(&x, &mut y).unwrap().produced, n);
+        y
+    }
+
+    /// Records `n` zeros and stops.
+    fn record_n(p: &mut Pipeline, n: usize) -> StopOutcome {
+        p.start_recording().unwrap();
+        let _ = p.record(&std::vec![0.0f32; n], &mut []).unwrap();
+        p.stop_recording(&mut []).unwrap()
+    }
+
+    fn stored(p: &Pipeline, number: u32) -> Vec<f32> {
+        p.memory.samples(p.memory.span(number).unwrap()).to_vec()
+    }
+
+    /// R-05: construction — the counter is 0 and the one-pass is keyed `(seed, 0)`.
+    #[test]
+    fn construction_keys_counter_zero() {
+        let s = capsule_settings(11);
+        let mut p = Pipeline::new(s).unwrap();
+        assert_eq!(p.transport.counter, 0);
+        assert_eq!(one_pass_n(&mut p, 300), oracle(&s, 0, 300));
+    }
+
+    /// R-05: a successful start keys the recorder to `(seed, counter)`, then the counter
+    /// advances; recording k carries stream k from its beginning.
+    #[test]
+    fn start_rekeys_then_increments() {
+        let s = capsule_settings(3);
+        let mut p = Pipeline::new(s).unwrap();
+        let _ = record_n(&mut p, 200);
+        assert_eq!(p.transport.counter, 1);
+        assert_eq!(stored(&p, 1), oracle(&s, 0, 200));
+        let _ = record_n(&mut p, 150);
+        assert_eq!(p.transport.counter, 2);
+        assert_eq!(stored(&p, 2), oracle(&s, 1, 150));
+    }
+
+    /// R-05: `reset`, idle or mid-recording, keeps the counter and keys the one-pass to its
+    /// current value (the next recording's stream).
+    #[test]
+    fn reset_keeps_the_counter_and_rekeys_the_one_pass() {
+        let s = capsule_settings(5);
+        let mut p = Pipeline::new(s).unwrap();
+        let _ = record_n(&mut p, 100);
+        let _ = record_n(&mut p, 100);
+        let _ = one_pass_n(&mut p, 77);
+        p.reset();
+        assert_eq!(p.transport.counter, 2);
+        assert_eq!(one_pass_n(&mut p, 100), oracle(&s, 2, 100));
+        p.start_recording().unwrap();
+        let _ = p.record(&[0.0; 10], &mut []).unwrap();
+        p.reset(); // the recording in progress is discarded; its stream was consumed
+        assert_eq!(p.transport.counter, 3);
+        assert_eq!(p.memory_status().count, 2);
+        assert_eq!(one_pass_n(&mut p, 100), oracle(&s, 3, 100));
+        let _ = record_n(&mut p, 100);
+        assert_eq!(stored(&p, 3), oracle(&s, 3, 100));
+    }
+
+    /// R-05: an accepted `reconfigure` keeps the counter and keys the one-pass to it (with the
+    /// new seed); a refused one changes nothing, so the one-pass stream continues.
+    #[test]
+    fn reconfigure_keeps_the_counter() {
+        let s = capsule_settings(1);
+        let mut p = Pipeline::new(s).unwrap();
+        let _ = record_n(&mut p, 100);
+        let t = capsule_settings(9);
+        p.reconfigure(t).unwrap();
+        assert_eq!(p.transport.counter, 1);
+        assert_eq!(one_pass_n(&mut p, 100), oracle(&t, 1, 100));
+        // Refused: an invalid offset. The pipeline is unchanged, mid-stream.
+        let mut bad = t;
+        bad.mic.hiss_offset_db = 13.0;
+        assert!(p.reconfigure(bad).is_err());
+        assert_eq!(p.transport.counter, 1);
+        assert_eq!(one_pass_n(&mut p, 100), oracle(&t, 1, 200)[100..]);
+        let _ = record_n(&mut p, 50);
+        assert_eq!(stored(&p, 2), oracle(&t, 1, 50));
+        assert_eq!(p.transport.counter, 2);
+    }
+
+    /// R-05: a refused start (recording or playback in progress, memory full, no slots) does
+    /// not advance the counter; a memory-full self-stop does not either.
+    #[test]
+    fn refused_starts_and_the_self_stop_do_not_advance() {
+        let s = capsule_settings(2);
+        let mut p = Pipeline::new(s).unwrap();
+        p.start_recording().unwrap();
+        assert_eq!(p.start_recording(), Err(Error::RecordingInProgress));
+        assert_eq!(p.transport.counter, 1);
+        let _ = p.stop_recording(&mut []).unwrap(); // empty: discarded
+        let _ = record_n(&mut p, 100);
+        assert_eq!(p.transport.counter, 2);
+        p.start_playback(1).unwrap();
+        assert_eq!(p.start_recording(), Err(Error::PlaybackInProgress));
+        assert_eq!(p.transport.counter, 2);
+        p.stop_playback().unwrap();
+        // Memory full: 1 s = 6000 samples at 6 kHz; this recording stops by itself.
+        p.start_recording().unwrap();
+        let info = p.record(&std::vec![0.0f32; 7000], &mut []).unwrap();
+        assert_eq!(info.stopped, Some(StopReason::MemoryFull));
+        assert_eq!(p.transport.counter, 3);
+        assert_eq!(p.start_recording(), Err(Error::MemoryFull));
+        assert_eq!(p.transport.counter, 3);
+        // No slots: one slot, used.
+        let mut one = capsule_settings(2);
+        one.memory.max_recordings = 1;
+        let mut q = Pipeline::new(one).unwrap();
+        let _ = record_n(&mut q, 10);
+        assert_eq!(q.start_recording(), Err(Error::NoRecordingSlots));
+        assert_eq!(q.transport.counter, 1);
+    }
+
+    /// R-05: an empty recording discarded at the stop has consumed its stream.
+    #[test]
+    fn an_empty_recording_consumes_its_stream() {
+        let s = capsule_settings(4);
+        let mut p = Pipeline::new(s).unwrap();
+        let out = record_n(&mut p, 0);
+        assert_eq!(out.result, StopResult::DiscardedEmpty);
+        assert_eq!(p.transport.counter, 1);
+        let _ = record_n(&mut p, 120);
+        assert_eq!(stored(&p, 1), oracle(&s, 1, 120));
+    }
+
+    /// R-05: erase, export, import, playback and one-pass calls leave the counter unchanged,
+    /// and the one-pass stream continues through them (and through recordings).
+    #[test]
+    fn other_calls_leave_the_counter_and_the_one_pass_stream_continues() {
+        let s = capsule_settings(6);
+        let mut p = Pipeline::new(s).unwrap();
+        let want = oracle(&s, 0, 150);
+        assert_eq!(one_pass_n(&mut p, 50), want[..50]);
+        let _ = record_n(&mut p, 100);
+        assert_eq!(one_pass_n(&mut p, 50), want[50..100]);
+        let mut bytes = std::vec![0u8; p.export_len(1).unwrap()];
+        p.export(1, &mut bytes).unwrap();
+        assert_eq!(p.import(&bytes), Ok(2));
+        p.start_playback(1).unwrap();
+        let mut buf = [0.0f32; 64];
+        while !p.play(&mut buf).unwrap().finished {}
+        p.erase(2).unwrap();
+        assert_eq!(p.transport.counter, 1);
+        assert_eq!(one_pass_n(&mut p, 50), want[100..150]);
+    }
+
+    /// R-05: a zero-length call advances nothing.
+    #[test]
+    fn a_zero_length_call_advances_nothing() {
+        let s = capsule_settings(8);
+        let mut p = Pipeline::new(s).unwrap();
+        assert_eq!(p.process(&[], &mut []).unwrap().produced, 0);
+        assert_eq!(one_pass_n(&mut p, 40), oracle(&s, 0, 40));
+        p.start_recording().unwrap();
+        let _ = p.record(&[], &mut []).unwrap();
+        let _ = p.record(&[0.0; 40], &mut []).unwrap();
+        let _ = p.stop_recording(&mut []).unwrap();
+        assert_eq!(stored(&p, 1), oracle(&s, 0, 40));
+        assert_eq!(p.transport.counter, 1);
     }
 }

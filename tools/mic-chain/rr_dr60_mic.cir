@@ -1,0 +1,36 @@
+* rr-dr60-emu spec 012 (research R-01): the RR-DR60's microphone amplifier, S-002 sheet 3.1,
+* for the ngspice cross-check of design_mic_chain.py's nodal model. Generic transistor models
+* (2SD1819A / 2SB1218A class: Is 1e-14 A, beta 250, Early voltage 50 V); the codec input
+* amplifier as an ideal inverting stage around the SG reference. The capsule is an AC current
+* source into its node (its DC bias current does not matter: C1 blocks it). @OUT@ is replaced
+* by the script with the output file for the AC response at GSX.
+.option temp=27
+VRAIL rail 0 DC 3.2
+VQ11 q11e 0 DC 2.7
+RQ11 q11e q11n 65
+R2 q11n m 1k
+IMIC 0 m DC 0 AC 1
+C1 m b 0.15u
+R3 o b 100k
+Q1 o b e QN
+Q3 c3 sg e QN
+VSG sg 0 DC 1.6
+R5 e 0 10k
+R6 rail c3 100k
+Q2 o c3 rail QP
+C4 o n1 0.1u
+R7 n1 n2 22k
+C5 n2 n3 1u
+R10 n3 ainm 1k
+R15 gsx ainm 82k
+C10 gsx ainm 150p
+EAMP gsx 0 sg ainm 1e6
+.model QN NPN(IS=1e-14 BF=250 VAF=50)
+.model QP PNP(IS=1e-14 BF=250 VAF=50)
+.control
+op
+print v(o) v(e) v(c3) v(b)
+ac dec 100 1 200k
+wrdata @OUT@ v(gsx)
+.endc
+.end

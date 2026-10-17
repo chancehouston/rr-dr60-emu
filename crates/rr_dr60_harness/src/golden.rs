@@ -248,6 +248,18 @@ pub struct GoldenEntry {
     /// which therefore read unchanged (FR-006).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub changes: Option<Vec<(u64, f32)>>,
+    /// Spec 012 (contracts/golden-format.md): the engine seed. Present with `counter` and
+    /// `hiss_offset_db` in microphone-file entries only; absent (and not serialized) in the
+    /// seven earlier files, which therefore read unchanged (FR-014).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+    /// Spec 012: the recording counter the output's hiss stream is keyed to (0: the one-pass
+    /// after construction; 1: the engine's second recording, FR-009).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counter: Option<u64>,
+    /// Spec 012: the hiss offset, dB (FR-007).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hiss_offset_db: Option<f32>,
 }
 
 /// The VAS part of a golden entry (specs/003-vas/contracts/golden-format.md).
@@ -381,6 +393,9 @@ pub fn entry(stimulus: &str, config: &str, host_rate_hz: u32, output: &[f32]) ->
         volume: None,
         n_at_bound: None,
         changes: None,
+        seed: None,
+        counter: None,
+        hiss_offset_db: None,
     }
 }
 
@@ -964,6 +979,201 @@ pub fn generate_volume_ramp(make: Make<'_>, bless: bool) -> GoldenFile {
         library_version: rr_dr60::VERSION.into(),
         entries,
     }
+}
+
+/// Spec 012 microphone golden stimuli in sorted order (contracts/golden-format.md › Stimuli).
+pub const MIC_STIMULI: [&str; 4] = ["loud_tone", "silence_1s", "very_loud_tone", "voiced_1s"];
+
+/// Spec 012 microphone golden configurations in sorted order (data-model.md › Harness
+/// configurations); the second-recording family `default_mic_rec1` follows `default_mic_quiet`.
+pub const GOLDEN_MIC_CONFIGS: [&str; 5] = [
+    "default_mic",
+    "default_mic_quiet",
+    "mic_capsule_only",
+    "mic_only",
+    "mic_only_quiet",
+];
+
+/// A spec 012 microphone golden stimulus at host rate `rate` (contracts/golden-format.md): the
+/// tones are 1 kHz for 0.25 s starting on the script's clipper-input peak phase
+/// ([`crate::mic_checks::START_PHASE`]).
+///
+/// # Panics
+///
+/// On an unknown stimulus name.
+pub fn mic_stimulus(name: &str, rate: u32) -> Vec<f32> {
+    let fs = f64::from(rate);
+    let quarter = rate as usize / 4;
+    match name {
+        "silence_1s" => stimulus::silence(rate as usize),
+        "voiced_1s" => stimulus::voiced(fs, 1.0, -20.0, 7),
+        "loud_tone" => crate::mic_checks::peak_tone(rate, 12.0, quarter),
+        "very_loud_tone" => crate::mic_checks::peak_tone(rate, 24.0, quarter),
+        other => panic!("unknown stimulus {other:?}"),
+    }
+}
+
+/// The one-pass output of `x` through `settings`, one block.
+fn one_pass(make: Make<'_>, settings: Settings, x: &[f32]) -> Vec<f32> {
+    let mut p = make(settings);
+    let mut y = vec![0.0; x.len()];
+    let produced = p.process(x, &mut y).expect("equal lengths").produced;
+    y.truncate(produced);
+    y
+}
+
+/// [`entry`] plus the spec 012 fields.
+fn entry_mic(
+    s: &str,
+    c: &str,
+    rate: u32,
+    settings: &Settings,
+    counter: u64,
+    y: &[f32],
+) -> GoldenEntry {
+    let mut e = entry(s, c, rate, y);
+    e.seed = Some(settings.seed);
+    e.counter = Some(counter);
+    e.hiss_offset_db = Some(settings.mic.hiss_offset_db);
+    e
+}
+
+/// Spec 012 FR-014 (contracts/golden-format.md): the microphone golden file, 4 stimuli × 5
+/// configurations × 7 rates one-pass entries (one block each, keyed to counter 0) plus the
+/// `default_mic_rec1` family, `silence_1s` recorded as the engine's second recording (at
+/// counter 1) and played to the end, at the seven rates: 147 entries with the seed, the counter and the
+/// hiss offset, sorted by configuration, stimulus and rate. With `bless` the generator also
+/// asserts that every `mic_only_quiet` entry on silence is exact zeros, that every `mic_only`
+/// entry on silence reads the script's hiss band level within ±0.5 dB, that every `default_mic`
+/// entry equals a record-then-play of the same input under spec 008's coordinates (FR-009's
+/// rule), and that every `default_mic_rec1` playback differs from the matching counter-0 entry.
+pub fn generate_mic(make: Make<'_>, bless: bool) -> GoldenFile {
+    use crate::mic_checks::{HISS_BAND_DBFS, HISS_TOL_DB};
+    use crate::split_checks::{self, PLAY_BLOCK, RECORD_BLOCK};
+    use rr_dr60::speech_codec;
+    let mut entries = Vec::new();
+    for &c in &GOLDEN_MIC_CONFIGS {
+        for &s in &MIC_STIMULI {
+            for rate in configs::all_rates() {
+                let settings = configs::settings(c, rate);
+                let x = mic_stimulus(s, rate);
+                let y = one_pass(make, settings, &x);
+                if bless && s == "silence_1s" && c == "mic_only_quiet" {
+                    assert!(
+                        y.iter().all(|v| v.to_bits() == 0),
+                        "{s}/{c}/{rate} Hz: the hiss off on silence is exact zeros (012 FR-007)"
+                    );
+                }
+                if bless && s == "silence_1s" && c == "mic_only" {
+                    let got = crate::analysis::band_level_aes17(&y, f64::from(rate), 300.0, 3000.0);
+                    assert!(
+                        (got - HISS_BAND_DBFS).abs() <= HISS_TOL_DB, // SC-001
+                        "{s}/{c}/{rate} Hz: hiss band {got} dBFS re {HISS_BAND_DBFS} (012 SC-001)"
+                    );
+                }
+                if bless && c == "default_mic" {
+                    // Spec 008 FR-009's coordinates (mic_checks::equivalence): the one-pass of
+                    // the input, the pre-encoder latency and the stop's frames of silence,
+                    // skipped by the codec delay; its prefix is this entry (causality).
+                    let mut p = make(configs::memory_capacity(settings, 60, 9));
+                    let run = split_checks::record_then_play(&mut p, &x, RECORD_BLOCK, PLAY_BLOCK);
+                    let d = (speech_codec::DELAY_SAMPLES * rate / 6000) as usize;
+                    let per_device = split_checks::host_per_device(rate);
+                    let pre_encoder = p.record_latency_samples() as usize - d;
+                    let drain =
+                        (speech_codec::DELAY_SAMPLES - speech_codec::LOOKAHEAD_SAMPLES) as usize;
+                    let tail = pre_encoder
+                        + (run.stop.silence_fed_samples as usize + drain + 1) * per_device;
+                    let mut padded = x.clone();
+                    padded.extend(core::iter::repeat_n(0.0f32, tail));
+                    let want = one_pass(make, settings, &padded);
+                    let got = &run.pre_drain;
+                    let bits_eq = |a: &[f32], b: &[f32]| {
+                        a.len() == b.len()
+                            && a.iter().zip(b).all(|(u, v)| u.to_bits() == v.to_bits())
+                    };
+                    assert!(
+                        want.len() >= d + got.len()
+                            && bits_eq(got, &want[d..d + got.len()])
+                            && bits_eq(&y, &want[..y.len()]),
+                        "{s}/{c}/{rate} Hz: the first recording differs from the one-pass (012 SC-008)"
+                    );
+                }
+                entries.push(entry_mic(s, c, rate, &settings, 0, &y));
+            }
+        }
+        if c == "default_mic_quiet" {
+            for rate in configs::all_rates() {
+                entries.push(mic_rec1(make, rate, bless, &entries));
+            }
+        }
+    }
+    GoldenFile {
+        format: "rr_dr60-golden".into(),
+        version: 1,
+        library_version: rr_dr60::VERSION.into(),
+        entries,
+    }
+}
+
+/// One `default_mic_rec1` entry: a 64-sample recording of silence (counter 0), then
+/// `silence_1s` recorded (counter 1) and played to the end, drain included. With `bless`,
+/// asserts that the playback before the drain differs from the matching counter-0
+/// `default_mic` entry (in `earlier`) skipped by the codec delay (FR-009).
+fn mic_rec1(make: Make<'_>, rate: u32, bless: bool, earlier: &[GoldenEntry]) -> GoldenEntry {
+    use crate::split_checks::{self, PLAY_BLOCK, RECORD_BLOCK};
+    let settings = configs::memory_capacity(configs::settings("default_mic", rate), 60, 9);
+    let x = mic_stimulus("silence_1s", rate);
+    let mut p = make(settings);
+    p.start_recording().expect("room for a recording");
+    let _ = p
+        .record(&stimulus::silence(64), &mut [])
+        .expect("recording");
+    let _ = p.stop_recording(&mut []).expect("recording");
+    let run = split_checks::record_then_play(&mut p, &x, RECORD_BLOCK, PLAY_BLOCK);
+    assert_eq!(run.number, 2, "the second recording");
+    if bless {
+        let counter0 = one_pass(make, settings, &x);
+        let d = (rr_dr60::speech_codec::DELAY_SAMPLES * rate / 6000) as usize;
+        let want = earlier
+            .iter()
+            .find(|e| {
+                e.config == "default_mic" && e.stimulus == "silence_1s" && e.host_rate_hz == rate
+            })
+            .expect("the counter-0 entry precedes the family");
+        assert_eq!(
+            entry("silence_1s", "default_mic", rate, &counter0).sha256,
+            want.sha256
+        );
+        let n = run.pre_drain.len().min(counter0.len().saturating_sub(d));
+        assert!(
+            run.pre_drain[..n]
+                .iter()
+                .zip(&counter0[d..d + n])
+                .any(|(a, b)| a.to_bits() != b.to_bits()),
+            "default_mic_rec1/{rate} Hz: the second recording's hiss equals counter 0's (012 FR-009)"
+        );
+    }
+    let mut y = run.pre_drain;
+    y.extend_from_slice(&run.drain);
+    entry_mic("silence_1s", "default_mic_rec1", rate, &settings, 1, &y)
+}
+
+/// The committed spec 012 microphone golden file.
+///
+/// # Panics
+///
+/// If the embedded file is not valid JSON.
+pub fn committed_mic() -> GoldenFile {
+    serde_json::from_str(include_str!("../golden/golden-mic-v1.json"))
+        .expect("valid embedded microphone golden file")
+}
+
+/// Path of the spec 012 microphone golden file. Bless it only with
+/// `RR_DR60_BLESS=mic cargo test -p rr_dr60_harness --test golden_mic`, with a CHANGELOG entry
+/// (012 FR-014).
+pub fn path_mic() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-mic-v1.json")
 }
 
 /// The committed spec 011 volume-ramp golden file.

@@ -186,7 +186,7 @@ fn validate(s: &RrDr60Settings) -> (RrDr60Status, RrDr60SettingField) {
 /// processing; a 72-byte (0.4-layout) struct is rejected as `STRUCT_SIZE`.
 #[test]
 fn c_api_005_layout_defaults_and_reserved_fields() {
-    assert_eq!(size_of::<RrDr60Settings>(), 112); // spec 010 contracts/c-api.md (104 in 0.9)
+    assert_eq!(size_of::<RrDr60Settings>(), 120); // spec 012 contracts/c-api.md (112 in 0.10 and 0.11)
     assert_eq!(std::mem::offset_of!(RrDr60Settings, agc_knee_dbfs), 28);
     assert_eq!(std::mem::offset_of!(RrDr60Settings, reserved_agc_1), 32);
     assert_eq!(std::mem::offset_of!(RrDr60Settings, reserved_agc_2), 36);
@@ -199,7 +199,7 @@ fn c_api_005_layout_defaults_and_reserved_fields() {
         80
     ); // 006
     let d = rr_dr60_settings_default(48_000);
-    assert_eq!(d.struct_size, 112); // spec 010
+    assert_eq!(d.struct_size, 120); // spec 012
     assert_eq!(d.agc_knee_dbfs, -1.0); // A-028
     assert_eq!(d.agc_attack_ms, 3.0); // A-034
     assert_eq!(d.agc_release_ms, 1370.0); // A-035
@@ -308,11 +308,11 @@ fn c_api_validate_agrees_with_create() {
     };
     let bad_size_and_tap = RrDr60Settings {
         struct_size: 24,
-        tap: 9,
+        tap: 11,
         ..base
     };
     let bad_tap_and_rate = RrDr60Settings {
-        tap: 9,
+        tap: 11,
         host_rate_hz: 22_050,
         ..base
     };
@@ -443,7 +443,7 @@ fn error_table() {
         RrDr60Status::UnsupportedHostRate
     );
     assert_eq!(
-        status(RrDr60Settings { tap: 9, ..ok }, &mut out), // 0 – 8 are taps since 0.9
+        status(RrDr60Settings { tap: 11, ..ok }, &mut out), // 0 – 10 are taps since 0.12
         RrDr60Status::InvalidArgument
     );
     assert_eq!(
@@ -1745,6 +1745,111 @@ fn smoke_reference_hash_is_pinned() {
     println!("smoke volume-transition case: {ramp_len} samples, FNV-1a 64 {ramp:#018x}");
     assert_eq!(ramp, smoke_reference::SMOKE_SPEAKER_RAMP_HASH);
     assert_eq!(ramp_len, smoke_reference::SMOKE_ROUTE_PLAYBACK_SAMPLES);
+    // Spec 012 T049: the microphone cases (the 0.12 default one-pass; two hiss recordings with
+    // a reset between them, which differ).
+    let ((mic, mic_len), recs) = smoke_reference::rust_mic_references();
+    println!(
+        "smoke microphone case (0.12 default one-pass): {mic_len} samples, FNV-1a 64 {mic:#018x}"
+    );
+    for (k, (h, len)) in recs.iter().enumerate() {
+        println!("smoke hiss recording {k}: {len} samples, FNV-1a 64 {h:#018x}");
+    }
+    assert_eq!(mic, smoke_reference::SMOKE_MIC_DEFAULT_HASH);
+    assert_eq!(mic_len, smoke_reference::SMOKE_MIC_DEFAULT_SAMPLES);
+    assert_eq!(recs[0].0, smoke_reference::SMOKE_MIC_REC0_HASH);
+    assert_eq!(recs[1].0, smoke_reference::SMOKE_MIC_REC1_HASH);
+    assert_ne!(
+        recs[0].0, recs[1].0,
+        "the two recordings carry different hiss (012 FR-009)"
+    );
+    for (_, len) in recs {
+        assert_eq!(len, smoke_reference::SMOKE_MIC_REC_SAMPLES);
+    }
+}
+
+/// Spec 012 T049 (FR-012, SC-009; contracts/c-api.md): at the measurement rates the C handle
+/// and the Rust engine, built from the same settings for each of the five microphone
+/// configurations and fed the smoke square (exactly representable) plus silence through the
+/// one-pass, give bit-identical output; for the two default configurations a record-then-play
+/// through C equals Rust's, and so does a second recording after `rr_dr60_reset` (the counter).
+#[test]
+fn c_api_mic_matches_rust_at_all_rates() {
+    for &rate in configs::measurement_rates() {
+        let mut x: Vec<f32> = (0..rate as usize)
+            .map(|i| {
+                if (i * 48 / rate as usize) % 48 < 24 {
+                    0.125
+                } else {
+                    -0.125
+                }
+            })
+            .collect();
+        x.extend(std::iter::repeat_n(0.0f32, rate as usize / 4));
+        for config in configs::MIC_CONFIGS {
+            let s = configs::memory_capacity(configs::settings(config, rate), 10, 3);
+            let cs = configs::c_settings(&s);
+            assert_eq!(
+                (
+                    cs.mic_capsule_enabled,
+                    cs.mic_amp_enabled,
+                    cs.mic_hiss_offset_db
+                ),
+                (
+                    s.mic.capsule_enabled,
+                    s.mic.amp_enabled,
+                    s.mic.hiss_offset_db
+                ),
+                "{config}"
+            );
+            let mut rp = Pipeline::new(s).unwrap();
+            let cp = create(&cs);
+            let (mut r_out, mut c_out) = (Vec::new(), Vec::new());
+            for chunk in x.chunks(1024) {
+                let mut y = vec![0.0f32; chunk.len()];
+                let n = rp.process(chunk, &mut y).unwrap().produced;
+                r_out.extend_from_slice(&y[..n]);
+                let mut info = RrDr60BlockInfo::default();
+                // SAFETY: live handle; valid buffers.
+                let status = unsafe {
+                    rr_dr60_process(cp, chunk.as_ptr(), y.as_mut_ptr(), chunk.len(), &mut info)
+                };
+                assert_eq!(status, RrDr60Status::Ok);
+                c_out.extend_from_slice(&y[..info.produced]);
+            }
+            assert!(!r_out.is_empty());
+            assert_eq!(
+                r_out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                c_out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                "{rate} Hz one-pass {config}"
+            );
+            // SAFETY: live handle, destroyed once.
+            unsafe { rr_dr60_destroy(cp) };
+            if config.starts_with("default_") {
+                let mut rp = Pipeline::new(s).unwrap();
+                let cp2 = create(&cs);
+                for second in [false, true] {
+                    if second {
+                        rp.reset();
+                        // SAFETY: live handle.
+                        assert_eq!(unsafe { rr_dr60_reset(cp2) }, RrDr60Status::Ok);
+                    }
+                    let run = split_checks::record_then_play(&mut rp, &x, 480, 480);
+                    let mut r_play = run.pre_drain.clone();
+                    r_play.extend_from_slice(&run.drain);
+                    let rec = c_record(cp2, &x, 480);
+                    assert!(rec.outcome.kept);
+                    let c_play_out = c_play(cp2, rec.outcome.number, 480);
+                    assert_eq!(
+                        r_play.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                        c_play_out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                        "{rate} Hz record-then-play {config} (second: {second})"
+                    );
+                }
+                // SAFETY: live handle, destroyed once.
+                unsafe { rr_dr60_destroy(cp2) };
+            }
+        }
+    }
 }
 
 // ---- Spec 009 User Story 4: the output chain through the C API (tasks.md T030) ----

@@ -65,8 +65,8 @@ fn header_figures() {
     assert_eq!(h.stage_count, 15);
     assert_eq!(h.device_rate_hz, 6000); // A-026
     assert_eq!(h.library_version, rr_dr60::VERSION);
-    assert_eq!(h.counts.not_modeled, 5); // spec 009 US3 scenario 1
-    assert_eq!(h.counts.assumed, 10);
+    assert_eq!(h.counts.not_modeled, 3); // spec 012 US4 AS1: stages 1 – 2 modeled
+    assert_eq!(h.counts.assumed, 12);
     assert_eq!(h.counts.sourced, 0);
     assert_eq!(h.counts.checked, 0);
     assert_eq!(
@@ -84,12 +84,12 @@ fn header_figures() {
 
 #[test]
 fn literal_statuses() {
-    // The register-free reading of US1 scenario 5 (007 FR-004): stages 3, 4, 5, 7, 8, 9, 10, 11,
-    // 12 and 13 are modeled on open assumptions (7 and 9 since spec 008; 11 – 13 since spec
-    // 009), every other stage is not modeled.
+    // The register-free reading of US1 scenario 5 (007 FR-004): stages 1 – 5 and 7 – 13 are
+    // modeled on open assumptions (7 and 9 since spec 008; 11 – 13 since spec 009; 1 and 2
+    // since spec 012), every other stage (6, 14, 15) is not modeled.
     for e in manifest().stages() {
         let want = match e.number {
-            3 | 4 | 5 | 7..=13 => StageStatus::Assumed,
+            1..=5 | 7..=13 => StageStatus::Assumed,
             _ => StageStatus::NotModeled,
         };
         assert_eq!(e.status, want, "stage {} status", e.number);
@@ -158,7 +158,7 @@ fn codec_stages_us3_scenario_1() {
     let c = m.header().counts;
     assert_eq!(
         (c.not_modeled, c.assumed, c.sourced, c.checked),
-        (5, 10, 0, 0) // spec 009 US3: stages 11 – 13 modeled
+        (3, 12, 0, 0) // spec 012 US4 AS1: stages 1 – 2 modeled too
     );
 }
 
@@ -389,6 +389,45 @@ fn output_stages_us3_scenario_1() {
     let c = m.header().counts;
     assert_eq!(
         (c.not_modeled, c.assumed, c.sourced, c.checked),
-        (5, 10, 0, 0)
+        (3, 12, 0, 0) // spec 012 US4 AS1
     );
+}
+
+/// Spec 012 US4 AS1 (FR-013): stages 1 and 2 read assumed / low / 0.12.0, cite S-002 and their
+/// assumptions, name what they do not model, and their controls notes name the switches, the
+/// hiss offset and the taps after them.
+#[test]
+fn mic_stages_us4_scenario_1() {
+    let m = manifest();
+    for (n, cites, controls) in [
+        (
+            1u32,
+            &["A-005", "A-048", "A-049", "A-050", "A-052"][..],
+            &[
+                "mic.capsule_enabled",
+                "mic.hiss_offset_db",
+                "Tap::AfterMicCapsule",
+            ][..],
+        ),
+        (
+            2,
+            &["A-006", "A-029", "A-046", "A-047", "A-051", "A-053"][..],
+            &["mic.amp_enabled", "Tap::AfterMicAmp"][..],
+        ),
+    ] {
+        let e = m.stage(n).unwrap();
+        assert_eq!(e.status, StageStatus::Assumed, "stage {n}");
+        assert_eq!(e.confidence, Confidence::Low, "stage {n}");
+        assert_eq!(e.model_version, "0.12.0", "stage {n}");
+        assert!(e.sources.contains(&"S-002"), "stage {n}");
+        for a in cites {
+            assert!(e.assumptions.contains(a), "stage {n} lacks {a}");
+        }
+        for c in controls {
+            assert!(e.controls.contains(c), "stage {n} controls lack {c:?}");
+        }
+        assert!(!e.coverage.is_empty(), "stage {n}");
+    }
+    assert!(m.stage(1).unwrap().description.contains("hiss"));
+    assert!(m.stage(2).unwrap().description.contains("clip"));
 }

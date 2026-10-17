@@ -1,4 +1,5 @@
-# Spec 011 FR-009 (research R-08): the idle-cost A/B of the volume transition on the CI runner.
+# The cost A/B on the CI runner (spec 011 FR-009, research R-08; spec 012 FR-011, research R-09):
+# the bypassed code against 0.11 (budget 3 %) and stages 1 – 2 on against 0.11 (reported).
 # Run once before the merge by adding the `ab-timing` label to the PR (a pull_request workflow
 # runs from the PR's merge commit, so it works before this file is on main); also runnable by
 # hand on main (`gh workflow run ab-timing.yml`). Never on push or on other PR events. The
@@ -9,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       baseline:
-        description: "Baseline revision (default: bd6d827, version 0.10)"
+        description: "Baseline revision (default: c9f9994, version 0.11)"
         required: false
-        default: "bd6d827"
+        default: "c9f9994"
   pull_request:
     types: [labeled]
 
@@ -29,5 +30,7 @@ jobs:
           fetch-depth: 0
       - name: Install toolchain from rust-toolchain.toml
         run: rustup toolchain install
-      - name: Idle A/B
-        run: scripts/ab-timing.sh "${{ inputs.baseline || 'bd6d827' }}"
+      - name: Bypassed A/B (012 FR-011, budget 3 %)
+        run: scripts/ab-timing.sh "${{ inputs.baseline || 'c9f9994' }}"
+      - name: Stages 1 – 2 on A/B (012 FR-011, reported)
+        run: scripts/ab-timing.sh "${{ inputs.baseline || 'c9f9994' }}" output_cost_mic

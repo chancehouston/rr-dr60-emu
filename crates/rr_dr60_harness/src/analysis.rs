@@ -357,6 +357,104 @@ pub fn third_octave_levels<T: Copy + Into<f64>>(x: &[T], fs: f64) -> [f64; 10] {
     out
 }
 
+/// The third-octave centres from 20 Hz to 20 kHz (spec 012 US1 AS1: the band match is read at
+/// each centre below the lower of 20 kHz and 0.45 × the host rate).
+pub const THIRD_OCTAVE_CENTRES_20_20K: [f64; 31] = [
+    20.0, 25.0, 31.5, 40.0, 50.0, 63.0, 80.0, 100.0, 125.0, 160.0, 200.0, 250.0, 315.0, 400.0,
+    500.0, 630.0, 800.0, 1000.0, 1250.0, 1600.0, 2000.0, 2500.0, 3150.0, 4000.0, 5000.0, 6300.0,
+    8000.0, 10000.0, 12500.0, 16000.0, 20000.0,
+];
+
+/// Mean power of `x` in the band `lo` … `hi` Hz (one FFT of the next power of two, Parseval:
+/// the one-sided bins doubled), relative to a full-scale sine's mean power: so
+/// `db(band_power_aes17(..)) / 2` is the band level in dBFS by the AES17 convention (spec 012
+/// FR-003).
+pub fn band_power_aes17<T: Copy + Into<f64>>(x: &[T], fs: f64, lo: f64, hi: f64) -> f64 {
+    let n = x.len().next_power_of_two().max(16);
+    let spectrum = Spectrum::from_impulse_response(x, fs, n);
+    let p: f64 = spectrum
+        .range(lo, hi.min(fs / 2.0 - spectrum.resolution()))
+        .map(|k| spectrum.bins[k].norm_sqr())
+        .sum();
+    // Σ x² = (1/n) Σ |X_k|² over both sides; the band's mean square over the signal's length.
+    let ms = 2.0 * p / n as f64 / x.len() as f64;
+    2.0 * ms // re a full-scale sine's mean square (0.5)
+}
+
+/// The band level of `x` between `lo` and `hi` Hz in dBFS (AES17: a full-scale sine reads
+/// 0 dBFS; spec 012 FR-003).
+pub fn band_level_aes17<T: Copy + Into<f64>>(x: &[T], fs: f64, lo: f64, hi: f64) -> f64 {
+    db(band_power_aes17(x, fs, lo, hi).max(1e-60)) / 2.0
+}
+
+/// Absolute third-octave band levels of `x` in dBFS (AES17) at each centre (edges at
+/// centre × 2^(±1/6); spec 012 US1 AS2).
+pub fn third_octave_dbfs<T: Copy + Into<f64>>(x: &[T], fs: f64, centres: &[f64]) -> Vec<f64> {
+    let k = 2f64.powf(1.0 / 6.0);
+    centres
+        .iter()
+        .map(|&fc| band_level_aes17(x, fs, fc / k, fc * k))
+        .collect()
+}
+
+/// The deviation (dB) of the response whose impulse response is `ir` from a prototype, at each
+/// `(frequency, prototype dB)` pair, by DTFT at the exact frequency (spec 004's lesson: never
+/// adjacent FFT bins; spec 012 US1 AS1).
+pub fn prototype_deviation<T: Copy + Into<f64>>(
+    ir: &[T],
+    fs: f64,
+    prototype_db: &[(f64, f64)],
+) -> Vec<(f64, f64)> {
+    prototype_db
+        .iter()
+        .map(|&(f, want)| (f, db(dtft(ir, f, fs).norm()) - want))
+        .collect()
+}
+
+/// The number of samples of `x` whose magnitude exceeds `threshold` (spec 012 R-04: the tail
+/// counts).
+pub fn exceedance_count<T: Copy + Into<f64>>(x: &[T], threshold: f64) -> usize {
+    x.iter().filter(|&&v| v.into().abs() > threshold).count()
+}
+
+/// The normalized cross-correlation of `a` and `b` (their common length): the magnitude at lag 0
+/// and the largest magnitude over lags −`max_lag` … +`max_lag`, each normalized by
+/// `sqrt(Σa²·Σb²)` over the overlap (spec 012 US1 AS4: independent streams read below 5/√N and
+/// 6/√N; a shifted copy reads 1 at its lag).
+pub fn norm_xcorr_max<T: Copy + Into<f64>, U: Copy + Into<f64>>(
+    a: &[T],
+    b: &[U],
+    max_lag: usize,
+) -> (f64, f64) {
+    let n = a.len().min(b.len());
+    let a: Vec<f64> = a[..n].iter().map(|&v| v.into()).collect();
+    let b: Vec<f64> = b[..n].iter().map(|&v| v.into()).collect();
+    let corr = |lag: i64| {
+        let (mut sab, mut saa, mut sbb) = (0.0, 0.0, 0.0);
+        for i in 0..n as i64 {
+            let j = i + lag;
+            if j < 0 || j >= n as i64 {
+                continue;
+            }
+            let (x, y) = (a[i as usize], b[j as usize]);
+            sab += x * y;
+            saa += x * x;
+            sbb += y * y;
+        }
+        if saa == 0.0 || sbb == 0.0 {
+            0.0
+        } else {
+            (sab / (saa * sbb).sqrt()).abs()
+        }
+    };
+    let zero = corr(0);
+    let mut worst = zero;
+    for lag in 1..=max_lag as i64 {
+        worst = worst.max(corr(lag)).max(corr(-lag));
+    }
+    (zero, worst)
+}
+
 /// Autocorrelation-method LPC envelope of one frame: returns the predictor coefficients
 /// a[1..=order] of A(z) = 1 − Σ a_k z^−k (Levinson–Durbin in f64, with a tiny white-noise
 /// floor), or `None` when the frame is silent.
@@ -549,6 +647,59 @@ pub fn level_track<T: Copy + Into<f64>, U: Copy + Into<f64>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Spec 012 T019: the band level of a full-scale sine inside the band is 0 dBFS; outside it
+    /// reads nothing; white noise's band level follows its share of the band.
+    #[test]
+    fn band_level_aes17_closed_forms() {
+        let fs = 48_000.0;
+        let n = 1 << 16;
+        let k = 1365.0; // an exact bin: no leakage
+        let f = k * fs / n as f64;
+        let x: Vec<f64> = (0..n).map(|i| (TAU * f * i as f64 / fs).cos()).collect();
+        assert!(band_level_aes17(&x, fs, 300.0, 3000.0).abs() < 1e-9);
+        assert!(band_level_aes17(&x, fs, 3000.0, 6000.0) < -200.0);
+        // White uniform noise of variance v: the band 300 – 3000 Hz holds 2700 / 24 000 of it.
+        let mut r = 12345u64;
+        let w: Vec<f64> = (0..n)
+            .map(|_| {
+                r = r
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                (r >> 11) as f64 / (1u64 << 53) as f64 - 0.5
+            })
+            .collect();
+        let want = db(2.0 * (1.0 / 12.0) * 2700.0 / 24_000.0) / 2.0;
+        let got = band_level_aes17(&w, fs, 300.0, 3000.0);
+        assert!((got - want).abs() < 0.2, "{got} vs {want}");
+        let thirds = third_octave_dbfs(&x, fs, &[1000.0, 4000.0]);
+        assert!(thirds[0].abs() < 1e-9 && thirds[1] < -200.0, "{thirds:?}");
+    }
+
+    /// Spec 012 T019: an impulse has a flat 0 dB response, so its deviation from a flat
+    /// prototype is 0; a shifted copy correlates at its lag; the exceedance count is exact.
+    #[test]
+    fn deviation_xcorr_and_exceedance_closed_forms() {
+        let mut ir = vec![0.0f64; 64];
+        ir[0] = 1.0;
+        for (_, d) in prototype_deviation(&ir, 48_000.0, &[(100.0, 0.0), (10_000.0, 0.0)]) {
+            assert!(d.abs() < 1e-12, "{d}");
+        }
+        let mut r = 7u64;
+        let a: Vec<f64> = (0..4000)
+            .map(|_| {
+                r = r
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                (r >> 11) as f64 / (1u64 << 53) as f64 - 0.5
+            })
+            .collect();
+        let mut b = vec![0.0; 4000];
+        b[5..].copy_from_slice(&a[..3995]);
+        let (zero, worst) = norm_xcorr_max(&a, &b, 8);
+        assert!(zero < 0.1 && (worst - 1.0).abs() < 1e-12, "{zero} {worst}");
+        assert_eq!(exceedance_count(&[0.5, -0.6, 0.7, 0.1], 0.55), 2);
+    }
 
     /// Spec 011 T009: the click energy against `tools/volume-ramp/ramp_model.py`'s earphone
     /// figure at 48 kHz (a 1 kHz cosine peaking at the change, 0.1 → 1, the smoothstep over

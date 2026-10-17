@@ -146,6 +146,9 @@ pub enum Setting {
     MemoryCapacityS,
     /// `memory.max_recordings`, valid 1 to 9 999 (spec 006).
     MemoryMaxRecordings,
+    /// `mic.hiss_offset_db`, the hiss level offset, valid −18 to +12 dB (spec 012 FR-003).
+    /// Checked whether or not the capsule is on. Appended in 0.12.
+    MicHissOffsetDb,
 }
 
 impl Setting {
@@ -172,6 +175,7 @@ impl Setting {
                 MEMORY_MAX_RECORDINGS_RANGE.0 as f32,
                 MEMORY_MAX_RECORDINGS_RANGE.1 as f32,
             ), // engineering target (006 FR-010)
+            Setting::MicHissOffsetDb => crate::mic::HISS_OFFSET_RANGE_DB, // A-048 (012 FR-003)
         }
     }
 
@@ -186,6 +190,7 @@ impl Setting {
             Setting::VasOnsetMs => ("vas.onset_ms", "ms"),
             Setting::MemoryCapacityS => ("memory.capacity_s", "s"),
             Setting::MemoryMaxRecordings => ("memory.max_recordings", ""),
+            Setting::MicHissOffsetDb => ("mic.hiss_offset_db", "dB"),
         }
     }
 }

@@ -13,6 +13,7 @@ pub mod codec_checks;
 pub mod configs;
 pub mod golden;
 pub mod manifest_checks;
+pub mod mic_checks;
 pub mod output_checks;
 pub mod output_clamp_checks;
 pub mod report;

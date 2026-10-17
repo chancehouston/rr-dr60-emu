@@ -48,7 +48,7 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 11
+#define RR_DR60_VERSION_MINOR 12
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
@@ -175,6 +175,9 @@ enum RrDr60SettingField
   RR_DR60_SETTING_FIELD_MEMORY_CAPACITY_S = 14,
   // `memory_max_recordings` is outside 1 to 9 999 (spec 006 FR-010).
   RR_DR60_SETTING_FIELD_MEMORY_MAX_RECORDINGS = 15,
+  // `mic_hiss_offset_db` is outside −18 to +12, or not finite; checked whether or not the
+  // capsule is on (spec 012 FR-003). Appended in 0.12.
+  RR_DR60_SETTING_FIELD_MIC_HISS_OFFSET_DB = 16,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -220,6 +223,13 @@ enum RrDr60Tap
   // `RR_DR60_STATUS_TAP_NOT_ON_ROUTE` while the speaker route is selected (spec 009
   // FR-011). Appended in 0.9. Never bounded by the output clamp (spec 010).
   RR_DR60_TAP_AFTER_EARPHONE = 8,
+  // After signal-chain stage 1 (the capsule), at the host rate: the input plus the capsule's
+  // unshaped hiss. Nothing after it runs; latency 0, no events (spec 012 FR-008). Appended
+  // in 0.12.
+  RR_DR60_TAP_AFTER_MIC_CAPSULE = 9,
+  // After signal-chain stage 2 (the microphone amplifier), at the host rate. Nothing after
+  // it runs; latency 0, no events (spec 012 FR-008). Appended in 0.12.
+  RR_DR60_TAP_AFTER_MIC_AMP = 10,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -411,7 +421,7 @@ typedef struct RrDr60Pipeline RrDr60Pipeline;
 // the two reserved slots at 32 and 36, `adc_clamp_enabled` at 72) and the two memory fields
 // are appended at 76 and 80 (spec 006 contracts/c-api.md).
 typedef struct RrDr60Settings {
-  // Must be `sizeof(RrDr60Settings)`: 112 since 0.10 (104 in 0.9, 96 in 0.8, 88 in 0.6 and 0.7, 80 in
+  // Must be `sizeof(RrDr60Settings)`: 120 since 0.12 (112 in 0.10 and 0.11, 104 in 0.9, 96 in 0.8, 88 in 0.6 and 0.7, 80 in
   // 0.5, 72 in 0.3 and 0.4, rejected as `STRUCT_SIZE`). Lets the struct grow in later
   // versions.
   uint32_t struct_size;
@@ -424,7 +434,9 @@ typedef struct RrDr60Settings {
   bool playback_stage_enabled;
   // An `RrDr60Tap` value.
   uint32_t tap;
-  // Seed for stochastic stages. No effect on output in this version.
+  // Seed for stochastic stages: since 0.12 the capsule's hiss (stage 1; spec 012 FR-009,
+  // A-049), one deterministic stream per recording keyed by the seed and the recording
+  // counter. No effect with `mic_capsule_enabled` false.
   uint64_t seed;
   // Signal-chain stage 3 (the limiter) on (true, default; assumed always active, A-020) or
   // bypassed. Below its knee the limiter is the identity; above it the output is held at the
@@ -509,6 +521,18 @@ typedef struct RrDr60Settings {
   // Ignored; reserved since 0.10 (this layout's tail, offsets 105 – 111, explicit so that
   // the next version can append at 112 and refuse 112). Write 0.
   uint8_t reserved_010_tail[7];
+  // Signal-chain stage 1, the capsule's self-noise (the hiss, A-048), on (true, default) or
+  // bypassed (spec 012). Appended in 0.12 at offset 112.
+  bool mic_capsule_enabled;
+  // Signal-chain stage 2, the microphone amplifier (the input high-pass, the clipper, the
+  // output coupling and the roll-off; A-046, A-047, A-051), on (true, default) or bypassed
+  // (spec 012). Appended in 0.12 at offset 113.
+  bool mic_amp_enabled;
+  // Ignored; reserved since 0.12 (offsets 114 – 115, explicit). Write 0.
+  uint8_t reserved_012[2];
+  // The hiss level offset in dB, −18 to +12, default 0 (spec 012 FR-003); validated whether
+  // or not the capsule is on. Appended in 0.12 at offset 116.
+  float mic_hiss_offset_db;
 } RrDr60Settings;
 
 // The result of one `rr_dr60_process` call (spec 003 FR-004, FR-005).
