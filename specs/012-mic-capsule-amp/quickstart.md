@@ -15,11 +15,12 @@ Expected:
 - **Corners:** about 818 Hz (665–985 over the grid, bounded above by about 1.0 kHz), 77 Hz and 12.9 kHz, a three-pole fit to the transfer at GSX.
 - **DC check:** consistent with 1.7 / 1.1 / 2.6 V.
 - **Per-rate fit:** worst error at most 0.1 dB at every rate, with every constraint satisfied.
-- **ngspice:** within 10 % of the nodal input corner.
+- **ngspice:** within 10 % of the nodal input corner; the clip levels within ±1 dB of the transient sweep at every level (as run: 0.45 / 0.29 dB).
+- **Hiss's credible range:** about −66 … −53 dBFS through the closed level chain.
 - **Hiss:** about −62 dBFS in the 300–3000 Hz band.
-- **Clip limits:** about +7 dBFS (negative) and +16.5 dBFS (positive), with the onsets about 0.6 dB below them, in clipper units and at the engine input.
-- **Bound:** L₊ + L₋ ≈ +19 dBFS.
-- **Level-5 margin:** about 16 dB.
+- **Clip limits** *(as built, refitted to the circuit simulation, 2026-10-16)*: about +9.15 dBFS (negative, k₋ = 0.65) and +17.10 dBFS (positive, k₊ = 0.80), with the onsets 2.4 and 1.0 dB below them, in clipper units and at the engine input.
+- **Bound:** L₊ + L₋ ≈ +20 dBFS.
+- **Level-5 margin:** about 17 dB (16.8 dB in the harness).
 
 ## 2. Story 1: the band and the hiss
 
@@ -54,7 +55,8 @@ Expected:
 cargo test -p rr_dr60_harness --test golden --test golden_agc --test golden_vas --test golden_codec \
   --test golden_output --test golden_output_clamp --test golden_volume_ramp   # the seven files unmoved
 cargo test -p rr_dr60_harness --test us1_mic whole_engine -- --nocapture       # equivalence, rest, rekey, taps
-cargo test -p rr_dr60_harness --test mic_matrix vas_margin -- --nocapture      # 60 s per level and rate at AfterVas
+cargo test -p rr_dr60_harness --test us1_mic whole_engine_vas_margin -- --nocapture   # 60 s per level and rate at AfterVas
+cargo test -p rr_dr60_harness --release --test mic_matrix -- --ignored --nocapture      # the 600 s runs and the 60-minute hiss
 cargo test -p rr_dr60_harness --test determinism mic && cargo test -p rr_dr60_harness --test alloc_free
 cargo test -p rr_dr60_harness --test mutation mic
 cargo test -p rr_dr60_harness --release --test timing mic_cost -- --ignored --nocapture --test-threads=1
@@ -64,10 +66,10 @@ scripts/ab-timing.sh c9f9994 output_cost_mic          # on against 0.11.0: repor
 
 Expected:
 - **Voice activation:** pauses once and never resumes at every level and rate; the level-5 margin is at least 10 dB.
-- **Limiter:** the on/off ratio at most 1 and non-decreasing; two seeds' ratio trajectories within 4 f32 ULP.
+- **Limiter:** the on/off ratio at most 1 and non-decreasing; the limiter's state over the release equals a hiss-free reconstruction's within 1e-6 relative *(restated at implementation, R-08; it was two seeds' trajectories within 4 f32 ULP)*.
 - **Codec:** the decoded hiss is reported.
 - **Cost:** `mic_cost` in-build at most 10 % (the CI ceiling is 25 %).
-- **Mutants:** all five fail their rows.
+- **Mutants:** all five fail their rows, and the knee mutant (±0.05, hardware review B4) fails the static curve's onset rows.
 
 Release-only: the 600 s and 60-minute runs (`--release --test mic_matrix -- --ignored`).
 

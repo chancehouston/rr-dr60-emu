@@ -68,7 +68,7 @@ These are given for the nominal parts and over a grid of C1 ±10 %, hFE 150–46
   - The netlist and the models' parameters are committed with the script.
 - **The DC check** is an Ebers–Moll solve with free saturation currents. It reproduces 1.7 / 1.1 / 2.6 V by construction, so it is a **consistency** check, not independent evidence: ΔVbe(Q1, Q3) = VT·ln(I1/I3) ≈ 74 mV against the meter's 0.1 ± 0.1 V, and Q2's Veb at 104 µA.
 - **The reviewer's closed form** 1/(2π·C1·(R2′ + Z_B)) is printed as a sanity check.
-- **As run (2026-10-16, T052; ngspice-47):** the operating point reads v(o) 1.712 V, v(e) 1.076 V, v(c3) 2.605 V, v(b) 1.672 V. The fitted corners are **824.2 / 76.8 / 12939 Hz** (fit residual 0.000 dB) against the nodal model's 818.4 / 76.8 / 12939 Hz. The input corner differs by **+0.7 %**, inside the ±10 % gate, so the gate passes and the bless may proceed.
+- **As run (2026-10-16, T052; ngspice-47):** the operating point reads v(o) 1.712 V, v(e) 1.076 V, v(c3) 2.605 V, v(b) 1.672 V. The fitted corners are **824.2 / 76.8 / 12939 Hz** (fit residual 0.000 dB) against the nodal model's 818.4 / 76.8 / 12939 Hz. The input corner differs by **+0.7 %**, inside the ±10 % gate, so the gate passes and the bless may proceed. The same run now also sweeps the clip levels (R-03 › As built): the model within 0.45 dB (negative) and 0.29 dB (positive) of ngspice at every level from 0 to +30 dBFS, gate ±1 dB.
 
 **Alternatives considered:**
 - A SPICE-only design: the build tool would depend on an external binary.
@@ -140,9 +140,23 @@ S-002's DC voltages give the **limits**, with 0 dBFS = 0.196 V peak at the ampli
 | Negative (limited first) | the output (1.7 V) falls until Q1 saturates near 1.15–1.3 V, with its emitter at 1.1 V | 0.4–0.55 V | **L₋ ≈ +7 dBFS** (+5 … +9) |
 | Positive | Q2 saturates (3.2 V − 0.1…0.2 V − 1.7 V) | 1.3–1.4 V | **L₊ ≈ +16.5 dBFS** (+16 … +17.5) |
 
+### As built: refitted to the circuit simulation (T054 B1, 2026-10-16)
+
+The post-implementation review ran the committed ngspice netlist as a 1 kHz transient at rising levels and read the output's swing from its operating point (1.712 V). The onsets agreed with the hard-rail model within about 0.7 dB, but the limits did not. Node B stays a virtual ground to beyond +20 dBFS: as the output falls, **Q1's base–collector junction conducts across R3**, a diode-feedback limit that keeps creeping up (0.516 V at +10 dBFS, 0.577 V at +20, 0.595 V at +30), with no hard rail. The positive side is Q2 reaching the rail (1.39 V at +20, 1.46 V at +30). The hard-rail estimates (0.45 / 1.30 V) were 2.4 / 1.0 dB low.
+
+| Polarity | Swing (V) | Knee | Limit (engine input, 1 kHz) | 0.1 dB onset | Worst error against ngspice, 0 … +30 dBFS |
+|---|---|---|---|---|---|
+| Negative (limited first) | **0.566** (0.45 … 0.62) | **k₋ = 0.65** | **+9.15 dBFS** (+7.2 … +9.9) | +6.77 dBFS (ngspice +7.02) | 0.45 dB (the hard-rail model 2.43) |
+| Positive | **1.414** (1.30 … 1.48) | **k₊ = 0.80** | **+17.10 dBFS** (+16.4 … +17.5) | +16.09 dBFS (ngspice +16.34) | 0.29 dB (the hard-rail model 1.02) |
+
+- **The fit:** spec 009's knee, the minimax over the swing and k with the onset held within 0.3 dB of ngspice's, at each polarity. The ranges run from the hard-rail estimates to ngspice with junction resistances (r_b 100 Ω, r_c 20 Ω) and a reverse beta of 10.
+- **The gate:** `design_mic_chain.py --spice` reruns the sweep (19 levels, 0 … +30 dBFS) and fails if the model is more than 1 dB from ngspice at any level of either polarity; it also reprints the refit. As run on 2026-10-16: 0.45 / 0.29 dB, the refit equal to the committed constants.
+- **Beyond +30 dBFS** the negative side keeps creeping (logarithmically), so the model's hard limit reads a few tenths of a dB low there. That is documented, not modeled.
+- **Consequences:** the L₊ + L₋ bound grows to about +20 dBFS (the limiter's 40 dB range still covers it); the knee is now one per polarity (`KNEE_NEG`, `KNEE_POS`), the static onsets are asserted in clipper units at ±0.065 dB (B4: the rising tone's level step per cycle), and a knee mutant (±0.05) must fail them.
+
 ### The knee
 
-- **k = 0.85**, spec 009's value. It is justified (A-051) by Q1's saturation curvature: Q1 starts at Vcb ≈ 0, so its base-collector junction conducts from about +0.4 V, at a high loop gain.
+- *(Plan-time; as built, one knee per polarity, k₋ = 0.65 and k₊ = 0.80: see "As built" above.)* **k = 0.85**, spec 009's value. It is justified (A-051) by Q1's saturation curvature: Q1 starts at Vcb ≈ 0, so its base-collector junction conducts from about +0.4 V, at a high loop gain.
 - **The onset** (0.1 dB compression) sits about **0.63 dB below L**, and the output reaches L about 1.21 dB above it. For k = 0.8 or 0.9 these are −1.01 / +1.58 dB and −0.30 / +0.83 dB.
 - The script prints k, both onsets and both limits, **in clipper units and referred to the engine input at 1 kHz**. The latter includes |HP_out·LP| at 1 kHz, about −0.04 dB.
 
@@ -155,7 +169,7 @@ S-002's DC voltages give the **limits**, with 0 dBFS = 0.196 V peak at the ampli
 
 ### Harmonics
 
-H2 and H3 of a tone 6 dB above the first onset are asserted within ±0.5 dB of the script's **discrete** model at each rate. The alias level (the discrete figure minus the continuous one) is reported. The C¹ knee's harmonics fall as about 1/n³, so the aliases are small. Oversampling or ADAA was rejected: about 2–4× the clipper's cost for an effect only very loud input triggers.
+H2 and H3 of a tone 6 dB above the first onset are asserted within ±0.5 dB of the script's **discrete** model at each rate. The alias level (the discrete figure minus the continuous one) is reported. *(As built, B3: at 6 kHz H3 = 3 kHz falls on Nyquist, where the DFT of a real signal reads N·|a·cos φ| rather than N·a/2, so that bin is not an amplitude: its row compares the same estimator at the same phase, and its alias is not reported. The real alias figures are at most about 2 dB: 6 kHz H2 +1.96 dB, 8 kHz H2 −0.46 / H3 +0.30 dB after the refit.)* The C¹ knee's harmonics fall as about 1/n³, so the aliases are small. Oversampling or ADAA was rejected: about 2–4× the clipper's cost for an effect only very loud input triggers.
 
 ## R-04: The hiss (FR-003; spec Q2, D3, D9, D10; plan review Q2, Q3, Q7, Q8, Q10)
 
@@ -166,8 +180,8 @@ H2 and H3 of a tone 6 dB above the first onset are asserted within ±0.5 dB of t
 - **A-weighted to band:** −5.96 dB, from the A-weighted level to the 300–3000 Hz band through the full-network band.
 - **Result:** **−62.0 dBFS** (RMS, AES17) in the 300–3000 Hz band at stage 2's output.
 - **The 1 kHz third-octave** sits 11.3 dB below the band level.
-- **The amplifier and R2 add a floor near −73 dBFS** (Q3 at 6 µA: e_n ≈ 7 nV/√Hz at a noise gain of about 95; R2's thermal noise about −78 dBFS). That adds +0.27 dB at the anchor, folded in.
-- **Credible range:** about **−70 … −54 dBFS**, with the capsule's S/N held at 58–62 dB (A-048).
+- **The amplifier and R2 add a floor near −73 dBFS** (Q3 at 6 µA: e_n ≈ 7 nV/√Hz at a noise gain of about 95; R2's thermal noise about −78 dBFS). That adds about +0.3 dB at the anchor, neglected in the level (inside its ±0.5 dB; corrected wording, B2: "folded in" was not literally true).
+- **Credible range:** about **−70 … −54 dBFS**, with the capsule's S/N held at 58–62 dB (A-048). *(Restated 2026-10-16, B2: that range varied the self-noise and the full scale by ±4 dB each, independently. Through the closed chain (2.181 µA rms of capsule current at full scale into 2.2 kΩ; capsules of −35 … −44 dBV/Pa at S/N 58 … 62 dB) it is **−65.6 … −52.6 dBFS**, a −40 dBV/Pa capsule at S/N 60 gives −59.6, and the −62 default corresponds to a capsule of about −42.4 dBV/Pa. The default is kept, the user's choice.)*
 - **Unknown:** the codec's SG reference noise reaches the output with the same gain. About 1.2 µV rms in band (22 nV/√Hz) would equal the whole hiss (A-050; S-003 pages 4–17 are the lead).
 
 ### The source
@@ -179,13 +193,13 @@ H2 and H3 of a tone 6 dB above the first onset are asserted within ±0.5 dB of t
 
 - **Uniform source:** `xoshiro256++`, period 2²⁵⁶ − 1.
 - **Keying** (plan review Q8): `z = mix64(seed ^ MIC_STREAM) ^ mix64(counter ^ MIC_COUNTER_SALT)`, where mix64 is SplitMix64's finalizer. Four SplitMix64 outputs from z fill the state.
-  - Two independent bijections remove the XOR/add collision families.
+  - Two independent bijections remove the XOR/add collision families. *(Wrong, B5: the same bijection XORed twice is symmetric, key(s, c) = key(c ⊕ K, s ⊕ K) with K = MIC_STREAM ⊕ MIC_COUNTER_SALT, and seeds K ⊕ n at counter n all share one stream. **As built (2026-10-16): `z = mix64(mix64(seed ^ MIC_STREAM) ^ counter ^ MIC_COUNTER_SALT)`**, a bijection of the seed at a fixed counter and of the counter at a fixed seed, with no structured cross-collisions; the script's key vectors were re-pinned.)*
   - SplitMix64 never yields an all-zero state, so seed 0 does not degenerate.
   - Both constants are registered (A-049).
 - **Gaussian:** a ziggurat (Marsaglia & Tsang 2000, 128 layers), with tables emitted by the script as `f64` bits.
   - **Bit use:** the layer index and sign come from bits 0–7, and the 53-bit mantissa from bits 11–63 (no overlap; Doornik 2005).
   - **Tail:** the uniforms are `(r >> 11) + 1`, so `ln` never sees 0. The tail and the wedge use `detmath::{exp, ln}`.
-  - **Bounded work** (constitution IV): each rejection loop is capped at **8 attempts**. At the cap the last candidate is returned, deterministically. The probability of reaching the cap is about 1e-16 per sample (registered in A-049). A hook forces the cap path in a unit test.
+  - **Bounded work** (constitution IV): each rejection loop is capped at **8 attempts**. At the cap the last candidate is returned, deterministically. The probability of reaching the cap is about 1e-16 per sample (registered in A-049). *(Restated, B6: that counted only the main loop, 0.0122⁸ ≈ 5e-16. The tail loop dominates: about 5.7e-4 tail entries per sample × 0.0689⁸ ≈ **2.9e-13 per sample**, about 1e-4 cap events per hour at 96 kHz; the capped value is still a tail value. The script prints both.)* A hook forces the cap path in a unit test.
 - **Advance count.** The source advances a variable but deterministic number of times per sample. The hiss is a function of the host samples processed, so partition independence holds.
 
 ### Streams (spec FR-009, the user's plan-review choice)
@@ -300,6 +314,7 @@ The gate pauses reliably when threshold − hiss RMS ≥ about 9 dB, and fails b
 - **Where:** `Tap::AfterVas`, which does not run the codec; the events do not depend on it (coach P15).
 - **The run:** a seeded 60 s silent run at each level and host rate, with `measurement_rates()` under coverage. It asserts from the events that the recording keeps exactly the hang time, pauses once, and never resumes. The RMS margin and the exceedance count are printed.
 - **The offset bisection:** the offset at which levels 4 and 5 stop pausing is found by bisection. Under `cfg(coverage)` it runs at 6 kHz only (the voice-activation input's hiss level is the same at every rate by construction); in the normal suite it runs at all rates.
+- **As run (2026-10-16, after the post-implementation review's keying change, B5):** in 10 s silent runs, level 5 stops pausing from **+8.8 … +9.5 dB** by host rate; level 4 pauses beyond +12 dB at five rates and stops from **+11.9 dB** at 44.1 and 96 kHz (before the keying change it paused beyond +12 dB at every rate). Near these offsets a gate can still pause late in a longer run (the table above: 48 s at −50 dBFS), so the 10 s bisection is a lower estimate of the stop offset. The 600 s runs at offset 0: margins 16.8 dB at level 5, hiss peaks −50.6 … −51.4 dBFS, the hang time kept at every level and rate.
 - **Release-only:** the 600 s runs.
 
 **A-022** is re-derived in Phase 4b:
@@ -376,6 +391,8 @@ So the high readings depend on how the timed runs are ordered, not on the code. 
 | Spec 008's per-sample figures | 0.896 / 1.361 µs per device sample at 6 / 48 kHz; record + play 1.015× | 8 µs ✓ |
 
 The worst block is one run's maximum and is set by scheduling jitter, not by the code: the case with stages 1 – 2 on read lower than the bypassed one. Its medians (3.8 against 4.0 µs) are the cost signal. The worst-block case with stages 1 – 2 on was added to `codec_cost_per_sample_and_worst_block` for this task.
+
+After the post-implementation review's fixes (the clipper's per-polarity knee, the nested keying), one more solo run: `mic_cost` 67.9 → 71.3 ns, **+3.43 ns (+5.05 %)**; `output_cost_mic` speaker +20.4 %, earphone +5.9 %. The per-polarity knee select costs nothing the runs resolve.
 
 ## R-10: Interfaces (FR-012; plan review P13, U4)
 

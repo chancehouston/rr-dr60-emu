@@ -423,8 +423,9 @@ impl Default for OutputSettings {
 ///   (A-048), generated from [`Settings::seed`] with its own stream for each recording (A-049).
 ///   The capsule's own response is flat (A-052), so stage 1 on means the hiss on.
 /// - `amp_enabled`: stage 2, the microphone amplifier: the input high-pass near 818 Hz
-///   (A-046; it thins the sound below about 1 kHz), the asymmetric soft clipper at its supply
-///   rails (A-051: negative samples limited first, near +7 dBFS), the output coupling near
+///   (A-046; it thins the sound below about 1 kHz), the asymmetric soft clipper (A-051:
+///   negative samples limited first and softly, toward +9 dBFS; positive near +17 dBFS), the
+///   output coupling near
 ///   77 Hz and the roll-off near 12.9 kHz (A-047, A-053), normalized to unity gain at 1 kHz.
 /// - `hiss_offset_db`: the hiss level offset, −18 to +12 dB, default 0
 ///   ([`mic::HISS_OFFSET_RANGE_DB`](crate::mic::HISS_OFFSET_RANGE_DB)); validated whether or

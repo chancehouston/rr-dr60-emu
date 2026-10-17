@@ -52,7 +52,7 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
   - **(b) the prototype:** read by impulse and DTFT at exact third-octave centres (spec 004's lesson: never adjacent FFT bins);
   - **(c) the clipper's static curve:** read through the engine's own probe;
   - **(d) the clipper-off twin:** for the recovery tail;
-  - **(e) limiter ratios:** two seeds within 4 f32 ULP;
+  - **(e) limiter ratios:** two seeds within 4 f32 ULP *(as built: the hiss-free reconstruction of the limiter's state within 1e-6 relative, research R-08)*;
   - **(f) bit-for-bit equivalence:** the first recording after construction, reset or reconfigure equals the one-pass.
 - **Levels.**
   - dBFS is AES17: a full-scale sine reads 0 dBFS, so RMS dBFS = 20·log10(RMS·√2).
@@ -336,14 +336,14 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
 
 **Goal**: the voice-activation margin, the limiter and codec interactions, the mutants and the cost.
 
-**Independent Test**: `cargo test -p rr_dr60_harness --test mic_matrix vas_margin -- --nocapture`, `--test mutation mic`, and the solo `timing` runs.
+**Independent Test**: `cargo test -p rr_dr60_harness --test us1_mic whole_engine_vas_margin -- --nocapture` *(corrected at T055: `--test mic_matrix vas_margin` matches only the ignored 600 s test, so it runs nothing)*, `--test mutation mic`, and the solo `timing` runs.
 
 ### Tests for User Story 3 (write first)
 
 - [x] T037 [US3] `crates/rr_dr60_harness/src/mic_checks.rs`:
   - **`vas_margin(rate, level, seconds)`:** the 0.12 default with the voice activation on (drop mode), read at `Tap::AfterVas`. Silence for 60 s. From the events: exactly the hang time kept, one pause, never resumed. The RMS margin at the voice-activation input (AES17) and the exceedance count are printed. The level-5 margin is at least 10 dB (US3 AS6, SC-010).
   - **`vas_offset_bisection(rate, level)`:** the offset at which the gate stops pausing, at 6 kHz only under `cfg(coverage)`.
-  - **`limiter_ratio(rate)`:** twin engines (limiter on and bypassed) and two seeds; a +9 dBFS 1 kHz burst then 3 s of silence. Over the silence the ratio is at most 1 and non-decreasing, and the two seeds' trajectories agree within 4 f32 ULP (US3 AS8).
+  - **`limiter_ratio(rate)`:** twin engines (limiter on and bypassed) and two seeds; a +9 dBFS 1 kHz burst then 3 s of silence. Over the silence the ratio is at most 1 and non-decreasing, and the two seeds' trajectories agree within 4 f32 ULP (US3 AS8). *(As built: the hiss-free reconstruction, research R-08.)*
   - **`decoded_hiss(rate)`:** `default_mic` with the voice activation bypassed; record and play 10 s of silence; the decoded band level relative to the input's, at 8 kHz after resampling, is reported. With the voice activation on, the recording length is reported (US3 AS7).
 
   Add them to `us1_mic.rs` (named `whole_engine_*`) and to `mic_matrix.rs` (all rates; 600 s release-only). Run them: **red** where the wiring is missing, otherwise green; record which.
@@ -366,7 +366,7 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
 ### Implementation for User Story 3
 
 - [x] T040 [US3] `crates/rr_dr60_harness/tests/timing.rs`:
-  - **`mic_cost`** (`#[ignore]`, release): the speaker route at 48 kHz, codec bypassed, 4096 blocks, `default_output` with the stages on against bypassed, on −20 dBFS noise; a full-scale spread and an offset spread reported; the fastest of nine alternating runs. Assert ≤ 10 % on the development machine; the CI ceiling is 25 % (read an env var set by `ci.yml`'s timing step).
+  - **`mic_cost`** (`#[ignore]`, release): the speaker route at 48 kHz, codec bypassed, 4096 blocks, `default_output` with the stages on against bypassed, on −20 dBFS noise; a full-scale spread and an offset spread reported; the fastest of nine alternating runs *(as built: 45 strictly alternating runs, research R-09)*. Assert ≤ 10 % on the development machine; the CI ceiling is 25 % (read an env var set by `ci.yml`'s timing step).
   - **`output_cost_mic`:** `output_cost`'s body with stages 1–2 on, printing the same line format; it asserts `limiter_state() == 0.0` at the end (R-09).
 - [x] T041 [US3] Timing scripts and workflow:
   - `scripts/ab-timing.sh`: an optional second argument (the head build's test name, default `output_cost`); the default baseline becomes `c9f9994`; the comment says what each mode measures;
@@ -457,8 +457,8 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
   - `scripts/check-traceability.sh`.
 - [X] T052 **The ngspice gate**: `uv run tools/mic-chain/design_mic_chain.py --spice`, with the input corner within 10 % of the nodal model. Record the figures in research R-01 › Cross-checks (as run).
 - [X] T053 The solo release timing runs (`mic_cost`, `output_cost_mic`, and spec 008's worst block with the stages on), quoted in research R-09.
-- [ ] T054 **The post-implementation hardware review** (`hw-emulation-reviewer`, the session's model): the as-built stages against the spec and the registers. Apply its findings before the bless. One review-driven manifest re-bless is allowed.
-- [ ] T055 **The coach review** (`speckit-coach`, the session's model): the branch against spec, plan and tasks, including SC-007's reader test. Apply its findings.
+- [X] T054 **The post-implementation hardware review** (`hw-emulation-reviewer`, the session's model): the as-built stages against the spec and the registers. Apply its findings before the bless. One review-driven manifest re-bless is allowed.
+- [X] T055 **The coach review** (`speckit-coach`, the session's model): the branch against spec, plan and tasks, including SC-007's reader test. Apply its findings.
 - [ ] T056 **The bless, once, after the reviews**: `RR_DR60_BLESS=mic cargo test -p rr_dr60_harness --test golden_mic` (the bless-time assertions pass).
   - Pin the SHA in `tests/golden_mic.rs`.
   - In the same commit, add `golden_mic` to `.github/workflows/ci.yml` (the check job's golden step, the golden matrix, the iOS simulator) and to `scripts/ios-device-golden.sh`.

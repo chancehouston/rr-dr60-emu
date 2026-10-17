@@ -165,9 +165,10 @@ fn reset_between_recordings_gives_new_hiss() {
     }
 }
 
-/// With the limiter bypassed, a loud tone passes the clipper (limited near +16.4 dBFS) and reaches
+/// With the limiter bypassed, a loud tone passes the clipper (limited near +17.1 dBFS) and reaches
 /// the codec's full-scale clamp (A-030): at the 6 kHz identity rate the tap after the record
-/// stage holds samples at exactly ±1.0 and none beyond.
+/// stage holds samples at exactly ±1.0 and none beyond. The hiss reaches the same tap: silence
+/// there is not silent (coach review C18).
 #[test]
 fn limiter_bypassed_reaches_the_clamp() {
     let rate = 6000;
@@ -182,4 +183,9 @@ fn limiter_bypassed_reaches_the_clamp() {
     println!("limiter bypassed, +20 dBFS at 6 kHz: peak {peak}, {at_rail} samples at the rail");
     assert_eq!(peak, 1.0); // A-030: the clamp
     assert!(at_rail > 0);
+    let quiet = run(s, &stimulus::silence(6000));
+    assert!(
+        quiet.iter().any(|&v| v != 0.0),
+        "the hiss reaches the record tap with the limiter bypassed (FR-003)"
+    );
 }

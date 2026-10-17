@@ -34,81 +34,84 @@
 //!   full scale for a -40 dBV/Pa capsule (at 2.2 kΩ)                                         80 – 100 dB SPL (A-029)                   87.6 dB SPL
 //!   full scale for a -44 dBV/Pa capsule (at 2.2 kΩ)                                         80 – 100 dB SPL (A-029)                   91.6 dB SPL
 //!   full scale at the amplifier's output (1 kHz)                                            ≈ 0.196 V peak (A-029)                    0.1975 V
-//!   limit L− (negative samples, Q1 saturates), engine input at 1 kHz                        +5 … +9 dBFS (A-051)                      +7.15 dBFS (swing 0.45 V; range +6.1 … +8.9)
-//!   limit L+ (positive samples, Q2 saturates), engine input at 1 kHz                        +16 … +17.5 dBFS (A-051)                  +16.37 dBFS (swing 1.30 V; range +16.0 … +17.0)
-//!   knee k                                                                                  0.85 (A-051)                              0.85
-//!   onset re its limit (0.1 dB compression)                                                 −1 … −0.3 dB                              -0.631 dB
-//!   output reaches the limit at (re the limit)                                              report                                    +1.214 dB
-//!   bound after stage 2: L+ + L− (engine units)                                             report                                    8.8609 (+18.95 dBFS)
+//!   limit L− (negative samples, Q1's B–C junction across R3), engine input at 1 kHz         +7 … +10 dBFS (A-051)                     +9.15 dBFS (swing 0.566 V; range +7.2 … +9.9)
+//!   limit L+ (positive samples, Q2 saturates), engine input at 1 kHz                        +16 … +17.5 dBFS (A-051)                  +17.10 dBFS (swing 1.414 V; range +16.4 … +17.5)
+//!   knee k− / k+                                                                            0.65 / 0.80 (A-051)                       0.65 / 0.8
+//!   onset re its limit (0.1 dB compression), negative / positive                            −3 … −0.3 dB                              -2.379 / -1.009 dB
+//!   onset, engine input at 1 kHz, negative / positive                                       report                                    +6.77 / +16.09 dBFS
+//!   output reaches the limit at (re the limit), negative / positive                         report                                    +2.607 / +1.584 dB
+//!   bound after stage 2: L+ + L− (engine units)                                             report                                    10.0255 (+20.02 dBFS)
 //!   6000 prototype match (dense grid; centres ≥ −40 dB, ≤ min(20 kHz, 0.45·fs))             ≤ 0.1 dB (SC-002)                         0.0017 dB (centres 0.0017)
 //!   6000 constraints (HP_in zero at DC; HP_out bilinear; LP b ≥ 0, unity DC)                all hold                                  True
 //!   6000 the bound's premises (1 − HP_out and LP non-negative, each summing to 1)           hold                                      True
 //!   6000 section −3 dB points (HP_in / HP_out / LP)                                         report                                    733.6 / 76.7 / above Nyquist Hz
 //!   6000 stage 2 group delay at 1 kHz                                                       report (not added to the latency, R-05)   0.104 ms
 //!   6000 HP_in phase at 1 kHz / start phase                                                 report                                    +34.99° / -34.99°
-//!   6000 clip limits in clipper units (L− / L+)                                             report                                    2.286966 / 6.606791
-//!   6000 recovery within ±0.1 dB after +13 dBFS for 50 ms (US2 AS4)                         ≤ 20 ms                                   12.17 ms
+//!   6000 clip limits in clipper units (L− / L+)                                             report                                    2.876495 / 7.186156
+//!   6000 recovery within ±0.1 dB after +13 dBFS for 50 ms (US2 AS4)                         ≤ 20 ms                                   11.50 ms
 //!   8000 prototype match (dense grid; centres ≥ −40 dB, ≤ min(20 kHz, 0.45·fs))             ≤ 0.1 dB (SC-002)                         0.0125 dB (centres 0.0125)
 //!   8000 constraints (HP_in zero at DC; HP_out bilinear; LP b ≥ 0, unity DC)                all hold                                  True
 //!   8000 the bound's premises (1 − HP_out and LP non-negative, each summing to 1)           hold                                      True
 //!   8000 section −3 dB points (HP_in / HP_out / LP)                                         report                                    770.3 / 76.6 / above Nyquist Hz
 //!   8000 stage 2 group delay at 1 kHz                                                       report (not added to the latency, R-05)   0.099 ms
 //!   8000 HP_in phase at 1 kHz / start phase                                                 report                                    +36.99° / -36.99°
-//!   8000 clip limits in clipper units (L− / L+)                                             report                                    2.293061 / 6.624397
-//!   8000 recovery within ±0.1 dB after +13 dBFS for 50 ms (US2 AS4)                         ≤ 20 ms                                   12.62 ms
+//!   8000 clip limits in clipper units (L− / L+)                                             report                                    2.884161 / 7.205306
+//!   8000 recovery within ±0.1 dB after +13 dBFS for 50 ms (US2 AS4)                         ≤ 20 ms                                   11.62 ms
 //!   16000 prototype match (dense grid; centres ≥ −40 dB, ≤ min(20 kHz, 0.45·fs))            ≤ 0.1 dB (SC-002)                         0.0600 dB (centres 0.0600)
 //!   16000 constraints (HP_in zero at DC; HP_out bilinear; LP b ≥ 0, unity DC)               all hold                                  True
 //!   16000 the bound's premises (1 − HP_out and LP non-negative, each summing to 1)          hold                                      True
 //!   16000 section −3 dB points (HP_in / HP_out / LP)                                        report                                    813.3 / 76.1 / above Nyquist Hz
 //!   16000 stage 2 group delay at 1 kHz                                                      report (not added to the latency, R-05)   0.095 ms
 //!   16000 HP_in phase at 1 kHz / start phase                                                report                                    +38.99° / -38.99°
-//!   16000 clip limits in clipper units (L− / L+)                                            report                                    2.294045 / 6.627241
-//!   16000 recovery within ±0.1 dB after +13 dBFS for 50 ms (US2 AS4)                        ≤ 20 ms                                   12.62 ms
+//!   16000 clip limits in clipper units (L− / L+)                                            report                                    2.885399 / 7.208399
+//!   16000 recovery within ±0.1 dB after +13 dBFS for 50 ms (US2 AS4)                        ≤ 20 ms                                   11.75 ms
 //!   44100 prototype match (dense grid; centres ≥ −40 dB, ≤ min(20 kHz, 0.45·fs))            ≤ 0.1 dB (SC-002)                         0.0277 dB (centres 0.0277)
 //!   44100 constraints (HP_in zero at DC; HP_out bilinear; LP b ≥ 0, unity DC)               all hold                                  True
 //!   44100 the bound's premises (1 − HP_out and LP non-negative, each summing to 1)          hold                                      True
 //!   44100 section −3 dB points (HP_in / HP_out / LP)                                        report                                    813.0 / 77.2 / 12927 Hz
 //!   44100 stage 2 group delay at 1 kHz                                                      report (not added to the latency, R-05)   0.097 ms
 //!   44100 HP_in phase at 1 kHz / start phase                                                report                                    +39.09° / -39.09°
-//!   44100 clip limits in clipper units (L− / L+)                                            report                                    2.291620 / 6.620235
-//!   44100 recovery within ±0.1 dB after +13 dBFS for 50 ms (US2 AS4)                        ≤ 20 ms                                   12.43 ms
+//!   44100 clip limits in clipper units (L− / L+)                                            report                                    2.882348 / 7.200779
+//!   44100 recovery within ±0.1 dB after +13 dBFS for 50 ms (US2 AS4)                        ≤ 20 ms                                   11.54 ms
 //!   48000 prototype match (dense grid; centres ≥ −40 dB, ≤ min(20 kHz, 0.45·fs))            ≤ 0.1 dB (SC-002)                         0.0682 dB (centres 0.0682)
 //!   48000 constraints (HP_in zero at DC; HP_out bilinear; LP b ≥ 0, unity DC)               all hold                                  True
 //!   48000 the bound's premises (1 − HP_out and LP non-negative, each summing to 1)          hold                                      True
 //!   48000 section −3 dB points (HP_in / HP_out / LP)                                        report                                    807.9 / 77.7 / 13046 Hz
 //!   48000 stage 2 group delay at 1 kHz                                                      report (not added to the latency, R-05)   0.097 ms
 //!   48000 HP_in phase at 1 kHz / start phase                                                report                                    +38.92° / -38.92°
-//!   48000 clip limits in clipper units (L− / L+)                                            report                                    2.291322 / 6.619374
-//!   48000 recovery within ±0.1 dB after +13 dBFS for 50 ms (US2 AS4)                        ≤ 20 ms                                   12.33 ms
+//!   48000 clip limits in clipper units (L− / L+)                                            report                                    2.881974 / 7.199842
+//!   48000 recovery within ±0.1 dB after +13 dBFS for 50 ms (US2 AS4)                        ≤ 20 ms                                   11.46 ms
 //!   88200 prototype match (dense grid; centres ≥ −40 dB, ≤ min(20 kHz, 0.45·fs))            ≤ 0.1 dB (SC-002)                         0.0042 dB (centres 0.0042)
 //!   88200 constraints (HP_in zero at DC; HP_out bilinear; LP b ≥ 0, unity DC)               all hold                                  True
 //!   88200 the bound's premises (1 − HP_out and LP non-negative, each summing to 1)          hold                                      True
 //!   88200 section −3 dB points (HP_in / HP_out / LP)                                        report                                    817.7 / 76.8 / 12945 Hz
 //!   88200 stage 2 group delay at 1 kHz                                                      report (not added to the latency, R-05)   0.099 ms
 //!   88200 HP_in phase at 1 kHz / start phase                                                report                                    +39.26° / -39.26°
-//!   88200 clip limits in clipper units (L− / L+)                                            report                                    2.291995 / 6.621319
-//!   88200 recovery within ±0.1 dB after +13 dBFS for 50 ms (US2 AS4)                        ≤ 20 ms                                   12.46 ms
+//!   88200 clip limits in clipper units (L− / L+)                                            report                                    2.882821 / 7.201958
+//!   88200 recovery within ±0.1 dB after +13 dBFS for 50 ms (US2 AS4)                        ≤ 20 ms                                   11.58 ms
 //!   96000 prototype match (dense grid; centres ≥ −40 dB, ≤ min(20 kHz, 0.45·fs))            ≤ 0.1 dB (SC-002)                         0.0037 dB (centres 0.0037)
 //!   96000 constraints (HP_in zero at DC; HP_out bilinear; LP b ≥ 0, unity DC)               all hold                                  True
 //!   96000 the bound's premises (1 − HP_out and LP non-negative, each summing to 1)          hold                                      True
 //!   96000 section −3 dB points (HP_in / HP_out / LP)                                        report                                    818.0 / 76.8 / 12946 Hz
 //!   96000 stage 2 group delay at 1 kHz                                                      report (not added to the latency, R-05)   0.099 ms
 //!   96000 HP_in phase at 1 kHz / start phase                                                report                                    +39.27° / -39.27°
-//!   96000 clip limits in clipper units (L− / L+)                                            report                                    2.292011 / 6.621365
-//!   96000 recovery within ±0.1 dB after +13 dBFS for 50 ms (US2 AS4)                        ≤ 20 ms                                   12.47 ms
-//!   6000 H2 / H3 re the fundamental, 6 dB above the first onset (discrete)                  report (US2 AS3 pins these ±0.5 dB)       -14.91 / -15.02 dB (alias +1.44 / +6.90 dB vs continuous -16.35 / -21.92)
-//!   8000 H2 / H3 re the fundamental, 6 dB above the first onset (discrete)                  report (US2 AS3 pins these ±0.5 dB)       -17.16 / -23.54 dB (alias -0.81 / -1.62 dB vs continuous -16.35 / -21.92)
-//!   16000 H2 / H3 re the fundamental, 6 dB above the first onset (discrete)                 report (US2 AS3 pins these ±0.5 dB)       -16.41 / -22.33 dB (alias -0.06 / -0.41 dB vs continuous -16.35 / -21.92)
-//!   44100 H2 / H3 re the fundamental, 6 dB above the first onset (discrete)                 report (US2 AS3 pins these ±0.5 dB)       -16.34 / -21.91 dB (alias +0.01 / +0.01 dB vs continuous -16.35 / -21.92)
-//!   48000 H2 / H3 re the fundamental, 6 dB above the first onset (discrete)                 report (US2 AS3 pins these ±0.5 dB)       -16.34 / -21.89 dB (alias +0.01 / +0.03 dB vs continuous -16.35 / -21.92)
-//!   88200 H2 / H3 re the fundamental, 6 dB above the first onset (discrete)                 report (US2 AS3 pins these ±0.5 dB)       -16.35 / -21.92 dB (alias +0.00 / +0.00 dB vs continuous -16.35 / -21.92)
-//!   96000 H2 / H3 re the fundamental, 6 dB above the first onset (discrete)                 report (US2 AS3 pins these ±0.5 dB)       -16.35 / -21.92 dB (alias +0.00 / +0.00 dB vs continuous -16.35 / -21.92)
+//!   96000 clip limits in clipper units (L− / L+)                                            report                                    2.882841 / 7.202008
+//!   96000 recovery within ±0.1 dB after +13 dBFS for 50 ms (US2 AS4)                        ≤ 20 ms                                   11.58 ms
+//!   6000 H2 / H3 re the fundamental, 6 dB above the first onset (discrete)                  report (US2 AS3 pins these ±0.5 dB)       -17.97 / -18.12 dB (alias +1.96 / at Nyquist: a·cos φ, not an amplitude vs continuous -19.93 / -24.50)
+//!   8000 H2 / H3 re the fundamental, 6 dB above the first onset (discrete)                  report (US2 AS3 pins these ±0.5 dB)       -20.39 / -24.20 dB (alias -0.46 / +0.31 dB vs continuous -19.93 / -24.50)
+//!   16000 H2 / H3 re the fundamental, 6 dB above the first onset (discrete)                 report (US2 AS3 pins these ±0.5 dB)       -19.96 / -24.64 dB (alias -0.03 / -0.13 dB vs continuous -19.93 / -24.50)
+//!   44100 H2 / H3 re the fundamental, 6 dB above the first onset (discrete)                 report (US2 AS3 pins these ±0.5 dB)       -19.93 / -24.49 dB (alias +0.01 / +0.01 dB vs continuous -19.93 / -24.50)
+//!   48000 H2 / H3 re the fundamental, 6 dB above the first onset (discrete)                 report (US2 AS3 pins these ±0.5 dB)       -19.92 / -24.48 dB (alias +0.01 / +0.02 dB vs continuous -19.93 / -24.50)
+//!   88200 H2 / H3 re the fundamental, 6 dB above the first onset (discrete)                 report (US2 AS3 pins these ±0.5 dB)       -19.93 / -24.50 dB (alias +0.00 / +0.00 dB vs continuous -19.93 / -24.50)
+//!   96000 H2 / H3 re the fundamental, 6 dB above the first onset (discrete)                 report (US2 AS3 pins these ±0.5 dB)       -19.93 / -24.50 dB (alias +0.00 / +0.00 dB vs continuous -19.93 / -24.50)
 //!   A-weighted to 300–3000 Hz band offset through stage 2                                   ≈ −6 dB                                   -5.96 dB
 //!   hiss in the 300–3000 Hz band at stage 2's output (AES17)                                −62 ± 0.5 dBFS (FR-003)                   -61.96 dBFS
 //!   third-octave levels 315–2500 Hz (dBFS)                                                  report (US1 AS2 pins these ±1 dB)         315: -85.13, 400: -82.27, 500: -79.77, 630: -77.38, 800: -75.15, 1000: -73.30, 1250: -71.66, 1600: -70.08, 2000: -68.80, 2500: -67.66
 //!   1 kHz third octave re the band level                                                    report                                    -11.33 dB
-//!   amplifier and R2 floor (A-050, from the reviewer's noise model)                         report                                    ≈ -73 dBFS (adds 0.33 dB at the anchor)
-//!   credible range (S/N 58–62 dB held, full scale 86–94 dB SPL)                             ≈ −70 … −54 dBFS (A-048)                  -70.0 … -54.0 dBFS
+//!   amplifier and R2 floor (A-050, from the reviewer's noise model)                         report                                    ≈ -73 dBFS (neglected in the level: it adds 0.33 dB at the anchor, inside ±0.5 dB)
+//!   full-scale capsule current at 1 kHz (A-029)                                             report                                    2.181 µA rms
+//!   credible range (closed chain: capsules −35 … −44 dBV/Pa at S/N 58 … 62 dB)              report (A-048)                            -65.6 … -52.6 dBFS (a −40 dBV/Pa capsule at S/N 60: -59.6)
+//!   capsule the default implies (S/N 60 dB at 90 dB SPL full scale)                         report (A-048)                            -42.4 dBV/Pa
 //!   6000 hiss source σ (white at the host rate)                                             report                                    5.498393e-04
 //!   8000 hiss source σ (white at the host rate)                                             report                                    6.351181e-04
 //!   16000 hiss source σ (white at the host rate)                                            report                                    8.982816e-04
@@ -123,13 +126,14 @@
 //!   level 4 RMS margin (-43 dBFS)                                                           report                                    20.0 dB (estimated stop offset ≈ +13.5 dB)
 //!   level 5 RMS margin (-46 dBFS)                                                           ≥ 10 dB at level 5 (SC-010)               17.0 dB (estimated stop offset ≈ +10.5 dB)
 //!   ziggurat tables (128 layers)                                                            X decreasing; X[127] small                X[0] 3.713086, X[1] 3.442620, X[127] 0.272321
-//!   retry cap                                                                               8 attempts per loop (A-049)               P(cap) ≈ 8.2e-16 per sample
-//!   key(0, 0) state                                                                         pinned by the core test                   0xeadb92fa864bd2b2 0x16abbcad2a042a56 0xb617bc4468079182 0x85eab382a43562f5
-//!   key(0, 0) first three outputs                                                           pinned by the core test                   0x2970d3955a0435d5 0x982fce1af44bf199 0x299e70eea13e0176
-//!   key(1, 0) state                                                                         pinned by the core test                   0x0bb2c342bed22952 0xb4212b9b02b833e9 0xb1a8b04b31479a8f 0x8c4bba6a2b7ac29a
-//!   key(1, 0) first three outputs                                                           pinned by the core test                   0xe227e9b8b51e2890 0x144cfa3243d9db7d 0xfb4568e8cfefb4a8
-//!   key(0, 1) state                                                                         pinned by the core test                   0xd508e2bfcd9b0eb3 0x891ca582008fd65c 0xfa001ad46ec3e23a 0xdd30b43c037a0dce
-//!   key(0, 1) first three outputs                                                           pinned by the core test                   0x52f16d4e0e742b7e 0x44cd464c9e0d20bf 0xa99c2247d2ebfbae
+//!   rejection per attempt: main loop / tail entry / tail loop                               report (A-049)                            0.0122 / 5.69e-04 / 0.0689
+//!   retry cap                                                                               8 attempts per loop (A-049)               P(cap) ≈ 2.9e-13 per sample
+//!   key(0, 0) state                                                                         pinned by the core test                   0xb345de77700a3233 0x9346f527d636a699 0x35ba3091b827b024 0xc94b5aee185fba4b
+//!   key(0, 0) first three outputs                                                           pinned by the core test                   0x660a136daf487acf 0x69829ff31569a03f 0xe0aae9e2a492bd66
+//!   key(1, 0) state                                                                         pinned by the core test                   0xc21450bcd096256b 0xf8d72ae16c588e6b 0xe7b8452a15afb4ca 0x1ff38098c1c688c1
+//!   key(1, 0) first three outputs                                                           pinned by the core test                   0x6cdd7f13e7072953 0xfa3a2672377b26ec 0xbea5658ee0250096
+//!   key(0, 1) state                                                                         pinned by the core test                   0x0ddeaf2cc43298e1 0xdd4b0fbeaa937e0f 0x408a9a81171677ea 0x41ccc64cb4e5991f
+//!   key(0, 1) first three outputs                                                           pinned by the core test                   0xca9b3b45c45a6e9b 0xc9432840b9fb9dae 0x5c244e6c00d9ac07
 
 #![allow(clippy::unreadable_literal, clippy::excessive_precision)]
 
@@ -263,24 +267,24 @@ pub(crate) const HISS_SIGMA: [f64; 7] = [
 
 /// The clipper's positive limit L+ in clipper units per host rate (A-051).
 pub(crate) const CLIP_POS: [f64; 7] = [
-    f64::from_bits(0x401a6d5a9685f58c), // 6000 Hz: 6.60679088
-    f64::from_bits(0x401a7f620aae0490), // 8000 Hz: 6.62439744
-    f64::from_bits(0x401a824b724d49f3), // 16000 Hz: 6.62724093
-    f64::from_bits(0x401a7b1ee10b7aed), // 44100 Hz: 6.62023498
-    f64::from_bits(0x401a7a3d28bdc219), // 48000 Hz: 6.61937393
-    f64::from_bits(0x401a7c3b258ec1b5), // 88200 Hz: 6.62131938
-    f64::from_bits(0x401a7c4730115daa), // 96000 Hz: 6.62136531
+    f64::from_bits(0x401cbe9f93f81b3a), // 6000 Hz: 7.18615562
+    f64::from_bits(0x401cd23bc582fd16), // 8000 Hz: 7.20530614
+    f64::from_bits(0x401cd5668ae5ca22), // 16000 Hz: 7.20839898
+    f64::from_bits(0x401ccd98ec1d6c1a), // 44100 Hz: 7.20077866
+    f64::from_bits(0x401ccca3689288ae), // 48000 Hz: 7.1998421
+    f64::from_bits(0x401ccece1e37a1db), // 88200 Hz: 7.20195815
+    f64::from_bits(0x401ccedb370a395f), // 96000 Hz: 7.20200811
 ];
 
 /// The clipper's negative limit L− in clipper units per host rate (A-051).
 pub(crate) const CLIP_NEG: [f64; 7] = [
-    f64::from_bits(0x40024bb4de5cbdaf), // 6000 Hz: 2.28696607
-    f64::from_bits(0x400258302ec73e3c), // 8000 Hz: 2.29306065
-    f64::from_bits(0x40025a343b7095a8), // 16000 Hz: 2.29404494
-    f64::from_bits(0x4002553cc32f5519), // 44100 Hz: 2.2916198
-    f64::from_bits(0x400254a07eaac173), // 48000 Hz: 2.29132174
-    f64::from_bits(0x400256019027c12e), // 88200 Hz: 2.29199517
-    f64::from_bits(0x40025609e633683a), // 96000 Hz: 2.29201107
+    f64::from_bits(0x4007030fdda7d8f7), // 6000 Hz: 2.87649511
+    f64::from_bits(0x400712c2dc66b144), // 8000 Hz: 2.88416073
+    f64::from_bits(0x4007154befbd64a1), // 16000 Hz: 2.88539874
+    f64::from_bits(0x40070f0cb5c89e3d), // 44100 Hz: 2.88234846
+    f64::from_bits(0x40070e4828fd7506), // 48000 Hz: 2.88197357
+    f64::from_bits(0x400710043dd9417c), // 88200 Hz: 2.88282059
+    f64::from_bits(0x4007100eba00f176), // 96000 Hz: 2.88284059
 ];
 
 /// The 1 kHz start phase that puts a host sample on the clipper-input peak (radians; harness).
@@ -294,8 +298,10 @@ pub(crate) const START_PHASE: [f64; 7] = [
     f64::from_bits(0xbfe5ef0d2f1ec6d2), // 96000 Hz: -0.685431091
 ];
 
-/// The knee start (A-051; spec 009's knee).
-pub(crate) const KNEE_K: f64 = f64::from_bits(0x3feb333333333333); // 0.85
+/// The knee start at the positive limit (A-051; spec 009's knee).
+pub(crate) const KNEE_POS: f64 = f64::from_bits(0x3fe999999999999a); // 0.8
+/// The knee start at the negative limit (A-051; spec 009's knee).
+pub(crate) const KNEE_NEG: f64 = f64::from_bits(0x3fe4cccccccccccd); // 0.65
 
 /// The ziggurat's layer abscissae, Doornik's ZIGNOR layout, 128 layers (A-049).
 pub(crate) const ZIG_X: [f64; 129] = [

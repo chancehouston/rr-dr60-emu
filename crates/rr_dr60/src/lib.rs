@@ -95,8 +95,9 @@
 //! **hiss**, a deterministic Gaussian noise at about −62 dBFS in the 300 – 3000 Hz band after
 //! stage 2 (A-048), with its own stream for each recording from [`Settings::seed`] and a
 //! recording counter that never rewinds (A-049). Stage 2 is the microphone amplifier: an input
-//! high-pass near 818 Hz (A-046), an asymmetric soft clipper at the supply rails that limits
-//! negative samples first, near +7 dBFS (A-051), and an output coupling near 77 Hz and a
+//! high-pass near 818 Hz (A-046), an asymmetric soft clipper that limits negative samples
+//! first and softly, toward +9 dBFS, and positive samples near +17 dBFS (A-051), and an output
+//! coupling near 77 Hz and a
 //! roll-off near 12.9 kHz (A-047, lumped ahead of the limiter, A-053), normalized to unity gain
 //! at 1 kHz, so 0 dBFS at 1 kHz still reaches the codec's full scale (about 90 dB SPL at the
 //! microphone, A-029). The default output therefore changes from 0.11: the low end is thinner,
@@ -341,6 +342,9 @@ pub mod __test_hooks {
         pub clipper_off: bool,
         /// The ziggurat's cap path taken on every draw (A-049).
         pub force_retry_cap: bool,
+        /// Added to both clipper knees k₊ and k₋ (0: as committed; ±0.05 is the knee mutant,
+        /// hardware review B4).
+        pub knee_delta: f32,
     }
 
     impl Default for OutputMutation {

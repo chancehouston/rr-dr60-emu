@@ -255,13 +255,13 @@ pub fn rust_ramp_reference() -> (u64, usize) {
 /// square (1 s) followed by 0.5 s of silence, in 480-sample blocks; (b) two recordings of 1 s of
 /// silence in the 0.12 default, a `reset` between them, each played to the end: the hiss of
 /// counters 0 and 1.
-pub const SMOKE_MIC_DEFAULT_HASH: u64 = 0x863a_a823_f42b_c8ce; // measured 2026-10-16 from the Rust path (72 000 samples; 012 T049)
+pub const SMOKE_MIC_DEFAULT_HASH: u64 = 0x533e_9117_7f8c_c1d6; // measured 2026-10-16 from the Rust path (72 000 samples; 012 T049, re-pinned after the review's B1 and B5)
 /// The (a) case's output length in host samples.
 pub const SMOKE_MIC_DEFAULT_SAMPLES: usize = 72_000; // 1.5 s at 48 kHz: the 0.5 s of silence is shorter than the hang time (A-025), so nothing is dropped
 /// The (b) case's first recording's playback hash.
-pub const SMOKE_MIC_REC0_HASH: u64 = 0x0bd8_b3aa_3dd4_132f; // measured 2026-10-16 from the Rust path (53 168 samples; 012 T049)
+pub const SMOKE_MIC_REC0_HASH: u64 = 0x0ef2_704a_7566_0621; // measured 2026-10-16 from the Rust path (53 168 samples; 012 T049, re-pinned after B5)
 /// The (b) case's second recording's playback hash.
-pub const SMOKE_MIC_REC1_HASH: u64 = 0x2c93_42b7_e52b_ca17; // measured 2026-10-16 from the Rust path (53 168 samples; 012 T049)
+pub const SMOKE_MIC_REC1_HASH: u64 = 0x442d_dc90_fb8b_3e11; // measured 2026-10-16 from the Rust path (53 168 samples; 012 T049, re-pinned after B5)
 /// The (b) case's playback length (each recording).
 pub const SMOKE_MIC_REC_SAMPLES: usize = 53_168; // the recording (one hang time of hiss, frame-padded) plus the drain at 48 kHz (012 T049)
 

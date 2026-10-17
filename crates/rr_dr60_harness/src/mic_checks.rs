@@ -743,24 +743,25 @@ pub fn taps(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
 pub const T_CLIP: &[&str] = &["A-051", "A-036"];
 
 /// L₋ and L₊ at the engine input at 1 kHz, dBFS: negative samples are limited first (A-051),
-/// printed 2026-10-16.
-pub const LIMIT_DBFS: [f64; 2] = [7.15, 16.37];
-/// Each polarity's onset (0.1 dB compression) re its limit, dB (A-051; k = 0.85), printed
+/// printed 2026-10-16 after the refit to the ngspice transient (hardware review B1).
+pub const LIMIT_DBFS: [f64; 2] = [9.15, 17.10];
+/// Each polarity's onset (0.1 dB compression) re its limit, dB, `[negative, positive]`
+/// (A-051; k₋ = 0.65, k₊ = 0.80), printed 2026-10-16.
+pub const ONSET_RE_LIMIT_DB: [f64; 2] = [-2.379, -1.009];
+/// The knee starts k₋ and k₊, fractions of the limits (A-051; spec 009's knee), printed
 /// 2026-10-16.
-pub const ONSET_RE_LIMIT_DB: f64 = -0.631;
-/// The knee start, a fraction of the limit (A-051; spec 009's knee), printed 2026-10-16.
-pub const KNEE_K: f64 = 0.85;
+pub const KNEE: [f64; 2] = [0.65, 0.80];
 
 /// The limits in clipper units per host rate (`SUPPORTED_HOST_RATES` order) as `[L₋, L₊]`,
 /// written by the script into `stages/mic_coeffs.rs` on 2026-10-16 (A-051).
 pub const CLIP_LIMITS: [[f64; 2]; 7] = [
-    [2.28696607, 6.60679088],
-    [2.29306065, 6.62439744],
-    [2.29404494, 6.62724093],
-    [2.2916198, 6.62023498],
-    [2.29132174, 6.61937393],
-    [2.29199517, 6.62131938],
-    [2.29201107, 6.62136531],
+    [2.87649511, 7.18615562],
+    [2.88416073, 7.20530614],
+    [2.88539874, 7.20839898],
+    [2.88234846, 7.20077866],
+    [2.88197357, 7.1998421],
+    [2.88282059, 7.20195815],
+    [2.88284059, 7.20200811],
 ];
 
 /// The 1 kHz cosine start phase that puts a host sample on the clipper-input peak, radians
@@ -776,25 +777,32 @@ pub const START_PHASE: [f64; 7] = [
 ];
 
 /// H2 and H3 re the fundamental for a 1 kHz tone 6 dB above the first onset after stage 2, the
-/// script's discrete model per rate, dB, printed 2026-10-16 (US2 AS3).
+/// script's discrete model per rate, dB, printed 2026-10-16 (US2 AS3). At 6 kHz H3 (3 kHz) is
+/// on Nyquist, where the bin reads a·cos φ, not an amplitude (hardware review B3): the row
+/// compares the same estimator at the same phase, and its alias row is not reported.
 pub const HARMONICS_DB: [[f64; 2]; 7] = [
-    [-14.91, -15.02],
-    [-17.16, -23.54],
-    [-16.41, -22.33],
-    [-16.34, -21.91],
-    [-16.34, -21.89],
-    [-16.35, -21.92],
-    [-16.35, -21.92],
+    [-17.97, -18.12],
+    [-20.39, -24.20],
+    [-19.96, -24.64],
+    [-19.93, -24.49],
+    [-19.92, -24.48],
+    [-19.93, -24.50],
+    [-19.93, -24.50],
 ];
 /// The near-continuous model's H2 and H3, dB (the aliases are reported against it).
-pub const HARMONICS_CONTINUOUS_DB: [f64; 2] = [-16.35, -21.92];
+pub const HARMONICS_CONTINUOUS_DB: [f64; 2] = [-19.93, -24.50];
 
 /// The time to return within ±0.1 dB of the linear response after +13 dBFS for 50 ms then
 /// −20 dBFS, ms, per rate, printed 2026-10-16 (US2 AS4).
-pub const RECOVERY_MS: [f64; 7] = [12.17, 12.62, 12.62, 12.43, 12.33, 12.46, 12.47];
+pub const RECOVERY_MS: [f64; 7] = [11.50, 11.62, 11.75, 11.54, 11.46, 11.58, 11.58];
 
-/// The onsets' and limits' tolerance, dB (SC-003).
+/// The onsets' and limits' tolerance at the engine input, dB (SC-003).
 pub const CLIP_TOL_DB: f64 = 0.5;
+/// The onsets' tolerance on the static curve in clipper units, dB (engineering target,
+/// hardware review B4: the curve has no noise, so only the rising tone's level step per cycle,
+/// 60 dB over 1000 cycles, and the print's last digit separate the two; SC-003's ±0.5 dB is
+/// the engine-input tolerance). A knee moved by 0.05 shifts the onsets by more.
+pub const STATIC_ONSET_TOL_DB: f64 = 0.065;
 /// The harmonics' tolerance against the discrete model, dB (US2 AS3).
 pub const HARMONIC_TOL_DB: f64 = 0.5;
 /// The printed limits carry 8 – 9 significant digits (engineering target).
@@ -898,7 +906,7 @@ pub fn static_curve(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
     let margin = 1.0 - 1e-6;
     let nonlinear_inside = t
         .iter()
-        .filter(|&&(i, o)| i <= KNEE_K * lp * margin && i >= -KNEE_K * ln * margin && o != i)
+        .filter(|&&(i, o)| i <= KNEE[1] * lp * margin && i >= -KNEE[0] * ln * margin && o != i)
         .count();
     let max_out = t.iter().map(|&(_, o)| o).fold(f64::MIN, f64::max);
     let min_out = t.iter().map(|&(_, o)| o).fold(f64::MAX, f64::min);
@@ -930,15 +938,15 @@ pub fn static_curve(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
         ),
         row(
             "positive onset re L+",
-            analysis::db(onset(1.0) / lp) - ONSET_RE_LIMIT_DB,
+            analysis::db(onset(1.0) / lp) - ONSET_RE_LIMIT_DB[1],
             "dB",
-            Tolerance::Range(-CLIP_TOL_DB, CLIP_TOL_DB), // SC-003
+            Tolerance::Range(-STATIC_ONSET_TOL_DB, STATIC_ONSET_TOL_DB), // SC-003 (B4)
         ),
         row(
             "negative onset re L-",
-            analysis::db(onset(-1.0) / ln) - ONSET_RE_LIMIT_DB,
+            analysis::db(onset(-1.0) / ln) - ONSET_RE_LIMIT_DB[0],
             "dB",
-            Tolerance::Range(-CLIP_TOL_DB, CLIP_TOL_DB), // SC-003
+            Tolerance::Range(-STATIC_ONSET_TOL_DB, STATIC_ONSET_TOL_DB), // SC-003 (B4)
         ),
     ];
     // Whatever the limiter's knee: the clipper sits before it.
@@ -969,6 +977,7 @@ pub fn engine_onsets(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
     let [neg_l, pos_l] = LIMIT_DBFS;
     let pos_on = onset_level(make, s, rate, 0, pos_l - 6.0, pos_l + 3.0);
     let neg_on = onset_level(make, s, rate, 1, neg_l - 6.0, neg_l + 3.0);
+    let [neg_rel, pos_rel] = ONSET_RE_LIMIT_DB;
     let [(_, pos_lim), (_, neg_lim)] = compression(make, s, rate, 40.0);
     let row = |property: &'static str, stim: &str, value: f64, tol: Tolerance| {
         MeasurementResult::new(
@@ -987,13 +996,13 @@ pub fn engine_onsets(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
         row(
             "positive onset at the engine input re the figure",
             "1 kHz at the start phase, bisected",
-            pos_on - (pos_l + ONSET_RE_LIMIT_DB),
+            pos_on - (pos_l + pos_rel),
             Tolerance::Range(-CLIP_TOL_DB, CLIP_TOL_DB), // SC-003
         ),
         row(
             "negative onset at the engine input re the figure",
             "1 kHz at the start phase, bisected",
-            neg_on - (neg_l + ONSET_RE_LIMIT_DB),
+            neg_on - (neg_l + neg_rel),
             Tolerance::Range(-CLIP_TOL_DB, CLIP_TOL_DB), // SC-003
         ),
         row(
@@ -1116,7 +1125,7 @@ pub fn harmonics(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
     let fs = f64::from(rate);
     let warm = rate as usize / 2;
     let n = rate as usize / 10;
-    let level = LIMIT_DBFS[0] + ONSET_RE_LIMIT_DB + 6.0;
+    let level = LIMIT_DBFS[0] + ONSET_RE_LIMIT_DB[0] + 6.0;
     let x = peak_tone(rate, level, warm + n);
     let y = run(make, configs::settings("mic_only_quiet", rate), &x);
     let w = &y[warm..warm + n];
@@ -1140,6 +1149,10 @@ pub fn harmonics(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
             "dB",
             Tolerance::Range(-HARMONIC_TOL_DB, HARMONIC_TOL_DB), // FR-006 (US2 AS3)
         ));
+        // At 6 kHz H3 is on Nyquist: its bin is a·cos φ, not an amplitude (hardware review B3).
+        if j == 1 && 2.0 * 3000.0 >= fs {
+            continue;
+        }
         rows.push(MeasurementResult::new(
             "US2 AS3",
             if j == 0 {
@@ -1252,8 +1265,6 @@ pub const T_CODEC: &[&str] = &["A-004", "A-040", "A-048"];
 pub const VAS_SECONDS: f64 = 60.0;
 /// The level-5 margin's floor, dB (SC-010).
 pub const VAS_MARGIN_MIN_DB: f64 = 10.0;
-/// The level-5 RMS margin the script prints, dB, 2026-10-16 (research R-07; A-022).
-pub const VAS_MARGIN_LEVEL5_DB: f64 = 17.0;
 /// The ratio reader's tolerance in `f32` ULP (spec 011's reader; US3 AS8).
 pub const RATIO_ULP: f64 = 4.0;
 

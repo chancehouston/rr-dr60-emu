@@ -672,6 +672,21 @@ mod mic {
         );
     }
 
+    /// Hardware review B4: a knee moved by ±0.05 (both polarities) fails the static curve's
+    /// onset rows in clipper units, which the engine-input tolerance alone would pass.
+    #[test]
+    fn knee_moved_fails_the_static_curve() {
+        for delta in [-0.05f32, 0.05] {
+            let make = mutant(MicMutation {
+                knee_delta: delta,
+                ..MicMutation::default()
+            });
+            let f = failed(&mic::static_curve(&make, RATE));
+            assert!(f.contains(&"positive onset re L+"), "{delta}: {f:?}");
+            assert!(f.contains(&"negative onset re L-"), "{delta}: {f:?}");
+        }
+    }
+
     #[test]
     fn shared_stream_fails_the_counters_cross_correlation() {
         let make = mutant(MicMutation {

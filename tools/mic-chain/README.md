@@ -25,17 +25,17 @@ A small-signal hybrid-π nodal model of the transimpedance amplifier. From it th
 
 ### The clipper
 
-The limits from the DC voltages (L₋ ≈ +7.15 dBFS where Q1 saturates, L₊ ≈ +16.37 dBFS where Q2 saturates), the knee (k = 0.85), the onsets and the bound L₊ + L₋.
+The limits and knees, one per polarity, fitted to the `--spice` transient sweep (L₋ ≈ +9.15 dBFS, k₋ = 0.65, where Q1's base–collector junction conducts across R3; L₊ ≈ +17.10 dBFS, k₊ = 0.80, where Q2 saturates at the rail), the onsets and the bound L₊ + L₋. `--spice` reruns the sweep and gates the model at ±1 dB of ngspice at every level from 0 to +30 dBFS (2026-10-16, the post-implementation review).
 
 ### The hiss
 
 - **Anchor:** 34 dB SPL(A) capsule self-noise, full scale 90 dB SPL; −61.96 dBFS in the 300–3000 Hz band.
-- **Shape and range:** the third-octave shape, the credible range, and the source's σ at each host rate.
+- **Shape and range:** the third-octave shape, the credible range through the closed level chain (and the capsule the default implies), and the source's σ at each host rate.
 - **Voice activation:** the margins at its five levels.
 
 ### The generator
 
-The ziggurat tables (128 layers), the retry cap and the keying test vectors that the core test pins.
+The ziggurat tables (128 layers), the rejection probabilities and the retry cap's probability per sample, and the keying test vectors that the core test pins (the nested keying since 2026-10-16).
 
 ## Usage
 
@@ -45,7 +45,7 @@ From the repository root. `uv` installs `numpy` and `scipy` from the script's he
 uv run tools/mic-chain/design_mic_chain.py            # print every figure
 uv run tools/mic-chain/design_mic_chain.py --check    # verify every bound and constraint; exit 1 on a failure
 uv run tools/mic-chain/design_mic_chain.py --write    # regenerate crates/rr_dr60/src/stages/mic_coeffs.rs
-uv run tools/mic-chain/design_mic_chain.py --spice    # the ngspice cross-check
+uv run tools/mic-chain/design_mic_chain.py --spice    # the ngspice cross-checks (the corners and the clip levels)
 ```
 
 `--write` must leave `mic_coeffs.rs` byte-identical when nothing changed. Changing the file is a model change: the golden file is re-blessed and the CHANGELOG notes it.
@@ -58,3 +58,4 @@ uv run tools/mic-chain/design_mic_chain.py --spice    # the ngspice cross-check
 - **As run on 2026-10-16** with ngspice 47:
   - the simulated operating point is 1.71 / 1.08 / 2.60 V (S-002 measured 1.7 / 1.1 / 2.6 V);
   - the corners are 824.2 / 76.8 / 12 939 Hz, +0.7 % on the input corner.
+- **The clip-level gate** (added 2026-10-16 by the post-implementation review): `--spice` also runs the netlist as a 1 kHz transient at 19 levels from 0 to +30 dBFS, reads the output's swing from its operating point over 90–100 ms, and requires the model's clipper within ±1 dB of ngspice at every level of each polarity. It prints the minimax refit (the onset held within 0.3 dB of ngspice's) next to the committed constants. As run: 0.45 dB (negative) and 0.29 dB (positive), the refit equal to the committed swings and knees.

@@ -1002,8 +1002,8 @@ fn readme_mic_statements() {
         "hang time",
         "+9 dB",
         // The clip limits and the host rate for loud material.
-        "+7.15 dBFS",
-        "+16.37 dBFS",
+        "+9.15 dBFS",
+        "+17.10 dBFS",
         "16 kHz",
         // The per-session seed.
         "seed",
@@ -1037,10 +1037,13 @@ fn readme_mic_statements() {
     for (id, phrases) in [
         ("A-046", &["818 Hz", "665–985 Hz", "−7.3 dB"][..]),
         ("A-047", &["77 Hz", "12.9 kHz"][..]),
-        ("A-048", &["−62 dBFS", "34 dB SPL(A)", "−70 … −54 dBFS"][..]),
+        ("A-048", &["−62 dBFS", "34 dB SPL(A)", "−66 … −53 dBFS"][..]),
         ("A-049", &["never rewinds", "bit 7", "8 attempts"][..]),
         ("A-050", &["−73 dBFS", "22 nV/√Hz"][..]),
-        ("A-051", &["+7.15 dBFS", "+16.37 dBFS", "k = 0.85"][..]),
+        (
+            "A-051",
+            &["+9.15 dBFS", "+17.10 dBFS", "k₋ = 0.65", "k₊ = 0.80"][..],
+        ),
         ("A-052", &["flat"][..]),
         ("A-053", &["lumped ahead of the limiter"][..]),
         ("A-005", &["spec 012", "A-048"][..]),

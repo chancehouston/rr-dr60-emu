@@ -1,5 +1,7 @@
 # Implementation Plan: Microphone Capsule and Amplifier (signal-chain stages 1–2)
 
+> **As built (2026-10-16, after the post-implementation reviews):** this file records the design as planned. Where it differs from the implementation, the spec's Clarifications › Post-implementation reviews, research R-03 › As built, R-04 and R-09 › As measured hold: the clipper has one limit and one knee per polarity (`Clipper { l_pos, l_neg, k_pos, k_neg, … }`, L₋ ≈ +9.15 dBFS, k₋ = 0.65, L₊ ≈ +17.10 dBFS, k₊ = 0.80); the keying is nested, `mix64(mix64(seed ^ MIC_STREAM) ^ counter ^ MIC_COUNTER_SALT)`; `MicFront` holds the capsule and the amplifier; `reset` keys the one-pass to the counter's current value (FR-009), never back to 0; the registers run A-046 – A-053; the golden file holds 147 entries with the earlier files' `n_samples` and `sha256` fields; the in-build cost protocol is 45 strictly alternating runs.
+
 **Branch**: `012-mic-capsule-amp` | **Date**: 2026-10-16 | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `/specs/012-mic-capsule-amp/spec.md`

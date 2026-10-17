@@ -20,8 +20,8 @@ use rr_dr60_detmath::{exp, ln};
 use crate::settings::MicSettings;
 use crate::stages::first_order::FirstOrder;
 use crate::stages::mic_coeffs::{
-    CLIP_NEG, CLIP_POS, HISS_SIGMA, HP_IN, HP_OUT, KNEE_K, LP, MIC_COUNTER_SALT, MIC_STREAM,
-    RETRY_CAP, ZIG_RATIO, ZIG_TAIL_R, ZIG_X,
+    CLIP_NEG, CLIP_POS, HISS_SIGMA, HP_IN, HP_OUT, KNEE_NEG, KNEE_POS, LP, MIC_COUNTER_SALT,
+    MIC_STREAM, RETRY_CAP, ZIG_RATIO, ZIG_TAIL_R, ZIG_X,
 };
 use crate::stages::output::{knee, rate_index};
 
@@ -37,11 +37,13 @@ const fn mix64(z: u64) -> u64 {
 }
 
 /// The xoshiro256++ state for `(seed, counter)` (spec 012 FR-003, FR-009; A-049):
-/// `z = mix64(seed ^ MIC_STREAM) ^ mix64(counter ^ MIC_COUNTER_SALT)`, then four SplitMix64
-/// outputs from `z`. Two independent bijections keep the seed and the counter from cancelling,
-/// and SplitMix64 never yields an all-zero state, so seed 0 does not degenerate.
+/// `z = mix64(mix64(seed ^ MIC_STREAM) ^ counter ^ MIC_COUNTER_SALT)`, then four SplitMix64
+/// outputs from `z`. The mix is nested, so `z` is a bijection of the seed for a fixed counter
+/// and of the counter for a fixed seed; the earlier XOR of two mixes was symmetric in its
+/// arguments and let families of (seed, counter) pairs share a stream (hardware review B5,
+/// 2026-10-16). SplitMix64 never yields an all-zero state, so seed 0 does not degenerate.
 pub(crate) const fn key(seed: u64, counter: u64) -> [u64; 4] {
-    let mut z = mix64(seed ^ MIC_STREAM) ^ mix64(counter ^ MIC_COUNTER_SALT);
+    let mut z = mix64(mix64(seed ^ MIC_STREAM) ^ counter ^ MIC_COUNTER_SALT);
     let mut s = [0u64; 4];
     let mut i = 0;
     while i < 4 {
@@ -139,7 +141,7 @@ impl MicCapsule {
     /// One standard normal draw: Doornik's ZIGNOR ziggurat, 128 layers (A-049). The layer
     /// comes from bits 0 – 6, the sign from bit 7, the magnitude from bits 11 – 63 (no
     /// overlap). Each rejection loop is capped at [`RETRY_CAP`] attempts and then returns its
-    /// last candidate, deterministically (constitution IV; P(cap) ≈ 8e-16 per sample).
+    /// last candidate, deterministically (constitution IV; P(cap) ≈ 2.9e-13 per sample, the tail loop's, A-049).
     #[inline]
     fn gauss(&mut self) -> f64 {
         let mut x = 0.0;
@@ -216,9 +218,10 @@ pub(crate) struct MicAmp {
 }
 
 /// The memoryless asymmetric soft clipper (spec 012 FR-006; research R-03; A-051): exactly
-/// linear for −k·L₋ ≤ v ≤ k·L₊; above, spec 009's parabolic knee scaled to each polarity's limit
-/// (C¹ at the joint, the limit reached at (2 − k)·L and held). Negative samples (the polarity
-/// the limiter does not sense, A-036) are limited first: L₋ < L₊.
+/// linear for −k₋·L₋ ≤ v ≤ k₊·L₊; outside, spec 009's parabolic knee scaled to each polarity's
+/// limit with that polarity's knee (C¹ at the joint, the limit reached at (2 − k)·L and held).
+/// Negative samples (the polarity the limiter does not sense, A-036) are limited first, and
+/// more softly: L₋ < L₊ and k₋ < k₊.
 #[derive(Clone, Copy, Debug)]
 struct Clipper {
     /// L₊, L₋ and their reciprocals.
@@ -226,33 +229,39 @@ struct Clipper {
     l_neg: f64,
     inv_pos: f64,
     inv_neg: f64,
-    /// The linear range's ends k·L₊ and −k·L₋.
+    /// The knees k₊, k₋.
+    k_pos: f64,
+    k_neg: f64,
+    /// The linear range's ends k₊·L₊ and −k₋·L₋.
     hi: f64,
     lo: f64,
 }
 
 impl Clipper {
-    /// The clipper for limits `l_pos`, `l_neg` (clipper units).
-    fn new(l_pos: f64, l_neg: f64) -> Self {
+    /// The clipper for limits `l_pos`, `l_neg` (clipper units) and knees `k_pos`, `k_neg`.
+    fn new(l_pos: f64, l_neg: f64, k_pos: f64, k_neg: f64) -> Self {
         Self {
             l_pos,
             l_neg,
             inv_pos: 1.0 / l_pos,
             inv_neg: 1.0 / l_neg,
-            hi: KNEE_K * l_pos,
-            lo: -KNEE_K * l_neg,
+            k_pos,
+            k_neg,
+            hi: k_pos * l_pos,
+            lo: -k_neg * l_neg,
         }
     }
 
     /// One sample. Selects, not branches on the signal: the linear range returns `v` itself
-    /// (bit-exact, US2 AS4); outside it, `L·knee(v / L, k)` for the sample's polarity (`knee` is
-    /// odd, so the negative side is −L₋·knee(−v / L₋, k)).
+    /// (bit-exact, US2 AS4); outside it, `L·knee(v / L, k)` with the sample's polarity's limit
+    /// and knee (`knee` is odd, so the negative side is −L₋·knee(−v / L₋, k₋)).
     #[inline(always)]
     fn apply(&self, v: f64) -> f64 {
         let pos = v > 0.0;
         let l = if pos { self.l_pos } else { self.l_neg };
         let inv = if pos { self.inv_pos } else { self.inv_neg };
-        let bent = l * knee(v * inv, KNEE_K);
+        let k = if pos { self.k_pos } else { self.k_neg };
+        let bent = l * knee(v * inv, k);
         if v >= self.lo && v <= self.hi {
             v
         } else {
@@ -266,10 +275,10 @@ impl MicAmp {
     pub(crate) fn new(host_rate_hz: u32) -> Option<Self> {
         let i = rate_index(host_rate_hz)?;
         Some(Self {
-            hp_in: FirstOrder::new(HP_IN[i]),             // A-046
-            clip: Clipper::new(CLIP_POS[i], CLIP_NEG[i]), // A-051
-            hp_out: FirstOrder::new(HP_OUT[i]),           // A-047, A-053
-            lp: FirstOrder::new(LP[i]),                   // A-047, A-053
+            hp_in: FirstOrder::new(HP_IN[i]), // A-046
+            clip: Clipper::new(CLIP_POS[i], CLIP_NEG[i], KNEE_POS, KNEE_NEG), // A-051
+            hp_out: FirstOrder::new(HP_OUT[i]), // A-047, A-053
+            lp: FirstOrder::new(LP[i]),       // A-047, A-053
         })
     }
 
@@ -303,13 +312,18 @@ impl MicAmp {
             self.hp_in = FirstOrder::new([1.0, 0.0, 0.0]);
         }
         let (p, n) = (self.clip.l_pos, self.clip.l_neg);
+        let (kp, kn) = (
+            self.clip.k_pos + f64::from(m.knee_delta),
+            self.clip.k_neg + f64::from(m.knee_delta),
+        );
+        self.clip = Clipper::new(p, n, kp, kn);
         if m.symmetric_clip {
-            self.clip = Clipper::new(n, n);
+            self.clip = Clipper::new(n, n, kn, kn);
         } else if m.swapped_polarity {
-            self.clip = Clipper::new(n, p);
+            self.clip = Clipper::new(n, p, kn, kp);
         }
         if m.clipper_off {
-            self.clip = Clipper::new(f64::INFINITY, f64::INFINITY);
+            self.clip = Clipper::new(f64::INFINITY, f64::INFINITY, kp, kn);
         }
         self.reset();
     }
@@ -429,41 +443,42 @@ mod tests {
     use crate::settings::SUPPORTED_HOST_RATES;
     use std::vec::Vec;
 
-    /// `tools/mic-chain/design_mic_chain.py`'s key vectors, printed 2026-10-16 (A-049):
+    /// `tools/mic-chain/design_mic_chain.py`'s key vectors, printed 2026-10-16 after the nested
+    /// keying (hardware review B5; A-049):
     /// `(seed, counter, state, first three outputs)`.
     const KEY_VECTORS: [(u64, u64, [u64; 4], [u64; 3]); 3] = [
         (
             0,
             0,
             [
-                0xeadb92fa864bd2b2,
-                0x16abbcad2a042a56,
-                0xb617bc4468079182,
-                0x85eab382a43562f5,
+                0xb345de77700a3233,
+                0x9346f527d636a699,
+                0x35ba3091b827b024,
+                0xc94b5aee185fba4b,
             ],
-            [0x2970d3955a0435d5, 0x982fce1af44bf199, 0x299e70eea13e0176],
+            [0x660a136daf487acf, 0x69829ff31569a03f, 0xe0aae9e2a492bd66],
         ),
         (
             1,
             0,
             [
-                0x0bb2c342bed22952,
-                0xb4212b9b02b833e9,
-                0xb1a8b04b31479a8f,
-                0x8c4bba6a2b7ac29a,
+                0xc21450bcd096256b,
+                0xf8d72ae16c588e6b,
+                0xe7b8452a15afb4ca,
+                0x1ff38098c1c688c1,
             ],
-            [0xe227e9b8b51e2890, 0x144cfa3243d9db7d, 0xfb4568e8cfefb4a8],
+            [0x6cdd7f13e7072953, 0xfa3a2672377b26ec, 0xbea5658ee0250096],
         ),
         (
             0,
             1,
             [
-                0xd508e2bfcd9b0eb3,
-                0x891ca582008fd65c,
-                0xfa001ad46ec3e23a,
-                0xdd30b43c037a0dce,
+                0x0ddeaf2cc43298e1,
+                0xdd4b0fbeaa937e0f,
+                0x408a9a81171677ea,
+                0x41ccc64cb4e5991f,
             ],
-            [0x52f16d4e0e742b7e, 0x44cd464c9e0d20bf, 0xa99c2247d2ebfbae],
+            [0xca9b3b45c45a6e9b, 0xc9432840b9fb9dae, 0x5c244e6c00d9ac07],
         ),
     ];
 
@@ -709,12 +724,18 @@ mod tests {
         for i in 0..SUPPORTED_HOST_RATES.len() {
             let (lp, ln) = (CLIP_POS[i], CLIP_NEG[i]);
             assert!(ln < lp, "L- < L+ (A-051, A-036)");
-            let c = Clipper::new(lp, ln);
+            const {
+                assert!(
+                    KNEE_NEG < KNEE_POS,
+                    "the negative limit is the softer (A-051)"
+                )
+            };
+            let c = Clipper::new(lp, ln, KNEE_POS, KNEE_NEG);
             let mut prev = f64::MIN;
             for n in -200_000..=200_000 {
                 let v = f64::from(n) * 1e-4; // −20 … +20 clipper units
                 let y = c.apply(v);
-                if v >= -0.85 * ln && v <= 0.85 * lp {
+                if v >= -KNEE_NEG * ln && v <= KNEE_POS * lp {
                     assert_eq!(y.to_bits(), v.to_bits(), "linear at {v}");
                 }
                 assert!(y <= lp && y >= -ln, "{v} → {y}");
@@ -723,9 +744,18 @@ mod tests {
             }
             assert_eq!(c.apply(1e30), lp);
             assert_eq!(c.apply(-1e30), -ln);
-            assert_eq!(c.apply((2.0 - 0.85) * lp), lp, "the limit at (2 − k)·L");
+            assert_eq!(
+                c.apply((2.0 - KNEE_POS) * lp),
+                lp,
+                "the limit at (2 − k₊)·L₊"
+            );
+            assert_eq!(
+                c.apply(-(2.0 - KNEE_NEG) * ln),
+                -ln,
+                "the limit at −(2 − k₋)·L₋"
+            );
             // Continuity at the joints.
-            for (j, l) in [(0.85 * lp, lp), (-0.85 * ln, ln)] {
+            for (j, l) in [(KNEE_POS * lp, lp), (-KNEE_NEG * ln, ln)] {
                 let d = (c.apply(j * (1.0 + 1e-12)) - c.apply(j)).abs();
                 assert!(d < 1e-9 * l, "continuous at {j}");
             }
@@ -737,8 +767,8 @@ mod tests {
     /// a clipper-off twin's response to the same tail plus the sections' decaying difference.
     #[test]
     fn clipper_is_memoryless_and_the_off_twin_is_linear() {
-        let c = Clipper::new(6.6, 2.3);
-        let off = Clipper::new(f64::INFINITY, f64::INFINITY);
+        let c = Clipper::new(6.6, 2.3, KNEE_POS, KNEE_NEG);
+        let off = Clipper::new(f64::INFINITY, f64::INFINITY, KNEE_POS, KNEE_NEG);
         for v in [-1e6, -3.0, -1.0, 0.0, 1.0, 5.0, 1e6] {
             assert_eq!(
                 off.apply(v).to_bits(),
@@ -758,8 +788,8 @@ mod tests {
     #[test]
     fn symmetric_and_swapped_clippers() {
         let (lp, ln) = (6.6, 2.3);
-        let sym = Clipper::new(ln, ln);
-        let swp = Clipper::new(ln, lp);
+        let sym = Clipper::new(ln, ln, KNEE_NEG, KNEE_NEG);
+        let swp = Clipper::new(ln, lp, KNEE_NEG, KNEE_POS);
         assert_eq!(sym.apply(1e9), ln);
         assert_eq!(sym.apply(-1e9), -ln);
         assert_eq!(swp.apply(1e9), ln);

@@ -50,10 +50,10 @@ static RrDr60Settings settings_011(uint32_t host_rate_hz) {
 /* Spec 012 T048 (contracts/c-api.md › Smoke loop): the microphone cases, pinned from the Rust
    path (smoke_reference.rs): the 0.12 default one-pass on the square plus silence, and two
    recordings of silence (the hiss) with a reset between them. */
-#define RR_DR60_SMOKE_MIC_DEFAULT_HASH 0x863aa823f42bc8ceULL
+#define RR_DR60_SMOKE_MIC_DEFAULT_HASH 0x533e91177f8cc1d6ULL
 #define RR_DR60_SMOKE_MIC_DEFAULT_SAMPLES 72000
-#define RR_DR60_SMOKE_MIC_REC0_HASH 0x0bd8b3aa3dd4132fULL
-#define RR_DR60_SMOKE_MIC_REC1_HASH 0x2c9342b7e52bca17ULL
+#define RR_DR60_SMOKE_MIC_REC0_HASH 0x0ef2704a75660621ULL
+#define RR_DR60_SMOKE_MIC_REC1_HASH 0x442ddc90fb8b3e11ULL
 #define RR_DR60_SMOKE_MIC_REC_SAMPLES 53168
 #define RR_DR60_SMOKE_FRAMES 51
 #define RR_DR60_SMOKE_SILENCE_FED 149

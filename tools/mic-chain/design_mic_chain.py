@@ -15,8 +15,10 @@ RR-DR60 (constitution Principle II). The register IDs:
 - A-047: the output coupling (C4 in series with C5 into R7 + R10 = 23 kOhm, one first-order
   corner while the limiter is idle) and the codec input amplifier's roll-off (C10 across R15).
 - A-053: those two sections lumped ahead of the limiter's attenuator.
-- A-051: the clip limits from the DC voltages (negative engine samples limited first, where Q1
-  saturates; positive where Q2 saturates), spec 009's parabolic knee at k = 0.85.
+- A-051: the clip limits, one per polarity (negative engine samples limited first: Q1's
+  base-collector junction conducts across R3, a soft limit; positive where Q2 saturates at the
+  rail), each with spec 009's parabolic knee at its own k, fitted to the --spice transient sweep
+  (T054 B1, 2026-10-16).
 - A-048: the hiss anchor (34 dB SPL(A) capsule self-noise, full scale 90 dB SPL at 1 kHz).
 - A-049: the generator (xoshiro256++, mix64 keying, a 128-layer ziggurat with capped retries).
 - A-050: the amplifier's and R2's added floor.
@@ -38,7 +40,8 @@ Usage (from the repository root):
   uv run tools/mic-chain/design_mic_chain.py            # print every design figure
   uv run tools/mic-chain/design_mic_chain.py --check    # verify every bound and constraint
   uv run tools/mic-chain/design_mic_chain.py --write    # regenerate crates/rr_dr60/src/stages/mic_coeffs.rs
-  uv run tools/mic-chain/design_mic_chain.py --spice    # the ngspice cross-check (a gate before the bless)
+  uv run tools/mic-chain/design_mic_chain.py --spice    # the ngspice cross-checks: the corners and the
+                                                        # clip levels (gates before the bless)
 """
 
 import math
@@ -73,10 +76,23 @@ GSX_FS_PEAK = 0.7  # A-030: codec full scale, +3 dBm0, 0.7 V peak at GSX
 # --- A-048: the hiss anchor ---
 SELF_NOISE_DBA = 34.0
 FULL_SCALE_SPL = 90.0
-# --- A-051: the clip limits' saturation voltages (nominal, range) ---
-VCESAT_Q1 = (0.15, 0.05, 0.20)  # Q1: output falls to V_E + Vce_sat
-VECSAT_Q2 = (0.20, 0.10, 0.25)  # Q2: output rises to V_RAIL - Vec_sat
-KNEE_K = 0.85  # spec 009's knee (A-031), justified for this stage in A-051
+# --- A-029: the closed level chain (capsule sensitivities, dBV/Pa; signal-to-noise re 94 dB SPL;
+# the capsule's load) for the hiss's credible range (T054 B2) ---
+CAPSULE_DBV_PA = (-35.0, -40.0, -44.0)
+CAPSULE_SNR_DB = (58.0, 60.0, 62.0)
+CAPSULE_LOAD = 2.2e3
+# --- A-051: the clip limits as swings at the amplifier's output from its operating point (V:
+# nominal, low, high) and the knees. The nominal swings and knees are the minimax fit of
+# spec 009's knee to the --spice transient sweep (+0 ... +30 dBFS at 1 kHz, the onset held within
+# 0.3 dB of ngspice's; T054 B1, 2026-10-16). Low: the hard-rail estimate from the DC voltages
+# (V_O - (V_E + 0.15 V) and (V_RAIL - 0.20 V) - V_O), the first design. High: ngspice with
+# junction resistances and a reverse beta of 10 (the reviewer's variant). ---
+SWING_NEG = (0.566, 0.45, 0.62)  # Q1's base-collector junction conducts across R3: a soft limit
+SWING_POS = (1.414, 1.30, 1.48)  # Q2 saturates at the 3.2 V rail
+KNEE_NEG = 0.65  # spec 009's knee (A-031) at the negative limit (A-051)
+KNEE_POS = 0.80  # and at the positive limit
+SPICE_LEVELS = [0, 4, 6, 6.5, 7, 7.5, 8, 9, 10, 12, 14, 15, 16, 16.5, 17, 18, 20, 24, 30]  # dBFS
+SPICE_CLIP_GATE_DB = 1.0  # the clip-level gate: the model within 1 dB of ngspice at every level
 # --- A-022: the voice-activation thresholds at levels 1..5 (dBFS, sine level) ---
 VAS_THRESHOLDS = [-34.0, -37.0, -40.0, -43.0, -46.0]
 HISS_OFFSET_RANGE = (-18.0, 12.0)
@@ -329,20 +345,20 @@ def knee(u, k):
     return np.where(u >= 2.0 - k, 1.0, y)
 
 
-def clip(v, lp_, ln_, k):
+def clip(v, lp_, ln_, kp=KNEE_POS, kn=KNEE_NEG):
     v = np.asarray(v, float)
-    pos = lp_ * knee(v / lp_, k)
-    neg = -ln_ * knee(-v / ln_, k)
-    lin = (v >= -k * ln_) & (v <= k * lp_)
+    pos = lp_ * knee(v / lp_, kp)
+    neg = -ln_ * knee(-v / ln_, kn)
+    lin = (v >= -kn * ln_) & (v <= kp * lp_)
     return np.where(lin, v, np.where(v > 0, pos, neg))
 
 
-def run_chain(x, r, lp_, ln_, k, clipper=True):
+def run_chain(x, r, lp_, ln_, clipper=True):
     y = x.astype(float)
     for c in (r["hp_in"],):
         y = filt(c, y)
     if clipper:
-        y = clip(y, lp_, ln_, k)
+        y = clip(y, lp_, ln_)
     y = filt(r["hp_out"], y)
     return filt(r["lp"], y)
 
@@ -374,23 +390,25 @@ def realization(nom):
     gsx_per_vo = abs(gsx[0] / v[0, 4])
     v_fs_o = GSX_FS_PEAK / gsx_per_vo
     fig("full scale at the amplifier's output (1 kHz)", "≈ 0.196 V peak (A-029)", f"{v_fs_o:.4f} V", 0.18 <= v_fs_o <= 0.21)
-    sw_neg = V_O - (V_E + VCESAT_Q1[0])
-    sw_pos = (V_RAIL - VECSAT_Q2[0]) - V_O
-    sw_neg_r = (V_O - (V_E + VCESAT_Q1[2]), V_O - (V_E + VCESAT_Q1[1]))
-    sw_pos_r = ((V_RAIL - VECSAT_Q2[2]) - V_O, (V_RAIL - VECSAT_Q2[1]) - V_O)
+    sw_neg, sw_pos = SWING_NEG[0], SWING_POS[0]
     l_neg_e = sw_neg / v_fs_o  # engine-input units at 1 kHz
     l_pos_e = sw_pos / v_fs_o
     db = lambda a: 20 * math.log10(a)
-    fig("limit L− (negative samples, Q1 saturates), engine input at 1 kHz", "+5 … +9 dBFS (A-051)",
-        f"{db(l_neg_e):+.2f} dBFS (swing {sw_neg:.2f} V; range {db(sw_neg_r[0]/v_fs_o):+.1f} … {db(sw_neg_r[1]/v_fs_o):+.1f})",
-        5 <= db(l_neg_e) <= 9)
+    fig("limit L− (negative samples, Q1's B–C junction across R3), engine input at 1 kHz", "+7 … +10 dBFS (A-051)",
+        f"{db(l_neg_e):+.2f} dBFS (swing {sw_neg:.3f} V; range {db(SWING_NEG[1]/v_fs_o):+.1f} … {db(SWING_NEG[2]/v_fs_o):+.1f})",
+        7 <= db(l_neg_e) <= 10)
     fig("limit L+ (positive samples, Q2 saturates), engine input at 1 kHz", "+16 … +17.5 dBFS (A-051)",
-        f"{db(l_pos_e):+.2f} dBFS (swing {sw_pos:.2f} V; range {db(sw_pos_r[0]/v_fs_o):+.1f} … {db(sw_pos_r[1]/v_fs_o):+.1f})",
+        f"{db(l_pos_e):+.2f} dBFS (swing {sw_pos:.3f} V; range {db(SWING_POS[1]/v_fs_o):+.1f} … {db(SWING_POS[2]/v_fs_o):+.1f})",
         16 <= db(l_pos_e) <= 17.5)
-    a_on = onset_ratio(KNEE_K)
-    fig("knee k", "0.85 (A-051)", f"{KNEE_K}")
-    fig("onset re its limit (0.1 dB compression)", "−1 … −0.3 dB", f"{db(a_on):+.3f} dB", -1 <= db(a_on) <= -0.3)
-    fig("output reaches the limit at (re the limit)", "report", f"{db(2 - KNEE_K):+.3f} dB")
+    a_on_neg, a_on_pos = onset_ratio(KNEE_NEG), onset_ratio(KNEE_POS)
+    fig("knee k− / k+", "0.65 / 0.80 (A-051)", f"{KNEE_NEG} / {KNEE_POS}")
+    # the knees were fitted with the onset held within 0.3 dB of ngspice's (--spice reprints it)
+    fig("onset re its limit (0.1 dB compression), negative / positive", "−3 … −0.3 dB",
+        f"{db(a_on_neg):+.3f} / {db(a_on_pos):+.3f} dB", all(-3 <= db(a) <= -0.3 for a in (a_on_neg, a_on_pos)))
+    fig("onset, engine input at 1 kHz, negative / positive", "report",
+        f"{db(l_neg_e * a_on_neg):+.2f} / {db(l_pos_e * a_on_pos):+.2f} dBFS")
+    fig("output reaches the limit at (re the limit), negative / positive", "report",
+        f"{db(2 - KNEE_NEG):+.3f} / {db(2 - KNEE_POS):+.3f} dB")
     fig("bound after stage 2: L+ + L− (engine units)", "report", f"{l_pos_e + l_neg_e:.4f} ({db(l_pos_e + l_neg_e):+.2f} dBFS)")
     per_rate = {}
     for fs in RATES:
@@ -439,8 +457,8 @@ def realization(nom):
         t = np.arange(n1 + n2) / fs
         amp = np.where(np.arange(n1 + n2) < n1, 10 ** (13 / 20), 10 ** (-20 / 20))
         x = amp * np.cos(2 * math.pi * 1000 * t + r["start_phase"])
-        y_c = run_chain(x, r, l_pos, l_neg, KNEE_K, True)
-        y_l = run_chain(x, r, l_pos, l_neg, KNEE_K, False)
+        y_c = run_chain(x, r, l_pos, l_neg, True)
+        y_l = run_chain(x, r, l_pos, l_neg, False)
         e = np.abs(y_c - y_l)
         tol = 10 ** (-20 / 20) * (10 ** (0.1 / 20) - 1)
         late = np.where(e[n1:] > tol)[0]
@@ -448,16 +466,20 @@ def realization(nom):
         r["settle_ms"] = settle_ms
         fig(f"{fs} recovery within ±0.1 dB after +13 dBFS for 50 ms (US2 AS4)", "≤ 20 ms", f"{settle_ms:.2f} ms", settle_ms <= 20)
         # harmonics of a tone 6 dB above the first (negative) onset: discrete vs continuous
-        a = l_neg_e * a_on * 10 ** (6 / 20)
+        a = l_neg_e * a_on_neg * 10 ** (6 / 20)
         h_d = harmonics(fs, r, a, l_pos, l_neg)
         r["h2_db"], r["h3_db"] = h_d
         per_rate[fs] = r
-    hc = harmonics_continuous(nom, l_pos_e, l_neg_e, a_on)
+    hc = harmonics_continuous(nom, l_pos_e, l_neg_e, a_on_neg)
     for fs in RATES:
         r = per_rate[fs]
+        # At 6 kHz H3 (3 kHz) falls on Nyquist, where the DFT of a real signal reads N·|a·cos φ|,
+        # not N·a/2: the bin is not an amplitude and its "alias" is mostly the phase factor (T054 B3).
+        h3_alias = ("at Nyquist: a·cos φ, not an amplitude" if 3000 * 2 >= fs
+                    else f"{r['h3_db']-hc[1]:+.2f} dB")
         fig(f"{fs} H2 / H3 re the fundamental, 6 dB above the first onset (discrete)", "report (US2 AS3 pins these ±0.5 dB)",
-            f"{r['h2_db']:.2f} / {r['h3_db']:.2f} dB (alias {r['h2_db']-hc[0]:+.2f} / {r['h3_db']-hc[1]:+.2f} dB vs continuous {hc[0]:.2f} / {hc[1]:.2f})")
-    return per_rate, dict(l_pos_e=l_pos_e, l_neg_e=l_neg_e, a_on=a_on, v_fs_o=v_fs_o)
+            f"{r['h2_db']:.2f} / {r['h3_db']:.2f} dB (alias {r['h2_db']-hc[0]:+.2f} / {h3_alias} vs continuous {hc[0]:.2f} / {hc[1]:.2f})")
+    return per_rate, dict(l_pos_e=l_pos_e, l_neg_e=l_neg_e, a_on_neg=a_on_neg, a_on_pos=a_on_pos, v_fs_o=v_fs_o)
 
 
 def harmonics(fs, r, a, l_pos, l_neg):
@@ -466,7 +488,7 @@ def harmonics(fs, r, a, l_pos, l_neg):
     warm = int(fs * 0.5)
     t = np.arange(warm + n) / fs
     x = a * np.cos(2 * math.pi * 1000 * t + r["start_phase"])
-    y = run_chain(x, r, l_pos, l_neg, KNEE_K, True)[warm:]
+    y = run_chain(x, r, l_pos, l_neg, True)[warm:]
     spec = np.fft.rfft(y)
     f1 = abs(spec[periods])
     out = []
@@ -476,7 +498,7 @@ def harmonics(fs, r, a, l_pos, l_neg):
     return out
 
 
-def harmonics_continuous(nom, l_pos_e, l_neg_e, a_on):
+def harmonics_continuous(nom, l_pos_e, l_neg_e, a_on_neg):
     """A near-continuous reference: the analog prototype's sections bilinear at 1.536 MHz."""
     fs = 1536000
     def bil_hp(fc):
@@ -488,7 +510,7 @@ def harmonics_continuous(nom, l_pos_e, l_neg_e, a_on):
     hp_in = [hp_in[0] * g, hp_in[1] * g, hp_in[2]]
     tail = abs(cascade([hp_out, lp], [1000.0], fs)[0])
     r = dict(hp_in=hp_in, hp_out=hp_out, lp=lp, start_phase=-float(np.angle(sect(hp_in, [1000.0], fs)[0])))
-    return harmonics(fs, r, l_neg_e * a_on * 10 ** (6 / 20), l_pos_e / tail, l_neg_e / tail)
+    return harmonics(fs, r, l_neg_e * a_on_neg * 10 ** (6 / 20), l_pos_e / tail, l_neg_e / tail)
 
 
 # =====================================================================================
@@ -531,10 +553,23 @@ def hiss(nom, per_rate):
     # the amplifier's and R2's added floor (A-050; plan review Q10)
     _, gsx = nodal([1000.0])
     amp_floor = -73.0
-    fig("amplifier and R2 floor (A-050, from the reviewer's noise model)", "report", f"≈ {amp_floor:.0f} dBFS (adds {10*math.log10(1+10**((amp_floor-level)/10)):.2f} dB at the anchor)")
-    lo_c = (SELF_NOISE_DBA - 4) - (FULL_SCALE_SPL + 4) + off
-    hi_c = (SELF_NOISE_DBA + 4) - (FULL_SCALE_SPL - 4) + off
-    fig("credible range (S/N 58–62 dB held, full scale 86–94 dB SPL)", "≈ −70 … −54 dBFS (A-048)", f"{lo_c:.1f} … {hi_c:.1f} dBFS")
+    fig("amplifier and R2 floor (A-050, from the reviewer's noise model)", "report",
+        f"≈ {amp_floor:.0f} dBFS (neglected in the level: it adds {10*math.log10(1+10**((amp_floor-level)/10)):.2f} dB at the anchor, inside ±0.5 dB)")
+    # the closed chain (A-029; T054 B2): full scale is the capsule current that puts 0.7 V peak at
+    # GSX; a capsule of S dBV/Pa into CAPSULE_LOAD makes it at FS_SPL = 94 + 20·log10(I·R) − S, and
+    # its self-noise is 94 − S/N dB(A)
+    v1, g1 = nodal([1000.0])
+    i_fs_rms = GSX_FS_PEAK / abs(g1[0]) / math.sqrt(2)
+    fs_spl = lambda sens: 94.0 + 20 * math.log10(i_fs_rms * CAPSULE_LOAD) - sens
+    band = lambda sens, snr: (94.0 - snr) - fs_spl(sens) + off
+    lo_c = band(CAPSULE_DBV_PA[2], CAPSULE_SNR_DB[2])
+    hi_c = band(CAPSULE_DBV_PA[0], CAPSULE_SNR_DB[0])
+    mid_c = band(CAPSULE_DBV_PA[1], CAPSULE_SNR_DB[1])
+    implied = 94.0 + 20 * math.log10(i_fs_rms * CAPSULE_LOAD) - FULL_SCALE_SPL
+    fig("full-scale capsule current at 1 kHz (A-029)", "report", f"{i_fs_rms*1e6:.3f} µA rms")
+    fig("credible range (closed chain: capsules −35 … −44 dBV/Pa at S/N 58 … 62 dB)", "report (A-048)",
+        f"{lo_c:.1f} … {hi_c:.1f} dBFS (a −40 dBV/Pa capsule at S/N 60: {mid_c:.1f})")
+    fig("capsule the default implies (S/N 60 dB at 90 dB SPL full scale)", "report (A-048)", f"{implied:.1f} dBV/Pa")
     # sigma per rate through the realized response
     for fs in RATES:
         r = per_rate[fs]
@@ -568,7 +603,15 @@ def ziggurat():
     ratio = [x[i + 1] / x[i] for i in range(ZIG_LAYERS)]
     ok = all(x[i] > x[i + 1] for i in range(1, ZIG_LAYERS)) and x[ZIG_LAYERS - 1] < 0.5
     fig("ziggurat tables (128 layers)", "X decreasing; X[127] small", f"X[0] {x[0]:.6f}, X[1] {x[1]:.6f}, X[127] {x[127]:.6f}", ok)
-    p_cap = (0.013) ** RETRY_CAP  # the per-attempt rejection probability is about 1.3 %
+    # the cap's probability per sample (T054 B6): the main loop rejects an attempt with
+    # 1 − (area under the half-normal) / (the ziggurat's area); the tail is entered from layer 0
+    # outside its rectangle, and Marsaglia's tail method rejects with 1 − R·e^(R²/2)·∫_R^∞ e^(−t²/2)
+    p_main = 1.0 - math.sqrt(math.pi / 2) / (ZIG_LAYERS * ZIG_V)
+    p_tail_entry = (1.0 - ZIG_R * f(ZIG_R) / ZIG_V) / ZIG_LAYERS
+    p_tail = 1.0 - ZIG_R * math.exp(ZIG_R ** 2 / 2) * math.sqrt(math.pi / 2) * math.erfc(ZIG_R / math.sqrt(2))
+    p_cap = p_main ** RETRY_CAP + p_tail_entry * p_tail ** RETRY_CAP
+    fig("rejection per attempt: main loop / tail entry / tail loop", "report (A-049)",
+        f"{p_main:.4f} / {p_tail_entry:.2e} / {p_tail:.4f}")
     fig("retry cap", f"{RETRY_CAP} attempts per loop (A-049)", f"P(cap) ≈ {p_cap:.1e} per sample", p_cap < 1e-12)
     return x, ratio
 
@@ -580,7 +623,10 @@ def mix64(z):
 
 
 def key(seed, counter):
-    z = mix64(seed ^ MIC_STREAM) ^ mix64(counter ^ MIC_COUNTER_SALT)
+    # nested, not two mixes XORed: mix64(seed ^ S) ^ mix64(counter ^ T) is symmetric under
+    # (seed, counter) -> (counter ^ S ^ T, seed ^ S ^ T), so whole families of (seed, counter)
+    # pairs shared a stream (T054 B5); this form is a bijection in each argument
+    z = mix64(mix64(seed ^ MIC_STREAM) ^ counter ^ MIC_COUNTER_SALT)
     s = []
     for _ in range(4):
         z = (z + 0x9E3779B97F4A7C15) & M64
@@ -650,7 +696,61 @@ def spice(nom):
     print(f"  ngspice corners: {fa:.1f} / {fb:.1f} / {fc:.0f} Hz (fit residual {np.max(np.abs(res(sol.x))):.3f} dB)")
     print(f"  nodal corners:   {nom['fa']:.1f} / {nom['fb']:.1f} / {nom['fc']:.0f} Hz")
     print(f"  input corner difference: {dev*100:+.1f} % (gate: within ±10 %)")
-    return abs(dev) <= 0.10
+    corner_ok = abs(dev) <= 0.10
+    return corner_ok and spice_clip(exe)
+
+
+def spice_clip(exe):
+    """The clip-level gate (T054 B1): a 1 kHz transient at each of SPICE_LEVELS, the output's
+    swing from its operating point over the 90 – 100 ms window, against the model's clipper
+    (the limits and knees above) on the linear swing; the model within SPICE_CLIP_GATE_DB of
+    ngspice at every level, each polarity. Prints the minimax refit for comparison."""
+    print("  clip levels (1 kHz transient; the output's swing from its operating point):")
+    v, gsx = nodal([1000.0])
+    v_fs_o = GSX_FS_PEAK / abs(gsx[0] / v[0, 4])
+    i_fs = v_fs_o / abs(v[0, 4])  # capsule current peak for 0 dBFS at 1 kHz
+    net = SPICE.read_text()
+    ctrl = net[net.index(".control"):net.index(".endc") + len(".endc")]
+    rows = []
+    with tempfile.TemporaryDirectory() as d:
+        for lvl in SPICE_LEVELS:
+            amp = i_fs * 10 ** (lvl / 20)
+            n = net.replace("IMIC 0 m DC 0 AC 1", f"IMIC 0 m DC 0 SIN(0 {amp:.6e} 1k)").replace(
+                ctrl, ".control\nop\nprint v(o)\ntran 1u 100m 90m\nmeas tran omax MAX v(o)\nmeas tran omin MIN v(o)\n.endc")
+            cir = Path(d) / "tran.cir"
+            cir.write_text(n)
+            out = subprocess.run([exe, "-b", str(cir)], capture_output=True, text=True, timeout=120).stdout
+            vals = {}
+            for line in out.splitlines():
+                t = line.strip().split()
+                if len(t) >= 3 and t[1] == "=" and t[0] in ("omax", "omin", "v(o)"):
+                    vals[t[0]] = float(t[2])
+            if len(vals) < 3:
+                print(out[-2000:])
+                return False
+            rows.append((lvl, vals["v(o)"] - vals["omin"], vals["omax"] - vals["v(o)"]))
+    ok = True
+    db = lambda a: 20 * math.log10(a)
+    model = lambda a, L, k: L * float(knee(a / L, k))
+    for name, col, (L, k) in (("negative", 1, (SWING_NEG[0], KNEE_NEG)), ("positive", 2, (SWING_POS[0], KNEE_POS))):
+        errs = [db(model(v_fs_o * 10 ** (lvl / 20), L, k) / row[col]) for lvl, row in zip(SPICE_LEVELS, rows)]
+        worst = max(abs(e) for e in errs)
+        print(f"    {name}: " + ", ".join(f"{lvl:+g} {row[col]:.3f} V ({e:+.2f})" for lvl, row, e in zip(SPICE_LEVELS, rows, errs)))
+        # the minimax refit, the onset held within 0.3 dB of ngspice's 0.1 dB compression point
+        comp = [db(row[col] / (v_fs_o * 10 ** (lvl / 20))) for lvl, row in zip(SPICE_LEVELS, rows)]
+        on = next(SPICE_LEVELS[i - 1] + (-0.1 - comp[i - 1]) / (comp[i] - comp[i - 1]) * (SPICE_LEVELS[i] - SPICE_LEVELS[i - 1])
+                  for i in range(1, len(comp)) if comp[i] <= -0.1 < comp[i - 1])
+        best = None
+        for Lf in np.arange(0.40, 1.60, 0.001):
+            for kf in np.arange(0.50, 0.99, 0.01):
+                if abs(db(Lf / v_fs_o * onset_ratio(kf)) - on) <= 0.3:
+                    e = max(abs(db(model(v_fs_o * 10 ** (lvl / 20), Lf, kf) / row[col])) for lvl, row in zip(SPICE_LEVELS, rows))
+                    if best is None or e < best[0]:
+                        best = (e, Lf, kf)
+        print(f"    {name}: the model (L {L:.3f} V = {db(L / v_fs_o):+.2f} dBFS, k {k}) worst {worst:.2f} dB "
+              f"(gate ±{SPICE_CLIP_GATE_DB}); ngspice onset {on:+.2f} dBFS; refit L {best[1]:.3f} V, k {best[2]:.2f}, worst {best[0]:.2f} dB")
+        ok = ok and worst <= SPICE_CLIP_GATE_DB
+    return ok
 
 
 def hexbits(x):
@@ -711,8 +811,10 @@ def write(per_rate, clipinfo, xz, ratio):
     per("CLIP_POS", "The clipper's positive limit L+ in clipper units per host rate (A-051).", "l_pos")
     per("CLIP_NEG", "The clipper's negative limit L− in clipper units per host rate (A-051).", "l_neg")
     per("START_PHASE", "The 1 kHz start phase that puts a host sample on the clipper-input peak (radians; harness).", "start_phase")
-    lines.append("/// The knee start (A-051; spec 009's knee).")
-    lines.append(f"pub(crate) const KNEE_K: f64 = f64::from_bits({hexbits(KNEE_K)}); // {KNEE_K}")
+    lines.append("/// The knee start at the positive limit (A-051; spec 009's knee).")
+    lines.append(f"pub(crate) const KNEE_POS: f64 = f64::from_bits({hexbits(KNEE_POS)}); // {KNEE_POS}")
+    lines.append("/// The knee start at the negative limit (A-051; spec 009's knee).")
+    lines.append(f"pub(crate) const KNEE_NEG: f64 = f64::from_bits({hexbits(KNEE_NEG)}); // {KNEE_NEG}")
     lines.append("")
     lines.append("/// The ziggurat's layer abscissae, Doornik's ZIGNOR layout, 128 layers (A-049).")
     lines.append(f"pub(crate) const ZIG_X: [f64; {ZIG_LAYERS + 1}] = [")
