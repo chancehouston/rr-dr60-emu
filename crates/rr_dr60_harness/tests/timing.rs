@@ -380,15 +380,28 @@ fn output_cost() {
     }
 }
 
+/// `output_clamp_cost`'s budget in percent: SC-005's 3 % on the development machine;
+/// `RR_DR60_CLAMP_COST_CEILING` overrides it (ci.yml sets 5 on the shared x86-64 runner, where
+/// the clamp's NaN-safe max / min costs about 2.5 %, read 2.46 – 3.60 % over four runs; spec 010
+/// SC-005 amended 2026-10-17).
+fn clamp_cost_ceiling() -> f64 {
+    std::env::var("RR_DR60_CLAMP_COST_CEILING")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3.0) // 010 SC-005
+}
+
 /// Spec 010 SC-005 (tasks.md T017; research R-08): the output clamp adds at most 2 ns per host
 /// sample to the codec-bypassed speaker route's one-pass cost at 48 kHz on full-scale noise at
 /// position 1 (a large share of samples replaced). The budget is SC-005's "about 3 %" of the
 /// option-off cost, asserted as a ratio so it means the same on every machine (2 ns was 3 % of
 /// the development machine's 68 ns; the x86-64 CI runner is about twice as slow, and its IEEE
 /// max / min with NaN handling takes a few instructions where aarch64 takes one). Each side is
-/// the fastest of nine alternating runs (the noise-robust estimator of 009's `output_cost`);
-/// both routes, the nanoseconds and the bounded share printed; the latencies unchanged. Quote
-/// the figures from a solo run.
+/// the fastest of 45 strictly alternating runs (spec 012's estimator, research R-09: the fastest
+/// of nine is run-order sensitive); both routes, the nanoseconds and the bounded share printed;
+/// the latencies unchanged. The 3 % budget is asserted on the development machine;
+/// `RR_DR60_CLAMP_COST_CEILING` overrides it (ci.yml sets 5 on the shared runner, where the
+/// clamp itself costs about 2.5 %: SC-005 amended 2026-10-17). Quote the figures from a solo run.
 #[test]
 #[ignore = "release-mode timing; run with --ignored"]
 fn output_clamp_cost() {
@@ -417,7 +430,7 @@ fn output_clamp_cost() {
     };
     for route in [Route::Speaker, Route::Earphone] {
         let (mut m_on, mut m_off) = (f64::MAX, f64::MAX);
-        for _ in 0..9 {
+        for _ in 0..45 {
             m_on = m_on.min(one(on, route));
             m_off = m_off.min(one(off, route));
         }
@@ -428,13 +441,14 @@ fn output_clamp_cost() {
         let _ = p.process_in_place(&mut buf);
         let share = 100.0 * buf.iter().filter(|v| v.abs() == 1.0).count() as f64 / buf.len() as f64;
         let over = 100.0 * (m_on / m_off - 1.0);
+        let ceiling = clamp_cost_ceiling();
         println!(
-            "output clamp, {route:?} route, 48 kHz, 4096 blocks, full-scale noise at position 1: best of nine {m_on:.1} ns per host sample on, {m_off:.1} off, {:+.2} ns ({over:+.2} %); {share:.1} % of samples at the bound (010 SC-005: budget about 3 % on the speaker route, 2 ns on the development machine)",
+            "output clamp, {route:?} route, 48 kHz, 4096 blocks, full-scale noise at position 1: best of 45 {m_on:.1} ns per host sample on, {m_off:.1} off, {:+.2} ns ({over:+.2} %); {share:.1} % of samples at the bound (010 SC-005: budget about 3 % on the speaker route, 2 ns on the development machine; ceiling here {ceiling} %)",
             m_on - m_off
         );
         if route == Route::Speaker {
             assert!(
-                over <= 3.0,
+                over <= ceiling,
                 "the output clamp adds {over:.2} % ({:.2} ns) (010 SC-005)",
                 m_on - m_off
             );
