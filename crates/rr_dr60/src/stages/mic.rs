@@ -20,10 +20,10 @@ use rr_dr60_detmath::{exp, ln};
 use crate::settings::MicSettings;
 use crate::stages::first_order::FirstOrder;
 use crate::stages::mic_coeffs::{
-    HISS_SIGMA, HP_IN, HP_OUT, LP, MIC_COUNTER_SALT, MIC_STREAM, RETRY_CAP, ZIG_RATIO, ZIG_TAIL_R,
-    ZIG_X,
+    CLIP_NEG, CLIP_POS, HISS_SIGMA, HP_IN, HP_OUT, KNEE_K, LP, MIC_COUNTER_SALT, MIC_STREAM,
+    RETRY_CAP, ZIG_RATIO, ZIG_TAIL_R, ZIG_X,
 };
-use crate::stages::output::rate_index;
+use crate::stages::output::{knee, rate_index};
 
 /// SplitMix64's increment (Steele, Lea & Flood 2014), the keying's state expansion (A-049).
 const GOLDEN_GAMMA: u64 = 0x9E37_79B9_7F4A_7C15; // A-049
@@ -67,9 +67,14 @@ pub(crate) struct MicCapsule {
     counter: u64,
     /// σ_rate · 10^(offset / 20), computed at construction.
     gain: f64,
-    /// Test-only: every rejection loop runs to its cap (A-049's cap path, spec 012 T023).
-    #[cfg(test)]
+    /// Test-only: every rejection loop runs to its cap (A-049's cap path, spec 012 T023;
+    /// `MicMutation::force_retry_cap`).
+    #[cfg(any(test, feature = "__test-hooks"))]
     force_cap: bool,
+    /// Test-only: the counter ignored, every stream keyed to counter 0 (the `shared_stream`
+    /// mutant, spec 012 T033).
+    #[cfg(any(test, feature = "__test-hooks"))]
+    shared: bool,
 }
 
 impl MicCapsule {
@@ -84,14 +89,18 @@ impl MicCapsule {
             seed,
             counter: 0,
             gain,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "__test-hooks"))]
             force_cap: false,
+            #[cfg(any(test, feature = "__test-hooks"))]
+            shared: false,
         })
     }
 
     /// Keys the stream to `(seed, counter)` from its beginning (FR-009).
     pub(crate) fn rekey(&mut self, counter: u64) {
         self.counter = counter;
+        #[cfg(any(test, feature = "__test-hooks"))]
+        let counter = if self.shared { 0 } else { counter };
         self.state = key(self.seed, counter);
     }
 
@@ -174,14 +183,23 @@ impl MicCapsule {
     /// Whether the test hook forces every loop to its cap.
     #[inline(always)]
     fn forced(&self) -> bool {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "__test-hooks"))]
         {
             self.force_cap
         }
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "__test-hooks")))]
         {
             false
         }
+    }
+
+    /// Test-only: applies `m`'s capsule mutants (spec 012 T033).
+    #[cfg(feature = "__test-hooks")]
+    fn mutate(&mut self, m: &crate::__test_hooks::MicMutation) {
+        self.force_cap = m.force_retry_cap;
+        self.shared = m.shared_stream;
+        self.gain *= exp(f64::from(m.hiss_db_delta) * core::f64::consts::LN_10 / 20.0);
+        self.reset();
     }
 }
 
@@ -191,8 +209,56 @@ impl MicCapsule {
 #[derive(Clone, Debug)]
 pub(crate) struct MicAmp {
     hp_in: FirstOrder,
+    /// The clipper (A-051), in clipper units: the input high-pass's output.
+    clip: Clipper,
     hp_out: FirstOrder,
     lp: FirstOrder,
+}
+
+/// The memoryless asymmetric soft clipper (spec 012 FR-006; research R-03; A-051): exactly
+/// linear for −k·L₋ ≤ v ≤ k·L₊; above, spec 009's parabolic knee scaled to each polarity's limit
+/// (C¹ at the joint, the limit reached at (2 − k)·L and held). Negative samples (the polarity
+/// the limiter does not sense, A-036) are limited first: L₋ < L₊.
+#[derive(Clone, Copy, Debug)]
+struct Clipper {
+    /// L₊, L₋ and their reciprocals.
+    l_pos: f64,
+    l_neg: f64,
+    inv_pos: f64,
+    inv_neg: f64,
+    /// The linear range's ends k·L₊ and −k·L₋.
+    hi: f64,
+    lo: f64,
+}
+
+impl Clipper {
+    /// The clipper for limits `l_pos`, `l_neg` (clipper units).
+    fn new(l_pos: f64, l_neg: f64) -> Self {
+        Self {
+            l_pos,
+            l_neg,
+            inv_pos: 1.0 / l_pos,
+            inv_neg: 1.0 / l_neg,
+            hi: KNEE_K * l_pos,
+            lo: -KNEE_K * l_neg,
+        }
+    }
+
+    /// One sample. Selects, not branches on the signal: the linear range returns `v` itself
+    /// (bit-exact, US2 AS4); outside it, `L·knee(v / L, k)` for the sample's polarity (`knee` is
+    /// odd, so the negative side is −L₋·knee(−v / L₋, k)).
+    #[inline(always)]
+    fn apply(&self, v: f64) -> f64 {
+        let pos = v > 0.0;
+        let l = if pos { self.l_pos } else { self.l_neg };
+        let inv = if pos { self.inv_pos } else { self.inv_neg };
+        let bent = l * knee(v * inv, KNEE_K);
+        if v >= self.lo && v <= self.hi {
+            v
+        } else {
+            bent
+        }
+    }
 }
 
 impl MicAmp {
@@ -200,17 +266,52 @@ impl MicAmp {
     pub(crate) fn new(host_rate_hz: u32) -> Option<Self> {
         let i = rate_index(host_rate_hz)?;
         Some(Self {
-            hp_in: FirstOrder::new(HP_IN[i]),   // A-046
-            hp_out: FirstOrder::new(HP_OUT[i]), // A-047, A-053
-            lp: FirstOrder::new(LP[i]),         // A-047, A-053
+            hp_in: FirstOrder::new(HP_IN[i]),             // A-046
+            clip: Clipper::new(CLIP_POS[i], CLIP_NEG[i]), // A-051
+            hp_out: FirstOrder::new(HP_OUT[i]),           // A-047, A-053
+            lp: FirstOrder::new(LP[i]),                   // A-047, A-053
         })
     }
 
-    /// One host sample. The clipper is linear until spec 012 US2 adds it (tasks.md T026).
+    /// One host sample.
     #[inline]
     pub(crate) fn process(&mut self, x: f64) -> f64 {
         let v = self.hp_in.process(x);
-        self.lp.process(self.hp_out.process(v))
+        let c = self.clip(v);
+        self.lp.process(self.hp_out.process(c))
+    }
+
+    /// The clipper (spec 012 FR-006; A-051).
+    #[inline(always)]
+    fn clip(&self, v: f64) -> f64 {
+        self.clip.apply(v)
+    }
+
+    /// Test-only: one host sample with the clipper's own input and output (spec 012 T033).
+    #[cfg(feature = "__test-hooks")]
+    fn process_traced(&mut self, x: f64) -> (f64, f64) {
+        let v = self.hp_in.process(x);
+        let c = self.clip(v);
+        let _ = self.lp.process(self.hp_out.process(c));
+        (v, c)
+    }
+
+    /// Test-only: applies `m`'s amplifier mutants (spec 012 T033).
+    #[cfg(feature = "__test-hooks")]
+    fn mutate(&mut self, m: &crate::__test_hooks::MicMutation) {
+        if m.no_input_hp {
+            self.hp_in = FirstOrder::new([1.0, 0.0, 0.0]);
+        }
+        let (p, n) = (self.clip.l_pos, self.clip.l_neg);
+        if m.symmetric_clip {
+            self.clip = Clipper::new(n, n);
+        } else if m.swapped_polarity {
+            self.clip = Clipper::new(n, p);
+        }
+        if m.clipper_off {
+            self.clip = Clipper::new(f64::INFINITY, f64::INFINITY);
+        }
+        self.reset();
     }
 
     /// Every section at rest (FR-009).
@@ -295,6 +396,28 @@ impl MicFront {
         if let Some(a) = &mut self.amp {
             a.reset();
         }
+    }
+
+    /// Test-only: applies `m` to both stages (spec 012 T033).
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn mutate(&mut self, m: &crate::__test_hooks::MicMutation) {
+        if let Some(c) = &mut self.capsule {
+            c.mutate(m);
+        }
+        if let Some(a) = &mut self.amp {
+            a.mutate(m);
+        }
+    }
+
+    /// Test-only: stage 1 then stage 2's input high-pass and clipper for `x`, returning the
+    /// clipper's input and output; `None` with stage 2 off (spec 012 T033).
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn clip_trace(&mut self, x: f64) -> Option<(f64, f64)> {
+        let x = match &mut self.capsule {
+            Some(c) => c.process(x),
+            None => x,
+        };
+        self.amp.as_mut().map(|a| a.process_traced(x))
     }
 }
 
@@ -575,5 +698,74 @@ mod tests {
         f.rekey(9);
         c.rekey(9);
         assert_eq!(f.process(0.0).to_bits(), (c.gain * c.gauss()).to_bits());
+    }
+
+    /// 012 T036 (FR-006; A-051): the clipper is exactly the identity inside −k·L₋ … k·L₊ and
+    /// reaches but never exceeds either limit; the knee is continuous at the joints and
+    /// monotonic; negative samples are limited first at every rate.
+    #[test]
+    fn clipper_linear_inside_bounded_outside() {
+        use crate::stages::mic_coeffs::{CLIP_NEG, CLIP_POS};
+        for i in 0..SUPPORTED_HOST_RATES.len() {
+            let (lp, ln) = (CLIP_POS[i], CLIP_NEG[i]);
+            assert!(ln < lp, "L- < L+ (A-051, A-036)");
+            let c = Clipper::new(lp, ln);
+            let mut prev = f64::MIN;
+            for n in -200_000..=200_000 {
+                let v = f64::from(n) * 1e-4; // −20 … +20 clipper units
+                let y = c.apply(v);
+                if v >= -0.85 * ln && v <= 0.85 * lp {
+                    assert_eq!(y.to_bits(), v.to_bits(), "linear at {v}");
+                }
+                assert!(y <= lp && y >= -ln, "{v} → {y}");
+                assert!(y >= prev, "monotonic at {v}");
+                prev = y;
+            }
+            assert_eq!(c.apply(1e30), lp);
+            assert_eq!(c.apply(-1e30), -ln);
+            assert_eq!(c.apply((2.0 - 0.85) * lp), lp, "the limit at (2 − k)·L");
+            // Continuity at the joints.
+            for (j, l) in [(0.85 * lp, lp), (-0.85 * ln, ln)] {
+                let d = (c.apply(j * (1.0 + 1e-12)) - c.apply(j)).abs();
+                assert!(d < 1e-9 * l, "continuous at {j}");
+            }
+        }
+    }
+
+    /// 012 T036 (US2 AS4): the clipper is memoryless: the amplifier's clipper output depends on
+    /// the current input high-pass output alone, so after a clipped burst the amplifier equals
+    /// a clipper-off twin's response to the same tail plus the sections' decaying difference.
+    #[test]
+    fn clipper_is_memoryless_and_the_off_twin_is_linear() {
+        let c = Clipper::new(6.6, 2.3);
+        let off = Clipper::new(f64::INFINITY, f64::INFINITY);
+        for v in [-1e6, -3.0, -1.0, 0.0, 1.0, 5.0, 1e6] {
+            assert_eq!(
+                off.apply(v).to_bits(),
+                v.to_bits(),
+                "the off twin is the identity"
+            );
+        }
+        // Same input, any history: the same output.
+        let seq = [10.0, -10.0, 0.5, 100.0, 0.5];
+        let outs: Vec<f64> = seq.iter().map(|&v| c.apply(v)).collect();
+        assert_eq!(outs[2].to_bits(), outs[4].to_bits());
+        assert_eq!(outs[2], 0.5);
+    }
+
+    /// 012 T036 (research R-11's mutants): a symmetric clipper limits both polarities at L₋;
+    /// a swapped one exchanges the limits.
+    #[test]
+    fn symmetric_and_swapped_clippers() {
+        let (lp, ln) = (6.6, 2.3);
+        let sym = Clipper::new(ln, ln);
+        let swp = Clipper::new(ln, lp);
+        assert_eq!(sym.apply(1e9), ln);
+        assert_eq!(sym.apply(-1e9), -ln);
+        assert_eq!(swp.apply(1e9), ln);
+        assert_eq!(swp.apply(-1e9), -lp);
+        for v in [0.3, 1.5, 3.0, 9.0] {
+            assert_eq!(sym.apply(v), -sym.apply(-v), "odd at {v}");
+        }
     }
 }

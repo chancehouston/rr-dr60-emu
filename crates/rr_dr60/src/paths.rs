@@ -614,6 +614,19 @@ impl RecordPath {
         self.counters.reset();
     }
 
+    /// Test-only: stages 1 – 2 altered by `m` (spec 012 T033).
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn mutate_mic(&mut self, m: &crate::__test_hooks::MicMutation) {
+        self.mic.mutate(m);
+    }
+
+    /// Test-only: the clipper's input and output for host sample `x` (spec 012 T033): stage 1,
+    /// then stage 2's input high-pass and clipper; `None` with stage 2 off.
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn mic_clip_trace(&mut self, x: f32) -> Option<(f64, f64)> {
+        self.mic.clip_trace(sanitize_in(x))
+    }
+
     /// Test-only: stage 4 with other coefficients (the SC-007 mutation tests, spec 004 T024);
     /// the latency follows.
     #[cfg(feature = "__test-hooks")]

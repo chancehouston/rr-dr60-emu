@@ -302,6 +302,28 @@ pub mod __test_hooks {
         pub volume_ramp_delta: i64,
     }
 
+    /// A deliberate alteration of the microphone path (stages 1 – 2) for the spec 012 mutation
+    /// tests and the clipper-off twin (`Pipeline::__with_mic_mutation`; tasks.md T033).
+    /// `Default` is the committed path.
+    #[derive(Clone, Copy, Debug, PartialEq, Default)]
+    pub struct MicMutation {
+        /// The input high-pass skipped (an identity in its place, without the 1 kHz
+        /// normalization).
+        pub no_input_hp: bool,
+        /// A symmetric clipper: L₊ = L₋ (both polarities limited at the negative limit).
+        pub symmetric_clip: bool,
+        /// The limits exchanged between the polarities.
+        pub swapped_polarity: bool,
+        /// The recording counter ignored: every stream keyed to counter 0.
+        pub shared_stream: bool,
+        /// The hiss level moved by this many dB (0: as committed).
+        pub hiss_db_delta: f32,
+        /// The clipper removed: the linear twin of US2 AS4's oracle.
+        pub clipper_off: bool,
+        /// The ziggurat's cap path taken on every draw (A-049).
+        pub force_retry_cap: bool,
+    }
+
     impl Default for OutputMutation {
         fn default() -> Self {
             Self {

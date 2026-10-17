@@ -304,23 +304,23 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
 
 ### Tests for User Story 2 (write first; red against the linear stand-in)
 
-- [ ] T033 [US2] Hooks in `crates/rr_dr60/src/lib.rs` (`__test_hooks`), `pipeline.rs` and `stages/mic.rs`:
+- [x] T033 [US2] Hooks in `crates/rr_dr60/src/lib.rs` (`__test_hooks`), `pipeline.rs` and `stages/mic.rs`:
   - `MicMutation { no_input_hp, symmetric_clip, swapped_polarity, shared_stream, hiss_db_delta, clipper_off, force_retry_cap }`;
   - `Pipeline::__with_mic_mutation`;
   - `Pipeline::__mic_clip_trace(&mut self, input: &[f32], trace: &mut [(f64, f64)])`, which writes the engine's own clipper input and output per sample at the tap after stage 2.
 
   Inert apart from what US1 used.
-- [ ] T034 [US2] US2 checks in `crates/rr_dr60_harness/src/mic_checks.rs`, with the figures from T004's print:
+- [x] T034 [US2] US2 checks in `crates/rr_dr60_harness/src/mic_checks.rs`, with the figures from T004's print:
   - **`static_curve`:** through the trace, the output equals the input exactly below k·L, never exceeds L, and the onsets and limits equal the script's (US2 AS1);
   - **`engine_onsets(rate)`:** 1 kHz tones at the printed start phase, levels stepped; onsets and limits within ±0.5 dB at the engine input, whatever `agc.knee_dbfs`;
   - **`bound(rate)`:** +40 dBFS tones, steps, a square toggling between ±L and random full-range input; every sample after stage 2 within L₊ + L₋, rounded up to f32 (US2 AS2, SC-003);
   - **`harmonics(rate)`:** a tone 6 dB above the first onset; H2 and H3 within ±0.5 dB of the discrete model, with the alias level reported (US2 AS3);
   - **`recovery(rate)`:** +13 dBFS for 50 ms then −20 dBFS against the `clipper_off` twin; the difference is exactly the decaying tail, and within ±0.1 dB by the printed settle time (US2 AS4).
-- [ ] T035 [P] [US2] Create `crates/rr_dr60_harness/tests/us2_mic.rs` with T034's checks at `measurement_rates()`. Run it: **red** (the clipper is the identity).
+- [x] T035 [P] [US2] Create `crates/rr_dr60_harness/tests/us2_mic.rs` with T034's checks at `measurement_rates()`. Run it: **red** (the clipper is the identity).
 
 ### Implementation for User Story 2
 
-- [ ] T036 [US2] The clipper in `crates/rr_dr60/src/stages/mic.rs` (FR-006; R-03):
+- [x] T036 [US2] The clipper in `crates/rr_dr60/src/stages/mic.rs` (FR-006; R-03):
   - `y = v` when −k·L₋ ≤ v ≤ k·L₊; otherwise `L₊·knee(v·inv₊, k)` for v > 0 and `−L₋·knee(−v·inv₋, k)` for v < 0, as branchless selects (reuse `stages::output::knee`, already `pub(crate)`);
   - the limits from `mic_coeffs`;
   - the mutants wired;

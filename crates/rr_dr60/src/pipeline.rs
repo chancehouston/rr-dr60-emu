@@ -734,6 +734,42 @@ impl Pipeline {
         Ok(p)
     }
 
+    /// Test-only (hidden): a pipeline whose microphone path (stages 1 – 2) is altered by `m` in
+    /// the one-pass and in the recorder (spec 012 T033: the mutants of research R-11 and the
+    /// clipper-off twin of US2 AS4); `MicMutation::default()` is the committed path.
+    ///
+    /// # Errors
+    ///
+    /// As [`Pipeline::new`].
+    #[doc(hidden)]
+    pub fn __with_mic_mutation(
+        settings: Settings,
+        m: &crate::__test_hooks::MicMutation,
+    ) -> Result<Self, Error> {
+        let mut p = Self::new(settings)?;
+        p.one_pass.rec.mutate_mic(m);
+        p.recorder.mutate_mic(m);
+        Ok(p)
+    }
+
+    /// Test-only (hidden): the clipper probe (spec 012 US2 AS1; contracts/rust-api.md › Test
+    /// hooks). Runs `input` through the one-pass front's stages 1 – 2 (not the limiter or
+    /// anything after it) and writes the engine's own clipper input and output per sample to
+    /// `trace`, in clipper units. Returns the number of samples written: the shorter length, or
+    /// 0 with stage 2 off. It advances the one-pass's stages 1 – 2.
+    #[doc(hidden)]
+    pub fn __mic_clip_trace(&mut self, input: &[f32], trace: &mut [(f64, f64)]) -> usize {
+        let mut n = 0;
+        for (&x, slot) in input.iter().zip(trace.iter_mut()) {
+            match self.one_pass.rec.mic_clip_trace(x) {
+                Some(t) => *slot = t,
+                None => return 0,
+            }
+            n += 1;
+        }
+        n
+    }
+
     /// Test-only (hidden): a one-pass pipeline with the FR-009 `f32` narrowing of the post-VAS
     /// device-rate stream enabled (the shipped behaviour) or disabled (the pre-0.6 engine), so
     /// the harness can measure the narrowing's effect (spec 006 research R-02;

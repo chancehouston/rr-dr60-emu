@@ -1,13 +1,14 @@
-//! Spec 012 seven-rate report of the microphone path (tasks.md T032): User Story 1's rows at
-//! every host rate (the band's deviations from the prototype, the realized −3 dB points, the
-//! 1 kHz group delay, the hiss's level and shape at the offsets, the streams' cross-correlations),
-//! each asserted. Report: `cargo test -p rr_dr60_harness --test mic_matrix -- --nocapture`.
+//! Spec 012 seven-rate report of the microphone path (tasks.md T032, T036): User Story 1's rows
+//! at every host rate (the band's deviations from the prototype, the realized −3 dB points, the
+//! 1 kHz group delay, the hiss's level and shape at the offsets, the streams' cross-correlations)
+//! and User Story 2's (the clipper's static curve, onsets, limits, bound, harmonics and
+//! recovery), each asserted. Report: `cargo test -p rr_dr60_harness --test mic_matrix -- --nocapture`.
 //! Release-only: `cargo test -p rr_dr60_harness --release --test mic_matrix -- --ignored
 //! --nocapture` (the 60-minute hiss at 48 kHz, US1 AS5).
 //!
-//! The band and the hiss are per-rate figures and cheap, so they run at all seven rates
-//! (`configs::all_rates`); the streams process 1.4 M samples per rate and their figures do not
-//! depend on the rate (the draws are the same, only σ scales them), so they run at the
+//! The band, the hiss and the clipper are per-rate figures and cheap, so they run at all seven
+//! rates (`configs::all_rates`); the streams process 1.4 M samples per rate and their figures do
+//! not depend on the rate (the draws are the same, only σ scales them), so they run at the
 //! measurement rates (`configs::measurement_rates`).
 
 use rr_dr60::Pipeline;
@@ -44,6 +45,26 @@ fn hiss_at_seven_rates() {
                     .iter()
                     .flat_map(move |&o| mic::hiss_level(&standard, r, o))
                     .collect::<Vec<_>>()
+            })
+            .collect(),
+    );
+}
+
+/// US2 AS1 – AS4 (SC-003) at the seven rates: the static curve, the engine-input onsets and
+/// limits, the bound, the harmonics against the discrete model (with the alias levels) and the
+/// recovery.
+#[test]
+fn clipper_at_seven_rates() {
+    finish(
+        configs::all_rates()
+            .iter()
+            .flat_map(|&r| {
+                let mut rows = mic::static_curve(&standard, r);
+                rows.extend(mic::engine_onsets(&standard, r));
+                rows.extend(mic::bound(&standard, r));
+                rows.extend(mic::harmonics(&standard, r));
+                rows.extend(mic::recovery(&standard, r));
+                rows
             })
             .collect(),
     );
