@@ -372,12 +372,14 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
   - `scripts/ab-timing.sh`: an optional second argument (the head build's test name, default `output_cost`); the default baseline becomes `c9f9994`; the comment says what each mode measures;
   - `.github/workflows/ab-timing.yml`: baseline `c9f9994` and a second step `scripts/ab-timing.sh c9f9994 output_cost_mic`;
   - `.github/workflows/ci.yml`: the release timing step sets the environment variable that `mic_cost` reads, so the 25 % CI ceiling applies there (spec FR-011; the analysis finding U1).
-- [ ] T042 [US3] Run the cost measurements solo on the development machine:
+- [x] T042 [US3] Run the cost measurements solo on the development machine:
   - `cargo test -p rr_dr60_harness --release --test timing mic_cost -- --ignored --nocapture --test-threads=1`;
   - `scripts/ab-timing.sh` (bypassed against 0.11: ≤ 3 %);
   - `scripts/ab-timing.sh c9f9994 output_cost_mic` (on against 0.11: reported).
 
   Record the figures against the budgets in research R-09 › As measured. If `mic_cost` exceeds 10 %, stop and take R-09's fallback to review.
+
+  *Done 2026-10-16:* the specified fastest-of-nine protocol read +15 – 18 % (run-order sensitive); R-09's fallback was not taken; by the user's decision `mic_cost` uses 45 strictly alternating runs (+5.4 – 5.9 %) and the cross-build "on" figure (+5.8 %) corroborates it. Figures in research R-09 › As measured.
 
 **Checkpoint**: SC-006, SC-010; all five mutants caught. Commit: `test(012): the microphone path in the whole engine, the mutants and the cost (US3)`.
 

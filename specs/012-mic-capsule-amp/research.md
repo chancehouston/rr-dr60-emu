@@ -327,13 +327,13 @@ The gate pauses reliably when threshold − hiss RMS ≥ about 9 dB, and fails b
 
 ### Measurement conditions
 
-48 kHz, codec bypassed, speaker route, release build, timing tests one at a time, each side the fastest of nine alternating runs.
+48 kHz, codec bypassed, speaker route, release build, timing tests one at a time. In one build each side is the fastest of 45 strictly alternating runs; across builds, the fastest of nine alternating rounds (`scripts/ab-timing.sh`). *(The in-build protocol was the fastest of nine alternating runs until the implementation; see "As measured".)*
 
 | Measurement | Test | Stimulus | Budget | Where |
 |---|---|---|---|---|
 | **In-build, on against bypassed** | `timing::mic_cost` | −20 dBFS noise; full-scale noise and the hiss offsets as a reported spread | **≤ 10 %** | asserted on the development machine; on CI under a **25 %** safety ceiling (the x86 runner is several times slower on branchless selects, spec 010) |
 | **Cross-build, bypassed against 0.11** | `scripts/ab-timing.sh` (`output_cost` in both builds; in the branch its configuration is rebased on `settings_011`) | `output_cost`'s fixed stimulus | **≤ 3 %** | asserted on the development machine; once on CI through the `ab-timing` label |
-| **Cross-build, on against 0.11** | `scripts/ab-timing.sh c9f9994 output_cost_mic` (a new optional head-test argument) | `output_cost`'s fixed stimulus | **reported only** | `output_cost_mic` asserts `limiter_state() == 0.0` at the end, so a charged limiter can never pass as mic cost |
+| **Cross-build, on against 0.11** | `scripts/ab-timing.sh c9f9994 output_cost_mic` (a new optional head-test argument) | `output_cost`'s fixed stimulus | **≤ 10 % as corroboration** (amended 2026-10-16; checked by hand, not asserted) | `output_cost_mic` asserts `limiter_state() == 0.0` at the end, so a charged limiter can never pass as mic cost |
 
 Why the cross-build "on" figure is only reported: stage 2 changes the stimulus's level (RMS 0.240, peak 0.784, only 1.1 dB below the limiter's knee) and therefore the cost of the limiter and the speaker knee.
 
@@ -347,6 +347,23 @@ Why the cross-build "on" figure is only reported: stage 2 changes the stimulus's
 
 - **Estimate:** ziggurat plus xoshiro ≈ 2 ns, three first-order sections ≈ 3 ns, the clipper ≈ 1–2 ns (the normalization is free, folded into HP_in). That is **about 6–7 ns on about 73 ns, +8–10 %**.
 - **Fallback** if the in-build ratio exceeds 10 %: merge HP_out and LP into one biquad. That voids the 1 − LP′ argument, so the script must re-prove the bound for the merged section (the L1 norm × (L₊ + L₋), and FR-006 amended) before the change. The change goes to review first.
+
+### As measured (T042, 2026-10-16, development machine, solo release runs)
+
+| Measurement | Figure | Budget |
+|---|---|---|
+| Cross-build, bypassed against `c9f9994` (`scripts/ab-timing.sh`) | speaker 73.7 → 74.0 ns, **+0.41 %**; earphone 65.2 → 65.7 ns, **+0.77 %** | ≤ 3 % ✓ |
+| Cross-build, on against `c9f9994` (`scripts/ab-timing.sh c9f9994 output_cost_mic`) | speaker 73.8 → 78.1 ns, **+4.30 ns (+5.83 %)**; earphone 65.3 → 68.7 ns, +3.40 ns (+5.21 %); the limiter uncharged at the end of every run | ≤ 10 % as corroboration ✓ |
+| In-build `mic_cost`, 45 strictly alternating runs, −20 dBFS noise | 65.9 → 69.4 ns, **+3.53 ns (+5.36 %)**; a second run +3.93 ns (+5.92 %); full-scale noise +5.6 – 5.7 %; offsets −18 / +12 dB equal within 0.1 ns; split: stage 1 +2.1 – 2.8 ns, stage 2 +1.4 – 1.9 ns | ≤ 10 % ✓ (CI ceiling 25 %) |
+
+**Why the in-build protocol changed.** With the specified fastest of nine alternating runs, `mic_cost` read **+10.3 – 10.9 ns (+15 – 17 %)** in four tries, and nine rounds of five runs per side read +11.9 – 12.3 ns (+18 %), while 45 strictly alternating runs read +3.9 – 4.2 ns and the independent cross-build A/B +4.3 ns. In the high mode stage 2 alone read +8 – 11 ns. Probes ruled out the arithmetic:
+- each first-order section costs 2.7 – 3.1 ns in isolation, the same for all three;
+- removing the clipper, the state flush, or the amplifier's inlining changed nothing;
+- with one section at a time in the engine, the output coupling alone read +8 ns and the roll-off alone +0, although their outputs are almost the same signal.
+
+So the high readings depend on how the timed runs are ordered, not on the code. The cause was not found (a scheduling or memory-layout effect is suspected, not shown). R-09's fallback (one biquad for the output coupling and the roll-off) was therefore not taken: the roll-off already costs nothing. The user chose the robust protocol, with the 10 % budget kept and the cross-build figure held to it as corroboration.
+
+**Estimate against measurement.** Plan time: 6 – 7 ns (+8 – 10 %). Measured: about 4 ns (+5 – 6 %).
 
 ## R-10: Interfaces (FR-012; plan review P13, U4)
 

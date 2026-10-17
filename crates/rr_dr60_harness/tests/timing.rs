@@ -561,7 +561,7 @@ fn mic_cost_ceiling() -> f64 {
 /// Spec 012 FR-011, SC-006 (tasks.md T040; research R-09): stages 1 – 2's cost in one build.
 /// The speaker route at 48 kHz, codec bypassed, 4096-sample blocks, `default_output` (0.11's
 /// default, stages 1 – 2 bypassed) against the same with `MicSettings::DEVICE`, on −20 dBFS
-/// noise; each side the fastest of nine alternating runs. At most 10 % (the CI ceiling 25 %);
+/// noise; each side the fastest of 45 strictly alternating runs. At most 10 % (the CI ceiling 25 %);
 /// full-scale noise, the offsets −18 / +12 dB and the split between the two stages reported.
 /// Quote the figures from a solo run.
 #[test]
@@ -587,9 +587,13 @@ fn mic_cost() {
         }
         t.elapsed().as_nanos() as f64 / x.len() as f64
     };
+    // 45 strictly alternating runs per side, the fastest kept (the user's decision of
+    // 2026-10-16; research R-09 › As measured): the fastest of nine read +10 – 12 ns on the
+    // development machine whatever the code (run-order sensitive), against +3.9 – 4.2 ns here and
+    // +4.3 ns in the cross-build A/B.
     let pair = |a: rr_dr60::Settings, b: rr_dr60::Settings, x: &[f32]| {
         let (mut ta, mut tb) = (f64::MAX, f64::MAX);
-        for _ in 0..9 {
+        for _ in 0..45 {
             ta = ta.min(once(a, x));
             tb = tb.min(once(b, x));
         }
