@@ -394,6 +394,20 @@ The worst block is one run's maximum and is set by scheduling jitter, not by the
 
 After the post-implementation review's fixes (the clipper's per-polarity knee, the nested keying), one more solo run: `mic_cost` 67.9 → 71.3 ns, **+3.43 ns (+5.05 %)**; `output_cost_mic` speaker +20.4 %, earphone +5.9 %. The per-polarity knee select costs nothing the runs resolve.
 
+### As measured on the CI runner (T059, 2026-10-17)
+
+On the CI runner (x86-64, PR #28: run 39015952080's release timing job and the `ab-timing` run 39019044154):
+
+| Measurement | Figure | Budget |
+|---|---|---|
+| In-build `mic_cost`, −20 dBFS noise | 130.6 → 147.1 ns, **+16.56 ns (+12.68 %)**; full-scale noise +12.85 %; offsets equal within 0.1 ns | CI ceiling 25 % ✓ (the 10 % budget is asserted on the development machine) |
+| Cross-build, bypassed against `c9f9994` | speaker 135.7 → 135.3 ns, **−0.29 %**; earphone 125.0 → 124.7 ns, **−0.24 %** | ≤ 3 % ✓ |
+| Cross-build, on against `c9f9994` (reported) | speaker +16.40 ns (+12.09 %); earphone +15.70 ns (+12.55 %) | corroborates the runner's in-build +12.7 % |
+| `output_cost_mic` | speaker +14.8 %, earphone +6.4 % | 009 SC-007 ≤ 25 % ✓ |
+| Spec 008's worst 64-sample block at 48 kHz | 312.2 µs bypassed / 369.6 µs stages 1 – 2 on (medians 7.5 / 8.4 µs) | 1333.3 µs ✓ |
+
+On the runner the stages cost about 16.5 ns, roughly four times the development machine's 4 ns in absolute terms and about twice in relative terms (the runner's baseline is about 1.9× slower): the same pattern as spec 010's branchless selects on x86-64. The in-build and cross-build figures agree there (+12.7 % and +12.1 %), so the runner reading is a property of the machine, not of the protocol. The stages bypassed cost nothing measurable on either machine.
+
 ## R-10: Interfaces (FR-012; plan review P13, U4)
 
 ### Rust
