@@ -2,15 +2,15 @@ name: CI
 
 # CI for every spec since 001 (the speech codec's golden file of spec 008, `golden_codec`, and the
 # output chain's of spec 009, `golden_output`, and the output clamp's of spec 010,
-# `golden_output_clamp`, and the volume transition's of spec 011, `golden_volume_ramp`, run
-# wherever the other three do; the release timing job prints the codec's cost and checks one
+# `golden_output_clamp`, and the volume transition's of spec 011, `golden_volume_ramp`, and the
+# microphone path's of spec 012, `golden_mic`, run wherever the other three do; the release timing job prints the codec's cost and checks one
 # frame-byte digest in the release profile, 008 research R-03).
-#   check         fmt, clippy, tests, C smoke test (ubuntu + macos); golden (001 + AGC + VAS + codec + output + clamp + volume ramp)
+#   check         fmt, clippy, tests, C smoke test (ubuntu + macos); golden (001 + AGC + VAS + codec + output + clamp + volume ramp + mic)
 #                 with default features, release timing, release-mode AGC and VAS matrices and
 #                 edge cases, C header drift (ubuntu)    — 001 T010, T038, T060; 002 T043; 003 T043
 #   coverage      >= 80% line coverage (Constitution III)                   — T010
-#   golden-matrix golden (001 + AGC + VAS + codec + output + clamp + volume ramp) + determinism on 6 desktop targets (FR-014) — T061
-#   ios           golden (001 + AGC + VAS + codec + output + clamp + volume ramp) + determinism in the iOS simulator; iOS builds — T063
+#   golden-matrix golden (001 + AGC + VAS + codec + output + clamp + volume ramp + mic) + determinism on 6 desktop targets (FR-014) — T061
+#   ios           golden (001 + AGC + VAS + codec + output + clamp + volume ramp + mic) + determinism in the iOS simulator; iOS builds — T063
 #   msrv          full test suite on Rust 1.85                                — T065
 # The 8th FR-014 target, a physical iOS device, is a release-time manual gate
 # (scripts/ios-device-golden.sh, docs/release-checklist.md).
@@ -79,7 +79,7 @@ jobs:
         run: scripts/check-traceability.sh
       - name: Golden files with default features (shipped configuration, no op-count)
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test -p rr_dr60_harness --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp
+        run: cargo test -p rr_dr60_harness --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic
       - name: Timing checks (release; FR-015 bounded work, SC-006; 008 SC-006 and the frame-byte digest)
         if: matrix.os == 'ubuntu-latest'
         # One test at a time: the timing tests measure wall-clock cost and worst blocks, so running
@@ -92,7 +92,7 @@ jobs:
         run: cargo test -p rr_dr60_harness --release --test timing -- --ignored --nocapture --test-threads=1
       - name: AGC and VAS full settings matrices and slow edge cases (release; spec 002 SC-002, R-07; spec 003 SC-002, R-12)
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test -p rr_dr60_harness --release --test agc_matrix --test agc_edge_cases --test vas_matrix --test vas_edge_cases --test us2_memory -- --ignored
+        run: cargo test -p rr_dr60_harness --release --test agc_matrix --test agc_edge_cases --test vas_matrix --test vas_edge_cases --test us2_memory --test mic_matrix -- --ignored
       - name: Install pinned cbindgen
         if: matrix.os == 'ubuntu-latest'
         uses: taiki-e/install-action@v2
@@ -145,7 +145,7 @@ jobs:
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - name: Golden files and determinism
-        run: cargo test -p rr_dr60_harness --all-features --target ${{ matrix.target }} --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test determinism
+        run: cargo test -p rr_dr60_harness --all-features --target ${{ matrix.target }} --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test determinism
 
   ios:
     name: ios (simulator + builds)
@@ -157,7 +157,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Golden files and determinism in the iOS simulator
         # .cargo/config.toml routes aarch64-apple-ios-sim binaries through scripts/ios-sim-runner.sh.
-        run: cargo test -p rr_dr60_harness --target aarch64-apple-ios-sim --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test determinism
+        run: cargo test -p rr_dr60_harness --target aarch64-apple-ios-sim --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test determinism
       - name: Build the C API library for iOS device and Intel simulator
         run: |
           cargo build -p rr_dr60_ffi --release --target aarch64-apple-ios

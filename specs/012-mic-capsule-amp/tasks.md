@@ -459,7 +459,7 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
 - [X] T053 The solo release timing runs (`mic_cost`, `output_cost_mic`, and spec 008's worst block with the stages on), quoted in research R-09.
 - [X] T054 **The post-implementation hardware review** (`hw-emulation-reviewer`, the session's model): the as-built stages against the spec and the registers. Apply its findings before the bless. One review-driven manifest re-bless is allowed.
 - [X] T055 **The coach review** (`speckit-coach`, the session's model): the branch against spec, plan and tasks, including SC-007's reader test. Apply its findings.
-- [ ] T056 **The bless, once, after the reviews**: `RR_DR60_BLESS=mic cargo test -p rr_dr60_harness --test golden_mic` (the bless-time assertions pass).
+- [X] T056 **The bless, once, after the reviews**: `RR_DR60_BLESS=mic cargo test -p rr_dr60_harness --test golden_mic` (the bless-time assertions pass).
   - Pin the SHA in `tests/golden_mic.rs`.
   - In the same commit, add `golden_mic` to `.github/workflows/ci.yml` (the check job's golden step, the golden matrix, the iOS simulator) and to `scripts/ios-device-golden.sh`.
   - Add `--test mic_matrix` to ci.yml's release `--ignored` step.

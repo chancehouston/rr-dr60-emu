@@ -8,11 +8,11 @@ use rr_dr60_harness::golden;
 use sha2::{Digest, Sha256};
 
 /// SHA-256 of `golden/golden-mic-v1.json` as blessed once by spec 012 (T056, after the
-/// post-implementation reviews). Until the bless the committed file is an empty placeholder
-/// and this test is red by design (the gate before the bless skips it). The golden window then
-/// closes for the feature: a moved hash is a defect, never a re-bless; a later change to the
-/// microphone path is a model change with a CHANGELOG entry (FR-014).
-const GOLDEN_MIC_V1_SHA256: &str = "placeholder until the 012 T056 bless";
+/// post-implementation reviews). The golden window is closed for the feature: a moved hash is a
+/// defect, never a re-bless; a later change to the microphone path is a model change with a
+/// CHANGELOG entry (FR-014).
+const GOLDEN_MIC_V1_SHA256: &str =
+    "70bc609516b80ceb785c2d905f24d8b88ecf64436b30b4092d297397a101f739"; // blessed 2026-10-16 (012 T056)
 
 #[test]
 fn golden_mic_v1_unchanged() {
@@ -62,7 +62,7 @@ fn golden_mic_matches() {
     assert_eq!(
         committed.entries.len(),
         147,
-        "the committed file holds the blessed entries (an empty placeholder until 012 T056)"
+        "the committed file holds the blessed entries (012 T056)"
     );
     if let Err(report) = golden::compare(&committed, &actual) {
         panic!("output differs from {}:\n{report}", path.display());
