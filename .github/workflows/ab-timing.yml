@@ -32,5 +32,5 @@ jobs:
         run: rustup toolchain install
       - name: Bypassed A/B (012 FR-011, budget 3 %)
         run: scripts/ab-timing.sh "${{ inputs.baseline || 'c9f9994' }}"
-      - name: Stages 1 – 2 on A/B (012 FR-011, reported)
+      - name: Stages 1 – 2 on A/B (012 FR-011, ≤ 10 % corroboration)
         run: scripts/ab-timing.sh "${{ inputs.baseline || 'c9f9994' }}" output_cost_mic

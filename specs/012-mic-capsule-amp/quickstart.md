@@ -61,7 +61,7 @@ cargo test -p rr_dr60_harness --test determinism mic && cargo test -p rr_dr60_ha
 cargo test -p rr_dr60_harness --test mutation mic
 cargo test -p rr_dr60_harness --release --test timing mic_cost -- --ignored --nocapture --test-threads=1
 scripts/ab-timing.sh                                  # bypassed against c9f9994 (0.11.0): ≤ 3 %
-scripts/ab-timing.sh c9f9994 output_cost_mic          # on against 0.11.0: reported (the limiter uncharged at the end)
+scripts/ab-timing.sh c9f9994 output_cost_mic          # on against 0.11.0: ≤ 10 % corroboration, not asserted (the limiter uncharged at the end)
 ```
 
 Expected:

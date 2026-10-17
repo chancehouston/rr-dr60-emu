@@ -339,8 +339,9 @@ impl Pipeline {
     ///
     /// [`Error::UnsupportedHostRate`] if `settings.host_rate_hz` is not in
     /// [`SUPPORTED_HOST_RATES`](crate::SUPPORTED_HOST_RATES), checked first.
-    /// [`Error::InvalidSetting`] if an AGC, VAS or memory setting is out of range or not
-    /// finite (spec 002 FR-011, spec 003 FR-012, spec 006 FR-010).
+    /// [`Error::InvalidSetting`] if an AGC, VAS, memory or microphone setting is out of range
+    /// or not finite (spec 002 FR-011, spec 003 FR-012, spec 006 FR-010, spec 012 FR-003: the
+    /// hiss offset, checked whether or not the capsule is on).
     /// [`Error::AllocationFailed`] if the recording store for the configured capacity cannot
     /// be reserved (spec 006 FR-017).
     pub fn new(settings: Settings) -> Result<Self, Error> {
@@ -646,8 +647,8 @@ impl Pipeline {
     ///
     /// [`Error::RecordingInProgress`] or [`Error::PlaybackInProgress`] unless the engine is
     /// idle; [`Error::UnsupportedHostRate`] if `settings.host_rate_hz` is not supported;
-    /// [`Error::InvalidSetting`] if an AGC, VAS or memory setting is invalid (spec 002 FR-011,
-    /// spec 003 FR-012, spec 006 FR-010); [`Error::StoredExceedsCapacity`] when the stored
+    /// [`Error::InvalidSetting`] if an AGC, VAS, memory or microphone setting is invalid (spec
+    /// 002 FR-011, spec 003 FR-012, spec 006 FR-010, spec 012 FR-003); [`Error::StoredExceedsCapacity`] when the stored
     /// recordings do not fit the new configuration: their time or count exceeds the new
     /// capacity, or the speech-codec setting changes while recordings are present (one memory
     /// holds one encoding, spec 008 FR-012; erase first); [`Error::AllocationFailed`] when a new

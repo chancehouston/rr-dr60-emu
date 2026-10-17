@@ -357,7 +357,7 @@ stage_table! {
     },
     {
         number: 2, identifier: "mic_amp", name: "Microphone amplifier",
-        description: "Amplifies the microphone signal ahead of the codec: a high-pass near 820 Hz thins the low end, and very loud sounds clip at its supply rails.",
+        description: "Amplifies the microphone signal ahead of the codec: a high-pass near 820 Hz thins the low end, and very loud sounds clip, the negative half first and softly.",
         status: Assumed, path: Record, confidence: Low,
         sources: ["S-002"], assumptions: ["A-006", "A-029", "A-046", "A-047", "A-051", "A-053"],
         coverage: "the output coupling's 159 Hz shift under limiting; below-clip distortion; part and transistor spread",
