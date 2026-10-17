@@ -470,11 +470,11 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
   - the open decisions (stage 6 and stages 14–15 to be researched; the controls discussion; the product questions deferred until engine core development is complete).
 
   The spec's Status becomes "implemented on the branch".
-- [ ] T059 **Ask the user**, then:
+- [X] T059 **Ask the user**, then:
   - push the branch and open a draft PR `feat: the microphone capsule and amplifier (012, v0.12.0)` with the figures;
   - when CI is green (11 jobs plus `registers`), add the `ab-timing` label and quote the runner's figures (the bypassed A/B against the 3 % budget, the on A/B reported, `mic_cost` under the 25 % ceiling);
   - mark the PR ready; **ask before merging** (`gh pr merge --merge --delete-branch`).
-- [ ] T060 After the merge: the spec's Status "merged" and CLAUDE.md's 012 line "complete on main" with the PR and the merge commit; then `/speckit-converge`.
+- [X] T060 After the merge: the spec's Status "merged" and CLAUDE.md's 012 line "complete on main" with the PR and the merge commit; then `/speckit-converge`.
 
 ---
 
