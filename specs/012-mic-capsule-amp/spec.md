@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-16
 
-**Status**: Draft (spec reviews applied)
+**Status**: Implemented on the branch `012-mic-capsule-amp` (2026-10-16; post-implementation reviews applied, golden blessed)
 
 **Input**: User description: "Feature 012: model signal-chain stages 1 and 2, the microphone capsule and the microphone amplifier, ahead of the record-path limiter. Today the engine's input is treated as the mic-amp output (A-036), so nothing models what happens between the sound at the microphone and the codec's input: the capsule's frequency response and self-noise, the amplifier's gain, its coupling high-pass corners (dominant ≈ 72 Hz, first order) and ≈ 13 kHz roll-off, its noise floor (the "hiss" floor), and its clipping on very loud sounds before the limiter can act. Evidence: S-002, A-005, A-006, A-029, A-030, A-036. The user wants the record path to start at the sound reaching the microphone. Each new stage must be independently bypassable and testable, deterministic (seeded noise), real-time safe, traceable to a source or a registered assumption, and every pre-012 configuration must stay bit-identical with the new stages bypassed (the earlier golden files unmoved). Out of scope: noise reduction (stage 6, to be researched deeper), clock and power (stages 14–15, to be researched deeper), handling noise and wind."
 

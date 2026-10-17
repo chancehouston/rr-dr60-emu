@@ -464,8 +464,8 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
   - In the same commit, add `golden_mic` to `.github/workflows/ci.yml` (the check job's golden step, the golden matrix, the iOS simulator) and to `scripts/ios-device-golden.sh`.
   - Add `--test mic_matrix` to ci.yml's release `--ignored` step.
   - Add the CHANGELOG's Added golden line.
-- [ ] T057 The full gate with coverage: `cargo llvm-cov --all-features --workspace --fail-under-lines 80`, within 1 point of 0.11's 98.02 %. Quote the figure.
-- [ ] T058 CLAUDE.md:
+- [X] T057 The full gate with coverage: `cargo llvm-cov --all-features --workspace --fail-under-lines 80`, within 1 point of 0.11's 98.02 %. Quote the figure.
+- [X] T058 CLAUDE.md:
   - the 012 status line (what was built, the figures as the script and harness printed them, the lessons) and the spec 012 report commands;
   - the open decisions (stage 6 and stages 14–15 to be researched; the controls discussion; the product questions deferred until engine core development is complete).
 
