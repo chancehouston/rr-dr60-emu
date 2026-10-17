@@ -10,8 +10,8 @@
 #     `default_output` is built on 0.11's default (stages 1 – 2 bypassed), so this measures what
 #     the bypassed code costs: spec 012 FR-011's budget is 3 %.
 #   HEAD_TEST = output_cost_mic: the working tree with stages 1 – 2 on against the baseline
-#     (reported only: stage 2 changes the level the later stages see; the test asserts the
-#     limiter stays uncharged).
+#     (at most 10 % as corroboration of the in-build figure, not asserted: stage 2 changes the
+#     level the later stages see; the test asserts the limiter stays uncharged).
 #
 # Usage: scripts/ab-timing.sh [baseline-rev [head-test]]
 #   (default baseline c9f9994, version 0.11, the spec 012 branch point; default head test
@@ -65,7 +65,7 @@ def best(path):
             out[m.group(1)] = min(out.get(m.group(1), float("inf")), float(m.group(2)))
     return out
 base, head, rev, test = best(sys.argv[1]), best(sys.argv[2]), sys.argv[3], sys.argv[4]
-budget = "012 FR-011: budget 3 %" if test == "output_cost" else "012 FR-011: reported"
+budget = "012 FR-011: budget 3 %" if test == "output_cost" else "012 FR-011: ≤ 10 % corroboration (not asserted)"
 for route in ("Speaker", "Earphone"):
     b, h = base[route], head[route]
     print(f"A/B {test} vs {rev}'s output_cost, {route} route, 48 kHz, 4096 blocks, constant volume: "

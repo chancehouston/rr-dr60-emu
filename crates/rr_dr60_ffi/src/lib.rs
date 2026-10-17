@@ -331,7 +331,9 @@ pub struct RrDr60StopOutcome {
     /// Post-VAS device samples of silence produced after the last represented input sample
     /// (spec 008 FR-013): the padding to the frame boundary plus the 60-sample look-ahead; 0
     /// with the codec bypassed or when the recording was discarded. Appended in 0.8 (the struct
-    /// grows 40 → 64 bytes on 64-bit targets, `flush` included).
+    /// grows 40 → 64 bytes on 64-bit targets, `flush` included). "Silence" is zero-valued
+    /// input (spec 012 FR-009): with the capsule (stage 1) on, the recording's tail there
+    /// carries the hiss.
     pub silence_fed_samples: u64,
 }
 

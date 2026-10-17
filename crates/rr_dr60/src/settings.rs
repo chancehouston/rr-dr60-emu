@@ -443,8 +443,8 @@ pub struct MicSettings {
     /// A-047, A-051) or bypassed.
     pub amp_enabled: bool,
     /// The hiss level offset in dB, −18 to +12, default 0 (spec 012 FR-003). It moves the hiss
-    /// from its documented level (A-048); above about +10 dB the voice activation stops pausing
-    /// in a silent room at sensitivity level 5.
+    /// from its documented level (A-048); from about +9 dB (a lower estimate: +8.8 … +9.5 dB by
+    /// host rate) the voice activation stops pausing in a silent room at sensitivity level 5.
     pub hiss_offset_db: f32,
 }
 
@@ -568,7 +568,8 @@ impl Settings {
 
     /// Checks these settings without creating a pipeline: the host rate first (FR-002), then
     /// every AGC field (spec 002 FR-011; knee, attack, release since spec 005), then every VAS
-    /// field (spec 003 FR-012), then the memory figures (spec 006 FR-010).
+    /// field (spec 003 FR-012), then the memory figures (spec 006 FR-010), then the hiss offset
+    /// (spec 012 FR-003; checked whether or not the capsule is on).
     /// [`Pipeline::new`](crate::Pipeline::new) runs the same check. Never allocates.
     ///
     /// # Errors

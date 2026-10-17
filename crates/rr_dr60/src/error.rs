@@ -24,7 +24,8 @@ pub enum Error {
         output: usize,
     },
     /// A setting is outside its valid range, or is NaN or ±Inf (spec 002 FR-011, spec 003
-    /// FR-012, spec 006 FR-010: a memory capacity of 0 is the "capacity too small" refusal).
+    /// FR-012, spec 006 FR-010: a memory capacity of 0 is the "capacity too small" refusal;
+    /// spec 012 FR-003: the hiss offset, checked whether or not the capsule is on).
     /// Returned by `Pipeline::new` and `Pipeline::reconfigure`; a failed reconfigure changes
     /// nothing.
     InvalidSetting {
