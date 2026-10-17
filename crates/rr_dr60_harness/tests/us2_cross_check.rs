@@ -967,3 +967,153 @@ fn readme_volume_statements() {
         "set_volume's rustdoc: {doc}"
     );
 }
+
+/// `text` with every "not measured" removed, so a check for the word "measured" lets the
+/// required disclaimer through (spec 012 R-11: "modeled on the circuit", never "measured").
+fn without_disclaimer(text: &str) -> String {
+    text.to_lowercase().replace("not measured", "")
+}
+
+/// Spec 012 US4 AS2, AS3 (tasks.md T043; research R-11): the README's microphone section states
+/// every item of US4 AS2; it, the new and amended register rows, the S-002 summary and the
+/// 0.12.0 CHANGELOG regions pass the denylist and the feature's forbidden words; the seed's
+/// documentation (Rust and C) names the hiss.
+#[test]
+fn readme_mic_statements() {
+    let text = readme();
+    let section =
+        mc::readme_region(&text, "mic-section").expect("README has the mic-section markers");
+    assert_eq!(mc::denylist_hit(section), None, "README microphone section");
+    for phrase in [
+        // The level reference and the host-gain arithmetic.
+        "90 dB SPL",
+        "80–100",
+        "− 90",
+        // The input high-pass.
+        "818 Hz",
+        "−7.3 dB",
+        // The hiss, its offset and switch, the advice for hosts with a floor.
+        "−62 dBFS",
+        "hiss_offset_db",
+        "capsule_enabled",
+        "mic_capsule_enabled",
+        "−65 dBFS",
+        // The voice activation on the hiss.
+        "hang time",
+        "+9 dB",
+        // The clip limits and the host rate for loud material.
+        "+7.15 dBFS",
+        "+16.37 dBFS",
+        "16 kHz",
+        // The per-session seed.
+        "seed",
+        "session",
+        // The basis.
+        "modeled on the circuit with typical part values, not measured",
+    ] {
+        assert!(
+            section.contains(phrase),
+            "README microphone section lacks {phrase:?}"
+        );
+    }
+    let forbidden = ["accurate", "authentic", "measured"];
+    let lower = without_disclaimer(section);
+    for word in forbidden {
+        assert!(
+            !lower.contains(word),
+            "README microphone section contains {word:?}"
+        );
+    }
+    // The registers: the new rows' key phrases; the amended rows name spec 012.
+    let assumptions =
+        std::fs::read_to_string(mc::repo_root().join("docs/hardware/assumptions.md")).unwrap();
+    let row = |id: &str| {
+        assumptions
+            .lines()
+            .find(|l| l.starts_with(&format!("| {id} ")))
+            .unwrap_or_else(|| panic!("{id}'s row"))
+            .to_string()
+    };
+    for (id, phrases) in [
+        ("A-046", &["818 Hz", "665–985 Hz", "−7.3 dB"][..]),
+        ("A-047", &["77 Hz", "12.9 kHz"][..]),
+        ("A-048", &["−62 dBFS", "34 dB SPL(A)", "−70 … −54 dBFS"][..]),
+        ("A-049", &["never rewinds", "bit 7", "8 attempts"][..]),
+        ("A-050", &["−73 dBFS", "22 nV/√Hz"][..]),
+        ("A-051", &["+7.15 dBFS", "+16.37 dBFS", "k = 0.85"][..]),
+        ("A-052", &["flat"][..]),
+        ("A-053", &["lumped ahead of the limiter"][..]),
+        ("A-005", &["spec 012", "A-048"][..]),
+        ("A-006", &["spec 012", "transimpedance"][..]),
+        ("A-019", &["spec 012", "DC"][..]),
+        ("A-022", &["spec 012", "16.8 dB"][..]),
+        ("A-028", &["spec 012", "DC"][..]),
+        ("A-029", &["spec 012", "90 dB SPL", "818 Hz", "460"][..]),
+        ("A-036", &["spec 012", "negative"][..]),
+    ] {
+        let r = row(id);
+        for p in phrases {
+            assert!(r.contains(p), "{id} lacks {p:?}");
+        }
+        if id >= "A-046" {
+            assert_eq!(mc::denylist_hit(&r), None, "{id}");
+            let lower = without_disclaimer(&r);
+            for word in forbidden {
+                assert!(!lower.contains(word), "{id} contains {word:?}");
+            }
+        }
+    }
+    assert!(
+        !row("A-029").contains("low loop gain") && !row("A-029").contains("does not close"),
+        "A-029 keeps a superseded statement"
+    );
+    // The S-002 summary: the two-stage topology; R1 is the record lamp's resistor.
+    let sources =
+        std::fs::read_to_string(mc::repo_root().join("docs/hardware/sources.md")).unwrap();
+    let s002 = sources
+        .lines()
+        .find(|l| l.starts_with("| S-002 "))
+        .expect("S-002's row");
+    for p in ["transimpedance", "R6 100 kΩ", "R1"] {
+        assert!(s002.contains(p), "S-002 lacks {p:?}");
+    }
+    // The 0.12.0 CHANGELOG regions: filled, clean.
+    let changelog = std::fs::read_to_string(mc::repo_root().join("CHANGELOG.md")).unwrap();
+    let mut rest = changelog.as_str();
+    let mut parts = 0;
+    while let Some(entry) = mc::readme_region(rest, "0.12.0") {
+        assert_eq!(mc::denylist_hit(entry), None, "CHANGELOG 0.12.0: {entry}");
+        let lower = entry.to_lowercase();
+        for word in ["accurate", "authentic", "details at t047"] {
+            assert!(!lower.contains(word), "CHANGELOG 0.12.0 contains {word:?}");
+        }
+        assert!(entry.len() > 400, "the 0.12.0 region is filled: {entry}");
+        parts += 1;
+        let end = rest.find("<!-- 0.12.0:end -->").unwrap() + "<!-- 0.12.0:end -->".len();
+        rest = &rest[end..];
+    }
+    assert_eq!(parts, 3, "the 0.12.0 entry has three parts");
+    // The seed's documentation names the hiss, Rust and C.
+    for (path, start, end) in [
+        (
+            "crates/rr_dr60/src/settings.rs",
+            "/// Seed for stochastic stages",
+            "pub seed",
+        ),
+        (
+            "crates/rr_dr60_ffi/src/lib.rs",
+            "/// Seed for stochastic stages",
+            "pub seed",
+        ),
+    ] {
+        let src = std::fs::read_to_string(mc::repo_root().join(path)).unwrap();
+        let i = src.find(start).unwrap_or_else(|| panic!("{path}"));
+        let j = i + src[i..].find(end).unwrap();
+        let doc = &src[i..j];
+        assert!(
+            doc.contains("hiss"),
+            "{path}: the seed's docs name the hiss"
+        );
+        assert!(!doc.contains("No effect on output"), "{path}");
+    }
+}

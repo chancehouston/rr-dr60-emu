@@ -1286,7 +1286,21 @@ pub fn vas_margin(make: Make<'_>, rate: u32, seconds: f64) -> Vec<MeasurementRes
     let z = run(make, at_input, &x);
     let settle = rate as usize / 2;
     let hiss_dbfs = analysis::rms_dbfs(&z[settle..]);
+    let peak = z[settle..]
+        .iter()
+        .fold(0.0f64, |m, &v| m.max(f64::from(v).abs()));
     let mut rows = vec![MeasurementResult::new(
+        "US3 AS6",
+        "hiss sample peak at the voice-activation input (re a full-scale sine's peak)",
+        T_VAS,
+        rate,
+        "default (AfterRecord)",
+        stim.clone(),
+        analysis::db(peak),
+        "dBFS",
+        Tolerance::Report,
+    )];
+    rows.push(MeasurementResult::new(
         "US3 AS6",
         "hiss RMS at the voice-activation input (AES17)",
         T_VAS,
@@ -1296,7 +1310,7 @@ pub fn vas_margin(make: Make<'_>, rate: u32, seconds: f64) -> Vec<MeasurementRes
         hiss_dbfs,
         "dBFS",
         Tolerance::Report,
-    )];
+    ));
     for level in 1..=5u8 {
         let s = vas_default(rate, level, 0.0);
         let r = crate::vas_checks::run(make, s, &x);

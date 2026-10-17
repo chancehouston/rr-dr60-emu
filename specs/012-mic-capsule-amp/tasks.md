@@ -391,8 +391,8 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
 
 **Independent Test**: `cargo test -p rr_dr60_harness --test us1_manifest --test us2_cross_check` and `scripts/check-traceability.sh`.
 
-- [ ] T043 [US4] `crates/rr_dr60_harness/tests/us2_cross_check.rs`: `readme_mic_statements`, written first. The README's microphone section must state every item of US4 AS2, including the per-session seed. It must not contain the denylisted words or "accurate", "authentic", "measured". A-046 – A-053 must contain their key phrases. Run it: **red**.
-- [ ] T044 [US4] `README.md`: the microphone section (US4 AS2), covering:
+- [x] T043 [US4] `crates/rr_dr60_harness/tests/us2_cross_check.rs`: `readme_mic_statements`, written first. The README's microphone section must state every item of US4 AS2, including the per-session seed. It must not contain the denylisted words or "accurate", "authentic", "measured". A-046 – A-053 must contain their key phrases. Run it: **red**.
+- [x] T044 [US4] `README.md`: the microphone section (US4 AS2), covering:
   - the level reference and the host-gain arithmetic;
   - the input high-pass and how it thins the sound;
   - the hiss, its offset and switch, and the advice for hosts whose microphone already carries a floor (about −65 dBFS);
@@ -402,7 +402,7 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
   - "modeled on the circuit with typical part values, not measured".
 
   Then grep the README, `docs/hardware/assumptions.md` and CLAUDE.md for "default" figures and restate each or label it "0.11 default" (R-06): A-042's peaks, the earphone 1.04–1.07, spec 011's route-output figures, spec 008's silence floor, spec 009's quiet decoder.
-- [ ] T045 [US4] The registers:
+- [x] T045 [US4] The registers:
   - **New rows:** complete A-046 – A-053 (rationale, capture protocols).
   - **Amendments:**
     - A-005;
@@ -413,7 +413,7 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
     - A-036: the first-clipping polarity.
   - **Signal chain:** `docs/hardware/signal-chain.md` rows 1–2 (Identifier, Modeled by, figures).
   - **Sources:** `docs/hardware/sources.md`'s S-002 summary (R6 in the mic amplifier; R1 is the record lamp's resistor) and a candidate secondary source for the 2SD1819A ranks.
-- [ ] T046 [P] [US4] `.github/ISSUE_TEMPLATE/hardware_evidence.yml`: the captures from the reviews:
+- [x] T046 [P] [US4] `.github/ISSUE_TEMPLATE/hardware_evidence.yml`: the captures from the reviews:
   - the 300 Hz / 1 kHz / 2.5 kHz tones at equal SPL;
   - the quiet room with the voice activation off;
   - the silent closet at sensitivity levels 1–5;
@@ -421,7 +421,7 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
   - the clip asymmetry;
   - the capsule marking;
   - the board check of C1 and R2.
-- [ ] T047 [US4] Rustdoc for every new public item and for `Settings::seed`, `Tap::AfterAgc` and `StopOutcome::silence_fed_samples`, plus one paragraph in the crate docs.
+- [x] T047 [US4] Rustdoc for every new public item and for `Settings::seed`, `Tap::AfterAgc` and `StopOutcome::silence_fed_samples`, plus one paragraph in the crate docs.
   - Fill the CHANGELOG 0.12.0 regions (Added, Changed, Documentation), with the default-output change called out.
   - Run `readme_mic_statements` green, `us1_manifest`, `us2_cross_check` and `scripts/check-traceability.sh`.
 
