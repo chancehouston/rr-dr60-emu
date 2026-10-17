@@ -1040,8 +1040,8 @@ fn entry_mic(
 
 /// Spec 012 FR-014 (contracts/golden-format.md): the microphone golden file, 4 stimuli × 5
 /// configurations × 7 rates one-pass entries (one block each, keyed to counter 0) plus the
-/// `default_mic_rec1` family, `silence_1s` recorded as the engine's second recording (counter
-/// 1) and played to the end, at the seven rates: 147 entries with the seed, the counter and the
+/// `default_mic_rec1` family, `silence_1s` recorded as the engine's second recording (at
+/// counter 1) and played to the end, at the seven rates: 147 entries with the seed, the counter and the
 /// hiss offset, sorted by configuration, stimulus and rate. With `bless` the generator also
 /// asserts that every `mic_only_quiet` entry on silence is exact zeros, that every `mic_only`
 /// entry on silence reads the script's hiss band level within ±0.5 dB, that every `default_mic`

@@ -195,30 +195,38 @@ fn codec_cost_per_sample_and_worst_block() {
     // decodes a frame.
     const BLOCK: usize = 64; // 008 SC-006
     let budget_us = BLOCK as f64 * 1000.0 / 48.0; // 1333.3 µs of audio per block
+    // Spec 012 T053: the same block with stages 1 – 2 on as well (the 0.12 microphone path).
     let x = stimulus::noise(0x0D60, 10 * 48_000);
-    let mut worst = 0.0f64;
-    let mut blocks: Vec<f64> = Vec::with_capacity(x.len() / BLOCK);
-    for _ in 0..3 {
-        let mut p = Pipeline::new(configs::settings("default_codec", 48_000)).unwrap();
-        let mut buf = x.clone();
-        for chunk in buf.chunks_mut(BLOCK) {
-            let t = Instant::now();
-            let _ = p.process_in_place(chunk);
-            let us = t.elapsed().as_nanos() as f64 / 1000.0;
-            blocks.push(us);
-            worst = worst.max(us);
+    for (label, mic) in [
+        ("", rr_dr60::MicSettings::BYPASSED),
+        (", stages 1 - 2 on (012)", rr_dr60::MicSettings::DEVICE),
+    ] {
+        let mut settings = configs::settings("default_codec", 48_000);
+        settings.mic = mic;
+        let mut worst = 0.0f64;
+        let mut blocks: Vec<f64> = Vec::with_capacity(3 * x.len() / BLOCK);
+        for _ in 0..3 {
+            let mut p = Pipeline::new(settings).unwrap();
+            let mut buf = x.clone();
+            for chunk in buf.chunks_mut(BLOCK) {
+                let t = Instant::now();
+                let _ = p.process_in_place(chunk);
+                let us = t.elapsed().as_nanos() as f64 / 1000.0;
+                blocks.push(us);
+                worst = worst.max(us);
+            }
         }
+        blocks.sort_by(f64::total_cmp);
+        let median = blocks[blocks.len() / 2];
+        println!(
+            "  worst 64-sample block at 48 kHz{label}: {worst:.1} µs (median {median:.1} µs; budget {budget_us:.1} µs, margin {:.0}x)",
+            budget_us / worst
+        );
+        assert!(
+            worst < budget_us,
+            "worst 64-sample block{label} {worst:.1} µs exceeds {budget_us:.1} µs (008 SC-006)"
+        );
     }
-    blocks.sort_by(f64::total_cmp);
-    let median = blocks[blocks.len() / 2];
-    println!(
-        "  worst 64-sample block at 48 kHz: {worst:.1} µs (median {median:.1} µs; budget {budget_us:.1} µs, margin {:.0}x)",
-        budget_us / worst
-    );
-    assert!(
-        worst < budget_us,
-        "worst 64-sample block {worst:.1} µs exceeds {budget_us:.1} µs (008 SC-006)"
-    );
 
     // Record plus play through the codec against the one-pass (spec 006 SC-006's rule).
     let x = stimulus::noise(9, 60 * 48_000);

@@ -68,6 +68,7 @@ These are given for the nominal parts and over a grid of C1 ±10 %, hFE 150–46
   - The netlist and the models' parameters are committed with the script.
 - **The DC check** is an Ebers–Moll solve with free saturation currents. It reproduces 1.7 / 1.1 / 2.6 V by construction, so it is a **consistency** check, not independent evidence: ΔVbe(Q1, Q3) = VT·ln(I1/I3) ≈ 74 mV against the meter's 0.1 ± 0.1 V, and Q2's Veb at 104 µA.
 - **The reviewer's closed form** 1/(2π·C1·(R2′ + Z_B)) is printed as a sanity check.
+- **As run (2026-10-16, T052; ngspice-47):** the operating point reads v(o) 1.712 V, v(e) 1.076 V, v(c3) 2.605 V, v(b) 1.672 V. The fitted corners are **824.2 / 76.8 / 12939 Hz** (fit residual 0.000 dB) against the nodal model's 818.4 / 76.8 / 12939 Hz. The input corner differs by **+0.7 %**, inside the ±10 % gate, so the gate passes and the bless may proceed.
 
 **Alternatives considered:**
 - A SPICE-only design: the build tool would depend on an external binary.
@@ -364,6 +365,17 @@ Why the cross-build "on" figure is only reported: stage 2 changes the stimulus's
 So the high readings depend on how the timed runs are ordered, not on the code. The cause was not found (a scheduling or memory-layout effect is suspected, not shown). R-09's fallback (one biquad for the output coupling and the roll-off) was therefore not taken: the roll-off already costs nothing. The user chose the robust protocol, with the 10 % budget kept and the cross-build figure held to it as corroboration.
 
 **Estimate against measurement.** Plan time: 6 – 7 ns (+8 – 10 %). Measured: about 4 ns (+5 – 6 %).
+
+### As measured (T053, 2026-10-16, development machine, one solo release run: `cargo test -p rr_dr60_harness --release --test timing -- --ignored --nocapture --test-threads=1 mic_cost output_cost_mic codec_cost_per_sample_and_worst_block`)
+
+| Measurement | Figure | Budget |
+|---|---|---|
+| `mic_cost`, −20 dBFS noise | 67.7 → 71.3 ns, **+3.54 ns (+5.22 %)**; full-scale noise +5.24 %; offsets −18 / +12 dB 71.3 / 71.3 ns; split: stage 1 alone +1.92 ns, stage 2 alone +1.17 ns | ≤ 10 % ✓ |
+| `output_cost_mic` (stages 1 – 2 on) | speaker 65.2 → 78.4 ns, +20.4 %; earphone 65.2 → 68.9 ns, +5.7 % | 009 SC-007 ≤ 25 % ✓ |
+| Spec 008's worst 64-sample block at 48 kHz (`default_codec`) | stages bypassed **195.2 µs** (median 3.8 µs); stages 1 – 2 on **144.5 µs** (median 4.0 µs) | 1333.3 µs ✓ (margin 7× / 9×) |
+| Spec 008's per-sample figures | 0.896 / 1.361 µs per device sample at 6 / 48 kHz; record + play 1.015× | 8 µs ✓ |
+
+The worst block is one run's maximum and is set by scheduling jitter, not by the code: the case with stages 1 – 2 on read lower than the bypassed one. Its medians (3.8 against 4.0 µs) are the cost signal. The worst-block case with stages 1 – 2 on was added to `codec_cost_per_sample_and_worst_block` for this task.
 
 ## R-10: Interfaces (FR-012; plan review P13, U4)
 

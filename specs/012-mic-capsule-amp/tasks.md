@@ -449,14 +449,14 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
   - the entries' `seed`, `counter` and `hiss_offset_db` fields;
   - the bless-time assertions;
   - `crates/rr_dr60_harness/tests/golden_mic.rs` with an empty placeholder file and a SHA placeholder, **red by design until T056**.
-- [ ] T051 The gate **without** `golden_mic`:
+- [X] T051 The gate **without** `golden_mic`:
   - `cargo test --all-features -- --skip golden_mic`, fmt, clippy;
   - the MSRV test build with `-D warnings`;
   - the header drift check;
   - `uv run tools/mic-chain/design_mic_chain.py --check` and a byte-identical `--write`;
   - `scripts/check-traceability.sh`.
-- [ ] T052 **The ngspice gate**: `uv run tools/mic-chain/design_mic_chain.py --spice`, with the input corner within 10 % of the nodal model. Record the figures in research R-01 › Cross-checks (as run).
-- [ ] T053 The solo release timing runs (`mic_cost`, `output_cost_mic`, and spec 008's worst block with the stages on), quoted in research R-09.
+- [X] T052 **The ngspice gate**: `uv run tools/mic-chain/design_mic_chain.py --spice`, with the input corner within 10 % of the nodal model. Record the figures in research R-01 › Cross-checks (as run).
+- [X] T053 The solo release timing runs (`mic_cost`, `output_cost_mic`, and spec 008's worst block with the stages on), quoted in research R-09.
 - [ ] T054 **The post-implementation hardware review** (`hw-emulation-reviewer`, the session's model): the as-built stages against the spec and the registers. Apply its findings before the bless. One review-driven manifest re-bless is allowed.
 - [ ] T055 **The coach review** (`speckit-coach`, the session's model): the branch against spec, plan and tasks, including SC-007's reader test. Apply its findings.
 - [ ] T056 **The bless, once, after the reviews**: `RR_DR60_BLESS=mic cargo test -p rr_dr60_harness --test golden_mic` (the bless-time assertions pass).
