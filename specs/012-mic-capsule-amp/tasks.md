@@ -444,7 +444,7 @@ The plan's task order names these phases 1, 1 (foundational part), 2, 3, 4a, 4b,
 
 ## Phase 8: The golden file, gates, reviews, the bless, the PR (plan › Task order, Phase 6)
 
-- [ ] T050 The golden generator in `crates/rr_dr60_harness/src/golden.rs` (contracts/golden-format.md):
+- [X] T050 The golden generator in `crates/rr_dr60_harness/src/golden.rs` (contracts/golden-format.md):
   - `MIC_STIMULI` (`silence_1s`, `voiced_1s`, `loud_tone`, `very_loud_tone`), `GOLDEN_MIC_CONFIGS`, the `default_mic_rec1` family (counter 1), `generate_mic`, `committed_mic`, `path_mic`;
   - the entries' `seed`, `counter` and `hiss_offset_db` fields;
   - the bless-time assertions;

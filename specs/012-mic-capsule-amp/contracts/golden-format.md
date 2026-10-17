@@ -7,13 +7,17 @@ The same JSON layout as the earlier golden files (an array of entries, sorted by
   "config": "mic_only",
   "stimulus": "silence_1s",
   "host_rate_hz": 48000,
+  "n_samples": 48000,
+  "sha256": "…64 hex…",
+  "head": ["…16 diagnostic bit patterns…"],
+  "rms_dbfs": -56.63,
   "seed": 0,
   "counter": 0,
-  "hiss_offset_db": 0.0,
-  "out_len": 48000,
-  "out_hash": "…64 hex…"
+  "hiss_offset_db": 0.0
 }
 ```
+
+(As built, T050: the earlier files' `n_samples`, `sha256`, `head` and `rms_dbfs` fields, which an earlier draft of this example called `out_len` and `out_hash`, plus the three new fields. The `default_mic_rec1` entries hash the whole playback, drain included.)
 
 ## Stimuli
 
