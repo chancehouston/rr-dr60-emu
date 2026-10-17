@@ -89,6 +89,12 @@ jobs:
         # runner gets a 25 % safety ceiling (its x86-64 select sequences cost more, spec 010).
         env:
           RR_DR60_MIC_COST_CEILING: "25"
+          # Spec 010 SC-005 (amended 2026-10-17): the clamp costs about 2.5 % on this runner
+          # (3 % stays asserted on the development machine).
+          RR_DR60_CLAMP_COST_CEILING: "5"
+          # Spec 011's volume-ramp confound guard (the constant-position spread): 2 % on the
+          # development machine; one runner type read 2.15 % (2026-10-17).
+          RR_DR60_RAMP_SPREAD_CEILING: "4"
         run: cargo test -p rr_dr60_harness --release --test timing -- --ignored --nocapture --test-threads=1
       - name: AGC and VAS full settings matrices and slow edge cases (release; spec 002 SC-002, R-07; spec 003 SC-002, R-12)
         if: matrix.os == 'ubuntu-latest'
