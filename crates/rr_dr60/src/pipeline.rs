@@ -8,6 +8,7 @@ use crate::memory::{Encoding, Memory};
 use crate::paths::{self, PlaybackPath, RecordPath};
 use crate::rate::RatePlan;
 use crate::settings::{DEVICE_RATE_HZ, Route, Settings, Tap};
+use crate::stages::speed::SpeedStage;
 use crate::transport::Transport;
 use crate::validate::validate;
 
@@ -146,6 +147,12 @@ pub struct Pipeline {
     /// The player's speech decoder (stage 9), `None` when bypassed; reset at every
     /// `start_playback`.
     pub(crate) decoder: Option<SpeechDecoder>,
+    /// The playback speed level (spec 013 FR-001): not a setting; kept through reset and
+    /// reconfigure; copied into the speed control at every play call.
+    pub(crate) speed_level: u8,
+    /// The player's speed control (spec 013; A-054), between the decoder and stage 10; reset at
+    /// every `start_playback`.
+    pub(crate) speed: SpeedStage,
 }
 
 // Contract (contracts/rust-api.md): `Pipeline` is Send + Sync. Fails to compile if a future
@@ -356,6 +363,7 @@ impl Pipeline {
             Route::default(),
             crate::output::VOLUME_REFERENCE, // A-043
             0,                               // 012 FR-009: the recording counter starts at 0
+            crate::speed::DEFAULT_LEVEL,     // 013 FR-001 (S-001: level 3)
         ))
     }
 
@@ -370,6 +378,7 @@ impl Pipeline {
         route: Route,
         volume: f32,
         counter: u64,
+        speed_level: u8,
     ) -> Self {
         let mut one_pass = OnePass::new(&settings, plan);
         one_pass.rec.rekey(counter); // 012 FR-009: the next recording's stream
@@ -387,6 +396,8 @@ impl Pipeline {
             plan_l_m: paths::l_m(plan),
             encoder: settings.speech_codec_enabled.then(SpeechEncoder::new),
             decoder: settings.speech_codec_enabled.then(SpeechDecoder::new),
+            speed_level,
+            speed: SpeedStage::new(speed_level),
         }
     }
 
@@ -538,6 +549,38 @@ impl Pipeline {
         self.volume
     }
 
+    /// Sets the playback speed level (spec 013 FR-001; A-054): 1 (slowest) … 5 (fastest), 3
+    /// normal, the default. The levels play at 3/5, 4/5, 1, 6/5 and 7/5 of normal speed
+    /// ([`speed::RATIO_NUMERATORS`](crate::speed::RATIO_NUMERATORS) over
+    /// [`speed::RATIO_DENOMINATOR`](crate::speed::RATIO_DENOMINATOR)), the pitch moving with
+    /// the speed: the modeled default (a resampling at the 6 kHz device rate between the speech
+    /// decoder and the codec's reconstruction filter), modeled on the documents, not measured.
+    /// At level 3 a playback is bit-identical to version 0.12's (the identity). Live: settable
+    /// at any time, idle, recording or playing; from the first device-rate sample a
+    /// [`play`](Self::play) call computes after it was set, the playback continues at the new
+    /// level from the place it reached (a change into level 3 waits until the place is a whole
+    /// stored sample, at most 4 device samples; once the place reaches the recording's end the
+    /// level of the current playback no longer changes). Applies to `play` only: the record path
+    /// and the one-pass processing ignore it. Kept by [`reset`](Self::reset) and
+    /// [`reconfigure`](Self::reconfigure). Read it back with
+    /// [`playback_speed`](Self::playback_speed). Real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidSpeedLevel`] for 0 or a level above 5; the level is unchanged.
+    pub fn set_playback_speed(&mut self, level: u8) -> Result<(), Error> {
+        if !(1..=crate::speed::LEVEL_COUNT).contains(&level) {
+            return Err(Error::InvalidSpeedLevel { level });
+        }
+        self.speed_level = level;
+        Ok(())
+    }
+
+    /// The playback speed level (spec 013 FR-001): the last valid setting, default 3.
+    pub fn playback_speed(&self) -> u8 {
+        self.speed_level
+    }
+
     /// The report of a refused in-place call: nothing produced, the stream's paused state.
     fn refused_block(&self) -> BlockInfo {
         BlockInfo {
@@ -677,6 +720,7 @@ impl Pipeline {
             self.route,
             self.volume,
             self.transport.counter, // 012 FR-009: the counter never rewinds
+            self.speed_level,       // 013 FR-001: kept by reconfigure
         );
         Ok(())
     }

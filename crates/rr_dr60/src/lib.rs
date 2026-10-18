@@ -364,6 +364,46 @@ pub mod __test_hooks {
             }
         }
     }
+
+    /// A deliberate alteration of the playback speed control for the spec 013 mutation tests
+    /// (`Pipeline::__with_speed_mutation`; research R-12). `Default` is the committed stage.
+    #[derive(Clone, Copy, Debug, PartialEq, Default)]
+    pub struct SpeedMutation {
+        /// Level 5's place step in fifths replaced by this (`None`: as committed, 7).
+        pub ratio_k7: Option<u32>,
+        /// The tail dropped: silence right after the recording's own part.
+        pub no_tail: bool,
+        /// A change into level 3 snaps the place forward instead of waiting for a whole place.
+        pub snap_into_level_3: bool,
+        /// Added to the look-ahead D (0: as committed, 28; −1 moves the response off the place).
+        pub lookahead_delta: i32,
+        /// The latch tested after a pending change instead of before it.
+        pub latch_after_switch: bool,
+        /// The player pushes the sample after the total is reached (the drain-0 case's extra
+        /// sample, plan review Q1).
+        pub no_drain_zero_stop: bool,
+    }
+
+    /// The speed control's bank for `level` as designed at construction: 5 phases × 57 taps,
+    /// phase-major (spec 013 research R-03, R-08); `None` for level 3 (the identity) or an
+    /// invalid level.
+    pub fn speed_bank(level: u8) -> Option<alloc::vec::Vec<f64>> {
+        if !(1..=5).contains(&level) || level == 3 {
+            return None;
+        }
+        Some(crate::stages::speed::design_bank(crate::stages::speed::numerator(level)).into_vec())
+    }
+
+    /// T(K, k): the speed control's tail after a constant-level recording of `stored` device
+    /// samples at numerator `k` (spec 013 research R-04).
+    pub fn speed_tail_len(k: u32, stored: u64) -> u64 {
+        crate::stages::speed::tail_len(stored, k)
+    }
+
+    /// The speed control's place of the next output, in fifths of a stored sample.
+    pub fn speed_place_fifths(pipeline: &crate::Pipeline) -> u64 {
+        pipeline.speed.place_fifths()
+    }
 }
 
 /// Crate version, e.g. `"0.1.0"`.

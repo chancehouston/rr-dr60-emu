@@ -18,6 +18,7 @@ pub mod output_checks;
 pub mod output_clamp_checks;
 pub mod report;
 pub mod smoke_reference;
+pub mod speed_checks;
 pub mod split_checks;
 pub mod stimulus;
 pub mod vas_checks;

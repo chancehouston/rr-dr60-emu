@@ -450,12 +450,17 @@ pub fn measurement_rates() -> &'static [u32] {
 /// (codec bypassed), or the frames encoding `x` (codec on). The recording is made at 6 kHz in
 /// `bypass_all` (every record stage off, so the stored samples equal the input) with the
 /// target's codec setting, exported and imported into the target engine (spec 006 FR-014:
-/// across host rates). Returns the engine and the recording's number.
+/// across host rates). `make` builds the target engine. Returns the engine and the recording's
+/// number.
 ///
 /// # Panics
 ///
 /// If a step of the recording, the export or the import fails.
-pub fn stored_recording(target: Settings, x: &[f32]) -> (rr_dr60::Pipeline, u32) {
+pub fn stored_recording(
+    make: crate::checks::Make<'_>,
+    target: Settings,
+    x: &[f32],
+) -> (rr_dr60::Pipeline, u32) {
     let mut rec = settings("bypass_all", 6000);
     rec.speech_codec_enabled = target.speech_codec_enabled;
     let mut p = rr_dr60::Pipeline::new(rec).expect("the recording engine");
@@ -464,7 +469,7 @@ pub fn stored_recording(target: Settings, x: &[f32]) -> (rr_dr60::Pipeline, u32)
     let _ = p.stop_recording(&mut []).expect("stop");
     let mut bytes = vec![0u8; p.export_len(1).expect("export_len")];
     let _ = p.export(1, &mut bytes).expect("export");
-    let mut q = rr_dr60::Pipeline::new(target).expect("the target engine");
+    let mut q = make(target); // the target engine (a mutant for the mutation tests)
     let number = q.import(&bytes).expect("import");
     (q, number)
 }
