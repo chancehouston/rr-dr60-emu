@@ -723,6 +723,14 @@ impl PlaybackPath {
         self.push_wide(f64::from(d));
     }
 
+    /// One device sample from the playback speed control (spec 013 FR-003), already 64-bit:
+    /// through stage 10 if it runs, into the interpolator. At level 3 it is a stored sample
+    /// widened exactly, so this equals [`push_device`](Self::push_device).
+    #[inline]
+    pub(crate) fn push_device_f64(&mut self, d: f64) {
+        self.push_wide(d);
+    }
+
     /// Test-only: the pre-0.6 un-narrowed route (spec 006 research R-02).
     #[cfg(any(test, feature = "__test-hooks"))]
     #[inline]

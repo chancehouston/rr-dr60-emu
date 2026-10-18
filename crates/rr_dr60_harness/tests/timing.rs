@@ -720,3 +720,154 @@ fn output_cost_mic() {
         );
     }
 }
+
+/// The `speed_cost` ceiling in percent: 15 % (spec 013 FR-010) on the development machine;
+/// `RR_DR60_SPEED_COST_CEILING` overrides it (ci.yml sets 25 on the shared runner).
+fn speed_cost_ceiling() -> f64 {
+    std::env::var("RR_DR60_SPEED_COST_CEILING")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(15.0) // 013 FR-010
+}
+
+/// The codec-on level-5 ratio ceiling: 1.5 (spec 013 FR-010) on the development machine;
+/// `RR_DR60_SPEED_CODEC_RATIO_CEILING` overrides it (ci.yml sets 2.0 on the shared runner).
+fn speed_codec_ratio_ceiling() -> f64 {
+    std::env::var("RR_DR60_SPEED_CODEC_RATIO_CEILING")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1.5) // 013 FR-010
+}
+
+/// An engine at `rate` in `config` on the speaker route holding a recording of `x`.
+fn speed_engine(config: &str, rate: u32, x: &[f32]) -> Pipeline {
+    let mut p = Pipeline::new(configs::settings(config, rate)).unwrap();
+    p.set_route(rr_dr60::Route::Speaker);
+    p.start_recording().unwrap();
+    for chunk in x.chunks(4096) {
+        let _ = p.record(chunk, &mut []).unwrap();
+    }
+    let _ = p.stop_recording(&mut []).unwrap();
+    p
+}
+
+/// One playback of recording 1 at `level` in blocks of `block`: ns per host sample.
+fn play_ns(p: &mut Pipeline, level: u8, block: usize) -> f64 {
+    let mut out = vec![0.0f32; block];
+    p.set_playback_speed(level).unwrap();
+    p.start_playback(1).unwrap();
+    let mut n = 0usize;
+    let t = Instant::now();
+    loop {
+        let info = p.play(&mut out).unwrap();
+        n += info.produced;
+        if info.finished {
+            break;
+        }
+    }
+    t.elapsed().as_nanos() as f64 / n as f64
+}
+
+/// Spec 013 FR-010, SC-005 (tasks.md T022; research R-07): the speed control's cost in one
+/// build: the codec-bypassed playback of 20 s of −20 dB noise at 48 kHz on the speaker route in
+/// 4096-sample blocks, levels 1, 2, 4 and 5 against level 3, each side the fastest of 45 strictly
+/// alternating runs: at most 15 % (the CI ceiling 25 %). The 6 kHz figures are reported. Quote
+/// the figures from a solo run.
+#[test]
+#[ignore = "release-mode timing; run with --ignored"]
+fn speed_cost() {
+    if skip_in_debug() {
+        return;
+    }
+    let ceiling = speed_cost_ceiling();
+    for rate in [48_000u32, 6000] {
+        let x: Vec<f32> = stimulus::noise(9, 20 * rate as usize)
+            .iter()
+            .map(|v| v * 0.1) // −20 dB
+            .collect();
+        let mut p = speed_engine("speed_default_no_codec", rate, &x);
+        for level in [1u8, 2, 4, 5] {
+            let (mut t_level, mut t3) = (f64::MAX, f64::MAX);
+            for _ in 0..45 {
+                t_level = t_level.min(play_ns(&mut p, level, 4096));
+                t3 = t3.min(play_ns(&mut p, 3, 4096));
+            }
+            let over = 100.0 * (t_level / t3 - 1.0);
+            println!(
+                "speed control, speaker route, {} kHz, 4096 blocks, codec bypassed: level {level} {t_level:.2} ns per host sample, level 3 {t3:.2} ns, {:+.2} ns ({over:+.2} %) (013 FR-010: budget 15 %, ceiling here {ceiling} %{})",
+                rate / 1000,
+                t_level - t3,
+                if rate == 48_000 { "" } else { "; reported" }
+            );
+            if rate == 48_000 {
+                assert!(
+                    over <= ceiling,
+                    "level {level} costs {over:.2} % over level 3 (013 FR-010)"
+                );
+            }
+        }
+    }
+}
+
+/// Spec 013 FR-010, SC-005 (tasks.md T022; research R-07): with the speech codec on, the
+/// per-host-sample cost at a constant level 5 against level 3 at 48 kHz (at most 1.5×, the CI
+/// ceiling 2.0), and the worst block with the level changed before every block (3 → 1 → 5 → 2
+/// → 4 → 3 …) at 6 and 48 kHz in blocks of 64 and 4096 against the block's real-time duration
+/// (1000 × block ÷ kHz µs, spec 008's lesson). Quote the figures from a solo run.
+#[test]
+#[ignore = "release-mode timing; run with --ignored"]
+fn speed_codec_worst_block() {
+    if skip_in_debug() {
+        return;
+    }
+    let cycle = [3u8, 1, 5, 2, 4];
+    for rate in [48_000u32, 6000] {
+        let x = stimulus::voiced(f64::from(rate), 20.0, -20.0, 5);
+        let mut p = speed_engine("speed_default", rate, &x);
+        if rate == 48_000 {
+            let (mut t5, mut t3) = (f64::MAX, f64::MAX);
+            for _ in 0..15 {
+                t5 = t5.min(play_ns(&mut p, 5, 4096));
+                t3 = t3.min(play_ns(&mut p, 3, 4096));
+            }
+            let ratio = t5 / t3;
+            let ceiling = speed_codec_ratio_ceiling();
+            println!(
+                "speed control, codec on, speaker route, 48 kHz, 4096 blocks: level 5 {t5:.2} ns per host sample, level 3 {t3:.2} ns, ratio {ratio:.3} (013 FR-010: at most 1.5, ceiling here {ceiling})"
+            );
+            assert!(
+                ratio <= ceiling,
+                "codec on, level 5 at {ratio:.3}x level 3 (013 FR-010)"
+            );
+        }
+        for block in [64usize, 4096] {
+            let budget_us = 1000.0 * block as f64 / f64::from(rate / 1000); // 008's lesson
+            let mut worst = 0.0f64;
+            for _ in 0..3 {
+                let mut out = vec![0.0f32; block];
+                p.set_playback_speed(3).unwrap();
+                p.start_playback(1).unwrap();
+                let mut c = 0usize;
+                loop {
+                    p.set_playback_speed(cycle[c % cycle.len()]).unwrap();
+                    let t = Instant::now();
+                    let info = p.play(&mut out).unwrap();
+                    worst = worst.max(t.elapsed().as_nanos() as f64 / 1000.0);
+                    c += 1;
+                    if info.finished {
+                        break;
+                    }
+                }
+            }
+            println!(
+                "speed control, codec on, {} kHz, {block}-sample blocks, the level changed before every block: worst block {worst:.1} µs of {budget_us:.0} µs ({:.1} % of real time)",
+                rate / 1000,
+                100.0 * worst / budget_us
+            );
+            assert!(
+                worst < budget_us,
+                "a block took {worst:.1} µs of {budget_us:.0} (013 FR-010)"
+            );
+        }
+    }
+}

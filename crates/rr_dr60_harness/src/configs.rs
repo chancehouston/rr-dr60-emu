@@ -274,6 +274,20 @@ pub fn settings(name: &str, host_rate_hz: u32) -> Settings {
             s = settings("output_only_amp", host_rate_hz);
             s.tap = Tap::AfterVolumeAmp; // 011 FR-004: the tap after stage 11
         }
+        // Spec 013 (data-model.md › Configurations): the speed control alone: every other
+        // stage bypassed (the player honours no tap; stage 10 and the output chain off, so the
+        // playback output is the device stream at 6 kHz), with the codec off or on.
+        "speed_only" => s = settings("bypass_all", host_rate_hz),
+        "speed_only_codec" => {
+            s = settings("bypass_all", host_rate_hz);
+            s.speech_codec_enabled = true; // 013 R-08: the decoder's look-ahead bookkeeping
+        }
+        // The 0.13 default (= 0.12's), and with the codec bypassed.
+        "speed_default" => s = Settings::new(host_rate_hz),
+        "speed_default_no_codec" => {
+            s = Settings::new(host_rate_hz);
+            s.speech_codec_enabled = false;
+        }
         other => panic!("unknown configuration {other:?}"),
     }
     s
@@ -429,6 +443,35 @@ pub fn measurement_rates() -> &'static [u32] {
     } else {
         &SUPPORTED_HOST_RATES
     }
+}
+
+/// Spec 013 (data-model.md › Stimuli; research R-08): an engine with `target` settings holding
+/// one recording whose stored device samples are `x` followed by the stop's flush of silence
+/// (codec bypassed), or the frames encoding `x` (codec on). The recording is made at 6 kHz in
+/// `bypass_all` (every record stage off, so the stored samples equal the input) with the
+/// target's codec setting, exported and imported into the target engine (spec 006 FR-014:
+/// across host rates). `make` builds the target engine. Returns the engine and the recording's
+/// number.
+///
+/// # Panics
+///
+/// If a step of the recording, the export or the import fails.
+pub fn stored_recording(
+    make: crate::checks::Make<'_>,
+    target: Settings,
+    x: &[f32],
+) -> (rr_dr60::Pipeline, u32) {
+    let mut rec = settings("bypass_all", 6000);
+    rec.speech_codec_enabled = target.speech_codec_enabled;
+    let mut p = rr_dr60::Pipeline::new(rec).expect("the recording engine");
+    p.start_recording().expect("start");
+    let _ = p.record(x, &mut []).expect("record");
+    let _ = p.stop_recording(&mut []).expect("stop");
+    let mut bytes = vec![0u8; p.export_len(1).expect("export_len")];
+    let _ = p.export(1, &mut bytes).expect("export");
+    let mut q = make(target); // the target engine (a mutant for the mutation tests)
+    let number = q.import(&bytes).expect("import");
+    (q, number)
 }
 
 #[cfg(test)]

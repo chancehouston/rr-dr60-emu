@@ -518,6 +518,37 @@ fn scale_to_level(x: &[f64], level_dbfs: f64) -> Vec<f32> {
     x.iter().map(|&v| (v * k) as f32).collect()
 }
 
+// ---- Spec 013: stored stimuli (data-model.md › Stimuli) ------------------------------------
+
+/// Spec 013: a stored tone of `amp` at `freq_hz`, `len` device samples at 6 kHz, starting at
+/// phase 0 (`tone` at the device rate). `stored_tone(1000.0, 0.5, n)` is `stored_tone_1k`
+/// (−6 dBFS).
+pub fn stored_tone(freq_hz: f64, amp: f64, len: usize) -> Vec<f32> {
+    tone(freq_hz, amp, 6000.0, len)
+}
+
+/// Spec 013: a stored impulse of 1.0 at device sample `j` in `len` samples (FR-008).
+pub fn stored_impulse(j: usize, len: usize) -> Vec<f32> {
+    let mut x = vec![0.0; len];
+    x[j] = 1.0;
+    x
+}
+
+/// Spec 013: a stored 1 kHz tone at −6 dBFS whose last sample is full scale, so the speed
+/// control's tail is audible if it were cut (FR-005, research R-04).
+pub fn stored_end_loud(len: usize) -> Vec<f32> {
+    let mut x = stored_tone(1000.0, 0.5, len);
+    if let Some(last) = x.last_mut() {
+        *last = 1.0;
+    }
+    x
+}
+
+/// Spec 013: the voiced stimulus at the device rate (`voiced_m20` at 6 kHz), `seconds` long.
+pub fn stored_voiced(seconds: f64) -> Vec<f32> {
+    voiced(6000.0, seconds, -20.0, 0x013) // seed: spec 013 (contracts/golden-format.md)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

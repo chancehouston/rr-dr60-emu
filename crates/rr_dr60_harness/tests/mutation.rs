@@ -715,3 +715,101 @@ mod mic {
         assert!(failed(&mic::hiss_level(&standard, RATE, 0.0)).is_empty());
     }
 }
+
+/// Spec 013 (tasks.md T021; research R-12): the six speed-control mutants each fail their row at
+/// 6 kHz, and the committed stage passes the same rows: level 5 stepping by 6 fifths fails the
+/// lengths; no tail fails the reference; a snap into level 3 and the latch after a pending
+/// change fail the schedules; a look-ahead of 27 fails the impulse peak; a look-ahead at level 3
+/// fails 0.12's frame counts.
+mod speed {
+    use rr_dr60::__test_hooks::SpeedMutation;
+    use rr_dr60::{Pipeline, Settings};
+    use rr_dr60_harness::checks::{MeasurementResult, standard};
+    use rr_dr60_harness::speed_checks as sc;
+
+    fn failed(results: &[MeasurementResult]) -> Vec<&'static str> {
+        results
+            .iter()
+            .filter(|r| !r.passed)
+            .map(|r| r.property)
+            .collect()
+    }
+
+    fn mutant(m: SpeedMutation) -> impl Fn(Settings) -> Pipeline {
+        move |s| Pipeline::__with_speed_mutation(s, &m).unwrap()
+    }
+
+    #[test]
+    fn level5_step_fails_the_lengths() {
+        let make = mutant(SpeedMutation {
+            ratio_k7: Some(6),
+            ..SpeedMutation::default()
+        });
+        let f = failed(&sc::lengths(&make, 6000, "speed_only"));
+        assert!(f.contains(&"playback length − expected"), "{f:?}");
+        assert!(failed(&sc::lengths(&standard, 6000, "speed_only")).is_empty());
+    }
+
+    #[test]
+    fn no_tail_fails_the_reference() {
+        let make = mutant(SpeedMutation {
+            no_tail: true,
+            ..SpeedMutation::default()
+        });
+        let f = failed(&sc::tail_and_reference(&make, "speed_only"));
+        assert!(f.contains(&"samples differing from the reference"), "{f:?}");
+        assert!(failed(&sc::tail_and_reference(&standard, "speed_only")).is_empty());
+    }
+
+    #[test]
+    fn snap_into_level_3_fails_the_schedules() {
+        let make = mutant(SpeedMutation {
+            snap_into_level_3: true,
+            ..SpeedMutation::default()
+        });
+        let f = failed(&sc::schedules(&make, "speed_only"));
+        assert!(
+            f.contains(&"schedule samples differing from the reference"),
+            "{f:?}"
+        );
+        assert!(failed(&sc::schedules(&standard, "speed_only")).is_empty());
+    }
+
+    #[test]
+    fn latch_after_switch_fails_the_schedules() {
+        let make = mutant(SpeedMutation {
+            latch_after_switch: true,
+            ..SpeedMutation::default()
+        });
+        let f = failed(&sc::schedules(&make, "speed_only"));
+        assert!(
+            f.contains(&"schedule samples differing from the reference"),
+            "{f:?}"
+        );
+    }
+
+    #[test]
+    fn short_lookahead_fails_the_impulse() {
+        let make = mutant(SpeedMutation {
+            lookahead_delta: -1,
+            ..SpeedMutation::default()
+        });
+        let f = failed(&sc::impulse(&make));
+        assert!(f.contains(&"impulse peak − nearest output"), "{f:?}");
+        assert!(failed(&sc::impulse(&standard)).is_empty());
+    }
+
+    #[test]
+    fn lookahead_at_level_3_fails_the_frame_counts() {
+        let make = mutant(SpeedMutation {
+            lookahead_at_level_3: true,
+            ..SpeedMutation::default()
+        });
+        let f = failed(&sc::level3_identity(&make, "speed_only_codec"));
+        assert!(
+            f.contains(&"calls whose decoded frames differ from 0.12's"),
+            "{f:?}"
+        );
+        assert!(failed(&sc::level3_identity(&standard, "speed_only_codec")).is_empty());
+    }
+}

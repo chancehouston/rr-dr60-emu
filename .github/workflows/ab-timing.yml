@@ -34,3 +34,5 @@ jobs:
         run: scripts/ab-timing.sh "${{ inputs.baseline || 'c9f9994' }}"
       - name: Stages 1 – 2 on A/B (012 FR-011, ≤ 10 % corroboration)
         run: scripts/ab-timing.sh "${{ inputs.baseline || 'c9f9994' }}" output_cost_mic
+      - name: Playback at the default speed level A/B (013 FR-010, CI ceiling 5 %)
+        run: scripts/ab-timing.sh 3a4eefb playback

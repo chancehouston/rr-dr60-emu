@@ -48,7 +48,7 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 12
+#define RR_DR60_VERSION_MINOR 13
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
@@ -64,6 +64,32 @@
 // `rr_dr60_set_volume` change moves the knob to the new position over this time at every host
 // rate. Equal to the Rust `output::VOLUME_TRANSITION_MS`. A read-only constant, not a setting.
 #define RR_DR60_VOLUME_TRANSITION_MS 20
+
+// The number of playback speed levels (spec 013 FR-001; S-001). Equal to the Rust
+// `speed::LEVEL_COUNT`.
+#define RR_DR60_SPEED_LEVEL_COUNT 5
+
+// The default playback speed level: normal speed (spec 013 FR-001; S-001: level 3).
+#define RR_DR60_SPEED_DEFAULT_LEVEL 3
+
+// The denominator of every playback speed ratio (spec 013 FR-002): level n plays at
+// `RR_DR60_SPEED_RATIO_NUMERATOR_n` / 5 of normal speed.
+#define RR_DR60_SPEED_RATIO_DENOMINATOR 5
+
+// Level 1's speed ratio numerator: 3/5, the slowest (A-054; spec 013 FR-002).
+#define RR_DR60_SPEED_RATIO_NUMERATOR_1 3
+
+// Level 2's speed ratio numerator: 4/5 (A-054).
+#define RR_DR60_SPEED_RATIO_NUMERATOR_2 4
+
+// Level 3's speed ratio numerator: 5/5, normal speed, the identity (A-054).
+#define RR_DR60_SPEED_RATIO_NUMERATOR_3 5
+
+// Level 4's speed ratio numerator: 6/5 (A-054).
+#define RR_DR60_SPEED_RATIO_NUMERATOR_4 6
+
+// Level 5's speed ratio numerator: 7/5, the fastest (A-054).
+#define RR_DR60_SPEED_RATIO_NUMERATOR_5 7
 
 // Result of every fallible C API call.
 enum RrDr60Status
@@ -130,6 +156,9 @@ enum RrDr60Status
   // A processing call with `RR_DR60_TAP_AFTER_SPEAKER` or `RR_DR60_TAP_AFTER_EARPHONE` while
   // the other route is selected; nothing processed (spec 009 FR-011).
   RR_DR60_STATUS_TAP_NOT_ON_ROUTE = 24,
+  // `rr_dr60_set_playback_speed` or `rr_dr60_playback_length_samples` with a level other
+  // than 1 … 5; the level is unchanged (spec 013 FR-001).
+  RR_DR60_STATUS_INVALID_SPEED_LEVEL = 25,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -614,7 +643,13 @@ typedef struct RrDr60PlayInfo {
   // The index (0-based) of the frame whose decoded samples are entering the playback path at
   // the end of the call, held at the last frame during the drain; 0 with the codec bypassed
   // (spec 008 FR-008). Appended in 0.8 (the struct grows 16 → 32 bytes on 64-bit targets).
+  // Since 0.13 it is ⌊place ÷ 120⌋ with the codec on (the same values at speed level 3).
   uint64_t frame_index;
+  // The place in the recording, in whole stored device samples, of the last device sample
+  // computed in this call (the playback speed control's place), and the recording's length
+  // once the place has reached its end; 0 before any (spec 013 FR-009). Appended in 0.13 (the struct grows 32 → 40 bytes
+  // on 64-bit targets: rebuild against this header).
+  uint64_t place;
 } RrDr60PlayInfo;
 
 // The engine's readable state, from `rr_dr60_get_state` (spec 006 FR-003, FR-015).
@@ -1003,6 +1038,45 @@ RrDr60Status rr_dr60_set_volume(struct RrDr60Pipeline *pipeline, float position)
 //
 // `pipeline` must be a live handle. `out_position` must be NULL or writable.
 RrDr60Status rr_dr60_get_volume(struct RrDr60Pipeline *pipeline, float *out_position);
+
+// Sets the playback speed level (spec 013 FR-001; A-054): 1 (slowest) … 5 (fastest), 3 normal,
+// the default, at 3/5, 4/5, 1, 6/5 and 7/5 of normal speed with the pitch moving with the speed
+// (the modeled default; not measured). At level 3 a playback is bit-identical to 0.12's. Live:
+// at any time; from the first device sample an `rr_dr60_play` call computes after it, the
+// playback continues at the new level from the place it reached (a change into level 3 waits
+// until the place is a whole stored sample, at most 4 device samples). Applies to
+// `rr_dr60_play` only. Survives `rr_dr60_reset` and `rr_dr60_reconfigure`. Real-time safe.
+//
+// Returns `RR_DR60_STATUS_INVALID_SPEED_LEVEL` for 0 or a level above 5; the level is then
+// unchanged.
+//
+// # Safety
+//
+// `pipeline` must be NULL or a live handle.
+RrDr60Status rr_dr60_set_playback_speed(struct RrDr60Pipeline *pipeline, uint8_t level);
+
+// Writes the playback speed level to `*out_level` (spec 013 FR-001): the last valid setting,
+// default 3. Real-time safe.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_level` must be NULL or writable.
+RrDr60Status rr_dr60_get_playback_speed(struct RrDr60Pipeline *pipeline, uint8_t *out_level);
+
+// Writes to `*out_samples` the host samples `rr_dr60_play` produces for recording `number`
+// played at a constant speed `level` (spec 013 FR-009): the recording's own part, the speed
+// control's tail (at most 46 device samples, none at level 3) and the drain. Real-time safe.
+//
+// Returns `RR_DR60_STATUS_INVALID_SPEED_LEVEL` (checked first) or
+// `RR_DR60_STATUS_NO_SUCH_RECORDING`.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_samples` must be NULL or writable.
+RrDr60Status rr_dr60_playback_length_samples(struct RrDr60Pipeline *pipeline,
+                                             uint32_t number,
+                                             uint8_t level,
+                                             uint64_t *out_samples);
 
 // The speaker route's gain in dB at a volume position under the circuit's loaded law (spec
 // 009 FR-003; A-044): 22.7 dB at 1, about 9.6 dB at 0.5, −∞ at 0; in volts of amplifier output

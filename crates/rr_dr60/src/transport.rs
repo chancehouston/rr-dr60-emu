@@ -15,6 +15,7 @@ use crate::form;
 use crate::memory::{Encoding, MemoryStatus, Span};
 use crate::pipeline::{Pipeline, VasEvent};
 use crate::settings::{Route, VasMode};
+use crate::stages::speed::SpeedOut;
 
 /// The engine's state (spec 006 FR-003): exactly one at a time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
@@ -130,8 +131,16 @@ pub struct PlayInfo {
     pub frames: usize,
     /// The index (0-based) of the frame whose decoded samples are entering the playback path
     /// at the end of the call (what is heard lags by `playback_latency_samples`), held at the
-    /// last frame during the drain; 0 with the codec bypassed (spec 008 FR-008).
+    /// last frame during the drain; 0 with the codec bypassed (spec 008 FR-008). Since 0.13 it
+    /// is ⌊place ÷ 120⌋ with the codec on (the same values at level 3), at most the last frame.
     pub frame_index: u64,
+    /// Since 0.13 (spec 013 FR-009): the place in the recording, in whole stored device samples,
+    /// of the last device sample computed in this call (the playback speed control's place), and
+    /// the recording's length K once the place has reached the recording's end; 0 before any.
+    /// It leads the audible output by
+    /// [`playback_latency_samples`](crate::Pipeline::playback_latency_samples), like
+    /// `frame_index`.
+    pub place: u64,
 }
 
 /// The player's cursor into the recording being played (data-model.md › Transport; spec 008
@@ -143,7 +152,9 @@ struct Cursor {
     offset: usize,
     /// Host samples produced so far.
     produced: u64,
-    /// Host samples the playback produces in all: ⌈K·m/l⌉ + the drain (research R-06).
+    /// Host samples the playback produces in all: ⌈(K′ + T)·m/l⌉ + the drain, unknown
+    /// (`u64::MAX`) until the speed control's place reaches K (spec 013 research R-05; ⌈K·m/l⌉ +
+    /// the drain at level 3, spec 006 research R-06).
     total: u64,
     /// The recording's number.
     number: u32,
@@ -406,15 +417,16 @@ impl Pipeline {
         if let Some(dec) = &mut self.decoder {
             dec.reset();
         }
-        let (l, m) = self.plan_l_m;
-        // ⌈K·m/l⌉ host samples for K stored device samples, then the drain (research R-06).
-        let k = span.len as u128 * self.memory.encoding().unit_samples() as u128;
-        let pre_drain = (k * u128::from(m)).div_ceil(u128::from(l)) as u64;
+        // Spec 013 FR-005, FR-007: the speed control from rest at the recording's start, at the
+        // host's level; the total (⌈(K′ + T)·m/l⌉ + the drain) is fixed when its place reaches K
+        // (research R-05), so it starts unknown.
+        let k = span.len as u64 * self.memory.encoding().unit_samples() as u64;
+        self.speed.reset(self.speed_level, k);
         self.transport.cursor = Cursor {
             span,
             offset: 0,
             produced: 0,
-            total: pre_drain + u64::from(self.player.drain_len_host_samples()),
+            total: u64::MAX, // 013 R-05: fixed at the speed control's latch
             number,
         };
         self.transport.decoded_read = FRAME;
@@ -424,12 +436,14 @@ impl Pipeline {
     }
 
     /// Produces the next block of host-rate output of the recording being played (spec 006
-    /// FR-002, FR-006, FR-008): exactly ⌈K·m/l⌉ samples for K stored device samples, then the
-    /// drain (`drain_samples()` of settled silence), then `finished` and idle. With the speech
-    /// codec on the frames are decoded one at a time as the output needs them (spec 008
-    /// FR-008: `frames`, `frame_index`). Only `output[..produced]` is written. Real-time safe:
-    /// at most one stored sample, or one frame per 120 device samples, is pulled per output
-    /// sample.
+    /// FR-002, FR-006, FR-008): exactly ⌈(K′ + T)·m/l⌉ samples for K stored device samples
+    /// played at the playback speed level(s) set (spec 013 FR-005: K′ device samples of the
+    /// recording's own part, ⌈K ÷ r⌉ at a constant level, and the speed control's tail of T;
+    /// ⌈K·m/l⌉ at level 3), then the drain (`drain_samples()` of settled silence), then
+    /// `finished` and idle. With the speech codec on the frames are decoded one at a time as the
+    /// output needs them (spec 008 FR-008: `frames`, `frame_index`). Only `output[..produced]`
+    /// is written. Real-time safe: at most 2 stored samples per device output (and up to 29
+    /// more, with at most one frame decoded, when the level leaves 3), each frame decoded once.
     ///
     /// # Errors
     ///
@@ -447,51 +461,87 @@ impl Pipeline {
             player,
             transport,
             decoder,
+            speed,
+            speed_level,
+            plan_l_m,
             ..
         } = self;
+        // Spec 013 FR-007: the host's level lands at this call (from the first device-rate
+        // sample it computes), under the latch and the deferred switch into level 3.
+        speed.request(*speed_level);
+        let (l, m) = *plan_l_m;
+        let drain = u64::from(player.drain_len_host_samples());
         let span = transport.cursor.span;
-        while produced < output.len() && transport.cursor.produced < transport.cursor.total {
+        let Transport {
+            cursor,
+            decoded,
+            decoded_read,
+            frame_index,
+            ..
+        } = transport;
+        // The source (spec 013 research R-01): the next stored device sample, decoding a frame
+        // when the codec is on, or `None` past the recording's end.
+        let mut source = || -> Option<f32> {
+            match decoder {
+                None => {
+                    let v = memory.samples(span).get(cursor.offset).copied();
+                    cursor.offset += 1;
+                    v
+                }
+                Some(dec) => {
+                    if *decoded_read >= FRAME && cursor.offset < span.len {
+                        let bytes = memory.frames(span);
+                        let size = codec::FRAME_BYTES as usize;
+                        let at = cursor.offset * size;
+                        let mut frame: Frame = [0; codec::FRAME_BYTES as usize];
+                        frame.copy_from_slice(&bytes[at..at + size]);
+                        dec.decode(&frame, decoded);
+                        *decoded_read = 0;
+                        cursor.offset += 1;
+                        frames += 1;
+                    }
+                    if *decoded_read < FRAME {
+                        let v = decoded[*decoded_read];
+                        *decoded_read += 1;
+                        Some(v)
+                    } else {
+                        None
+                    }
+                }
+            }
+        };
+        while produced < output.len() && cursor.produced < cursor.total {
             let y = loop {
                 if let Some(y) = player.try_next_host() {
                     break y;
                 }
-                // Pull the next stored device sample (decoding a frame when the codec is on),
-                // or a zero of the drain.
-                let d = match decoder {
-                    None => {
-                        let v = memory.samples(span).get(transport.cursor.offset).copied();
-                        transport.cursor.offset += 1;
-                        v.unwrap_or(0.0)
-                    }
-                    Some(dec) => {
-                        if transport.decoded_read >= FRAME && transport.cursor.offset < span.len {
-                            let bytes = memory.frames(span);
-                            let size = codec::FRAME_BYTES as usize;
-                            let at = transport.cursor.offset * size;
-                            let mut frame: Frame = [0; codec::FRAME_BYTES as usize];
-                            frame.copy_from_slice(&bytes[at..at + size]);
-                            dec.decode(&frame, &mut transport.decoded);
-                            transport.decoded_read = 0;
-                            transport.frame_index = transport.cursor.offset as u64;
-                            transport.cursor.offset += 1;
-                            frames += 1;
-                        }
-                        if transport.decoded_read < FRAME {
-                            let v = transport.decoded[transport.decoded_read];
-                            transport.decoded_read += 1;
-                            v
-                        } else {
-                            0.0
-                        }
-                    }
+                // The next device sample: the speed control's own part and tail, then the
+                // drain's silence (spec 013 FR-005; research R-04).
+                let d = match speed.next(&mut source) {
+                    SpeedOut::Own(v) | SpeedOut::Tail(v) => v,
+                    SpeedOut::Silence => 0.0,
                 };
-                player.push_device(d);
+                // 013 research R-05: the total is fixed once the place reaches K; the host
+                // sample being produced needs this device sample, so it lies within the total.
+                if cursor.total == u64::MAX {
+                    if let Some(n) = speed.final_count() {
+                        let pre = (u128::from(n) * u128::from(m)).div_ceil(u128::from(l)) as u64;
+                        cursor.total = pre + drain;
+                    }
+                }
+                player.push_device_f64(d);
             };
             output[produced] = y;
             produced += 1;
-            transport.cursor.produced += 1;
+            cursor.produced += 1;
         }
-        let finished = transport.cursor.produced >= transport.cursor.total;
+        let done = cursor.produced >= cursor.total;
+        // 013 FR-009: the place and the frame index from the speed control's place.
+        let place = speed.place();
+        if decoder.is_some() {
+            *frame_index = (place / FRAME as u64).min((span.len as u64).saturating_sub(1));
+        }
+        let finished = done;
         if finished {
             transport.state = State::Idle;
         }
@@ -500,6 +550,7 @@ impl Pipeline {
             finished,
             frames,
             frame_index: transport.frame_index,
+            place,
         })
     }
 
@@ -692,6 +743,28 @@ impl Pipeline {
             .ok_or(Error::NoSuchRecording { number })
     }
 
+    /// The host samples [`play`](Self::play) produces for recording `number` played at a
+    /// constant playback speed `level` (spec 013 FR-009): ⌈(⌈5K ÷ k⌉ + T) · m ÷ l⌉ host samples
+    /// for K stored device samples at the level's numerator k (the recording's own part and the
+    /// speed control's tail of T ≤ 46 device samples, 0 at level 3), plus
+    /// [`drain_samples`](Self::drain_samples). Real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidSpeedLevel`] (checked first), then [`Error::NoSuchRecording`].
+    pub fn playback_length_samples(&self, number: u32, level: u8) -> Result<u64, Error> {
+        if !(1..=crate::speed::LEVEL_COUNT).contains(&level) {
+            return Err(Error::InvalidSpeedLevel { level });
+        }
+        let k = self.recording_length(number)?;
+        let (l, m) = self.plan_l_m;
+        let numerator = crate::stages::speed::numerator(level);
+        let own = (5 * k).div_ceil(u64::from(numerator)); // 013 FR-005: ⌈5K ÷ k⌉
+        let tail = crate::stages::speed::tail_len(k, numerator); // 013 R-04
+        let pre_drain = (u128::from(own + tail) * u128::from(m)).div_ceil(u128::from(l)) as u64;
+        Ok(pre_drain + u64::from(self.player.drain_len_host_samples()))
+    }
+
     /// The record path's latency in host samples: input samples until the corresponding device
     /// sample is stored (spec 006 FR-016), the speech codec's delay of 180 device samples
     /// included when it is on (spec 008 FR-004); the stop flush is the part before the encoder.
@@ -710,7 +783,8 @@ impl Pipeline {
         self.player.latency_host_samples()
     }
 
-    /// The host samples `play` produces after the recording's own ⌈K·m/l⌉: stage 10's
+    /// The host samples `play` produces after the recording's own part and the speed control's
+    /// tail (⌈K·m/l⌉ at level 3; spec 013 FR-005): stage 10's
     /// settling length of device-rate silence (121 device samples at the committed
     /// coefficients, −100 dB; 0 with the stage bypassed), the rate conversion's full
     /// remaining response (spec 006 FR-008), and the output chain's settle

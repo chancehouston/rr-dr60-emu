@@ -1,5 +1,5 @@
 rr_dr60 manifest
-library_version: 0.12.0
+library_version: 0.13.0
 device_rate_hz: 6000
 stage_count: 15
 counts: not_modeled=3 assumed=12 sourced=0 checked=0
@@ -106,15 +106,15 @@ model_version: 0.8.0
 
 stage 9 decoder
 name: Speech decoder (CELP)
-description: Rebuilds the voice-band stream from the stored CELP frames for playback.
+description: Rebuilds the voice-band stream from the stored CELP frames for playback, at one of five playback speeds (level 3 is normal).
 status: assumed
 path: playback
 confidence: low
-sources: S-002, S-008, S-009, S-010, S-011
-assumptions: A-004, A-040, A-041
-coverage: the device's own decoder (frame length, look-ahead, codebooks and its postfilter unidentified; A-040, A-041)
-controls: speech_codec_enabled; Tap::AfterDecoder; PlayInfo.frames, PlayInfo.frame_index
-model_version: 0.8.0
+sources: S-001, S-002, S-003, S-008, S-009, S-010, S-011, S-012, S-018
+assumptions: A-004, A-040, A-041, A-054
+coverage: the device's own decoder (frame length, look-ahead, codebooks, postfilter); its speed method (A-054); pitch-kept speeds
+controls: speech_codec_enabled; set_playback_speed; Tap::AfterDecoder; PlayInfo.frames, PlayInfo.frame_index, PlayInfo.place
+model_version: 0.13.0
 
 stage 10 codec_output
 name: Codec output: DAC and reconstruction filter
@@ -124,7 +124,7 @@ path: playback
 confidence: medium
 sources: S-002, S-003, S-005, S-007
 assumptions: A-015, A-016, A-026, A-027, A-030
-coverage: µ-law expansion, idle noise on the playback side, DAC imaging residue above 3 kHz; the SLOW/FAST speed control
+coverage: µ-law expansion, idle noise on the playback side, DAC imaging residue above 3 kHz
 controls: playback_stage_enabled; Tap::AfterPlayback
 model_version: 0.4.0
 

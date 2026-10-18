@@ -45,7 +45,7 @@ use rr_dr60::{
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 12;
+pub const RR_DR60_VERSION_MINOR: u32 = 13;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -112,6 +112,9 @@ pub enum RrDr60Status {
     /// A processing call with `RR_DR60_TAP_AFTER_SPEAKER` or `RR_DR60_TAP_AFTER_EARPHONE` while
     /// the other route is selected; nothing processed (spec 009 FR-011).
     TapNotOnRoute = 24,
+    /// `rr_dr60_set_playback_speed` or `rr_dr60_playback_length_samples` with a level other
+    /// than 1 … 5; the level is unchanged (spec 013 FR-001).
+    InvalidSpeedLevel = 25,
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -351,7 +354,13 @@ pub struct RrDr60PlayInfo {
     /// The index (0-based) of the frame whose decoded samples are entering the playback path at
     /// the end of the call, held at the last frame during the drain; 0 with the codec bypassed
     /// (spec 008 FR-008). Appended in 0.8 (the struct grows 16 → 32 bytes on 64-bit targets).
+    /// Since 0.13 it is ⌊place ÷ 120⌋ with the codec on (the same values at speed level 3).
     pub frame_index: u64,
+    /// The place in the recording, in whole stored device samples, of the last device sample
+    /// computed in this call (the playback speed control's place), and the recording's length
+    /// once the place has reached its end; 0 before any (spec 013 FR-009). Appended in 0.13 (the struct grows 32 → 40 bytes
+    /// on 64-bit targets: rebuild against this header).
+    pub place: u64,
 }
 
 /// How the memory stores recordings, from `rr_dr60_get_encoding` (spec 008 FR-010, FR-012),
@@ -663,6 +672,10 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
         // Spec 009 contracts/c-api.md: statuses 23 and 24.
         Error::InvalidVolume { .. } => (RrDr60Status::InvalidVolume, RrDr60SettingField::None),
         Error::TapNotOnRoute { .. } => (RrDr60Status::TapNotOnRoute, RrDr60SettingField::None),
+        // Spec 013 contracts/c-api.md: status 25.
+        Error::InvalidSpeedLevel { .. } => {
+            (RrDr60Status::InvalidSpeedLevel, RrDr60SettingField::None)
+        }
         _ => (RrDr60Status::InvalidArgument, RrDr60SettingField::None),
     }
 }
@@ -1312,6 +1325,7 @@ fn c_play_info(i: PlayInfo) -> RrDr60PlayInfo {
         finished: i.finished,
         frames: i.frames,
         frame_index: i.frame_index,
+        place: i.place,
     }
 }
 
@@ -1711,6 +1725,117 @@ pub unsafe extern "C" fn rr_dr60_get_volume(
     // SAFETY: out_position is non-null and writable (caller contract).
     unsafe { *out_position = p.inner.volume() };
     RrDr60Status::Ok
+}
+
+/// The number of playback speed levels (spec 013 FR-001; S-001). Equal to the Rust
+/// `speed::LEVEL_COUNT`.
+pub const RR_DR60_SPEED_LEVEL_COUNT: u32 = 5; // 013 FR-001: equal to `rr_dr60::speed::LEVEL_COUNT` (a literal so cbindgen emits the define; the unit test pins it)
+
+/// The default playback speed level: normal speed (spec 013 FR-001; S-001: level 3).
+pub const RR_DR60_SPEED_DEFAULT_LEVEL: u32 = 3; // 013 FR-001: equal to `rr_dr60::speed::DEFAULT_LEVEL` (pinned)
+
+/// The denominator of every playback speed ratio (spec 013 FR-002): level n plays at
+/// `RR_DR60_SPEED_RATIO_NUMERATOR_n` / 5 of normal speed.
+pub const RR_DR60_SPEED_RATIO_DENOMINATOR: u32 = 5; // 013 FR-002: equal to `rr_dr60::speed::RATIO_DENOMINATOR` (pinned)
+
+/// Level 1's speed ratio numerator: 3/5, the slowest (A-054; spec 013 FR-002).
+pub const RR_DR60_SPEED_RATIO_NUMERATOR_1: u32 = 3; // A-054 (013 FR-002; pinned)
+/// Level 2's speed ratio numerator: 4/5 (A-054).
+pub const RR_DR60_SPEED_RATIO_NUMERATOR_2: u32 = 4; // A-054 (013 FR-002; pinned)
+/// Level 3's speed ratio numerator: 5/5, normal speed, the identity (A-054).
+pub const RR_DR60_SPEED_RATIO_NUMERATOR_3: u32 = 5; // A-054 (013 FR-002; pinned)
+/// Level 4's speed ratio numerator: 6/5 (A-054).
+pub const RR_DR60_SPEED_RATIO_NUMERATOR_4: u32 = 6; // A-054 (013 FR-002; pinned)
+/// Level 5's speed ratio numerator: 7/5, the fastest (A-054).
+pub const RR_DR60_SPEED_RATIO_NUMERATOR_5: u32 = 7; // A-054 (013 FR-002; pinned)
+
+/// Sets the playback speed level (spec 013 FR-001; A-054): 1 (slowest) … 5 (fastest), 3 normal,
+/// the default, at 3/5, 4/5, 1, 6/5 and 7/5 of normal speed with the pitch moving with the speed
+/// (the modeled default; not measured). At level 3 a playback is bit-identical to 0.12's. Live:
+/// at any time; from the first device sample an `rr_dr60_play` call computes after it, the
+/// playback continues at the new level from the place it reached (a change into level 3 waits
+/// until the place is a whole stored sample, at most 4 device samples). Applies to
+/// `rr_dr60_play` only. Survives `rr_dr60_reset` and `rr_dr60_reconfigure`. Real-time safe.
+///
+/// Returns `RR_DR60_STATUS_INVALID_SPEED_LEVEL` for 0 or a level above 5; the level is then
+/// unchanged.
+///
+/// # Safety
+///
+/// `pipeline` must be NULL or a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_set_playback_speed(
+    pipeline: *mut RrDr60Pipeline,
+    level: u8,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    match p.inner.set_playback_speed(level) {
+        Ok(()) => RrDr60Status::Ok,
+        Err(e) => status_from_error(e),
+    }
+}
+
+/// Writes the playback speed level to `*out_level` (spec 013 FR-001): the last valid setting,
+/// default 3. Real-time safe.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_level` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_get_playback_speed(
+    pipeline: *mut RrDr60Pipeline,
+    out_level: *mut u8,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out_level.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: out_level is non-null and writable (caller contract).
+    unsafe { *out_level = p.inner.playback_speed() };
+    RrDr60Status::Ok
+}
+
+/// Writes to `*out_samples` the host samples `rr_dr60_play` produces for recording `number`
+/// played at a constant speed `level` (spec 013 FR-009): the recording's own part, the speed
+/// control's tail (at most 46 device samples, none at level 3) and the drain. Real-time safe.
+///
+/// Returns `RR_DR60_STATUS_INVALID_SPEED_LEVEL` (checked first) or
+/// `RR_DR60_STATUS_NO_SUCH_RECORDING`.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_samples` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_playback_length_samples(
+    pipeline: *mut RrDr60Pipeline,
+    number: u32,
+    level: u8,
+    out_samples: *mut u64,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out_samples.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    match p.inner.playback_length_samples(number, level) {
+        Ok(len) => {
+            // SAFETY: out_samples is non-null and writable (caller contract).
+            unsafe { *out_samples = len };
+            RrDr60Status::Ok
+        }
+        Err(e) => status_from_error(e),
+    }
 }
 
 /// The speaker route's gain in dB at a volume position under the circuit's loaded law (spec
@@ -2640,7 +2765,7 @@ mod tests {
         assert_eq!(d.reserved_010_tail, [0; 7]);
         assert_eq!(d.reserved_012, [0; 2]);
         assert_eq!(d.mic_hiss_offset_db, 0.0); // 012 FR-003
-        assert_eq!(RR_DR60_VERSION_MINOR, 12);
+        assert_eq!(RR_DR60_VERSION_MINOR, 13);
         let mut stale = rr_dr60_settings_default(48_000);
         stale.struct_size = 112; // a 0.10 or 0.11 caller (spec 012 FR-012)
         assert_eq!(
@@ -2684,6 +2809,29 @@ mod tests {
         assert_eq!(
             RR_DR60_VOLUME_TRANSITION_MS,
             rr_dr60::output::VOLUME_TRANSITION_MS
+        );
+        // Spec 013 T028: the speed defines are the Rust constants.
+        assert_eq!(
+            RR_DR60_SPEED_LEVEL_COUNT,
+            u32::from(rr_dr60::speed::LEVEL_COUNT)
+        );
+        assert_eq!(
+            RR_DR60_SPEED_DEFAULT_LEVEL,
+            u32::from(rr_dr60::speed::DEFAULT_LEVEL)
+        );
+        assert_eq!(
+            RR_DR60_SPEED_RATIO_DENOMINATOR,
+            rr_dr60::speed::RATIO_DENOMINATOR
+        );
+        assert_eq!(
+            [
+                RR_DR60_SPEED_RATIO_NUMERATOR_1,
+                RR_DR60_SPEED_RATIO_NUMERATOR_2,
+                RR_DR60_SPEED_RATIO_NUMERATOR_3,
+                RR_DR60_SPEED_RATIO_NUMERATOR_4,
+                RR_DR60_SPEED_RATIO_NUMERATOR_5,
+            ],
+            rr_dr60::speed::RATIO_NUMERATORS
         );
         for p in [1.0f32, 0.5, 0.25, RR_DR60_VOLUME_REFERENCE, 0.1, 0.01] {
             assert_eq!(
@@ -2795,6 +2943,11 @@ mod tests {
         assert!(to_settings(&s).is_err());
         assert_eq!(RrDr60Status::InvalidVolume as u32, 23);
         assert_eq!(RrDr60Status::TapNotOnRoute as u32, 24);
+        assert_eq!(RrDr60Status::InvalidSpeedLevel as u32, 25); // spec 013
+        assert_eq!(
+            status_from_error(Error::InvalidSpeedLevel { level: 0 }),
+            RrDr60Status::InvalidSpeedLevel
+        );
         assert_eq!(
             status_from_error(Error::InvalidVolume { position: 2.0 }),
             RrDr60Status::InvalidVolume
@@ -3124,7 +3277,8 @@ mod tests {
             assert_eq!(offset_of!(RrDr60StopOutcome, silence_fed_samples), 56);
             assert_eq!(size_of::<RrDr60StopOutcome>(), 64); // 40 → 64
             assert_eq!(offset_of!(RrDr60PlayInfo, frame_index), 24);
-            assert_eq!(size_of::<RrDr60PlayInfo>(), 32); // 16 → 32
+            assert_eq!(offset_of!(RrDr60PlayInfo, place), 32); // spec 013
+            assert_eq!(size_of::<RrDr60PlayInfo>(), 40); // 16 → 32 → 40 (013)
         }
         assert_eq!(size_of::<RrDr60SpeechCodecInfo>(), 24);
         assert_eq!(offset_of!(RrDr60SpeechCodecInfo, model_version), 16);
@@ -3194,6 +3348,7 @@ mod tests {
             finished: true,
             frames: 9,
             frame_index: 9,
+            place: 9,
         };
         let mut outcome = RrDr60StopOutcome {
             flush: garbage,

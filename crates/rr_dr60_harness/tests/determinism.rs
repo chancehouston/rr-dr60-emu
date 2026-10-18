@@ -657,3 +657,45 @@ fn seed_selects_the_hiss() {
     assert_eq!(one_block(a, &x), one_block(a, &x));
     assert_ne!(one_block(a, &x), one_block(b, &x));
 }
+
+/// Spec 013 FR-010 (T020): at a constant level other than 3 a playback is bit-identical across
+/// call partitions of 1, 64 and 4096 samples and an irregular one, at 6 and 48 kHz, the codec on
+/// and off.
+#[test]
+fn speed_partitions() {
+    for rate in [6000u32, 48_000] {
+        for config in ["speed_default", "speed_default_no_codec"] {
+            let x = rr_dr60_harness::stimulus::voiced(f64::from(rate), 0.6, -20.0, 13);
+            for level in [1u8, 5] {
+                let play = |sizes: &mut dyn FnMut() -> usize| {
+                    let mut p = Pipeline::new(configs::settings(config, rate)).unwrap();
+                    p.start_recording().unwrap();
+                    let _ = p.record(&x, &mut []).unwrap();
+                    let _ = p.stop_recording(&mut []).unwrap();
+                    p.set_playback_speed(level).unwrap();
+                    p.start_playback(1).unwrap();
+                    let mut out = Vec::new();
+                    loop {
+                        let mut buf = vec![0.0f32; sizes()];
+                        let info = p.play(&mut buf).unwrap();
+                        out.extend_from_slice(&buf[..info.produced]);
+                        if info.finished {
+                            return out;
+                        }
+                    }
+                };
+                let reference = play(&mut || 4096);
+                for fixed in [1usize, 64] {
+                    let got = play(&mut || fixed);
+                    assert!(
+                        got == reference,
+                        "{rate} {config} level {level}: blocks of {fixed}"
+                    );
+                }
+                let mut rng = Pcg32::new(0x013, 1);
+                let got = play(&mut || rng.below(3000) as usize);
+                assert!(got == reference, "{rate} {config} level {level}: irregular");
+            }
+        }
+    }
+}

@@ -16,6 +16,8 @@ pub(crate) mod mic_coeffs;
 pub(crate) mod output;
 #[allow(dead_code)] // the generated table carries the script's pinned figures, read by tests
 pub(crate) mod output_coeffs;
+// Spec 013: the playback speed control at the device rate, run by the player only.
+pub(crate) mod speed;
 pub(crate) mod vas;
 pub(crate) mod voiceband;
 pub(crate) mod voiceband_coeffs;
