@@ -27,7 +27,9 @@
 //! `rr_dr60_reset`, `rr_dr60_latency_samples`, `rr_dr60_settings_validate`,
 //! `rr_dr60_start_recording`, `rr_dr60_record`, `rr_dr60_max_record_events`,
 //! `rr_dr60_stop_recording`, `rr_dr60_start_playback`, `rr_dr60_play`,
-//! `rr_dr60_stop_playback`, `rr_dr60_set_route`, `rr_dr60_get_route`, `rr_dr60_get_state`,
+//! `rr_dr60_stop_playback`, `rr_dr60_set_route`, `rr_dr60_get_route`, `rr_dr60_set_volume`,
+//! `rr_dr60_get_volume`, `rr_dr60_set_playback_speed`, `rr_dr60_get_playback_speed`,
+//! `rr_dr60_playback_length_samples`, `rr_dr60_get_state`,
 //! `rr_dr60_memory_status`, `rr_dr60_recording_length`, `rr_dr60_export_len`, the three
 //! latency and drain reads and `rr_dr60_footprint_bytes`. Not real-time safe:
 //! `rr_dr60_create`, `rr_dr60_destroy`, `rr_dr60_reconfigure` (allocate), `rr_dr60_erase`,
