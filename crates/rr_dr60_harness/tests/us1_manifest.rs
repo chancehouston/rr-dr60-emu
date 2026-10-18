@@ -107,7 +107,10 @@ fn codec_stages_us3_scenario_1() {
         let e = m.stage(n).unwrap();
         assert_eq!(e.status, StageStatus::Assumed, "stage {n}");
         assert_eq!(e.confidence, Confidence::Low, "stage {n}");
-        assert_eq!(e.model_version, "0.8.0", "stage {n}");
+        // Restated 2026-10-17 by spec 013 (/speckit-analyze F2): stage 9 carries the playback
+        // speed control (A-054) at model version 0.13.0; stage 7 stays at 0.8.0.
+        let version = if n == 9 { "0.13.0" } else { "0.8.0" };
+        assert_eq!(e.model_version, version, "stage {n}");
         assert!(
             !e.coverage.is_empty() && !e.controls.is_empty(),
             "stage {n}"
@@ -139,10 +142,16 @@ fn codec_stages_us3_scenario_1() {
         );
     }
     let dec = m.stage(9).unwrap();
+    assert!(
+        dec.assumptions.contains(&"A-054"),
+        "stage 9 cites A-054 (spec 013 FR-011)"
+    );
     for item in [
         "Tap::AfterDecoder",
         "PlayInfo.frames",
         "PlayInfo.frame_index",
+        "set_playback_speed", // spec 013 FR-011
+        "PlayInfo.place",     // spec 013 FR-009
     ] {
         assert!(
             dec.controls.contains(item),

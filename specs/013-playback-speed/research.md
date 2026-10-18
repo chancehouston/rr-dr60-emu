@@ -29,11 +29,11 @@ The host's level (`Pipeline::speed_level`, set any time) is copied into the stag
 | Level | k | r | Passband (Hz) | Stopband (Hz) | Cutoff (Hz) | Passband deviation (dB) | Worst spurious 20 – 3000 Hz (dB, at stored f) | Tail (device samples) |
 |---|---|---|---|---|---|---|---|---|
 | 1 | 3 | 0.6 | 2550 | 3100 | 2825.0 | 0.0012 | −73.0 (2853 Hz) | 46 |
-| 2 | 4 | 0.8 | 2550 | 3100 | 2825.0 | 0.0012 | −73.1 (2853 Hz) | 34 |
-| 4 | 6 | 1.2 | 1875 | 2500 | 2187.5 | 0.0019 | −72.8 (2503 Hz) | 23 |
-| 5 | 7 | 1.4 | 1607.1 | 2142.9 | 1875.0 | 0.0025 | −74.4 (2203 Hz) | 20 |
+| 2 | 4 | 0.8 | 2550 | 3100 | 2825.0 | 0.0012 | −73.0 (2853 Hz) | 34 |
+| 4 | 6 | 1.2 | 1875 | 2500 | 2187.5 | 0.0019 | −72.5 (2503 Hz) | 23 |
+| 5 | 7 | 1.4 | 1607.1 | 2142.9 | 1875.0 | 0.0025 | −73.9 (2203 Hz) | 20 |
 
-The slow levels' passband is the record band's top, 2550 Hz (the host converters' convention; plan review Q7: a 2250 Hz passband lost 0.15 dB at 2500 Hz and 0.68 dB at 2550 Hz, now 0.002 dB at 2500 Hz), and their stopband 3100 Hz (the image 6000 − f of a stored 2900 Hz tone, FR-004 (b)); levels 1 and 2 therefore share one prototype (three distinct banks). The fast levels' passband is 2250 ÷ r and their stopband 3000 ÷ r (the device Nyquist frequency after the move, FR-004 (b), (c)). The look-ahead is D = 28 stored samples (4.67 ms). Figures: a least-squares fit at r × f for the passband (tones every 50 Hz from 103 Hz up to min(2250, 2250 ÷ r)), a Kaiser-windowed (β 20) spectrum of the residual between 20 and 3000 Hz for the spurious (tones every 25 Hz from 103 to 2903 Hz; for r × f above 3000 Hz the whole output is the residual, FR-004 (c)).
+The slow levels' passband is the record band's top, 2550 Hz (the host converters' convention; plan review Q7: a 2250 Hz passband lost 0.15 dB at 2500 Hz and 0.68 dB at 2550 Hz, now 0.002 dB at 2500 Hz), and their stopband 3100 Hz (the image 6000 − f of a stored 2900 Hz tone, FR-004 (b)); levels 1 and 2 therefore share one prototype (three distinct banks). The fast levels' passband is 2250 ÷ r and their stopband 3000 ÷ r (the device Nyquist frequency after the move, FR-004 (b), (c)). The look-ahead is D = 28 stored samples (4.67 ms). Figures: a least-squares fit at r × f for the passband (tones every 50 Hz from 103 Hz up to min(2250, 2250 ÷ r)), a Kaiser-windowed (β 20), four-times zero-padded spectrum of the residual between 20 and 3000 Hz for the spurious (tones every 25 Hz from 103 to 2903 Hz; for r × f above 3000 Hz the whole output is the residual, FR-004 (c)).
 
 **The dot product** uses **four partial sums in a fixed order**: s_q = Σ_{m ≡ q (mod 4)} c[ph][m] · x[i + 28 − m] for q = 0 … 3 (m ascending), y = (s₀ + s₁) + (s₂ + s₃). Any fixed order is deterministic (no fused multiply-add is generated without an explicit call); four independent chains cut the latency-bound loop's cost (plan review Q4: the single-accumulator 57-tap product measured 13.7 ns per device output on the development machine, 1.7 ns per host sample at 48 kHz, against a play-only base of about 24 ns).
 

@@ -247,6 +247,81 @@ pub fn fit_sinusoid<T: Copy + Into<f64>>(x: &[T], fs: f64, guess_hz: f64) -> (f6
     (amp, fine)
 }
 
+/// Spec 013 (research R-08): the least-squares fit of a sinusoid at exactly `freq_hz` in `x`
+/// (no window: the cosine and sine at the given frequency over every sample), as its amplitude
+/// and the residual `x − fit`. A pure sinusoid fits exactly at any length, so the amplitude
+/// resolves level differences far below an FFT bin's, and the residual carries every other
+/// component (FR-004 (a), (b)).
+pub fn sine_fit<T: Copy + Into<f64>>(x: &[T], freq_hz: f64, fs: f64) -> (f64, Vec<f64>) {
+    let w = TAU * freq_hz / fs;
+    let (mut scc, mut sss, mut scs, mut sxc, mut sxs) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for (n, &v) in x.iter().enumerate() {
+        let (c, s) = ((w * n as f64).cos(), (w * n as f64).sin());
+        let v: f64 = v.into();
+        scc += c * c;
+        sss += s * s;
+        scs += c * s;
+        sxc += v * c;
+        sxs += v * s;
+    }
+    let det = scc * sss - scs * scs;
+    let a = (sxc * sss - sxs * scs) / det;
+    let b = (sxs * scc - sxc * scs) / det;
+    let residual = x
+        .iter()
+        .enumerate()
+        .map(|(n, &v)| v.into() - a * (w * n as f64).cos() - b * (w * n as f64).sin())
+        .collect();
+    ((a * a + b * b).sqrt(), residual)
+}
+
+/// Spec 013 (research R-08): the largest spectral component of `x` between `lo_hz` and `hi_hz`,
+/// in dB relative to a unit-amplitude sine: a Kaiser window (β 20, sidelobes far below the
+/// −60 dB floor) and an FFT zero-padded four times (scalloping under 0.03 dB), each bin's
+/// magnitude scaled by 2 ÷ Σw so a sine of amplitude A reads 20·log10(A) at its peak bin (FR-004 (b), (c); `tools/playback-speed/speed_design.py`'s
+/// `peak_db`).
+pub fn spurious_peak_db<T: Copy + Into<f64>>(x: &[T], fs: f64, lo_hz: f64, hi_hz: f64) -> f64 {
+    let n = x.len();
+    let i0 = |v: f64| {
+        // The modified Bessel function of the first kind, order 0, by its power series.
+        let (mut sum, mut term, mut k) = (1.0, 1.0, 1.0);
+        while term > 1e-17 * sum {
+            term *= (v / (2.0 * k)) * (v / (2.0 * k));
+            sum += term;
+            k += 1.0;
+        }
+        sum
+    };
+    let beta = 20.0; // engineering target (013 R-08: the script's window)
+    let denom = i0(beta);
+    let w: Vec<f64> = (0..n)
+        .map(|k| {
+            let r = 2.0 * k as f64 / (n - 1) as f64 - 1.0;
+            i0(beta * (1.0 - r * r).max(0.0).sqrt()) / denom
+        })
+        .collect();
+    let wsum: f64 = w.iter().sum();
+    let padded = 4 * n; // engineering target (013 R-08: the script's zero padding)
+    let mut buf: Vec<Complex64> = x
+        .iter()
+        .zip(&w)
+        .map(|(&v, &wk)| Complex64::new(v.into() * wk, 0.0))
+        .chain(std::iter::repeat(Complex64::new(0.0, 0.0)))
+        .take(padded)
+        .collect();
+    rustfft::FftPlanner::<f64>::new()
+        .plan_fft_forward(padded)
+        .process(&mut buf);
+    let mut peak = 0.0f64;
+    for (k, c) in buf.iter().enumerate().take(padded / 2 + 1) {
+        let f = k as f64 * fs / padded as f64;
+        if f > lo_hz && f < hi_hz {
+            peak = peak.max(c.norm() * 2.0 / wsum);
+        }
+    }
+    db(peak.max(1e-300))
+}
+
 /// Amplitude ratio to decibels.
 pub fn db(ratio: f64) -> f64 {
     20.0 * ratio.log10()
@@ -646,6 +721,23 @@ pub fn level_track<T: Copy + Into<f64>, U: Copy + Into<f64>>(
 
 #[cfg(test)]
 mod tests {
+    /// 013 T007: the fit recovers a tone's amplitude exactly and leaves a second tone in the
+    /// residual, which the spurious reader finds at its level.
+    #[test]
+    fn sine_fit_and_spurious_peak() {
+        let fs = 6000.0;
+        let x: Vec<f64> = (0..9000)
+            .map(|n| {
+                let t = n as f64 / fs;
+                0.5 * (TAU * 1003.0 * t + 0.3).sin() + 1e-3 * (TAU * 2203.0 * t).sin()
+            })
+            .collect();
+        let (a, res) = super::sine_fit(&x, 1003.0, fs);
+        assert!((a - 0.5).abs() < 1e-6, "{a}");
+        let peak = super::spurious_peak_db(&res, fs, 20.0, 3000.0);
+        assert!((peak - (-60.0)).abs() < 0.05, "{peak}"); // 1e-3 is −60 dB re a unit sine
+    }
+
     use super::*;
 
     /// Spec 012 T019: the band level of a full-scale sine inside the band is 0 dBFS; outside it

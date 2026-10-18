@@ -105,6 +105,12 @@ pub enum Error {
         /// The rejected position.
         position: f32,
     },
+    /// `set_playback_speed` or `playback_length_samples` with a level other than 1 … 5 (spec 013
+    /// FR-001); the level is unchanged.
+    InvalidSpeedLevel {
+        /// The rejected level.
+        level: u8,
+    },
     /// A processing call with a named route tap ([`Tap::AfterSpeaker`](crate::Tap::AfterSpeaker)
     /// or [`Tap::AfterEarphone`](crate::Tap::AfterEarphone)) while the other route is selected
     /// (spec 009 FR-011); nothing was processed. The route output tap
@@ -272,6 +278,9 @@ impl fmt::Display for Error {
             Error::TapNotOnRoute { tap, route } => {
                 write!(f, "tap {tap:?} is not on the selected route {route:?}")
             }
+            Error::InvalidSpeedLevel { level } => {
+                write!(f, "invalid playback speed level {level}: expected 1 to 5")
+            }
         }
     }
 }
@@ -307,7 +316,7 @@ mod tests {
     /// refusal has a `Display` that names the reason in the spec's words and includes its field.
     #[test]
     fn transport_errors_display_the_reason_and_their_field() {
-        let cases: [(Error, &[&str]); 18] = [
+        let cases: [(Error, &[&str]); 19] = [
             (Error::RecordingInProgress, &["recording in progress"]),
             (Error::PlaybackInProgress, &["playback in progress"]),
             (Error::NotRecording, &["not recording"]),
@@ -355,6 +364,11 @@ mod tests {
                     route: crate::Route::Earphone,
                 },
                 &["is not on the selected route", "AfterSpeaker", "Earphone"],
+            ),
+            // Spec 013 FR-001.
+            (
+                Error::InvalidSpeedLevel { level: 6 },
+                &["invalid playback speed level", "6", "1 to 5"],
             ),
         ];
         let mut texts = std::vec::Vec::new();

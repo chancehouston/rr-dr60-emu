@@ -127,10 +127,11 @@ def fit(y: np.ndarray, f: float):
 
 def peak_db(res: np.ndarray, lo: float = 20.0, hi: float = 3000.0) -> float:
     """The largest spectral component of `res` between lo and hi Hz, dB re a unit sine (a
-    Kaiser-windowed FFT, β 20, normalized to the sine's peak)."""
+    Kaiser-windowed FFT, β 20, zero-padded four times so a component between bins reads within
+    0.03 dB, normalized to the sine's peak)."""
     w = np.kaiser(len(res), 20)
-    spec = np.abs(np.fft.rfft(res * w)) / w.sum() * 2
-    f = np.arange(len(spec)) * FS / len(res)
+    spec = np.abs(np.fft.rfft(res * w, 4 * len(res))) / w.sum() * 2
+    f = np.arange(len(spec)) * FS / (4 * len(res))
     m = (f > lo) & (f < hi)
     return float(20 * np.log10(spec[m].max() + 1e-300))
 

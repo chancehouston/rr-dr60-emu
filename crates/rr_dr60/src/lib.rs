@@ -203,6 +203,7 @@ mod rate;
 mod resample;
 mod sanitize;
 mod settings;
+pub mod speed;
 mod stages;
 #[cfg(test)]
 mod test_util;
