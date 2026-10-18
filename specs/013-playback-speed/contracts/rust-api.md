@@ -21,8 +21,9 @@ pub fn set_playback_speed(&mut self, level: u8) -> Result<(), Error>;
 pub fn playback_speed(&self) -> u8;
 
 /// The host samples `play` produces for recording `number` played at a constant `level`:
-/// ⌈⌈5K ÷ k⌉ · m ÷ l⌉ (the recording's own part, K stored device samples, k the level's
-/// numerator) plus `drain_samples()`. Real-time safe.
+/// ⌈(⌈5K ÷ k⌉ + T) · m ÷ l⌉ (the recording's own part, K stored device samples, k the level's
+/// numerator, and the speed control's tail of T ≤ 46 device samples, 0 at level 3) plus
+/// `drain_samples()`. Real-time safe.
 ///
 /// # Errors
 /// `Error::InvalidSpeedLevel` (checked first), then `Error::NoSuchRecording`.
@@ -73,7 +74,7 @@ InvalidSpeedLevel { level: u8 },
 
 ## Test hooks (`__test_hooks`, feature `__test-hooks`; not public API)
 
-- `start_playback_at(p: &mut Pipeline, number: u32, place_fifths: u64) -> Result<(), Error>`: `start_playback`, then the speed control's place set to `place_fifths` (the stored samples before it pulled into the ring as the playback would have; the decoder run through them), for the continuity oracle (research R-08).
 - `speed_place_fifths(p: &Pipeline) -> u64`: the place of the next output, in fifths.
-- `SpeedMutation { ratio_k7: Option<u32>, no_tail: bool, snap_into_level_3: bool, lookahead_delta: i32, no_phase_normalization: bool, look_ahead_at_level_3: bool }` with `Pipeline::__with_speed_mutation` (research R-12's six mutants).
-- `speed_bank(level: u8) -> Option<Vec<f64>>`: a level's committed bank, for the core figure pins.
+- `SpeedMutation { ratio_k7: Option<u32>, no_tail: bool, snap_into_level_3: bool, lookahead_delta: i32, latch_after_switch: bool, no_drain_zero_stop: bool }` with `Pipeline::__with_speed_mutation` (research R-12's six mutants).
+- `speed_bank(level: u8) -> Option<Vec<f64>>`: a level's bank as designed at construction (5 × 57, phase-major), for the independent reference (research R-08) and the pins.
+- `speed_tail_len(k: u32, stored: u64) -> u64`: T(K, k), for the length checks.

@@ -52,7 +52,7 @@ typedef struct RrDr60PlayInfo {
 } RrDr60PlayInfo;
 ```
 
-A compile break for hosts that size the struct themselves (as 008's growth); recorded in the CHANGELOG's 0.13.0 "Changed".
+An **ABI break** (as 008's growth): the struct has no size field, so a host built against the 0.12 header and linked against 0.13 is overrun by 8 bytes; recorded in the CHANGELOG's 0.13.0 "Changed" with the instruction to rebuild against the new header.
 
 ## Smoke loop and parity
 

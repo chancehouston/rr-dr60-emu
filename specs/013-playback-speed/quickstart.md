@@ -22,13 +22,13 @@ Expected: lengths exact (⌈⌈5K ÷ k⌉ · m ÷ l⌉ before the drain); at 6 k
 ## US2: live changes
 
 ```sh
-cargo test -p rr_dr60_harness --test us2_speed -- --nocapture         # every ordered pair bit-exact against the hooked constant-level playback
+cargo test -p rr_dr60_harness --test us2_speed -- --nocapture         # every ordered pair bit-exact against the independent reference
 cargo test -p rr_dr60_harness --test speed_edge_cases
 cargo test -p rr_dr60_harness --test determinism speed
 cargo test -p rr_dr60_harness --test alloc_free
 cargo test -p rr_dr60_harness --test mutation speed::                 # six mutants caught
 cargo test -p rr_dr60_harness --release --test timing speed_cost speed_codec_worst_block -- --ignored --nocapture --test-threads=1
-scripts/ab-timing.sh 3a4eefb playback                                 # level 3 against 0.12: ≤ 3 % (solo)
+scripts/ab-timing.sh 3a4eefb playback                                 # level 3 against 0.12: ≤ 3 % (solo; 45 alternating rounds)
 ```
 
 ## US3: records

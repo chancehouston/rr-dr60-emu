@@ -18,7 +18,8 @@ to sum to exactly 1 (`resample::design::polyphase_split`). The response is centr
 so the speed control adds no latency (FR-003, FR-008). Level 3 (k = 5) passes x[i] unaltered.
 
 Per level the prototype's band edges, in the stored stream's frequencies (research R-03):
-  r < 1:  passband 2250 Hz, stopband 3100 Hz (the image 6000 − f of a stored 2900 Hz tone);
+  r < 1:  passband 2550 Hz (the record band's top, the host converters' convention), stopband
+          3100 Hz (the image 6000 − f of a stored 2900 Hz tone);
   r > 1:  passband 2250 / r, stopband 3000 / r (the device Nyquist frequency after the move),
 the cutoff halfway between, 70 dB of design attenuation (FR-004's 60 dB with margin).
 
@@ -51,7 +52,7 @@ def kaiser_beta(a: float) -> float:
 
 def edges(k: int) -> tuple[float, float]:
     r = k / 5
-    return (2250.0, 3100.0) if k < 5 else (2250.0 / r, 3000.0 / r)
+    return (2550.0, 3100.0) if k < 5 else (2250.0 / r, 3000.0 / r)
 
 
 def prototype(k: int) -> np.ndarray:
@@ -169,13 +170,21 @@ def main() -> int:
           f" ({ATTEN_DB:.0f} dB)")
     print(f"cost: {PER_PHASE} multiply-adds per device output sample at levels 1, 2, 4, 5"
           f" ({PER_PHASE / 8:.1f} per host sample at 48 kHz at level-3-equivalent density)")
+    print("bank pins (the Rust banks within 1e-12): cutoff in cycles per prototype sample; energy ="
+          " sum of c[ph][m]^2; moment = sum of c[ph][m] * ((ph + 5m - 140) / 140)^2")
+    for k in (3, 4, 6, 7):
+        fp, fs = edges(k)
+        bk = BANKS[k]
+        t = (np.arange(PHASES)[:, None] + 5 * np.arange(PER_PHASE)[None, :] - (TAPS - 1) / 2) / ((TAPS - 1) / 2)
+        print(f"  k={k}: cutoff {(fp + fs) / 2 / PROTO_RATE:.15f}, energy {np.sum(bk * bk):.15f},"
+              f" moment {np.sum(bk * t * t):.15e}, phase sums max |1 - sum| {np.max(np.abs(bk.sum(axis=1) - 1)):.1e}")
     print()
     print("level  k  r    pass Hz  stop Hz  cutoff Hz  passband dev dB  worst spurious dB (f)   tail")
     figures = {}
     for k in (3, 4, 6, 7):
         r = k / 5
         fp, fs = edges(k)
-        f_top = min(2250.0, 2250.0 / r)
+        f_top = min(2250.0, 2250.0 / r)  # FR-004 (a)'s range
         dev = 0.0
         res_worst = -999.0
         for f in np.arange(100.0, f_top + 1e-9, 50.0) + 3.0:
@@ -262,8 +271,8 @@ def main() -> int:
     # changing at output 3000, the output against the two constant-level references.
     print("level change (FR-007, reported): the band each level passes, stored-stream frequencies")
     for k in (3, 4, 6, 7):
-        print(f"  k={k}: -0.1 dB edge {min(2250.0, 2250.0 / (k / 5)):.0f} Hz or above,"
-              f" -60 dB from {edges(k)[1]:.0f} Hz")
+        print(f"  k={k}: passband edge {edges(k)[0]:.0f} Hz (stored), -60 dB from {edges(k)[1]:.0f} Hz;"
+              f" level at 2500 Hz stored {response_db(k, 2500.0) if k / 5 * 2500 < 2990 else float('nan'):+.3f} dB")
 
     if check:
         if failures:
