@@ -396,9 +396,9 @@ stage_table! {
     },
     {
         number: 6, identifier: "noise_reduction", name: "Noise reduction",
-        description: "Claimed by one secondary account to reduce background noise; the service manual lists no such function.",
+        description: "Claimed by one secondary account to reduce background noise; no manufacturer document lists such a function and the circuit has none.",
         status: NotModeled, path: Record, confidence: NotApplicable,
-        sources: ["S-002", "S-004"], assumptions: ["A-009"],
+        sources: ["S-001", "S-002", "S-004", "S-012", "S-013"], assumptions: ["A-009"],
         coverage: "", controls: "", model_version: "",
     },
     {
@@ -469,16 +469,17 @@ stage_table! {
     },
     {
         number: 14, identifier: "clock", name: "Clock",
-        description: "An 8 MHz resonator clocks the DSP, which derives the codec's 6 kHz sampling clock from it.",
+        description: "An 8 MHz resonator clocks both processors; the DSP derives the codec's 6 kHz sampling clock from it.",
         status: NotModeled, path: Both, confidence: NotApplicable,
-        sources: ["S-002"], assumptions: ["A-011"],
+        sources: ["S-002", "S-003", "S-016"], assumptions: ["A-011"],
         coverage: "", controls: "", model_version: "",
     },
     {
         number: 15, identifier: "power", name: "Power supply",
-        description: "Two AAA cells feed a 3.3 V converter for the digital section and a switched rail for the analog section.",
+        description: "Two AAA cells feed a 3.3 V converter whose switched rails supply the analog section and the flash; the speaker amplifier runs directly from the cells.",
         status: NotModeled, path: Both, confidence: NotApplicable,
-        sources: ["S-001", "S-002"], assumptions: ["A-013"],
+        sources: ["S-001", "S-002", "S-006", "S-014", "S-015", "S-017"],
+        assumptions: ["A-013", "A-056", "A-057", "A-058"],
         coverage: "", controls: "", model_version: "",
     },
 }
