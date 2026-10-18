@@ -8,6 +8,7 @@ Notes kept by the `product-specialist` consulting agent (see `.claude/agents/pro
 - [competitors.md](competitors.md): apps in the same category on the App Store and Google Play, with the claims they make.
 - [monetization.md](monetization.md): the free tier, the paid tier, and the models considered.
 - [front-and-inside.md](front-and-inside.md): the app's two views of the recorder (the front and the inside), what the inside may show, the free/Workbench split, and the engine requests it needs.
+- [controls-discussion.md](controls-discussion.md): the controls and AI-control decision brief (2026-10-18, engine 0.13.0): every engine parameter classified, which controls the app wants live and the engine work each needs, the options for an AI-facing control surface with its guardrails, a proposed spec sequence and the owner's questions.
 - [decisions.md](decisions.md): the product decision log.
 
 Everything here follows the project's claims policy in `CLAUDE.md`: describe what the signal chain does to sound, say "modeled on" until a stage is checked against a real unit, and make no claim about paranormal phenomena either way.
