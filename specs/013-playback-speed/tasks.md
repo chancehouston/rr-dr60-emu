@@ -162,8 +162,8 @@ description: "Task list for 013 Playback Speed (the device's five playback speed
 
 - [X] T034 Re-run T030's gate after the review fixes.
 - [X] T035 **The golden bless, once, after the reviews**: `RR_DR60_BLESS=speed cargo test -p rr_dr60_harness --test golden_speed`; pin its SHA in `tests/golden_speed.rs`; add `golden_speed` to `.github/workflows/ci.yml` (the check job, the golden matrix, the iOS simulator job) and `scripts/ios-device-golden.sh`; add `RR_DR60_SPEED_COST_CEILING: "25"` and `RR_DR60_SPEED_CODEC_RATIO_CEILING: "2.0"` to the release timing job's environment; a CHANGELOG line for the bless; one commit.
-- [ ] T036 The full gate **with** coverage: `cargo llvm-cov --all-features --workspace --fail-under-lines 80` (within 1 point of 0.12's 97.96 %), and the iOS simulator golden run if available.
-- [ ] T037 CLAUDE.md: the 013 status line (the figures as the harness and the script print them, the lessons) and the commands (the reports, the bless, the A/B playback mode); the spec's Status line; the bookmark memory.
+- [X] T036 The full gate **with** coverage: `cargo llvm-cov --all-features --workspace --fail-under-lines 80` (within 1 point of 0.12's 97.96 %), and the iOS simulator golden run if available.
+- [X] T037 CLAUDE.md: the 013 status line (the figures as the harness and the script print them, the lessons) and the commands (the reports, the bless, the A/B playback mode); the spec's Status line; the bookmark memory.
 - [ ] T038 Rebase onto `main` if PR #31 has merged (else keep the stack), push `013-playback-speed`, open a **draft** PR (to `main`, or to `research/noise-clock-power` if PR #31 is open) with the figures, the review notes and a checklist; when CI is green add the `ab-timing` label and quote the runner's A/B. **Do not mark the PR ready and do not merge**: the owner decides on return.
 
 ---
