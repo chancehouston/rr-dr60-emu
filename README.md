@@ -31,9 +31,9 @@ This project is **neutral and technical**. It emulates what the recorder's elect
 
 ## Accuracy
 
-Exact specifications for the RR-DR60 aren't fully public. Where they're unknown, we make **reasonable, documented assumptions** and record each one in the [assumption register](docs/hardware/assumptions.md) along with the [sources](docs/hardware/sources.md) behind it. The v1 goal is a **measured character match**: frequency response, noise, AGC and VAS behavior, and codec artifacts within stated tolerances. Bit-exact reproduction isn't a goal.
+Exact specifications for the RR-DR60 aren't fully public. Where they're unknown, we make **reasonable, documented assumptions** and record each one in the [assumption register](docs/hardware/assumptions.md) along with the [sources](docs/hardware/sources.md) behind it. The v1 goal is a **modeled character match**: frequency response, noise, AGC and VAS behavior, and codec artifacts within stated tolerances of the model built from those documents. **No stage has been checked against a real unit**, and that check is out of scope until the project has a unit it can open. Bit-exact reproduction isn't a goal.
 
-**Own a working RR-DR60?** Recordings of test signals from a real unit are the most valuable contribution you can make. Open a [Hardware evidence](https://github.com/chancehouston/rr-dr60-emu/issues/new/choose) issue.
+**Own a working RR-DR60?** Recordings of test signals from a real unit are still the most valuable contribution you can make, and any that arrive are compared against the model. Open a [Hardware evidence](https://github.com/chancehouston/rr-dr60-emu/issues/new/choose) issue.
 
 ### Fidelity status by stage
 

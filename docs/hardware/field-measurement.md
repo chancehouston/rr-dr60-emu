@@ -1,6 +1,6 @@
 # Field measurement through the app (feasibility note)
 
-Status: **idea under evaluation** (2026-10-13). Not a spec. Nothing here is implemented, and nothing here changes the emulator's behavior. When this becomes a feature it goes through Spec-Kit like everything else; this page records what the loop can and cannot measure so the spec starts from the physics rather than from hope.
+Status: **shelved** (2026-10-18: real-unit verification is out of scope until the project has a unit it can open; see CLAUDE.md › Open decisions). Was: idea under evaluation (2026-10-13). Not a spec. Nothing here is implemented, and nothing here changes the emulator's behavior. When this becomes a feature it goes through Spec-Kit like everything else; this page records what the loop can and cannot measure so the spec starts from the physics rather than from hope.
 
 ## The idea
 

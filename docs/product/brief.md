@@ -118,7 +118,7 @@ The dossier does not change these. Details and reasoning are in decisions.md.
   - The sensor tracks and the raw microphone audio are processed and stored on the device. Re-check both labels against the final session design.
 - **Ads:** none, and no consumables.
 - **Subscriptions:** none at launch. The dossier selects none either; confirmation is question O-6.
-- **Evidence program:** a product priority. The free routes come first (a published capture kit, requests to creators who own units).
+- **Evidence program:** *superseded 2026-10-18:* real-unit checks are out of scope until the project has a unit it can open (decisions.md). The status header still shows the truth: no stage checked against a real unit.
 - **Engine distribution:** a Swift Package wrapping an XCFramework (later an Android archive), not a source port.
 - **Stage strings:** the engine carries short, neutral, English strings per stage (the stage manifest), and apps localize them.
 - **Status vocabulary:** product copy says "checked against a real unit", never "verified".
@@ -136,7 +136,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
 
 | Earlier decision (date, note) | Now |
 |---|---|
-| The vintage-gear audience stays in the copy but is not built for until evidence of it appears (2026-10-11, decisions.md, personas.md) | **Agreed:** Recorder mode is built as its home. |
+| The vintage-gear audience stays in the copy but is not built for until evidence of it appears (2026-10-11, decisions.md, personas.md) | **Agreed:** Recorder mode is built as its home. *2026-10-18:* listeners whose main interest is a checked, authentic sound are no longer targeted (decisions.md); **Open (O-15):** Recorder mode's framing. |
 | The free inside has no controls at all; every control is Workbench ("see free, touch paid") (2026-10-11, decisions.md, front-and-inside.md › Rules, › Free and Workbench) | **Agreed:** the engine's intended user adjustments are free. **Open (★ O-1):** which controls those are. |
 | The paid tier is one non-consumable called "Workbench", $7.99 (tested between $4.99 and $9.99), with a fixed list: expanded memory, stage taps and mixer, "Listen here", raw-capture retention, bypass and parameters, folders and search, stem export, review tools (2026-10-11, monetization.md) | **Agreed:** paid expansion is component packages with example chains and presets. **Open:** one workbench unlock or several experience packs, the price, and where each old Workbench item now belongs (★ O-2). |
 | The raw microphone capture is kept only with the Workbench; the free tier keeps only the device-rate render (2026-10-11, decisions.md, front-and-inside.md › Tap to inspect) | **Agreed:** an Investigation session keeps the original microphone audio, and sensor sessions are free. **Open (★ O-3):** whether raw audio is kept in Recorder mode, whether it is free there, and how the user deletes it. |
@@ -190,6 +190,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
 - **O-13 Controls and AI control:** the 2026-10-15 request to give the app's users more to "play" with and to allow an AI to drive the engine's controls is not in the dossier. *(2026-10-18: the decision brief is [controls-discussion.md](controls-discussion.md), against engine 0.13.0.)*
   - It joins O-1 and the dossier's engine question 1.
   - It includes how a fast stream of volume changes behaves: each change restarts the 20 ms volume transition, so updates faster than about 60 per second make the knob lag.
+- **O-15 Recorder mode's audience (2026-10-18):** with real-unit checks out of scope, the product no longer targets listeners whose main interest is a checked, authentic sound. Does Recorder mode keep its "home for vintage-hardware and audio enthusiasts" framing, become the plain recorder front for every user, or merge into the tinkerer's view? Reconsider the dropped audience if demand appears.
 - **O-14 Implementation questions from the dossier:**
   - clock mapping and drift;
   - battery and storage cost;
