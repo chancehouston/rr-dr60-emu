@@ -47,6 +47,8 @@ static RrDr60Settings settings_011(uint32_t host_rate_hz) {
 /* Spec 011 T035: the volume-transition case (the square at 0.1 on the speaker route, 1.0 before
    play block 10, 0.4 before block 11), pinned from the Rust path (smoke_reference.rs). */
 #define RR_DR60_SMOKE_SPEAKER_RAMP_HASH 0xcc0133ffc64ac96eULL
+#define RR_DR60_SMOKE_SPEED_HASH 0x0dd90285502edcc3ULL /* spec 013 T029: smoke_reference::SMOKE_SPEED_HASH */
+#define RR_DR60_SMOKE_SPEED_SAMPLES 79776
 /* Spec 012 T048 (contracts/c-api.md › Smoke loop): the microphone cases, pinned from the Rust
    path (smoke_reference.rs): the 0.12 default one-pass on the square plus silence, and two
    recordings of silence (the hiss) with a reset between them. */
@@ -813,6 +815,56 @@ int main(int argc, char **argv) {
       CHECK(hr == RR_DR60_SMOKE_SPEAKER_RAMP_HASH,
             "transition case: playback hash %016llx differs from the Rust path's %016llx (011 T035)",
             (unsigned long long)hr, (unsigned long long)RR_DR60_SMOKE_SPEAKER_RAMP_HASH);
+      /* Spec 013 T029: the playback speed through C: the same recording on the speaker route at
+       * volume 0.1 and speed level 5, level 1 from play block 10; refused levels; the length
+       * helper; the playback equals the Rust path's bit for bit. */
+      CHECK(RR_DR60_SPEED_LEVEL_COUNT == 5 && RR_DR60_SPEED_DEFAULT_LEVEL == 3 &&
+                RR_DR60_SPEED_RATIO_DENOMINATOR == 5 && RR_DR60_SPEED_RATIO_NUMERATOR_1 == 3 &&
+                RR_DR60_SPEED_RATIO_NUMERATOR_5 == 7,
+            "the speed defines (013 FR-002)");
+      CHECK(sizeof(RrDr60PlayInfo) == 40 || sizeof(void *) != 8, "RrDr60PlayInfo is 40 bytes since 0.13 (013 FR-012)");
+      uint8_t lvl = 0;
+      CHECK(rr_dr60_get_playback_speed(handles2[1], &lvl) == RR_DR60_STATUS_OK && lvl == 3, "default level 3 (013 FR-001)");
+      CHECK(rr_dr60_set_playback_speed(handles2[1], 0) == RR_DR60_STATUS_INVALID_SPEED_LEVEL &&
+                rr_dr60_set_playback_speed(handles2[1], 6) == RR_DR60_STATUS_INVALID_SPEED_LEVEL &&
+                rr_dr60_get_playback_speed(handles2[1], &lvl) == RR_DR60_STATUS_OK && lvl == 3,
+            "refused levels leave the level unchanged (013 FR-001)");
+      uint64_t helper = 0;
+      CHECK(rr_dr60_set_route(handles2[1], RR_DR60_ROUTE_SPEAKER) == RR_DR60_STATUS_OK &&
+                rr_dr60_set_volume(handles2[1], 0.1f) == RR_DR60_STATUS_OK &&
+                rr_dr60_set_playback_speed(handles2[1], 5) == RR_DR60_STATUS_OK &&
+                rr_dr60_playback_length_samples(handles2[1], 1, 5, &helper) == RR_DR60_STATUS_OK && helper > 0 &&
+                rr_dr60_start_playback(handles2[1], 1) == RR_DR60_STATUS_OK,
+            "speed playback (013)");
+      size_t ns = 0;
+      uint64_t last_place = 0;
+      float *ps = malloc(sizeof(float) * 3 * (size_t)FS);
+      CHECK(ps != NULL, "malloc");
+      for (int block = 0;; block++) {
+        if (block == 10) CHECK(rr_dr60_set_playback_speed(handles2[1], 1) == RR_DR60_STATUS_OK, "level 1 (013)");
+        RrDr60PlayInfo pi;
+        CHECK(ns + 480 <= 3 * (size_t)FS, "speed playback longer than expected");
+        CHECK(rr_dr60_play(handles2[1], ps + ns, 480, &pi) == RR_DR60_STATUS_OK, "play (013)");
+        CHECK(pi.place >= last_place, "the place never decreases (013 FR-009)");
+        last_place = pi.place;
+        ns += pi.produced;
+        if (pi.finished) break;
+      }
+      CHECK(ns == RR_DR60_SMOKE_SPEED_SAMPLES, "speed case: %zu samples (Rust: %d)", ns, RR_DR60_SMOKE_SPEED_SAMPLES);
+      uint64_t hs = 0xcbf29ce484222325ULL;
+      for (size_t i = 0; i < ns; i++) {
+        uint8_t le[4];
+        memcpy(le, &ps[i], 4);
+        for (int b = 0; b < 4; b++) {
+          hs ^= le[b];
+          hs *= 0x00000100000001b3ULL;
+        }
+      }
+      CHECK(hs == RR_DR60_SMOKE_SPEED_HASH,
+            "speed case: playback hash %016llx differs from the Rust path's %016llx (013 T029)",
+            (unsigned long long)hs, (unsigned long long)RR_DR60_SMOKE_SPEED_HASH);
+      free(ps);
+      CHECK(rr_dr60_set_playback_speed(handles2[1], 3) == RR_DR60_STATUS_OK, "back to level 3");
       rr_dr60_destroy(handles2[0]);
       rr_dr60_destroy(handles2[1]);
     }

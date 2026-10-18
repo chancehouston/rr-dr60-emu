@@ -1091,6 +1091,7 @@ fn c_play_info(i: rr_dr60::PlayInfo) -> RrDr60PlayInfo {
         finished: i.finished,
         frames: i.frames,
         frame_index: i.frame_index,
+        place: i.place, // spec 013 FR-009
     }
 }
 
@@ -1745,6 +1746,13 @@ fn smoke_reference_hash_is_pinned() {
     println!("smoke volume-transition case: {ramp_len} samples, FNV-1a 64 {ramp:#018x}");
     assert_eq!(ramp, smoke_reference::SMOKE_SPEAKER_RAMP_HASH);
     assert_eq!(ramp_len, smoke_reference::SMOKE_ROUTE_PLAYBACK_SAMPLES);
+    // Spec 013 T029: the playback-speed case (the square at level 5, level 1 from play block 10).
+    let (speed, speed_len, speed_helper) = smoke_reference::rust_speed_reference();
+    println!(
+        "smoke speed case: {speed_len} samples, FNV-1a 64 {speed:#018x}, length helper at level 5 {speed_helper}"
+    );
+    assert_eq!(speed, smoke_reference::SMOKE_SPEED_HASH);
+    assert_eq!(speed_len, smoke_reference::SMOKE_SPEED_SAMPLES);
     // Spec 012 T049: the microphone cases (the 0.12 default one-pass; two hiss recordings with
     // a reset between them, which differ).
     let ((mic, mic_len), recs) = smoke_reference::rust_mic_references();
@@ -2272,5 +2280,115 @@ fn c_api_volume_transition_matches_rust_at_all_rates() {
                 rr_dr60_destroy(cp2);
             }
         }
+    }
+}
+
+/// Spec 013 US3 AS1 (FR-012; tasks.md T029): the C speed functions match the Rust API: set, read
+/// and refuse a level (status 25, the level unchanged), the length helper, and a playback with
+/// level changes through `rr_dr60_play`, whose output and reports (the place included) are
+/// bit-identical to the Rust path's.
+#[test]
+fn speed_parity() {
+    use rr_dr60_ffi::{
+        RrDr60Pipeline, RrDr60PlayInfo, RrDr60Status, rr_dr60_create, rr_dr60_destroy,
+        rr_dr60_get_playback_speed, rr_dr60_play, rr_dr60_playback_length_samples, rr_dr60_record,
+        rr_dr60_set_playback_speed, rr_dr60_start_playback, rr_dr60_start_recording,
+        rr_dr60_stop_recording,
+    };
+    let rate = 48_000;
+    let settings = configs::settings("speed_default", rate);
+    let x = stimulus::voiced(f64::from(rate), 1.0, -20.0, 0x013);
+    let schedule = [(0usize, 2u8), (7, 5), (15, 3), (22, 1)];
+    // Rust.
+    let mut p = rr_dr60::Pipeline::new(settings).unwrap();
+    p.start_recording().unwrap();
+    let _ = p.record(&x, &mut []).unwrap();
+    let _ = p.stop_recording(&mut []).unwrap();
+    let rust_helper = p.playback_length_samples(1, 4).unwrap();
+    let mut rust = Vec::new();
+    let mut rust_infos = Vec::new();
+    p.set_playback_speed(2).unwrap();
+    p.start_playback(1).unwrap();
+    let mut buf = vec![0.0f32; 960];
+    for c in 0.. {
+        for &(at, l) in &schedule {
+            if at == c && c > 0 {
+                p.set_playback_speed(l).unwrap();
+            }
+        }
+        let info = p.play(&mut buf).unwrap();
+        rust.extend(buf[..info.produced].iter().map(|v| v.to_bits()));
+        rust_infos.push(c_play_info(info));
+        if info.finished {
+            break;
+        }
+    }
+    // C.
+    let cs = configs::c_settings(&settings);
+    let mut h: *mut RrDr60Pipeline = std::ptr::null_mut();
+    // SAFETY: valid pointers throughout; `h` is a live handle until destroyed.
+    unsafe {
+        assert_eq!(rr_dr60_create(&cs, &mut h), RrDr60Status::Ok);
+        assert_eq!(rr_dr60_start_recording(h), RrDr60Status::Ok);
+        assert_eq!(
+            rr_dr60_record(
+                h,
+                x.as_ptr(),
+                x.len(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0
+            ),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_stop_recording(h, std::ptr::null_mut(), std::ptr::null_mut(), 0),
+            RrDr60Status::Ok
+        );
+        let mut level = 0u8;
+        assert_eq!(rr_dr60_get_playback_speed(h, &mut level), RrDr60Status::Ok);
+        assert_eq!(level, 3);
+        for bad in [0u8, 6] {
+            assert_eq!(
+                rr_dr60_set_playback_speed(h, bad),
+                RrDr60Status::InvalidSpeedLevel
+            );
+        }
+        let mut len = 0u64;
+        assert_eq!(
+            rr_dr60_playback_length_samples(h, 1, 9, &mut len),
+            RrDr60Status::InvalidSpeedLevel
+        );
+        assert_eq!(
+            rr_dr60_playback_length_samples(h, 1, 4, &mut len),
+            RrDr60Status::Ok
+        );
+        assert_eq!(len, rust_helper);
+        assert_eq!(rr_dr60_set_playback_speed(h, 2), RrDr60Status::Ok);
+        assert_eq!(rr_dr60_get_playback_speed(h, &mut level), RrDr60Status::Ok);
+        assert_eq!(level, 2);
+        assert_eq!(rr_dr60_start_playback(h, 1), RrDr60Status::Ok);
+        let mut c_out = Vec::new();
+        let mut c_infos = Vec::new();
+        for c in 0.. {
+            for &(at, l) in &schedule {
+                if at == c && c > 0 {
+                    assert_eq!(rr_dr60_set_playback_speed(h, l), RrDr60Status::Ok);
+                }
+            }
+            let mut info = RrDr60PlayInfo::default();
+            assert_eq!(
+                rr_dr60_play(h, buf.as_mut_ptr(), buf.len(), &mut info),
+                RrDr60Status::Ok
+            );
+            c_out.extend(buf[..info.produced].iter().map(|v| v.to_bits()));
+            c_infos.push(info);
+            if info.finished {
+                break;
+            }
+        }
+        rr_dr60_destroy(h);
+        assert_eq!(c_out, rust, "the C playback equals the Rust playback");
+        assert_eq!(c_infos, rust_infos, "the C reports equal the Rust reports");
     }
 }

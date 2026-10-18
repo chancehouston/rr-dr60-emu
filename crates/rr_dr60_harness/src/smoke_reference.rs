@@ -249,6 +249,51 @@ pub fn rust_ramp_reference() -> (u64, usize) {
     (fnv1a64(&play), play.len())
 }
 
+/// Spec 013 T029 (contracts/c-api.md › Smoke loop): the playback-speed case's hash: the
+/// full-scale square of the clamp cases recorded once in the default engine (0.11's settings),
+/// played on the speaker route at volume 0.1 at speed level 5, the level set to 1 before play
+/// block 10 (480-sample blocks): a live change between two non-3 levels. Pinned once from the
+/// Rust path (`rust_speed_reference`); `ffi_parity::smoke_reference_hash_is_pinned` checks it.
+pub const SMOKE_SPEED_HASH: u64 = 0x0dd9_0285_502e_dcc3; // measured 2026-10-17 from the Rust path (79 776 samples; 013 T029)
+
+/// The speed case's length in host samples (the level-5 stretch, then level 1 to the end).
+pub const SMOKE_SPEED_SAMPLES: usize = 79_776; // measured 2026-10-17 (013 T029)
+
+/// The play block before which the speed case sets level 1 (contracts/c-api.md).
+pub const SMOKE_SPEED_CHANGE_BLOCK: usize = 10; // engineering target (013 T029)
+
+/// The speed case `(hash, length, length helper at level 5)` from the Rust path.
+pub fn rust_speed_reference() -> (u64, usize, u64) {
+    let mut p = Pipeline::new(crate::configs::settings_011(SMOKE_RATE)).expect("rate");
+    p.start_recording().expect("idle");
+    for chunk in clamp_stimulus().chunks(SMOKE_BLOCK) {
+        let info = p.record(chunk, &mut []).expect("recording");
+        assert!(info.stopped.is_none());
+    }
+    let out = p.stop_recording(&mut []).expect("recording");
+    let rr_dr60::StopResult::Kept { number, .. } = out.result else {
+        unreachable!("the stimulus is recorded")
+    };
+    p.set_route(rr_dr60::Route::Speaker);
+    p.set_volume(0.1).expect("a valid position");
+    p.set_playback_speed(5).expect("a valid level");
+    let helper = p.playback_length_samples(number, 5).expect("a recording");
+    p.start_playback(number).expect("idle");
+    let mut play = Vec::new();
+    let mut buf = vec![0.0f32; SMOKE_BLOCK];
+    for block in 0.. {
+        if block == SMOKE_SPEED_CHANGE_BLOCK {
+            p.set_playback_speed(1).expect("a valid level");
+        }
+        let info = p.play(&mut buf).expect("playing");
+        play.extend_from_slice(&buf[..info.produced]);
+        if info.finished {
+            break;
+        }
+    }
+    (fnv1a64(&play), play.len(), helper)
+}
+
 /// Spec 012 T048, T049 (contracts/c-api.md › Smoke loop): the microphone cases' hashes, pinned
 /// once from the Rust path (`rust_mic_references`); `ffi_parity::smoke_reference_hash_is_pinned`
 /// checks them and `smoke.c` embeds them. (a) the 0.12 default one-pass at 48 kHz on the smoke
