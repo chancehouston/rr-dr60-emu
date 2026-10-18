@@ -17,7 +17,7 @@ cargo test -p rr_dr60_harness --test us1_speed -- --nocapture         # lengths,
 cargo test -p rr_dr60_harness --test speed_matrix -- --nocapture      # the seven-rate report
 ```
 
-Expected: lengths exact (⌈⌈5K ÷ k⌉ · m ÷ l⌉ before the drain); at 6 kHz fits within ±0.1 dB, spurious at or below −60 dB and within 0.5 dB of the script; impulse peaks at 1000 / 750 / 600 / 500 / 429; level 3 bit-identical; the eight golden guards unmoved.
+Expected: lengths exact (⌈(⌈5K ÷ k⌉ + T) · m ÷ l⌉ before the drain); at 6 kHz fits within ±0.1 dB, spurious at or below −60 dB and within 0.5 dB of the script; impulse peaks at 1000 / 750 / 500 / 430 (j = 600, and 602 at level 5); level 3 bit-identical; the eight golden guards unmoved.
 
 ## US2: live changes
 
@@ -56,7 +56,7 @@ RR_DR60_BLESS=speed cargo test -p rr_dr60_harness --test golden_speed
 ```sh
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features
+cargo test --all-features                       # before the bless (T035): -- --skip golden_speed
 RUSTFLAGS="-D warnings" cargo +1.85 test --no-run --all-features
 cargo llvm-cov --all-features --workspace --fail-under-lines 80
 ```

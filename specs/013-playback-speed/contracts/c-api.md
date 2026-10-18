@@ -56,4 +56,4 @@ An **ABI break** (as 008's growth): the struct has no size field, so a host buil
 
 ## Smoke loop and parity
 
-`smoke.c` gains one case: a ±0.125 square recorded with the codec on (exactly representable, 006's lesson) at 48 kHz, played at level 5 for half the playback and level 1 for the rest, the output hashed (`RR_DR60_SMOKE_SPEED_HASH`, pinned in `smoke_reference.rs` from the Rust run) and the refused levels 0 and 6 checked. `ffi_parity` adds: set/get/refuse, the length helper against `playback_length_samples`, and a playback with level changes bit-identical to the Rust API's.
+`smoke.c` gains one case (as built): the loop's existing full-scale square recording in 0.11's default (the codec on; exactly representable, 006's lesson) at 48 kHz, played on the speaker route at volume 0.1 at level 5 and at level 1 from play block 10, the output hashed (`RR_DR60_SMOKE_SPEED_HASH`, pinned in `smoke_reference.rs` from the Rust run) and the refused levels 0 and 6 checked. `ffi_parity` adds: set/get/refuse, the length helper against `playback_length_samples`, and a playback with level changes bit-identical to the Rust API's.

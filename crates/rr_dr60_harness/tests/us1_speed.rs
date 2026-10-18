@@ -81,3 +81,27 @@ fn us1_as6_tail_and_reference() {
     report::print(&results);
     assert_all(&results);
 }
+
+/// FR-006 (coach review R7): level 3's per-call reports in the default engine at the measurement
+/// rates.
+#[test]
+fn us1_as4_level3_reports_at_every_rate() {
+    let mut results = Vec::new();
+    for &rate in measurement_rates() {
+        results.extend(sc::level3_reports(&standard, rate));
+    }
+    report::print(&results);
+    assert_all(&results);
+}
+
+/// FR-005 (research R-12; post-implementation review B7): spec 009's drain bound at the other
+/// levels, both routes, at the measurement rates.
+#[test]
+fn us1_as6_drain_tail() {
+    let mut results = Vec::new();
+    for &rate in measurement_rates() {
+        results.extend(sc::drain_tail(&standard, rate));
+    }
+    report::print(&results);
+    assert_all(&results);
+}

@@ -50,10 +50,10 @@ then (Own or Tail): last_p5 = p5; p5 += active
 
 | Item | 0.12 | 0.13 |
 |---|---|---|
-| `Cursor::total` | ⌈K · m ÷ l⌉ + drain at `start_playback` | `u64::MAX` at `start_playback`; ⌈(K′ + T) · m ÷ l⌉ + drain when the stage first returns `Silence`; if `produced` already equals it, nothing is pushed or emitted (R-05) |
+| `Cursor::total` | ⌈K · m ÷ l⌉ + drain at `start_playback` | `u64::MAX` at `start_playback`; ⌈(K′ + T) · m ÷ l⌉ + drain **as built: at the latch** (K known at the start; the stage counts the remaining tail), set while the device sample is pushed (R-05's as-built note) |
 | device sample pushed | `memory` / decoder sample, or 0.0 past the end | the stage's `Own` / `Tail` value (the tail before the drain), then +0.0 (`Silence`) |
 | `PlayInfo::frame_index` | the last decoded frame | min(⌊place ÷ 120⌋, F − 1) with the codec on; 0 bypassed (equal at level 3) |
-| `PlayInfo::place` | — | min(⌊last_p5 ÷ 5⌋, K); 0 before any output |
+| `PlayInfo::place` | — | ⌊last_p5 ÷ 5⌋, and K once latched (as built); 0 before any output |
 | `start_playback` | resets the player and the decoder | also resets the stage (place 0, the ring cleared, `active` = the host's level, not latched) |
 | `playback_length_samples(number, level)` | — | ⌈(⌈5K ÷ k⌉ + T(K, k)) · m ÷ l⌉ + drain |
 

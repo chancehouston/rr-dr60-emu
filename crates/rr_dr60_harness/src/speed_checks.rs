@@ -136,13 +136,6 @@ pub fn reference_output(x: &[f32], call: usize, schedule: &[(usize, u8)]) -> (Ve
         .collect();
     let bank = |k: u32| &banks.iter().find(|(kk, _)| *kk == k).expect("k").1;
     let kk = x.len() as u64;
-    let xs = |j: i64| {
-        if j < 0 || j >= kk as i64 {
-            0.0
-        } else {
-            f64::from(x[j as usize])
-        }
-    };
     let first = schedule
         .iter()
         .find(|(c, _)| *c == 0)
@@ -176,16 +169,12 @@ pub fn reference_output(x: &[f32], call: usize, schedule: &[(usize, u8)]) -> (Ve
                 break;
             }
         }
-        let y = if active == 5 {
-            xs(i)
-        } else {
-            let c = &bank(active)[ph * PER_PHASE..(ph + 1) * PER_PHASE];
-            let mut s = [0.0f64; 4];
-            for (m, &cm) in c.iter().enumerate() {
-                s[m & 3] += cm * xs(i + D - m as i64);
-            }
-            (s[0] + s[1]) + (s[2] + s[3])
-        };
+        let y = value_at(
+            x,
+            (active != 5).then(|| bank(active).as_slice()),
+            active,
+            p5,
+        );
         out.push(narrow(y));
         let here = p5 / 5;
         p5 += u64::from(active);
@@ -195,6 +184,31 @@ pub fn reference_output(x: &[f32], call: usize, schedule: &[(usize, u8)]) -> (Ve
         .map(|c| place_after[((c + 1) * call).min(out.len()) - 1])
         .collect();
     (out, places)
+}
+
+/// The speed control's value at place `p5` (fifths) for numerator `k` on the stored stream `x`
+/// (x = 0 outside it): x[i] at k = 5, else the four-sum dot product of the level's bank phase
+/// with x[i + 28 − m] (research R-03, R-08).
+pub fn value_at(x: &[f32], bank: Option<&[f64]>, k: u32, p5: u64) -> f64 {
+    let kk = x.len() as i64;
+    let xs = |j: i64| {
+        if j < 0 || j >= kk {
+            0.0
+        } else {
+            f64::from(x[j as usize])
+        }
+    };
+    let i = (p5 / 5) as i64;
+    let ph = (p5 % 5) as usize;
+    if k == 5 {
+        return xs(i);
+    }
+    let c = &bank.expect("a bank for k ≠ 5")[ph * PER_PHASE..(ph + 1) * PER_PHASE];
+    let mut s = [0.0f64; 4];
+    for (m, &cm) in c.iter().enumerate() {
+        s[m & 3] += cm * xs(i + D - m as i64);
+    }
+    (s[0] + s[1]) + (s[2] + s[3])
 }
 
 /// The stored stream of recording `number` as the level-3 playback reads it at 6 kHz in
@@ -383,8 +397,19 @@ pub fn band_other_rate(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
                 configs::stored_recording(make, cfg, &stimulus::stored_tone(r * f, AMP, 9000));
             let z = play(&mut q, m, call, &[(0, speed::DEFAULT_LEVEL)]).out;
             let margin = (0.15 * fs) as usize;
-            let (a, _) = analysis::sine_fit(middle(&y, margin), r * f, fs);
+            let (a, res) = analysis::sine_fit(middle(&y, margin), r * f, fs);
             let (b, _) = analysis::sine_fit(middle(&z, margin), r * f, fs);
+            results.push(MeasurementResult::new(
+                "FR-004",
+                "spurious in 20 – 3000 Hz (other rates, reported)",
+                T_SPEED,
+                rate,
+                "speed_only",
+                format!("level {level}, stored {f:.0} Hz"),
+                analysis::spurious_peak_db(&res, fs, 20.0, 3000.0) - analysis::db(AMP),
+                "dB",
+                Tolerance::Report, // FR-004: reported at the other rates
+            ));
             results.push(MeasurementResult::new(
                 "FR-004",
                 "level at r × f − level 3's at r × f",
@@ -671,12 +696,19 @@ pub fn settings(name: &str, rate: u32) -> Settings {
 /// (one-sample calls).
 pub fn schedules(make: Make<'_>, config: &'static str) -> Vec<MeasurementResult> {
     let cfg = configs::settings(config, 6000);
-    let x = stimulus::stored_end_loud(301);
+    // K = 420 stored samples: 5K is a multiple of every non-3 numerator (3, 4, 6, 7), so a
+    // pending switch into level 3 can meet the place exactly at K at every level (the latch's
+    // order, post-implementation review B5). The stop adds its flush of silence to the stimulus.
+    let flush = {
+        let (p, n) = configs::stored_recording(make, cfg, &[0.5]);
+        p.recording_length(n).expect("length") as usize - 1
+    };
+    let x = stimulus::stored_end_loud(420 - flush);
     let mut cases: Vec<(usize, Vec<(usize, u8)>)> =
         vec![(120, vec![(0, 1), (1, 5)]), (121, vec![(0, 5), (1, 2)])];
     for a in LEVELS {
         cases.push((121, vec![(0, a), (1, 3)]));
-        let own = (5 * 301u64).div_ceil(u64::from(numerator(a))) as usize;
+        let own = (5 * 420u64).div_ceil(u64::from(numerator(a))) as usize;
         for back in 0..=5usize {
             cases.push((1, vec![(0, a), (own - back, 3)]));
         }
@@ -698,6 +730,154 @@ pub fn schedules(make: Make<'_>, config: &'static str) -> Vec<MeasurementResult>
             mismatches(&played.out, &want) as f64,
             "",
             Tolerance::Exact(0.0), // FR-007: bit-exact
+        ));
+    }
+    results
+}
+
+/// The script's level-change steps (FR-007, reported; post-implementation review B2) as (stored
+/// tone Hz, from level, to level, dB re the −6 dBFS tone), printed by
+/// `uv run tools/playback-speed/speed_design.py` on 2026-10-17.
+pub const SCRIPT_STEPS: [(f64, u8, u8, f64); 20] = [
+    (1000.0, 1, 5, -77.4),
+    (1000.0, 5, 1, -73.6),
+    (1000.0, 5, 3, -99.3),
+    (1000.0, 3, 5, -99.3),
+    (1000.0, 2, 4, -92.8),
+    (1000.0, 4, 2, -93.2),
+    (1000.0, 3, 1, -93.6),
+    (2000.0, 1, 5, -1.1),
+    (2000.0, 5, 1, -0.7),
+    (2000.0, 5, 3, -1.9),
+    (2000.0, 3, 5, -1.9),
+    (2000.0, 2, 4, -40.0),
+    (2000.0, 4, 2, -40.4),
+    (2000.0, 3, 1, -83.8),
+    (2400.0, 1, 5, -0.0),
+    (2400.0, 5, 1, -0.0),
+    (2400.0, 5, 3, -0.4),
+    (2400.0, 3, 5, -0.4),
+    (2400.0, 2, 4, -0.0),
+    (2400.0, 4, 2, -0.0),
+];
+
+/// FR-007's reported step (post-implementation review B2): the output after a change at place p
+/// is exactly the new level's value at p, so the step a change makes is the largest |y_new(p) −
+/// y_old(p)| over the old level's places (whole places when either level is 3), for a stored
+/// tone at −6 dBFS, dB re the tone; pinned to the script's figure within 0.5 dB.
+pub fn change_step() -> Vec<MeasurementResult> {
+    let bank = |level: u8| rr_dr60::__test_hooks::speed_bank(level);
+    let mut results = Vec::new();
+    for &(f, a, b, want) in &SCRIPT_STEPS {
+        let x = stimulus::stored_tone(f, AMP, 4000);
+        let (ka, kb) = (numerator(a), numerator(b));
+        let (ba, bb) = (bank(a), bank(b));
+        let mut worst = 0.0f64;
+        for n in 200u64..2000 {
+            let p5 = n * u64::from(ka);
+            if (ka == 5 || kb == 5) && p5 % 5 != 0 {
+                continue;
+            }
+            if p5 / 5 >= 3900 {
+                break;
+            }
+            let ya = value_at(&x, ba.as_deref(), ka, p5);
+            let yb = value_at(&x, bb.as_deref(), kb, p5);
+            worst = worst.max((yb - ya).abs());
+        }
+        let got = analysis::db(worst.max(1e-300) / AMP);
+        results.push(MeasurementResult::new(
+            "FR-007",
+            "level-change step − the script's",
+            T_SPEED,
+            6000,
+            "speed_only",
+            format!("stored {f:.0} Hz, level {a} → {b}: {got:.1} dB re the tone"),
+            got - want,
+            "dB",
+            Tolerance::Range(-0.5, 0.5), // engineering target (013 R-03 pin)
+        ));
+    }
+    results
+}
+
+/// Spec 009 FR-008's drain bound at the other levels (research R-12; post-implementation review
+/// B7): the default engine, a 1 kHz tone at 0 dBFS recorded and played at each level on both
+/// routes: the RMS of the last 1 ms is at most −80 dBFS.
+pub fn drain_tail(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
+    let fs = f64::from(rate);
+    let x = stimulus::tone(1000.0, 1.0, fs, (fs * 0.5) as usize);
+    let mut results = Vec::new();
+    for (route, rname) in [
+        (rr_dr60::Route::Speaker, "speaker"),
+        (rr_dr60::Route::Earphone, "earphone"),
+    ] {
+        let mut p = make(configs::settings("speed_default", rate));
+        p.start_recording().expect("start");
+        let _ = p.record(&x, &mut []).expect("record");
+        let _ = p.stop_recording(&mut []).expect("stop");
+        p.set_route(route);
+        for level in LEVELS {
+            let y = play(&mut p, 1, (rate / 50) as usize, &[(0, level)]).out;
+            let ms = (rate as usize / 1000).max(1);
+            results.push(MeasurementResult::new(
+                "FR-005",
+                "last 1 ms of the drain (009 FR-008's bound)",
+                T_SPEED,
+                rate,
+                "speed_default",
+                format!("1 kHz 0 dBFS, {rname}, level {level}"),
+                analysis::rms_dbfs(&y[y.len() - ms..]).max(-200.0),
+                "dBFS",
+                Tolerance::AtMost(-80.0), // 009 FR-008
+            ));
+        }
+    }
+    results
+}
+
+/// FR-006 (US1 AS4) at a host rate in the default engine (coach review R7): at level 3 the
+/// per-call reports follow 0.12's rules: `finished` once, in the call where the produced total
+/// reaches ⌈K · m ÷ l⌉ + the drain; Σ `frames` = F; `frame_index` = ⌊place ÷ 120⌋ (at most F − 1).
+pub fn level3_reports(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
+    let fs = f64::from(rate);
+    let x = stimulus::voiced(fs, 1.0, -20.0, 0x013);
+    let mut p = make(configs::settings("speed_default", rate));
+    p.start_recording().expect("start");
+    let _ = p.record(&x, &mut []).expect("record");
+    let _ = p.stop_recording(&mut []).expect("stop");
+    let k = p.recording_length(1).expect("length");
+    let frames = k / 120;
+    let total = (k * u64::from(rate)).div_ceil(6000) + u64::from(p.drain_samples());
+    let call = (rate / 50) as usize;
+    let played = play(&mut p, 1, call, &[(0, 3)]);
+    let bad_index = played
+        .places
+        .iter()
+        .zip(&played.frame_indices)
+        .filter(|(place, fi)| **fi != (**place / 120).min(frames - 1))
+        .count();
+    let mut results = Vec::new();
+    for (property, measured, want) in [
+        (
+            "produced − ⌈K·m/l⌉ − drain",
+            played.out.len() as f64 - total as f64,
+            0.0,
+        ),
+        ("Σ frames − F", played.frames as f64 - frames as f64, 0.0),
+        ("frame indices off 0.12's rule", bad_index as f64, 0.0),
+        ("finished reports", played.finished as f64, 1.0),
+    ] {
+        results.push(MeasurementResult::new(
+            "FR-006",
+            property,
+            T_SPEED,
+            rate,
+            "speed_default",
+            "voiced, 1 s, level 3",
+            measured,
+            "",
+            Tolerance::Exact(want), // FR-006: 0.12's reports
         ));
     }
     results

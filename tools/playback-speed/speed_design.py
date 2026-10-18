@@ -42,6 +42,8 @@ PER_PHASE = 2 * D + 1  # 57
 ATTEN_DB = 70.0  # design attenuation (FR-004: 60 dB, with margin)
 LEVELS = (3, 4, 5, 6, 7)  # k: r = k / 5 (FR-002)
 FLOOR_DB = -60.0  # FR-004 (b), (c)
+AMP = 0.5  # the stored tones' amplitude, -6 dBFS
+STEP_PAIRS = ((1, 5), (5, 1), (5, 3), (3, 5), (2, 4), (4, 2), (1, 3), (3, 1))  # (from, to) levels
 PASS_DB = 0.1  # FR-004 (a)
 
 
@@ -96,6 +98,17 @@ def play(x: np.ndarray, k: int, with_tail: bool = False) -> np.ndarray:
     idx = i[:, None] + D - np.arange(PER_PHASE)[None, :]
     xs = np.where((idx >= 0) & (idx < K), x[np.clip(idx, 0, K - 1)], 0.0)
     return np.sum(BANKS[k][ph] * xs, axis=1)
+
+
+def value_at(x: np.ndarray, k: int, p5: int) -> float:
+    """The speed control's value at place p5 (fifths) for numerator k: x[i] at k = 5, else the
+    phase's dot product with x[i + D - m] (x = 0 outside the recording)."""
+    i, ph = divmod(p5, 5)
+    if k == 5:
+        return float(x[i]) if 0 <= i < len(x) else 0.0
+    idx = i + D - np.arange(PER_PHASE)
+    xs = np.where((idx >= 0) & (idx < len(x)), x[np.clip(idx, 0, len(x) - 1)], 0.0)
+    return float(np.dot(BANKS[k][ph], xs))
 
 
 def tail_len(k: int) -> int:
@@ -268,12 +281,30 @@ def main() -> int:
                   f" {peak_db(y):+.1f} dB")
     print()
 
-    # FR-007: the step a change of level makes (reported): a stored 1 kHz tone, the level
-    # changing at output 3000, the output against the two constant-level references.
-    print("level change (FR-007, reported): the band each level passes, stored-stream frequencies")
-    for k in (3, 4, 6, 7):
-        print(f"  k={k}: passband edge {edges(k)[0]:.0f} Hz (stored), -60 dB from {edges(k)[1]:.0f} Hz;"
-              f" level at 2500 Hz stored {response_db(k, 2500.0) if k / 5 * 2500 < 2990 else float('nan'):+.3f} dB")
+    # FR-007: the step a change of level makes (reported; post-implementation review B2): the
+    # output after a change at place p is exactly the new level's value at p, so the step is
+    # max over the old level's places of |y_b(p) - y_a(p)| (whole places only when either level is
+    # 3), for a stored tone of amplitude 0.5 (-6 dBFS), dB re the tone.
+    print("level change (FR-007, reported): the largest step |y_new(p) - y_old(p)|, dB re a -6 dBFS stored tone")
+    step_table = {}
+    for f in (1000.0, 2000.0, 2400.0):
+        x = AMP * np.sin(2 * np.pi * f / FS * np.arange(4000))
+        cells = []
+        for a, b in STEP_PAIRS:
+            worst = 0.0
+            ka, kb = a + 2, b + 2
+            for n in range(200, 2000):
+                p5 = n * ka
+                if (ka == 5 or kb == 5) and p5 % 5:
+                    continue
+                if p5 // 5 >= 3900:
+                    break
+                worst = max(worst, abs(value_at(x, kb, p5) - value_at(x, ka, p5)))
+            db = 20 * np.log10(worst / AMP + 1e-300)
+            step_table[(f, a, b)] = db
+            cells.append(f"{a}->{b} {db:6.1f}")
+        print(f"  {f:6.0f} Hz: " + ", ".join(cells))
+    print()
 
     if check:
         if failures:

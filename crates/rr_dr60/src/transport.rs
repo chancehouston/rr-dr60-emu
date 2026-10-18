@@ -135,8 +135,9 @@ pub struct PlayInfo {
     /// is ⌊place ÷ 120⌋ with the codec on (the same values at level 3), at most the last frame.
     pub frame_index: u64,
     /// Since 0.13 (spec 013 FR-009): the place in the recording, in whole stored device samples,
-    /// of the last device sample computed in this call (the playback speed control's place), at
-    /// most the recording's length; 0 before any. It leads the audible output by
+    /// of the last device sample computed in this call (the playback speed control's place), and
+    /// the recording's length K once the place has reached the recording's end; 0 before any.
+    /// It leads the audible output by
     /// [`playback_latency_samples`](crate::Pipeline::playback_latency_samples), like
     /// `frame_index`.
     pub place: u64,
@@ -151,7 +152,9 @@ struct Cursor {
     offset: usize,
     /// Host samples produced so far.
     produced: u64,
-    /// Host samples the playback produces in all: ⌈K·m/l⌉ + the drain (research R-06).
+    /// Host samples the playback produces in all: ⌈(K′ + T)·m/l⌉ + the drain, unknown
+    /// (`u64::MAX`) until the speed control's place reaches K (spec 013 research R-05; ⌈K·m/l⌉ +
+    /// the drain at level 3, spec 006 research R-06).
     total: u64,
     /// The recording's number.
     number: u32,
@@ -433,12 +436,14 @@ impl Pipeline {
     }
 
     /// Produces the next block of host-rate output of the recording being played (spec 006
-    /// FR-002, FR-006, FR-008): exactly ⌈K·m/l⌉ samples for K stored device samples, then the
-    /// drain (`drain_samples()` of settled silence), then `finished` and idle. With the speech
-    /// codec on the frames are decoded one at a time as the output needs them (spec 008
-    /// FR-008: `frames`, `frame_index`). Only `output[..produced]` is written. Real-time safe:
-    /// at most one stored sample, or one frame per 120 device samples, is pulled per output
-    /// sample.
+    /// FR-002, FR-006, FR-008): exactly ⌈(K′ + T)·m/l⌉ samples for K stored device samples
+    /// played at the playback speed level(s) set (spec 013 FR-005: K′ device samples of the
+    /// recording's own part, ⌈K ÷ r⌉ at a constant level, and the speed control's tail of T;
+    /// ⌈K·m/l⌉ at level 3), then the drain (`drain_samples()` of settled silence), then
+    /// `finished` and idle. With the speech codec on the frames are decoded one at a time as the
+    /// output needs them (spec 008 FR-008: `frames`, `frame_index`). Only `output[..produced]`
+    /// is written. Real-time safe: at most 2 stored samples per device output (and up to 29
+    /// more, with at most one frame decoded, when the level leaves 3), each frame decoded once.
     ///
     /// # Errors
     ///
@@ -778,7 +783,8 @@ impl Pipeline {
         self.player.latency_host_samples()
     }
 
-    /// The host samples `play` produces after the recording's own ⌈K·m/l⌉: stage 10's
+    /// The host samples `play` produces after the recording's own part and the speed control's
+    /// tail (⌈K·m/l⌉ at level 3; spec 013 FR-005): stage 10's
     /// settling length of device-rate silence (121 device samples at the committed
     /// coefficients, −100 dB; 0 with the stage bypassed), the rate conversion's full
     /// remaining response (spec 006 FR-008), and the output chain's settle

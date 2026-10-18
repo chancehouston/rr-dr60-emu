@@ -25,14 +25,14 @@ fn golden_speed_v1_unchanged() {
     );
 }
 
-/// Spec 013 FR-013 (contracts/golden-format.md): 194 entries, bit-exact on every target. Bless
+/// Spec 013 FR-013 (contracts/golden-format.md): 196 entries, bit-exact on every target. Bless
 /// on purpose only, with a CHANGELOG entry:
 /// `RR_DR60_BLESS=speed cargo test -p rr_dr60_harness --test golden_speed`
 #[test]
 fn golden_speed_matches() {
     let bless = std::env::var("RR_DR60_BLESS").as_deref() == Ok("speed");
     let actual = golden::generate_speed(&standard, bless);
-    assert_eq!(actual.entries.len(), 194); // contracts/golden-format.md
+    assert_eq!(actual.entries.len(), 196); // contracts/golden-format.md
     assert!(actual.entries.iter().all(|e| e.speed_level.is_some()
         && e.place.is_some()
         && e.own_length.is_some()
@@ -45,6 +45,6 @@ fn golden_speed_matches() {
         return;
     }
     let committed = golden::committed_speed();
-    assert_eq!(committed.entries.len(), 194);
+    assert_eq!(committed.entries.len(), 196);
     golden::compare(&committed, &actual).unwrap();
 }

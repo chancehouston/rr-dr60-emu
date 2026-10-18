@@ -357,8 +357,8 @@ pub struct RrDr60PlayInfo {
     /// Since 0.13 it is ⌊place ÷ 120⌋ with the codec on (the same values at speed level 3).
     pub frame_index: u64,
     /// The place in the recording, in whole stored device samples, of the last device sample
-    /// computed in this call (the playback speed control's place), at most the recording's
-    /// length; 0 before any (spec 013 FR-009). Appended in 0.13 (the struct grows 32 → 40 bytes
+    /// computed in this call (the playback speed control's place), and the recording's length
+    /// once the place has reached its end; 0 before any (spec 013 FR-009). Appended in 0.13 (the struct grows 32 → 40 bytes
     /// on 64-bit targets: rebuild against this header).
     pub place: u64,
 }

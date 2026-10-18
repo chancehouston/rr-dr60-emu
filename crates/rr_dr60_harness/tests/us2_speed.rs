@@ -31,6 +31,21 @@ fn check(config: &str, x: &[f32], call: usize, schedule: &[(usize, u8)], what: &
         played.places.windows(2).all(|w| w[1] >= w[0]),
         "{config} {what}: the place decreased"
     );
+    if config == "speed_only_codec" {
+        // FR-009 (post-implementation review B3): with the codec on, the frame index follows the
+        // place at every level, never decreases, and every frame is decoded exactly once.
+        let k = p.recording_length(n).unwrap();
+        let frames = k / 120;
+        for (place, fi) in played.places.iter().zip(&played.frame_indices) {
+            assert_eq!(
+                *fi,
+                (place / 120).min(frames - 1),
+                "{config} {what}: frame index"
+            );
+        }
+        assert!(played.frame_indices.windows(2).all(|w| w[1] >= w[0]));
+        assert_eq!(played.frames, frames, "{config} {what}: frames decoded");
+    }
 }
 
 const CONFIGS: [&str; 2] = ["speed_only", "speed_only_codec"];

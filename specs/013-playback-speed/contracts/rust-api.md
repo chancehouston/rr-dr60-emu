@@ -44,8 +44,8 @@ pub struct PlayInfo {
     /// bypassed.
     pub frame_index: u64,
     /// Since 0.13 (FR-009): the place in the recording, in whole stored device samples, of the
-    /// last device sample computed in this call, at most the recording's length; 0 before
-    /// any. It leads the audible output by `playback_latency_samples`, like `frame_index`.
+    /// last device sample computed in this call, and the recording's length once the place has
+    /// reached its end (as built); 0 before any. It leads the audible output by `playback_latency_samples`, like `frame_index`.
     pub place: u64,
 }
 ```
@@ -58,7 +58,7 @@ pub const DEFAULT_LEVEL: u8 = 3;                 // S-001: factory set to 3
 pub const RATIO_DENOMINATOR: u32 = 5;
 pub const RATIO_NUMERATORS: [u32; 5] = [3, 4, 5, 6, 7]; // A-054: 0.6 … 1.4
 pub const LOOKAHEAD_SAMPLES: u32 = 28;           // stored samples read ahead (research R-03)
-pub const MAX_TAIL_SAMPLES: u32 = 46;            // device samples played into the drain (R-04)
+pub const MAX_TAIL_SAMPLES: u32 = 46;            // device samples played before the drain (R-04)
 /// The speed ratio of `level` (1 … 5), or `None`.
 pub fn ratio(level: u8) -> Option<f64>;
 ```

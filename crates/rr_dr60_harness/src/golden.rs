@@ -1001,8 +1001,9 @@ pub fn generate_volume_ramp(make: Make<'_>, bless: bool) -> GoldenFile {
     }
 }
 
-/// A spec 013 speed-only run: its configuration name, schedule and after-the-end change.
-type SpeedRun = (String, Vec<(usize, u8)>, Option<u8>);
+/// A spec 013 speed-only run: its configuration name, schedule, after-the-end change and call
+/// size.
+type SpeedRun = (String, Vec<(usize, u8)>, Option<u8>, usize);
 
 /// Spec 013 (contracts/golden-format.md): the levels other than 3 the speed file plays.
 pub const SPEED_LEVELS: [u8; 4] = [1, 2, 4, 5];
@@ -1014,6 +1015,9 @@ pub fn speed_schedule(name: &str) -> Vec<(usize, u8)> {
     match name {
         "a" => vec![(0, 3), (20, 1), (45, 3), (65, 5), (90, 4)],
         "b" => vec![(0, 2), (30, 5), (55, 1)],
+        // Played in calls of 121 (speed-only set only): call 1 starts at place 121·3/5, not a
+        // whole stored sample, so the switch into level 3 is deferred (FR-007).
+        "c" => vec![(0, 1), (1, 3), (3, 5), (4, 3)],
         other => panic!("unknown schedule {other:?}"),
     }
 }
@@ -1021,14 +1025,14 @@ pub fn speed_schedule(name: &str) -> Vec<(usize, u8)> {
 /// A spec 013 playback: every sample to `finished` in calls of `call`, the schedule applied
 /// before its calls; with `after_end`, a change to `after_end` before the first call after the
 /// place reached the recording's length `k`. Returns the output, the schedule as applied, the
-/// last place and the frames decoded.
+/// last place, the frames decoded and the first call that reported the place at K.
 fn speed_play(
     p: &mut rr_dr60::Pipeline,
     call: usize,
     schedule: &[(usize, u8)],
     after_end: Option<u8>,
     k: u64,
-) -> (Vec<f32>, Vec<(u64, u8)>, u64, u64) {
+) -> (Vec<f32>, Vec<(u64, u8)>, u64, u64, usize) {
     let mut applied: Vec<(u64, u8)> = schedule.iter().map(|&(c, l)| (c as u64, l)).collect();
     if let Some(&(_, l)) = schedule.iter().find(|(c, _)| *c == 0) {
         p.set_playback_speed(l).unwrap();
@@ -1036,6 +1040,7 @@ fn speed_play(
     p.start_playback(1).unwrap();
     let mut buf = vec![0.0f32; call];
     let (mut out, mut frames, mut place, mut pending) = (Vec::new(), 0u64, 0u64, after_end);
+    let mut reached = usize::MAX; // the first call that reported the place at K
     for c in 0.. {
         for &(at, l) in schedule {
             if at == c && c > 0 {
@@ -1052,14 +1057,17 @@ fn speed_play(
         out.extend_from_slice(&buf[..info.produced]);
         frames += info.frames as u64;
         place = info.place;
+        if place >= k && reached == usize::MAX {
+            reached = c;
+        }
         if info.finished {
             break;
         }
     }
-    (out, applied, place, frames)
+    (out, applied, place, frames, reached)
 }
 
-/// Spec 013 FR-013 (contracts/golden-format.md): the playback-speed file, 194 entries. With
+/// Spec 013 FR-013 (contracts/golden-format.md): the playback-speed file, 196 entries. With
 /// `bless`, asserts the lengths against the length helper, schedule B's after-the-end change as
 /// having no effect, and the speed-only entries against the independent reference.
 pub fn generate_speed(make: Make<'_>, bless: bool) -> GoldenFile {
@@ -1110,7 +1118,7 @@ pub fn generate_speed(make: Make<'_>, bless: bool) -> GoldenFile {
                 for &(route, rname) in routes {
                     p.set_route(route);
                     for level in SPEED_LEVELS {
-                        let (y, _, place, frames) =
+                        let (y, _, place, frames, _) =
                             speed_play(&mut p, call, &[(0, level)], None, k);
                         let own = y.len() as u64 - drain;
                         if bless {
@@ -1149,10 +1157,17 @@ pub fn generate_speed(make: Make<'_>, bless: bool) -> GoldenFile {
                     for sched in ["a", "b"] {
                         let schedule = speed_schedule(sched);
                         let after = (sched == "b").then_some(3u8);
-                        let (y, applied, place, frames) =
+                        let (y, applied, place, frames, reached) =
                             speed_play(&mut p, call, &schedule, after, k);
+                        if bless {
+                            // Every scheduled change lands before the place reaches K (review B1).
+                            assert!(
+                                schedule.iter().all(|&(c, _)| c < reached),
+                                "{rate} {sched}: a change after the end"
+                            );
+                        }
                         if bless && after.is_some() {
-                            let (z, _, _, _) = speed_play(&mut p, call, &schedule, None, k);
+                            let (z, _, _, _, _) = speed_play(&mut p, call, &schedule, None, k);
                             assert!(
                                 mismatches(&y, &z) == 0,
                                 "{rate}: schedule B's change after the end changed the output (013 FR-007)"
@@ -1179,8 +1194,8 @@ pub fn generate_speed(make: Make<'_>, bless: bool) -> GoldenFile {
     // (d) The speed-only configuration at 6 kHz on imported stimuli.
     let only = configs::settings("speed_only", 6000);
     for (stim, x) in [
-        ("stored_tone_1k", stimulus::stored_tone(1000.0, 0.5, 6000)),
-        ("stored_voiced", stimulus::stored_voiced(1.0)),
+        ("stored_tone_1k", stimulus::stored_tone(1000.0, 0.5, 12_000)),
+        ("stored_voiced", stimulus::stored_voiced(2.0)),
     ] {
         let (mut p, n) = configs::stored_recording(make, only, &x);
         assert_eq!(n, 1);
@@ -1188,16 +1203,26 @@ pub fn generate_speed(make: Make<'_>, bless: bool) -> GoldenFile {
         let stream = stored_stream(&mut p, 1);
         let mut runs: Vec<SpeedRun> = SPEED_LEVELS
             .iter()
-            .map(|&l| (format!("speed_only_l{l}"), vec![(0, l)], None))
+            .map(|&l| (format!("speed_only_l{l}"), vec![(0, l)], None, 120))
             .collect();
-        runs.push(("speed_only_sched_a".into(), speed_schedule("a"), None));
-        runs.push(("speed_only_sched_b".into(), speed_schedule("b"), Some(3)));
-        for (name, schedule, after) in runs {
-            let (y, applied, place, _) = speed_play(&mut p, 120, &schedule, after, k);
+        runs.push(("speed_only_sched_a".into(), speed_schedule("a"), None, 120));
+        runs.push((
+            "speed_only_sched_b".into(),
+            speed_schedule("b"),
+            Some(3),
+            120,
+        ));
+        runs.push(("speed_only_sched_c".into(), speed_schedule("c"), None, 121));
+        for (name, schedule, after, call) in runs {
+            let (y, applied, place, _, reached) = speed_play(&mut p, call, &schedule, after, k);
             if bless {
+                assert!(
+                    schedule.iter().all(|&(c, _)| c < reached),
+                    "{stim} {name}: a change after the end (review B1)"
+                );
                 let sched: Vec<(usize, u8)> =
                     applied.iter().map(|&(c, l)| (c as usize, l)).collect();
-                let (want, _) = reference_output(&stream, 120, &sched);
+                let (want, _) = reference_output(&stream, call, &sched);
                 assert_eq!(
                     mismatches(&y, &want),
                     0,
