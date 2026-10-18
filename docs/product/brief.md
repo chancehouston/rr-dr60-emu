@@ -149,7 +149,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
 - **O-1 ★ Which controls are the free "intended user adjustments"?**
   - The engine has no such list yet; producing one is the dossier's first engine question.
   - The candidates fall into three groups:
-    1. the device's own controls: volume, speaker or earphone, voice activation on or off, the sensitivity setting;
+    1. the device's own controls: volume, speaker or earphone, voice activation on or off, the sensitivity setting; *(corrected 2026-10-18: voice activation on or off is not a device control, since the device has no VAS switch, S-001, A-008; it is an emulator option. Playback speed, built in 0.13, is a device control. See controls-discussion.md.)*
     2. the model's internal parameters: the limiter's knee and timing, the voice-activation threshold and hang time, a stage's bypass, the speech codec on or off;
     3. effects beyond the device, which the dossier places in paid packages.
   - The question is whether group 2 is free, paid or split.
@@ -187,7 +187,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
   - The inside's scope shows no marks other than the engine's own events (front-and-inside.md › Wording).
   - Investigation review adds the user's own markers (MARK in concept 02).
   - Proposed reconciliation: user markers are allowed in Investigation review and always labelled as the user's. The inside's scope rule stays.
-- **O-13 Controls and AI control:** the 2026-10-15 request to give the app's users more to "play" with and to allow an AI to drive the engine's controls is not in the dossier.
+- **O-13 Controls and AI control:** the 2026-10-15 request to give the app's users more to "play" with and to allow an AI to drive the engine's controls is not in the dossier. *(2026-10-18: the decision brief is [controls-discussion.md](controls-discussion.md), against engine 0.13.0.)*
   - It joins O-1 and the dossier's engine question 1.
   - It includes how a fast stream of volume changes behaves: each change restarts the 20 ms volume transition, so updates faster than about 60 per second make the knob lag.
 - **O-14 Implementation questions from the dossier:**
@@ -227,7 +227,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
 
 **Not built:** two device features that the 2026-10-11 free-tier list includes.
 
-- **SLOW/FAST playback speed.** Stage 10's manifest entry names it as not modeled.
+- **SLOW/FAST playback speed.** Stage 10's manifest entry names it as not modeled. *(Built since 0.13.0, spec 013: five live levels, pitch moving with speed, A-054.)*
 - **10 SEC REVIEW** (S-002 control S11). The playback calls have no seek, so it is not modeled. **To confirm:** whether the app can build it from the existing calls, before promising it.
 
 ### 2. Expose meaningful activity
