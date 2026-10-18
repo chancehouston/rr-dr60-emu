@@ -797,6 +797,22 @@ impl Pipeline {
         Ok(p)
     }
 
+    /// Test-only (hidden): a pipeline whose playback speed control carries the mutation `m`
+    /// (spec 013 research R-12; tasks.md T021).
+    ///
+    /// # Errors
+    ///
+    /// As [`Pipeline::new`].
+    #[doc(hidden)]
+    pub fn __with_speed_mutation(
+        settings: Settings,
+        m: &crate::__test_hooks::SpeedMutation,
+    ) -> Result<Self, Error> {
+        let mut p = Self::new(settings)?;
+        p.speed.mutation = *m;
+        Ok(p)
+    }
+
     /// Test-only (hidden): the clipper probe (spec 012 US2 AS1; contracts/rust-api.md › Test
     /// hooks). Runs `input` through the one-pass front's stages 1 – 2 (not the limiter or
     /// anything after it) and writes the engine's own clipper input and output per sample to

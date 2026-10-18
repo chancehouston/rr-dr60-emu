@@ -379,9 +379,9 @@ pub mod __test_hooks {
         pub lookahead_delta: i32,
         /// The latch tested after a pending change instead of before it.
         pub latch_after_switch: bool,
-        /// The player pushes the sample after the total is reached (the drain-0 case's extra
-        /// sample, plan review Q1).
-        pub no_drain_zero_stop: bool,
+        /// Level 3 reads 28 stored samples ahead like the other levels (the play reports' frame
+        /// counts then differ from 0.12's; spec 013 FR-006).
+        pub lookahead_at_level_3: bool,
     }
 
     /// The speed control's bank for `level` as designed at construction: 5 phases × 57 taps,

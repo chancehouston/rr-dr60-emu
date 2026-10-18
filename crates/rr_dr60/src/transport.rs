@@ -457,9 +457,13 @@ impl Pipeline {
             transport,
             decoder,
             speed,
+            speed_level,
             plan_l_m,
             ..
         } = self;
+        // Spec 013 FR-007: the host's level lands at this call (from the first device-rate
+        // sample it computes), under the latch and the deferred switch into level 3.
+        speed.request(*speed_level);
         let (l, m) = *plan_l_m;
         let drain = u64::from(player.drain_len_host_samples());
         let span = transport.cursor.span;
@@ -501,8 +505,7 @@ impl Pipeline {
                 }
             }
         };
-        let mut done = cursor.produced >= cursor.total;
-        while produced < output.len() && !done {
+        while produced < output.len() && cursor.produced < cursor.total {
             let y = loop {
                 if let Some(y) = player.try_next_host() {
                     break y;
@@ -513,20 +516,21 @@ impl Pipeline {
                     SpeedOut::Own(v) | SpeedOut::Tail(v) => v,
                     SpeedOut::Silence => 0.0,
                 };
+                // 013 research R-05: the total is fixed once the place reaches K; the host
+                // sample being produced needs this device sample, so it lies within the total.
+                if cursor.total == u64::MAX {
+                    if let Some(n) = speed.final_count() {
+                        let pre = (u128::from(n) * u128::from(m)).div_ceil(u128::from(l)) as u64;
+                        cursor.total = pre + drain;
+                    }
+                }
                 player.push_device_f64(d);
             };
             output[produced] = y;
             produced += 1;
             cursor.produced += 1;
-            // 013 research R-05: the total is fixed once the place reaches K.
-            if cursor.total == u64::MAX {
-                if let Some(n) = speed.final_count() {
-                    let pre = (u128::from(n) * u128::from(m)).div_ceil(u128::from(l)) as u64;
-                    cursor.total = pre + drain;
-                }
-            }
-            done = cursor.produced >= cursor.total;
         }
+        let done = cursor.produced >= cursor.total;
         // 013 FR-009: the place and the frame index from the speed control's place.
         let place = speed.place();
         if decoder.is_some() {

@@ -13,6 +13,9 @@
 #     (at most 10 % as corroboration of the in-build figure, not asserted: stage 2 changes the
 #     level the later stages see; the test asserts the limiter stays uncharged).
 #
+#   HEAD_TEST = playback: spec 013's playback at the default speed level against the baseline
+#     (013 FR-010: budget 3 %); `tests/playback_timing.rs` is copied into the baseline worktree.
+#
 # Usage: scripts/ab-timing.sh [baseline-rev [head-test]]
 #   (default baseline c9f9994, version 0.11, the spec 012 branch point; default head test
 #   output_cost)
@@ -27,6 +30,45 @@ work="$(mktemp -d)"
 trap 'git -C "$root" worktree remove --force "$work/base" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
 
 git -C "$root" worktree add --detach "$work/base" "$baseline" >/dev/null
+
+if [ "$head_test" = "playback" ]; then
+  # Spec 013 FR-010 (research R-07): the playback at the default speed level against the
+  # baseline. The test is written against 0.12's public API, so it is copied into the baseline
+  # worktree; each build's `playback_timing` binary runs 45 times, strictly alternating, and the
+  # fastest of each is compared (budget 3 % on the development machine, 5 % on the CI runner).
+  cp "$root/crates/rr_dr60_harness/tests/playback_timing.rs" "$work/base/crates/rr_dr60_harness/tests/"
+  pbin_of() {
+    (cd "$1" && cargo test -q -p rr_dr60_harness --release --test playback_timing --no-run --message-format=json 2>/dev/null) |
+      python3 -c 'import json,sys
+for l in sys.stdin:
+    try: m = json.loads(l)
+    except ValueError: continue
+    if m.get("reason") == "compiler-artifact" and m.get("target", {}).get("name") == "playback_timing" and m.get("executable"):
+        print(m["executable"])' | tail -1
+  }
+  echo "building the baseline ($baseline) and the working tree (playback) ..." >&2
+  base_bin="$(pbin_of "$work/base")"
+  head_bin="$(pbin_of "$root")"
+  [ -x "$base_bin" ] && [ -x "$head_bin" ] || { echo "ab-timing: a build failed" >&2; exit 1; }
+  : >"$work/base.txt"
+  : >"$work/head.txt"
+  for i in $(seq 1 45); do
+    echo "round $i of 45" >&2
+    "$base_bin" --ignored --exact playback_cost --nocapture --test-threads=1 2>/dev/null | grep -o 'playback, .*' >>"$work/base.txt"
+    "$head_bin" --ignored --exact playback_cost --nocapture --test-threads=1 2>/dev/null | grep -o 'playback, .*' >>"$work/head.txt"
+  done
+  python3 - "$work/base.txt" "$work/head.txt" "$baseline" <<'PY'
+import re, sys
+def best(path):
+    v = [float(m.group(1)) for l in open(path) for m in [re.search(r"blocks: ([\d.]+) ns per host sample", l)] if m]
+    return min(v)
+b, h, rev = best(sys.argv[1]), best(sys.argv[2]), sys.argv[3]
+print(f"A/B playback at the default speed level vs {rev}, Speaker route, 48 kHz, 4096 blocks, codec bypassed: "
+      f"{rev} {b:.2f} ns, working tree {h:.2f} ns per host sample, {h - b:+.2f} ns ({100 * (h / b - 1):+.2f} %) "
+      f"(013 FR-010: budget 3 %, CI ceiling 5 %; fastest of 45 alternating runs each)")
+PY
+  exit 0
+fi
 
 bin_of() { # the release timing test binary of the tree at $1
   (cd "$1" && cargo test -q -p rr_dr60_harness --release --test timing --no-run --message-format=json 2>/dev/null) |

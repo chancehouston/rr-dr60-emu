@@ -189,7 +189,6 @@ impl SpeedStage {
 
     /// The host's level for the outputs computed from now on (spec 013 FR-007; applied by
     /// `next` under the latch and the deferred-switch rules).
-    #[allow(dead_code)] // 013 T018: the live change (US2) calls it at every play call
     pub(crate) fn request(&mut self, level: u8) {
         self.requested = numerator(level);
     }
@@ -246,6 +245,38 @@ impl SpeedStage {
         } else {
             f64::from(self.ring[j as usize & (RING - 1)])
         }
+    }
+
+    /// The dot product of phase `ph` of the active bank with x[base − m], m = 0 … 56, as four
+    /// partial sums in a fixed order (research R-03): s_q over m ≡ q (mod 4), m ascending, then
+    /// (s₀ + s₁) + (s₂ + s₃). Inside the stored samples it reads the ring without bounds tests;
+    /// at the edges, through `x` (zeros outside 0 … K − 1). Both paths add the same terms in the
+    /// same order, so they are bit-identical.
+    #[inline]
+    fn dot(&self, ph: usize, base: i64) -> f64 {
+        let c = &self.bank(self.active)[ph * PER_PHASE..(ph + 1) * PER_PHASE];
+        let (mut s0, mut s1, mut s2, mut s3) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        if base >= (PER_PHASE - 1) as i64 && (base as u64) < self.pulled {
+            let b = base as usize;
+            let r = &self.ring;
+            let at = |m: usize| f64::from(r[(b - m) & (RING - 1)]);
+            let mut m = 0;
+            while m + 4 < PER_PHASE {
+                s0 += c[m] * at(m);
+                s1 += c[m + 1] * at(m + 1);
+                s2 += c[m + 2] * at(m + 2);
+                s3 += c[m + 3] * at(m + 3);
+                m += 4;
+            }
+            s0 += c[PER_PHASE - 1] * at(PER_PHASE - 1); // m = 56 ≡ 0 (mod 4)
+        } else {
+            let mut s = [0.0f64; 4];
+            for (m, &cm) in c.iter().enumerate() {
+                s[m & 3] += cm * self.x(base - m as i64);
+            }
+            (s0, s1, s2, s3) = (s[0], s[1], s[2], s[3]);
+        }
+        (s0 + s1) + (s2 + s3)
     }
 
     /// The bank for numerator k (k ≠ 5).
@@ -320,7 +351,36 @@ impl SpeedStage {
     /// The next device output (data-model.md › the state machine). `src` returns the next
     /// stored device sample (it is called at most K times per playback). Bounded work: at most
     /// 57 multiply-adds and at most 2 + 29 pulls (FR-010).
+    #[inline]
     pub(crate) fn next(&mut self, src: &mut impl FnMut() -> Option<f32>) -> SpeedOut {
+        // The steady identity (level 3, no change pending, nothing read ahead): one stored
+        // sample per output, exactly what the general path computes (FR-006), without its tests.
+        #[cfg(feature = "__test-hooks")]
+        let plain = !self.mutation.lookahead_at_level_3;
+        #[cfg(not(feature = "__test-hooks"))]
+        let plain = true;
+        let i = self.p5 / 5;
+        if plain
+            && self.active == K_IDENTITY
+            && self.requested == K_IDENTITY
+            && !self.latched
+            && self.pulled == i
+            && i < self.stored
+        {
+            let v = src().unwrap_or(0.0); // the source holds K samples (always Some here)
+            self.ring[i as usize & (RING - 1)] = v;
+            self.pulled = i + 1;
+            self.last_p5 = Some(self.p5);
+            self.p5 += 5;
+            self.own += 1;
+            self.latch();
+            return SpeedOut::Own(f64::from(v));
+        }
+        self.next_general(src)
+    }
+
+    /// The general step: the latch, a pending change, the look-ahead, the tail.
+    fn next_general(&mut self, src: &mut impl FnMut() -> Option<f32>) -> SpeedOut {
         let i = (self.p5 / 5) as i64;
         self.pull_through(i, src);
         #[cfg(feature = "__test-hooks")]
@@ -340,17 +400,15 @@ impl SpeedStage {
             return SpeedOut::Silence;
         }
         let y = if self.active == K_IDENTITY {
+            #[cfg(feature = "__test-hooks")]
+            if self.mutation.lookahead_at_level_3 {
+                self.pull_through(i + D as i64, src); // the mutant: look-ahead at level 3
+            }
             self.x(i)
         } else {
             let base = i + self.lookahead();
             self.pull_through(base, src);
-            let c = &self.bank(self.active)[ph * PER_PHASE..(ph + 1) * PER_PHASE];
-            // Four partial sums in a fixed order (research R-03): s_q over m ≡ q (mod 4).
-            let mut s = [0.0f64; 4];
-            for (m, &cm) in c.iter().enumerate() {
-                s[m & 3] += cm * self.x(base - m as i64);
-            }
-            (s[0] + s[1]) + (s[2] + s[3])
+            self.dot(ph, base)
         };
         self.last_p5 = Some(self.p5);
         self.p5 += self.step(self.active);

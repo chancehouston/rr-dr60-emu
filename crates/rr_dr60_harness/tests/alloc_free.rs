@@ -169,6 +169,7 @@ fn processing_never_touches_the_heap() {
         output_clamp_cases(rate, vas_sizes);
         volume_ramp_cases(rate, vas_sizes);
         mic_cases(rate, vas_sizes);
+        speed_cases(rate, vas_sizes);
     }
 
     // Spec 007 FR-016, FR-017, SC-004: the manifest reads, Rust and C.
@@ -668,5 +669,49 @@ fn mic_cases(rate: u32, sizes: &[usize]) {
     for (_, handle) in engines {
         // SAFETY: handle came from rr_dr60_create.
         unsafe { rr_dr60_destroy(handle) };
+    }
+}
+
+/// Spec 013 FR-010 (T020): playbacks at every level and with the level changed before every
+/// block (through 3 → 1 → 5 → 2 → 4), the codec on and off, allocate nothing: the speed
+/// control's banks and ring exist from construction; its look-ahead and the decoder's frames
+/// are filled in place.
+fn speed_cases(rate: u32, sizes: &[usize]) {
+    let input = vas_input(rate);
+    let mut output = vec![0.0f32; 1024];
+    let cycle = [3u8, 1, 5, 2, 4];
+    for config in ["speed_default", "speed_default_no_codec"] {
+        let settings = configs::memory_capacity(configs::settings(config, rate), 300, 3);
+        let mut p = Pipeline::new(settings).unwrap();
+        p.start_recording().unwrap();
+        let _ = p.record(&input, &mut []).unwrap();
+        let _ = p.stop_recording(&mut []).unwrap();
+        let before = counts();
+        for level in 1..=rr_dr60::speed::LEVEL_COUNT {
+            p.set_playback_speed(level).unwrap();
+            p.start_playback(1).unwrap();
+            for &n in &sizes[..32] {
+                if p.play(&mut output[..n]).unwrap().finished {
+                    break;
+                }
+            }
+            if p.state().state == rr_dr60::State::Playing {
+                p.stop_playback().unwrap();
+            }
+        }
+        p.start_playback(1).unwrap();
+        let _ = p.playback_length_samples(1, 5).unwrap();
+        for (i, &n) in sizes.iter().enumerate() {
+            p.set_playback_speed(cycle[i % cycle.len()]).unwrap();
+            if p.play(&mut output[..n]).unwrap().finished {
+                break;
+            }
+        }
+        p.reset();
+        let after = counts();
+        assert_eq!(
+            after, before,
+            "{rate} Hz {config}: the playback speed control, heap activity [allocs, deallocs, reallocs]"
+        );
     }
 }

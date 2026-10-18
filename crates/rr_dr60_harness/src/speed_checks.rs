@@ -65,6 +65,8 @@ pub struct Played {
     pub frame_indices: Vec<u64>,
     /// `PlayInfo::frames` summed.
     pub frames: u64,
+    /// `PlayInfo::frames` per call.
+    pub frames_per_call: Vec<u64>,
     /// Calls that reported `finished` (must be 1).
     pub finished: usize,
 }
@@ -95,6 +97,7 @@ pub fn play(p: &mut Pipeline, number: u32, call: usize, schedule: &[(usize, u8)]
         played.places.push(info.place);
         played.frame_indices.push(info.frame_index);
         played.frames += info.frames as u64;
+        played.frames_per_call.push(info.frames as u64);
         if info.finished {
             played.finished += 1;
             // One more call must be refused (the engine is idle).
@@ -607,6 +610,29 @@ pub fn level3_identity(make: Make<'_>, config: &'static str) -> Vec<MeasurementR
         "",
         Tolerance::Exact(0.0), // FR-009
     ));
+    if cfg.speech_codec_enabled {
+        // FR-006: nothing read ahead at level 3, so after each call the frames decoded are
+        // those holding the places reached, as in 0.12: ⌊place ÷ 120⌋ + 1 in all.
+        let mut total = 0u64;
+        let mut bad = 0usize;
+        for (place, f) in played.places.iter().zip(&played.frames_per_call) {
+            total += f;
+            if total != (place / 120 + 1).min(frames) {
+                bad += 1;
+            }
+        }
+        results.push(MeasurementResult::new(
+            "FR-006",
+            "calls whose decoded frames differ from 0.12's",
+            T_SPEED,
+            6000,
+            config,
+            "voiced, 1 s",
+            bad as f64,
+            "",
+            Tolerance::Exact(0.0), // FR-006: the reports identical
+        ));
+    }
     let decreasing = played.places.windows(2).filter(|w| w[1] < w[0]).count();
     results.push(MeasurementResult::new(
         "FR-009",
@@ -636,4 +662,43 @@ pub fn level3_identity(make: Make<'_>, config: &'static str) -> Vec<MeasurementR
 /// The settings of a named configuration (a re-export for the tests' convenience).
 pub fn settings(name: &str, rate: u32) -> Settings {
     configs::settings(name, rate)
+}
+
+/// FR-005, FR-007 (US2 AS1 – AS3; research R-08 (c)) as rows, for the mutation tests: a set of
+/// schedules at 6 kHz in `config` against the independent reference: a pair at two change
+/// points, into level 3 at a place that is not whole (calls of 121), and changes into level 3
+/// and to another level in the last five outputs before the place reaches K and just after it
+/// (one-sample calls).
+pub fn schedules(make: Make<'_>, config: &'static str) -> Vec<MeasurementResult> {
+    let cfg = configs::settings(config, 6000);
+    let x = stimulus::stored_end_loud(301);
+    let mut cases: Vec<(usize, Vec<(usize, u8)>)> =
+        vec![(120, vec![(0, 1), (1, 5)]), (121, vec![(0, 5), (1, 2)])];
+    for a in LEVELS {
+        cases.push((121, vec![(0, a), (1, 3)]));
+        let own = (5 * 301u64).div_ceil(u64::from(numerator(a))) as usize;
+        for back in 0..=5usize {
+            cases.push((1, vec![(0, a), (own - back, 3)]));
+        }
+        cases.push((1, vec![(0, a), (own + 1, 1)]));
+    }
+    let mut results = Vec::new();
+    for (call, schedule) in cases {
+        let (mut p, n) = configs::stored_recording(make, cfg, &x);
+        let stream = stored_stream(&mut p, n);
+        let played = play(&mut p, n, call, &schedule);
+        let (want, _) = reference_output(&stream, call, &schedule);
+        results.push(MeasurementResult::new(
+            "FR-007",
+            "schedule samples differing from the reference",
+            T_SPEED,
+            6000,
+            config,
+            format!("calls of {call}, {schedule:?}"),
+            mismatches(&played.out, &want) as f64,
+            "",
+            Tolerance::Exact(0.0), // FR-007: bit-exact
+        ));
+    }
+    results
 }

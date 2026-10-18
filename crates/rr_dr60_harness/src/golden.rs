@@ -260,6 +260,22 @@ pub struct GoldenEntry {
     /// Spec 012: the hiss offset, dB (FR-007).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hiss_offset_db: Option<f32>,
+    /// Spec 013 (contracts/golden-format.md): the playback speed level set before
+    /// `start_playback` (a schedule's first). Present in speed-file entries only; absent (and not
+    /// serialized) in the eight earlier files, which therefore read unchanged (FR-006).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_level: Option<u8>,
+    /// Spec 013: a schedule's `[call index, level]`, each set before that call (calls of rate ÷
+    /// 50 host samples); absent for a constant level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_changes: Option<Vec<(u64, u8)>>,
+    /// Spec 013: the last `PlayInfo::place`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<u64>,
+    /// Spec 013: host samples produced before the drain (the recording's own part and the speed
+    /// control's tail).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub own_length: Option<u64>,
 }
 
 /// The VAS part of a golden entry (specs/003-vas/contracts/golden-format.md).
@@ -396,6 +412,10 @@ pub fn entry(stimulus: &str, config: &str, host_rate_hz: u32, output: &[f32]) ->
         seed: None,
         counter: None,
         hiss_offset_db: None,
+        speed_level: None,
+        speed_changes: None,
+        place: None,
+        own_length: None,
     }
 }
 
@@ -979,6 +999,253 @@ pub fn generate_volume_ramp(make: Make<'_>, bless: bool) -> GoldenFile {
         library_version: rr_dr60::VERSION.into(),
         entries,
     }
+}
+
+/// A spec 013 speed-only run: its configuration name, schedule and after-the-end change.
+type SpeedRun = (String, Vec<(usize, u8)>, Option<u8>);
+
+/// Spec 013 (contracts/golden-format.md): the levels other than 3 the speed file plays.
+pub const SPEED_LEVELS: [u8; 4] = [1, 2, 4, 5];
+
+/// Spec 013: the two schedules as `[call index, level]` (calls of rate ÷ 50 host samples):
+/// A into and out of level 3 and between two non-3 levels; B between non-3 levels, then a
+/// change to level 3 after the place reached the end (appended at run time).
+pub fn speed_schedule(name: &str) -> Vec<(usize, u8)> {
+    match name {
+        "a" => vec![(0, 3), (20, 1), (45, 3), (65, 5), (90, 4)],
+        "b" => vec![(0, 2), (30, 5), (55, 1)],
+        other => panic!("unknown schedule {other:?}"),
+    }
+}
+
+/// A spec 013 playback: every sample to `finished` in calls of `call`, the schedule applied
+/// before its calls; with `after_end`, a change to `after_end` before the first call after the
+/// place reached the recording's length `k`. Returns the output, the schedule as applied, the
+/// last place and the frames decoded.
+fn speed_play(
+    p: &mut rr_dr60::Pipeline,
+    call: usize,
+    schedule: &[(usize, u8)],
+    after_end: Option<u8>,
+    k: u64,
+) -> (Vec<f32>, Vec<(u64, u8)>, u64, u64) {
+    let mut applied: Vec<(u64, u8)> = schedule.iter().map(|&(c, l)| (c as u64, l)).collect();
+    if let Some(&(_, l)) = schedule.iter().find(|(c, _)| *c == 0) {
+        p.set_playback_speed(l).unwrap();
+    }
+    p.start_playback(1).unwrap();
+    let mut buf = vec![0.0f32; call];
+    let (mut out, mut frames, mut place, mut pending) = (Vec::new(), 0u64, 0u64, after_end);
+    for c in 0.. {
+        for &(at, l) in schedule {
+            if at == c && c > 0 {
+                p.set_playback_speed(l).unwrap();
+            }
+        }
+        if place >= k {
+            if let Some(l) = pending.take() {
+                p.set_playback_speed(l).unwrap();
+                applied.push((c as u64, l));
+            }
+        }
+        let info = p.play(&mut buf).unwrap();
+        out.extend_from_slice(&buf[..info.produced]);
+        frames += info.frames as u64;
+        place = info.place;
+        if info.finished {
+            break;
+        }
+    }
+    (out, applied, place, frames)
+}
+
+/// Spec 013 FR-013 (contracts/golden-format.md): the playback-speed file, 194 entries. With
+/// `bless`, asserts the lengths against the length helper, schedule B's after-the-end change as
+/// having no effect, and the speed-only entries against the independent reference.
+pub fn generate_speed(make: Make<'_>, bless: bool) -> GoldenFile {
+    use crate::speed_checks::{mismatches, reference_output, stored_stream};
+    let mut entries = Vec::new();
+    let mut push = |stim: &str,
+                    config: String,
+                    rate: u32,
+                    y: &[f32],
+                    level: u8,
+                    changes: Option<Vec<(u64, u8)>>,
+                    place: u64,
+                    own: u64,
+                    frames: Option<u64>,
+                    seed: Option<u64>| {
+        let mut e = entry(stim, &config, rate, y);
+        e.speed_level = Some(level);
+        e.speed_changes = changes;
+        e.place = Some(place);
+        e.own_length = Some(own);
+        e.frames = frames;
+        if seed.is_some() {
+            e.seed = seed;
+            e.counter = Some(0); // 012 FR-009: the engine's first recording
+        }
+        entries.push(e);
+    };
+    for rate in configs::all_rates() {
+        let call = (rate / 50) as usize;
+        for stim in ["tone_1k_m20", "voiced_m20"] {
+            let x = stimulus(stim, rate);
+            for (config, codec) in [("speed_default", true), ("speed_default_no_codec", false)] {
+                let settings = configs::settings(config, rate);
+                let mut p = make(settings);
+                p.start_recording().unwrap();
+                let _ = p.record(&x, &mut []).unwrap();
+                let _ = p.stop_recording(&mut []).unwrap();
+                let k = p.recording_length(1).unwrap();
+                let drain = u64::from(p.drain_samples());
+                let routes: &[(rr_dr60::Route, &str)] = if codec {
+                    &[
+                        (rr_dr60::Route::Speaker, "speaker"),
+                        (rr_dr60::Route::Earphone, "earphone"),
+                    ]
+                } else {
+                    &[(rr_dr60::Route::Speaker, "speaker")]
+                };
+                for &(route, rname) in routes {
+                    p.set_route(route);
+                    for level in SPEED_LEVELS {
+                        let (y, _, place, frames) =
+                            speed_play(&mut p, call, &[(0, level)], None, k);
+                        let own = y.len() as u64 - drain;
+                        if bless {
+                            let helper = p.playback_length_samples(1, level).unwrap();
+                            assert_eq!(
+                                y.len() as u64,
+                                helper,
+                                "{stim} {config} {rate} level {level}: the helper (013 FR-009)"
+                            );
+                            assert_eq!(
+                                place, k,
+                                "{stim} {config} {rate} level {level}: the place (013 FR-009)"
+                            );
+                        }
+                        let name = if codec {
+                            format!("speed_default_{rname}_l{level}")
+                        } else {
+                            format!("speed_no_codec_speaker_l{level}")
+                        };
+                        push(
+                            stim,
+                            name,
+                            rate,
+                            &y,
+                            level,
+                            None,
+                            place,
+                            own,
+                            codec.then_some(frames),
+                            Some(settings.seed),
+                        );
+                    }
+                }
+                if codec && stim == "voiced_m20" {
+                    p.set_route(rr_dr60::Route::Speaker);
+                    for sched in ["a", "b"] {
+                        let schedule = speed_schedule(sched);
+                        let after = (sched == "b").then_some(3u8);
+                        let (y, applied, place, frames) =
+                            speed_play(&mut p, call, &schedule, after, k);
+                        if bless && after.is_some() {
+                            let (z, _, _, _) = speed_play(&mut p, call, &schedule, None, k);
+                            assert!(
+                                mismatches(&y, &z) == 0,
+                                "{rate}: schedule B's change after the end changed the output (013 FR-007)"
+                            );
+                        }
+                        let own = y.len() as u64 - drain;
+                        push(
+                            stim,
+                            format!("speed_sched_{sched}"),
+                            rate,
+                            &y,
+                            schedule[0].1,
+                            Some(applied),
+                            place,
+                            own,
+                            Some(frames),
+                            Some(settings.seed),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    // (d) The speed-only configuration at 6 kHz on imported stimuli.
+    let only = configs::settings("speed_only", 6000);
+    for (stim, x) in [
+        ("stored_tone_1k", stimulus::stored_tone(1000.0, 0.5, 6000)),
+        ("stored_voiced", stimulus::stored_voiced(1.0)),
+    ] {
+        let (mut p, n) = configs::stored_recording(make, only, &x);
+        assert_eq!(n, 1);
+        let k = p.recording_length(1).unwrap();
+        let stream = stored_stream(&mut p, 1);
+        let mut runs: Vec<SpeedRun> = SPEED_LEVELS
+            .iter()
+            .map(|&l| (format!("speed_only_l{l}"), vec![(0, l)], None))
+            .collect();
+        runs.push(("speed_only_sched_a".into(), speed_schedule("a"), None));
+        runs.push(("speed_only_sched_b".into(), speed_schedule("b"), Some(3)));
+        for (name, schedule, after) in runs {
+            let (y, applied, place, _) = speed_play(&mut p, 120, &schedule, after, k);
+            if bless {
+                let sched: Vec<(usize, u8)> =
+                    applied.iter().map(|&(c, l)| (c as usize, l)).collect();
+                let (want, _) = reference_output(&stream, 120, &sched);
+                assert_eq!(
+                    mismatches(&y, &want),
+                    0,
+                    "{stim} {name}: the reference (013 R-08)"
+                );
+            }
+            let changes = (schedule.len() > 1).then_some(applied);
+            push(
+                stim,
+                name,
+                6000,
+                &y,
+                schedule[0].1,
+                changes,
+                place,
+                y.len() as u64,
+                None,
+                None,
+            );
+        }
+    }
+    entries.sort_by(|a, b| {
+        (a.stimulus.as_str(), a.config.as_str(), a.host_rate_hz).cmp(&(
+            b.stimulus.as_str(),
+            b.config.as_str(),
+            b.host_rate_hz,
+        ))
+    });
+    GoldenFile {
+        format: "rr_dr60-golden".into(),
+        version: 1,
+        library_version: rr_dr60::VERSION.into(),
+        entries,
+    }
+}
+
+/// The committed spec 013 playback-speed golden file.
+///
+/// # Panics
+///
+/// If the file is missing or unreadable.
+pub fn committed_speed() -> GoldenFile {
+    load(&path_speed()).expect("golden-speed-v1.json")
+}
+
+/// The path of `golden/golden-speed-v1.json`.
+pub fn path_speed() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-speed-v1.json")
 }
 
 /// Spec 012 microphone golden stimuli in sorted order (contracts/golden-format.md › Stimuli).

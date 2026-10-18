@@ -75,6 +75,6 @@ InvalidSpeedLevel { level: u8 },
 ## Test hooks (`__test_hooks`, feature `__test-hooks`; not public API)
 
 - `speed_place_fifths(p: &Pipeline) -> u64`: the place of the next output, in fifths.
-- `SpeedMutation { ratio_k7: Option<u32>, no_tail: bool, snap_into_level_3: bool, lookahead_delta: i32, latch_after_switch: bool, no_drain_zero_stop: bool }` with `Pipeline::__with_speed_mutation` (research R-12's six mutants).
+- `SpeedMutation { ratio_k7: Option<u32>, no_tail: bool, snap_into_level_3: bool, lookahead_delta: i32, latch_after_switch: bool, lookahead_at_level_3: bool }` with `Pipeline::__with_speed_mutation` (research R-12's six mutants).
 - `speed_bank(level: u8) -> Option<Vec<f64>>`: a level's bank as designed at construction (5 × 57, phase-major), for the independent reference (research R-08) and the pins.
 - `speed_tail_len(k: u32, stored: u64) -> u64`: T(K, k), for the length checks.
