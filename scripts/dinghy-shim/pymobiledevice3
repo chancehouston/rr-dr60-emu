@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# cargo-dinghy 0.8.6 runs `pymobiledevice3 apps list --no-color …` on iOS 17 and later;
+# pymobiledevice3 11 has no --no-color option (its JSON output is plain when piped).
+# This shim drops the option and runs the real pymobiledevice3, the next one on PATH.
+set -euo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+args=()
+for a in "$@"; do [[ "$a" == "--no-color" ]] || args+=("$a"); done
+IFS=: read -r -a dirs <<<"$PATH"
+for d in "${dirs[@]}"; do
+  [[ "$(cd "$d" 2>/dev/null && pwd)" == "$here" ]] && continue
+  if [[ -x "$d/pymobiledevice3" ]]; then exec "$d/pymobiledevice3" "${args[@]+"${args[@]}"}"; fi
+done
+echo "pymobiledevice3 not found on PATH (install: uv tool install pymobiledevice3)" >&2
+exit 127
