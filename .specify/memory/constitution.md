@@ -25,8 +25,12 @@ it unchanged.
   its rationale, confidence (High/Medium/Low), and a verification method.
 - Changing an assumed or sourced value is a user-visible change. It MUST be recorded in
   `CHANGELOG.md` and in the assumption's status.
-- The v1 fidelity target is a measured character match within stated tolerances. Bit-exact
-  reproduction is a non-goal unless original codec firmware or algorithms are recovered.
+- The v1 fidelity target is a modeled character match: each stage's measurable properties are
+  specified with tolerances against its sources and assumptions, and are stated as modeled, not
+  measured. Checking the model against a real unit is out of scope until the project has a
+  physical unit it can open (amended 2026-10-18); the target then becomes a measured character
+  match within stated tolerances. Bit-exact reproduction is a non-goal unless original codec
+  firmware or algorithms are recovered.
 
 Rationale: without real-unit references, honesty about what is known versus assumed is the only
 thing that makes the emulator trustworthy and improvable as evidence arrives.
@@ -130,4 +134,9 @@ part without hiding regressions in another. It also keeps every merged increment
 - Every spec, plan, and pull request MUST be checked for compliance (the plan's Constitution Check
   and the PR checklist). Deviations MUST be justified in Complexity Tracking or rejected.
 
-**Version**: 1.1.0 | **Ratified**: 2026-10-08 | **Last Amended**: 2026-10-08
+**Version**: 1.2.0 | **Ratified**: 2026-10-08 | **Last Amended**: 2026-10-18
+
+Amendment 1.2.0 (2026-10-18): principle II's v1 target is a modeled character match; real-unit
+checks are out of scope until the project has a unit it can open. Rationale: no unit is available
+and community captures have not arrived, so a measured target cannot be planned. Principle VI is
+unchanged: accuracy is still never advertised beyond what has been measured.
