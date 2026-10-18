@@ -7,7 +7,7 @@ The common format of `golden.rs` (`rr_dr60-golden`, version 1), entries sorted b
 | `speed_level` | `u8` | the level set before `start_playback` (the schedule's first level for a schedule entry) |
 | `speed_changes` | `[[u64, u8]]` | the schedule: `[play-call index, level]`, each set before that call (absent for a constant level) |
 | `place` | `u64` | the last `PlayInfo::place` |
-| `own_length` | `u64` | host samples produced before the drain (`produced` total minus `drain_samples()`) |
+| `own_length` | `u64` | host samples produced before the drain: the recording's own part and the speed control's tail (`produced` total minus `drain_samples()`) |
 
 `frames` (existing) carries the frames decoded over the playback with the codec on (absent bypassed); `seed` and `counter` (existing, spec 012) are present for the entries recorded through the default record path. The output hashed is every `play()` sample to `finished`, in calls of **rate ÷ 50 host samples** (20 ms, 120 device samples at every rate; a schedule's call index counts these calls). Each recording is made once per (stimulus, rate, codec) and replayed at every level and route.
 
