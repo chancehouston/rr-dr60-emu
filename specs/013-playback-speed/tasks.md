@@ -132,10 +132,10 @@ description: "Task list for 013 Playback Speed (the device's five playback speed
 
 **Independent Test**: the cross-check, the audit and the README statements check.
 
-- [ ] T024 [US3] Add `us2_cross_check::readme_speed_statements` in `crates/rr_dr60_harness/tests/us2_cross_check.rs` (the five levels and 0.6 … 1.4, "pitch", "modeled", the weak lean toward a pitch-keeping device, "playback only", the length helper, level 3 unchanged, the C names); run it **red**.
-- [ ] T025 [US3] Write the README's "Playback speed" section in `README.md` (research R-10) → T024 green; the rustdoc of `set_playback_speed`, `playback_speed`, `playback_length_samples`, `PlayInfo::place`, `PlayInfo::frame_index` and the `speed` module (the identity at level 3 stated, contracts/rust-api.md); the crate docs' one sentence in `crates/rr_dr60/src/lib.rs`.
-- [ ] T026 [P] [US3] Records: the signal-chain row 9 "**Modeled by** spec 013 …" sentence (research R-10) in `docs/hardware/signal-chain.md`; A-054's verification text complete; the CHANGELOG 0.13.0 regions filled (Added: the control, the length helper, `PlayInfo::place`, the constants; Changed: the C play report 32 → 40 bytes, an ABI break, rebuild against the new header; `frame_index` from the place; Documentation: A-054, S-018, the stage-9 manifest entry and the one re-bless).
-- [ ] T027 [US3] Run `us1_manifest`, `us2_cross_check` and `scripts/check-traceability.sh`; no second canonical re-bless unless a review changes a string.
+- [X] T024 [US3] Add `us2_cross_check::readme_speed_statements` in `crates/rr_dr60_harness/tests/us2_cross_check.rs` (the five levels and 0.6 … 1.4, "pitch", "modeled", the weak lean toward a pitch-keeping device, "playback only", the length helper, level 3 unchanged, the C names); run it **red**.
+- [X] T025 [US3] Write the README's "Playback speed" section in `README.md` (research R-10) → T024 green; the rustdoc of `set_playback_speed`, `playback_speed`, `playback_length_samples`, `PlayInfo::place`, `PlayInfo::frame_index` and the `speed` module (the identity at level 3 stated, contracts/rust-api.md); the crate docs' one sentence in `crates/rr_dr60/src/lib.rs`.
+- [X] T026 [P] [US3] Records: the signal-chain row 9 "**Modeled by** spec 013 …" sentence (research R-10) in `docs/hardware/signal-chain.md`; A-054's verification text complete; the CHANGELOG 0.13.0 regions filled (Added: the control, the length helper, `PlayInfo::place`, the constants; Changed: the C play report 32 → 40 bytes, an ABI break, rebuild against the new header; `frame_index` from the place; Documentation: A-054, S-018, the stage-9 manifest entry and the one re-bless).
+- [X] T027 [US3] Run `us1_manifest`, `us2_cross_check` and `scripts/check-traceability.sh`; no second canonical re-bless unless a review changes a string.
 
 **Checkpoint**: SC-007. Commit `docs(013): the speed control's records (US3)`.
 

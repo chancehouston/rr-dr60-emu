@@ -485,6 +485,34 @@ s.tap = RR_DR60_TAP_AFTER_DECODER;        /* or: the codec's output before the p
 > **Modeled on the class, not on the device, and not measured against a unit.** The frame length, the look-ahead, the codebooks and the bit allocation are the model's choices from the published coders of the period; a real RR-DR60 may use a different frame length (even a round sample count rather than a round millisecond count), different codebooks, or a frame-granular pause. The deciding captures are listed in [A-040 and A-041](docs/hardware/assumptions.md): a sustained vowel or a click train played back by a real unit (the frame period shows as a recurring excitation pattern), the shortest item a unit keeps, the exact time shown at FULL, and white noise, a tone and a pitch glide through the speaker and earphone outputs.
 <!-- codec-section:end -->
 
+### Playback speed (the SPEED CONTROL)
+
+<!-- speed-section:start -->
+Since 0.13 a recording can be played at the device's **five playback speeds**. The owner's manual describes a SPEED CONTROL switch and five levels, level 3 normal, level 1 the slowest and level 5 the fastest; Panasonic's 1999 US product page gives the only figure, "Slow/Fast Play (+/-40%)" ([S-001, S-012](docs/hardware/sources.md)). The engine plays the levels at **3/5, 4/5, 1, 6/5 and 7/5** of normal speed (0.6, 0.8, 1.0, 1.2, 1.4: the speed reading of "+/-40%", linear spacing assumed; [A-054](docs/hardware/assumptions.md), low confidence; the other reading, a duration change of ±40 %, is registered beside it).
+
+- **The pitch moves with the speed.** Level 1 plays about 67 % longer and lower, level 5 shorter and higher. This is the modeled default: a resampling of the decoded stream at the 6 kHz device rate between the speech decoder and the codec's reconstruction filter (A-054's mechanism (b)). How the device itself does it is not documented: the codec cannot be slowed by lowering its clock within its stated range ([S-003](docs/hardware/sources.md)), so the slow levels are a DSP process, and the research of 2026-10-17 leans weakly toward a **pitch-keeping** device (time-scaling the decoder's output). One capture of a real unit settles it (P1 in the [hardware-evidence template](.github/ISSUE_TEMPLATE/hardware_evidence.yml)); a pitch-keeping mode would be a later feature. At the fast levels the content that would no longer fit below the device's 3 kHz band is removed first rather than folding back; the emulator's resampler keeps every other product at least 60 dB down (a device of 1998 may have done less).
+- **A live control, playback only.** `set_playback_speed(level)` (1 – 5; `playback_speed()` reads it back, default 3) works at any time, like the volume and the route, and is kept by `reset` and `reconfigure`. From the first device sample a `play` call computes after the change, the playback continues at the new level from the place it reached: nothing restarts, skips or repeats (a change into level 3 waits until the place is a whole stored sample, at most 4 device samples, 0.7 ms). The record path and the one-pass processing ignore it, as on the device, where the level changes only during playback.
+- **Level 3 is the unchanged output**: bit-identical to 0.12, every play report included.
+- **Length.** A recording of K stored device samples plays its own part in ⌈K ÷ r⌉ device samples, then a short tail of the resampler's response (at most 46 device samples, none at level 3), then the unchanged drain. `playback_length_samples(number, level)` returns the whole length in host samples for a constant level, and `PlayInfo::place` reports the place in the recording, in stored device samples, after every `play` call (it reaches the recording's length at the end), for a progress display.
+
+```rust
+p.set_playback_speed(1)?;                      // SLOW: 0.6, lower pitch
+let total = p.playback_length_samples(1, 1)?;  // host samples, the drain included
+p.start_playback(1)?;
+let info = p.play(&mut out)?;                  // info.place: stored samples reached
+p.set_playback_speed(5)?;                      // FAST from the next play call
+```
+
+```c
+rr_dr60_set_playback_speed(p, 1);              /* RR_DR60_STATUS_INVALID_SPEED_LEVEL outside 1 - 5 */
+uint64_t total = 0;
+rr_dr60_playback_length_samples(p, 1, 1, &total);
+/* RrDr60PlayInfo.place since 0.13 (the struct grew 32 -> 40 bytes: rebuild against the header) */
+```
+
+> **Modeled on the documents, not measured against a unit.** The five ratios, the pitch behavior and the resampler's quality are assumptions ([A-054](docs/hardware/assumptions.md)); a capture of a real unit playing a tone and a sustained vowel at each level decides them.
+<!-- speed-section:end -->
+
 ### Output chain (signal-chain stages 11 – 13)
 
 <!-- output-section:start -->

@@ -25,7 +25,11 @@
 //!   sound after a pause is lost, and the remaining audio is joined at abrupt
 //!   splices. It is modeled on the owner's manual and assumed values (A-008,
 //!   A-021 – A-025) and is on by default; see [`VasSettings`]. And
-//! - **Stage 10**, the playback-side DAC and reconstruction filter.
+//! - **Stage 10**, the playback-side DAC and reconstruction filter. Ahead of it, since spec 013,
+//!   the player's **playback speed control** (part of stage 9's playback firmware): five levels
+//!   at 3/5 … 7/5 of normal speed with the pitch moving with the speed, a live control
+//!   ([`Pipeline::set_playback_speed`]; A-054, modeled on the documents, not measured), level 3
+//!   the unchanged output; see [`speed`].
 //!
 //! Since spec 006 the engine also has the device's structure: the **record path** (stages 3, 4
 //! with the clamp, and 5) writes into a **memory** of 60 minutes and 99 recordings (S-001;

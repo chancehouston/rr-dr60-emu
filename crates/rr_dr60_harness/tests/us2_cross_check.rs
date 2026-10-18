@@ -1120,3 +1120,55 @@ fn readme_mic_statements() {
         assert!(!doc.contains("No effect on output"), "{path}");
     }
 }
+
+/// Spec 013 US3 AS3, AS4 (FR-014, SC-008; tasks.md T024): the README's playback-speed section
+/// states the five levels and their ratios, that the pitch moves with the speed, that this is the
+/// modeled default pending a capture with the weak lean toward a pitch-keeping device, that the
+/// level is live and playback-only, the length rule and helper, that level 3 is unchanged, and
+/// the C names; it passes the denylist and the claims policy.
+#[test]
+fn readme_speed_statements() {
+    let text = readme();
+    let section =
+        mc::readme_region(&text, "speed-section").expect("README has the speed-section markers");
+    assert_eq!(mc::denylist_hit(section), None, "README speed section");
+    for phrase in [
+        "five",
+        "0.6",
+        "1.4",
+        "3/5",
+        "7/5",
+        "pitch",
+        "modeled",
+        "pitch-keeping",
+        "P1",
+        "A-054",
+        "playback only",
+        "live",
+        "set_playback_speed",
+        "playback_length_samples",
+        "PlayInfo::place",
+        "level 3",
+        "bit-identical",
+        "rr_dr60_set_playback_speed",
+        "RR_DR60_STATUS_INVALID_SPEED_LEVEL",
+    ] {
+        assert!(
+            section.contains(phrase),
+            "README speed section lacks {phrase:?}"
+        );
+    }
+    let lower = section.to_lowercase();
+    for word in [
+        "accurate",
+        "reveal",
+        "uncover",
+        "hidden voice",
+        "measured on",
+    ] {
+        assert!(
+            !lower.contains(word),
+            "README speed section contains {word:?}"
+        );
+    }
+}
