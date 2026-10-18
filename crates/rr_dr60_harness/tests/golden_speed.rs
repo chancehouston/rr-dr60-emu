@@ -1,21 +1,21 @@
 //! Golden-file check for spec 013, the playback speed control (FR-013, SC-006;
 //! contracts/golden-format.md; tasks.md T023, T035). The eight earlier golden files are
 //! untouched (level 3 is the identity) and keep their own guards.
-//!
-//! Red by design until the bless (T035): the file does not exist yet, and the SHA guard holds a
-//! placeholder; the gate runs without this binary until then (010's order).
 
 use rr_dr60_harness::checks::standard;
 use rr_dr60_harness::golden;
 use sha2::{Digest, Sha256};
 
-/// SHA-256 of `golden/golden-speed-v1.json`, pinned at the bless (T035).
-const GOLDEN_SPEED_V1_SHA256: &str = "unblessed"; // 013 T035 pins it
+/// SHA-256 of `golden/golden-speed-v1.json` as blessed once by spec 013 (T035, after the
+/// post-implementation reviews). The golden window is closed for the feature: a moved hash is a
+/// defect, never a re-bless; a later change to the speed control is a model change with a
+/// CHANGELOG entry (FR-013).
+const GOLDEN_SPEED_V1_SHA256: &str =
+    "d36b0a75625e67b11cb513d6b80be29b8827e3f60ee737c084eebdbc6e28dce2"; // blessed 2026-10-17 (013 T035)
 
 #[test]
 fn golden_speed_v1_unchanged() {
-    let bytes = std::fs::read(golden::path_speed()).expect("golden-speed-v1.json (bless first)");
-    let hex: String = Sha256::digest(&bytes)
+    let hex: String = Sha256::digest(include_bytes!("../golden/golden-speed-v1.json"))
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
