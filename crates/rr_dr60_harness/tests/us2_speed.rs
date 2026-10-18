@@ -259,3 +259,29 @@ fn independent_of_route_volume_and_clamp() {
         "the clamp bounds the route output"
     );
 }
+
+/// FR-007 (the deferred switch, read in fifths; tasks.md T040): at 6 kHz in `speed_only`, after
+/// 121 outputs at level 1 the next place is 363 fifths (not a whole stored sample); a change to
+/// level 3 keeps the old step of 3 fifths until the place is whole (366, 369, 372, 375), then
+/// steps by 5 (380, 385).
+#[test]
+fn deferred_switch_in_fifths() {
+    use rr_dr60::__test_hooks::speed_place_fifths;
+    let x = stimulus::stored_voiced(0.5);
+    let (mut p, n) = stored_recording(&standard, configs::settings("speed_only", 6000), &x);
+    p.set_playback_speed(1).unwrap();
+    p.start_playback(n).unwrap();
+    assert_eq!(speed_place_fifths(&p), 0);
+    let mut buf = vec![0.0f32; 121];
+    let _ = p.play(&mut buf).unwrap();
+    assert_eq!(speed_place_fifths(&p), 363);
+    p.set_playback_speed(3).unwrap();
+    let mut one = [0.0f32; 1];
+    let places: Vec<u64> = (0..6)
+        .map(|_| {
+            let _ = p.play(&mut one).unwrap();
+            speed_place_fifths(&p)
+        })
+        .collect();
+    assert_eq!(places, [366, 369, 372, 375, 380, 385]);
+}

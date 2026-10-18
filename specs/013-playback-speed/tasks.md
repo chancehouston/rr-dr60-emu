@@ -190,3 +190,8 @@ description: "Task list for 013 Playback Speed (the device's five playback speed
 - **Then US3, the C surface, the gates, the reviews and the single bless.**
 
 The phase checkpoints are commit points. The owner is away: the PR is opened as a draft and nothing is merged or marked ready.
+
+## Phase 7: Convergence
+
+- [X] T039 Add to capture P1 in `.github/ISSUE_TEMPLATE/hardware_evidence.yml` the level-change capture A-054 names: a sustained vowel played back with the SPEED CONTROL dial turned during playback, captured at 48 kHz or more from the earphone jack, to show whether the device steps, changes at a frame boundary or mutes (the trigger for a crossfade, spec 013's post-implementation review B2), per A-054 verification / research R-10 (partial)
+- [X] T040 Use `__test_hooks::speed_place_fifths` in `crates/rr_dr60_harness/tests/us2_speed.rs` (assert the place in fifths after each call against the independent reference's place sequence) or remove it from `crates/rr_dr60/src/lib.rs`, `crates/rr_dr60/src/stages/speed.rs` and `specs/013-playback-speed/contracts/rust-api.md`, per contracts/rust-api.md › Test hooks (unrequested)
