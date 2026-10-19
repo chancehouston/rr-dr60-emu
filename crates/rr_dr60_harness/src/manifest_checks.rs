@@ -1,6 +1,7 @@
 //! The stage manifest's cross-check against the hardware registers (spec 007 FR-013,
 //! FR-011, FR-002, FR-003; contracts/cross-check.md), the wording rules, and the renderers
-//! that produce the canonical text and the README's generated regions (research R-04, R-05).
+//! that produce the canonical text and the generated regions of the README and the user
+//! guide (research R-04, R-05).
 //!
 //! The cross-check is a pure function of a manifest value and four texts (`sources.md`,
 //! `assumptions.md`, `signal-chain.md`, `CHANGELOG.md`), so tests can substitute doctored
@@ -8,7 +9,8 @@
 //!
 //! Bless switches: `RR_DR60_BLESS=manifest cargo test -p rr_dr60_harness --test us2_cross_check
 //! canonical` rewrites `golden/manifest-v1.txt`; `RR_DR60_BLESS=readme … readme -- --test-threads=1`
-//! rewrites the README's three marked regions (single-threaded: two tests write the same file). Both are content changes recorded in the CHANGELOG
+//! rewrites the three marked regions: the README's fidelity table and the user guide's
+//! (`docs/guide.md`) two code blocks. Both are content changes recorded in the CHANGELOG
 //! (007 FR-015).
 
 use std::fmt;

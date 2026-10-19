@@ -9,8 +9,8 @@
 //!
 //! The engine's input level reference is unchanged by these stages: 0 dBFS at 1 kHz still
 //! reaches the codec's full scale. That corresponds to **about 90 dB SPL at the microphone**
-//! (80 – 100 dB SPL, low confidence; A-029), a figure documented here and in the README, not a
-//! setting: a host scales its own microphone input.
+//! (80 – 100 dB SPL, low confidence; A-029), a figure documented here and in the user guide,
+//! not a setting: a host scales its own microphone input.
 
 /// The valid range of [`MicSettings::hiss_offset_db`](crate::MicSettings::hiss_offset_db) in
 /// dB, inclusive (spec 012 FR-003; A-048): −18 to +12 dB around the default hiss level. For

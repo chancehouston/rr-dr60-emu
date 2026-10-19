@@ -525,23 +525,41 @@ fn example_prints_canonical_text() {
     assert_eq!(String::from_utf8(out.stdout).unwrap(), render(manifest()));
 }
 
+/// The documents that carry marked regions: the README (the front page, with the fidelity
+/// table) and the user guide (the code examples and the per-stage sections).
+const DOCS: [&str; 2] = ["README.md", "docs/guide.md"];
+
+/// The README and the user guide, one after the other; each region marker occurs once in them.
 fn readme() -> String {
-    std::fs::read_to_string(mc::repo_root().join("README.md")).unwrap()
+    DOCS.iter()
+        .map(|d| std::fs::read_to_string(mc::repo_root().join(d)).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-/// Compares a README region with `want`, blessing it with `RR_DR60_BLESS=readme`.
+/// The document of `DOCS` that carries region `name`.
+fn doc_with_region(name: &str) -> &'static str {
+    DOCS.into_iter()
+        .find(|d| {
+            let text = std::fs::read_to_string(mc::repo_root().join(d)).unwrap();
+            mc::readme_region(&text, name).is_some()
+        })
+        .unwrap_or_else(|| panic!("neither the README nor the guide has the {name} markers"))
+}
+
+/// Compares a README or guide region with `want`, blessing it with `RR_DR60_BLESS=readme`.
 fn check_readme_region(name: &str, want: &str) {
-    let text = readme();
+    let doc = doc_with_region(name);
+    let path = mc::repo_root().join(doc);
+    let text = std::fs::read_to_string(&path).unwrap();
     if std::env::var("RR_DR60_BLESS").as_deref() == Ok("readme") {
-        let new = mc::replace_readme_region(&text, name, want)
-            .unwrap_or_else(|| panic!("README has no {name} markers"));
-        std::fs::write(mc::repo_root().join("README.md"), new).unwrap();
-        println!("blessed README region {name}");
+        let new = mc::replace_readme_region(&text, name, want).unwrap();
+        std::fs::write(&path, new).unwrap();
+        println!("blessed {doc} region {name}");
     }
-    let text = readme();
-    let got =
-        mc::readme_region(&text, name).unwrap_or_else(|| panic!("README has no {name} markers"));
-    assert_eq!(got.trim_end(), want.trim_end(), "README region {name}");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let got = mc::readme_region(&text, name).unwrap();
+    assert_eq!(got.trim_end(), want.trim_end(), "{doc} region {name}");
 }
 
 #[test]

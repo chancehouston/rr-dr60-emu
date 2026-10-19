@@ -119,7 +119,7 @@
 //! every earlier tap are never bounded. It is **an emulator convenience, not a device
 //! behavior**, for hosts that write integer buffers (+1.0 maps to 32767 in a 16-bit
 //! conversion); on material above the bound it replaces the excess with flat tops, which adds
-//! distortion of its own that the device does not have. See the README's output section for
+//! distortion of its own that the device does not have. See the user guide's output section for
 //! the figures and the headroom alternative.
 //!
 //! Stages 4 and 10 are modeled on the OKI MSM7702 voice-band codec at the device's internal

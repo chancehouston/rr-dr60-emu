@@ -5,10 +5,10 @@ name: registers
 # skips documentation-only changes workflow-wide (its paths-ignore covers **.md and docs/**),
 # so this second, short workflow runs on every pull request, detects inside the job whether
 # any file the manifest mirrors or renders changed (the three registers, the CHANGELOG for the
-# model versions, the README for the generated table and code blocks, the manifest and its
-# checks), and runs the cargo steps only when one did. Because the job always reports, it can
-# be made a required status check (repository settings, the maintainer's call); a path-filtered
-# trigger could not, since a skipped required check blocks unrelated pull requests.
+# model versions, the README and docs/guide.md for the generated table, code blocks and stage
+# sections, the manifest and its checks), and runs the cargo steps only when one did. Because
+# the job always reports, it can be made a required status check (repository settings, the
+# maintainer's call); a path-filtered trigger could not, since a skipped required check blocks unrelated pull requests.
 on:
   pull_request:
   push:
@@ -46,7 +46,7 @@ jobs:
           fi
           changed=$(git diff --name-only "$BASE" "${{ github.sha }}")
           echo "$changed"
-          if echo "$changed" | grep -Eq '^(docs/hardware/|CHANGELOG\.md$|README\.md$|crates/rr_dr60/src/manifest\.rs$|crates/rr_dr60_harness/src/manifest_checks\.rs$|crates/rr_dr60_harness/tests/us1_manifest\.rs$|crates/rr_dr60_harness/tests/us2_cross_check\.rs$|crates/rr_dr60_harness/examples/manifest\.rs$|crates/rr_dr60_harness/golden/manifest-v1\.txt$|crates/rr_dr60_ffi/tests/c/smoke\.c$|scripts/check-traceability\.sh$|\.github/workflows/registers\.yml$)'; then
+          if echo "$changed" | grep -Eq '^(docs/hardware/|CHANGELOG\.md$|README\.md$|docs/guide\.md$|crates/rr_dr60/src/manifest\.rs$|crates/rr_dr60_harness/src/manifest_checks\.rs$|crates/rr_dr60_harness/tests/us1_manifest\.rs$|crates/rr_dr60_harness/tests/us2_cross_check\.rs$|crates/rr_dr60_harness/examples/manifest\.rs$|crates/rr_dr60_harness/golden/manifest-v1\.txt$|crates/rr_dr60_ffi/tests/c/smoke\.c$|scripts/check-traceability\.sh$|\.github/workflows/registers\.yml$)'; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "nothing the manifest mirrors changed; the cargo steps are skipped"
