@@ -169,6 +169,23 @@ The figures in these cards are illustrations. A shipped card prints the engine's
 
 None prints the motion or self-interference context next to a reading. Printing it is a neutral differentiator: it neither claims nor debunks.
 
+### Vibration track (2026-10-21)
+
+The owner's idea, from the 2026-10-21 working notes, and part of Investigation mode's feature set. It is exploratory; the thresholds are open.
+
+- **What it is:** a track of the accelerometer's vibration level, recorded only while the phone lies still. While the phone is handled, the track shows "phone moving" instead, from the motion intervals above.
+- **Why it helps the session:** it invites the user to put the phone down. A phone at rest gives quieter audio (no handling noise) and steadier magnetometer readings.
+- **What it will pick up:** footsteps, doors, ventilation, traffic, appliances.
+- **Wording:** a reading in its unit (g), with a time window, never "detector", "activity" or "presence". Next to an audio mark, it is a context line: "Vibration 0.004 g at 12:04.1 (phone at rest)". The app never says what a coincidence means, either way.
+- **Self-interference:** the app stays silent while recording, with no haptics and no speaker output (already the session rule in § 1), so it does not record its own vibration.
+- **Open:** the vibration measure (band-limited RMS of `userAcceleration`?), the rest criterion, and whether it produces automatic marks or is a track only.
+
+### "Question asked here" marks (2026-10-21)
+
+A second kind of user mark, from the same notes: one tap marks the moment a question was asked. It has its own shape, is labelled as the user's, and appears on the review timeline like MARK.
+
+**Sensor timing (a note on the working notes):** the notes propose resampling every sensor to one common rate. Keep the delivered timestamps in the session record (§ 1, § 2), and resample only for display and analysis. The barometer delivers about once a second.
+
 ## 4. "Inside this moment" by re-rendering
 
 **Verdict: sound, with conditions.** The engine is deterministic: the same input, settings and seed give bit-identical output. So a session that keeps the raw microphone audio, the settings, the seed and a change log can be re-rendered offline to recover any stage's tap and state at any moment.
