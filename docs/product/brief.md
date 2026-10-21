@@ -6,7 +6,8 @@
 - **Sources:**
   - the design dossier *One instrument. Two ways to explore.* (v0.1, 15 October 2026, [design-dossier-2026-10-15.pdf](design-dossier-2026-10-15.pdf)), prepared from the product-design conversation with Chance Houston that day;
   - the product decisions of 2026-10-11 that the dossier does not change (decisions.md);
-  - the engine on `main` at version 0.11.0, read on 2026-10-16 for the capability facts below.
+  - the engine on `main` at version 0.11.0, read on 2026-10-16 for the capability facts below;
+  - the owner's working notes of 2026-10-21 (*RR-DR60 Emulator App — Working Notes, Draft 1*, a Claude doc; exploratory), for the items dated 2026-10-21. Its "validated", "chip-level" and "reproduces exactly" wording was not adopted: it conflicts with the claims policy and the 2026-10-18 scope decision.
 - **Not a screen specification.** The dossier's renderings are illustrative: their controls, routings and readings are placeholders, and the sensor readings in them are invented for the concept.
 - **Claims policy.** Everything here follows the policy in `CLAUDE.md`: describe what the signal chain does to sound, say "modeled on" until a stage is checked against a real unit, and make no claim about paranormal phenomena either way.
 
@@ -84,6 +85,7 @@ A recording becomes a documented session. The whole session design is **Agreed**
   - The active chain and settings are saved, and changes during a session are timestamped, so a later listener knows what processing was applied.
 - **Context.**
   - Candidate tracks: magnetic field, motion and pressure, where the phone supports them.
+  - *2026-10-21, the owner's idea, part of Investigation mode's feature set:* a **vibration track** from the accelerometer, active only while the phone lies still (investigation-mode.md › Vibration track).
   - Recorded with them: device identity, units, sampling information, sensor accuracy or status where the platform provides it, missing data and interruptions.
 - **Review with a shared cursor.** Select a sound and see the phone's readings at that moment, including movement and capture gaps.
 - **The interface treats a coincidence as something to examine and never labels it proof of a paranormal cause.**
@@ -160,7 +162,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
     - stage taps and "Listen here";
     - stem export;
     - folders and search;
-    - review tools.
+    - review tools (candidates added 2026-10-21: reverse playback and a spectrogram; slow playback is the device's own speed control, free).
 - **O-3 ★ Raw microphone audio.**
   - Kept in both modes or only in Investigation sessions; free or paid in Recorder mode.
   - How it interacts with voice activation (the dossier asks this).
@@ -187,10 +189,22 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
   - The inside's scope shows no marks other than the engine's own events (front-and-inside.md › Wording).
   - Investigation review adds the user's own markers (MARK in concept 02).
   - Proposed reconciliation: user markers are allowed in Investigation review and always labelled as the user's. The inside's scope rule stays.
+  - *2026-10-21:* a second kind of user mark, "Question asked here", one tap during a session.
 - **O-13 Controls and AI control:** the 2026-10-15 request to give the app's users more to "play" with and to allow an AI to drive the engine's controls is not in the dossier. *(2026-10-18: the decision brief is [controls-discussion.md](controls-discussion.md), against engine 0.13.0.)*
   - It joins O-1 and the dossier's engine question 1.
   - It includes how a fast stream of volume changes behaves: each change restarts the 20 ms volume transition, so updates faster than about 60 per second make the knob lag.
 - **O-15 Recorder mode's audience (2026-10-18):** with real-unit checks out of scope, the product no longer targets listeners whose main interest is a checked, authentic sound. Does Recorder mode keep its "home for vintage-hardware and audio enthusiasts" framing, become the plain recorder front for every user, or merge into the tinkerer's view? Reconsider the dropped audience if demand appears.
+- **O-16 An "entertainment" disclaimer (2026-10-21).** The working notes lean toward "For entertainment purposes" in the store description and the About screen, to cover App Review. The copy rules (2026-10-11) ban "entertainment only" because it reads as a debunk. Options:
+  1. keep the rule and write a neutral statement of what the app does instead, in the style competitors use ("measures and reacts to changes in the environment only", competitors.md);
+  2. allow "for entertainment" in the store description and About screen only, never in the app's working copy;
+  3. decide after the first review: submit with option 1 and add the phrase if App Review asks for it.
+
+  Undecided; the owner is unsure (2026-10-21).
+- **O-17 First submission and App Review 4.2 / 4.3 (2026-10-21).** This is the owner's first App Store submission, so review readiness is a design concern.
+  - Guideline 4.2 (minimum functionality): a record button with a filter is at risk; the app must feel like a full instrument.
+  - Guideline 4.3 (spam): aimed at template clones and lookalikes; a reviewer should see the difference within about 30 seconds of opening the app (the flip to the inside, the stage statuses).
+  - Common fixable rejections: crashes, a missing privacy policy, broken links, digital goods sold outside in-app purchase.
+  - The category's table stakes, which 1.0 should meet: raw microphone capture, voice activation, instant playback, a waveform to scrub, a session library with tags, trim, export. (Silence removal is the device's own VAS.)
 - **O-14 Implementation questions from the dossier:**
   - clock mapping and drift;
   - battery and storage cost;
