@@ -1,6 +1,6 @@
 # Decision review: handoff to the reviewer
 
-**Date:** 2026-10-21 · **Owner:** Chance Houston · **Repository state:** `main` at 862c640 (engine 0.13.0) · **App:** private repo `ic-recorder-app` at d230979
+**Date:** 2026-10-21 · **Owner:** Chance Houston · **Repository state:** https://github.com/chancehouston/rr-dr60-emu, branch `main` (engine 0.13.0; this handoff is in `docs/review/`) · **App:** private repo `ic-recorder-app` at d230979
 
 You are a frontier model asked for a **final, independent review** of the decisions this project has made so far and the questions it has left open. The owner wants three answers:
 
@@ -16,7 +16,7 @@ The owner decides. You advise. Ask the owner questions whenever an answer would 
 
 **rr-dr60-emu** is an open-source (MIT) software emulator of the complete audio signal chain of the Panasonic RR-DR60, a late-1990s digital voice recorder. The chain runs from the microphone to the speaker. The device is well known among paranormal investigators as an "EVP recorder". The project's public voice is strictly neutral: it describes what the signal chain does to sound, and it neither claims nor debunks paranormal phenomena.
 
-- **Engine:** a `no_std` Rust core (`crates/rr_dr60`), deterministic fixed-point and float DSP, real-time safe, with a stable C API (`crates/rr_dr60_ffi`, header `include/rr_dr60.h`) and a Swift package wrapping an XCFramework (`swift/`). The measurement harness and golden files are in `crates/rr_dr60_harness`.
+- **Engine:** a `no_std` Rust core (`crates/rr_dr60`), deterministic fixed-point and float DSP, real-time safe, with a stable C API (`crates/rr_dr60_ffi`, header `crates/rr_dr60_ffi/include/rr_dr60.h`) and a Swift package wrapping an XCFramework (`swift/`). The measurement harness and golden files are in `crates/rr_dr60_harness`.
 - **Built so far:** 13 features through GitHub Spec-Kit (`specs/001` … `specs/013`). Ten of the fifteen signal-chain stages are modeled: the microphone and amplifier, the limiter, the codec filters and clamp, voice activation (VAS), a 4 kbit/s speech codec of the device's class (not its actual coder), a modeled memory with record and playback paths, the playback speed control, the volume control, and the speaker and earphone outputs. Stage 6 (noise reduction) is not modeled because research found no evidence that the device has it.
 - **Evidence base:** a service manual and codec datasheets (`docs/hardware/sources.md`, 18 sources) and a register of 58 numbered assumptions (`docs/hardware/assumptions.md`, `A-###`). **No physical unit and no reference recordings.** On 2026-10-18 the owner put real-unit verification out of scope (constitution 1.2.0). The v1 target is a *modeled* character match.
 - **Quality bar:** about 98 % line coverage (80 % gate), seven host sample rates, golden files with SHA guards, timing budgets, an iOS-device golden check (passed 2026-10-18), and CI on 12 jobs.
