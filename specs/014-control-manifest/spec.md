@@ -38,6 +38,7 @@ The owner reads this section first. Each decision gives the recommendation; the 
 - Q: Is the hiss offset a unit condition? → A: **Yes**, with the rule written down: a unit condition is an audible difference an owner could hear between two units or over one unit's life; inaudible or not directly hearable component spreads stay model internals (FR-015).
 - Q: Which IDs does a control cite? → A: **What its description rests on**: the comments on the default lines gain the missing IDs (comment-only); a device control cites S-001 or S-002, a unit condition or model internal at least one A-### (FR-016).
 - Q: May the new C structs grow? → A: **As in 007, no size field**; both join the pre-1.0 ABI-pass list (FR-013).
+- Q: Approve the plan? → A: **Yes** (owner sign-off 2026-10-29); tasks, analyze and implement proceed to the merge, stopping only on a failed check or a new decision.
 
 ## Overview
 
