@@ -174,6 +174,30 @@ fn processing_never_touches_the_heap() {
 
     // Spec 007 FR-016, FR-017, SC-004: the manifest reads, Rust and C.
     manifest_reads();
+    // Spec 014 FR-012, FR-013, SC-005: the control manifest reads.
+    control_reads();
+}
+
+/// Spec 014 FR-012: reading every control entry, every option and every lookup allocates
+/// nothing.
+fn control_reads() {
+    let before = counts();
+    let mut touched = 0usize;
+    for e in rr_dr60::controls() {
+        touched += e.identifier.len() + e.name.len() + e.description.len() + e.unit.len();
+        touched += e.sources.len() + e.assumptions.len();
+        if let rr_dr60::ControlValue::Choice { options, .. } = e.value {
+            touched += options.iter().map(|o| o.identifier.len()).sum::<usize>();
+        }
+        touched += usize::from(rr_dr60::control(e.identifier).is_some());
+    }
+    touched += usize::from(rr_dr60::control("battery").is_none());
+    let after = counts();
+    assert!(touched > 0);
+    assert_eq!(
+        after, before,
+        "heap activity [allocs, deallocs, reallocs] while reading the control manifest"
+    );
 }
 
 /// Spec 007 FR-016, FR-017: reading the whole manifest, every lookup and the five C functions
