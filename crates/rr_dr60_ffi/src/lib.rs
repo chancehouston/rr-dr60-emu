@@ -117,6 +117,10 @@ pub enum RrDr60Status {
     /// `rr_dr60_set_playback_speed` or `rr_dr60_playback_length_samples` with a level other
     /// than 1 … 5; the level is unchanged (spec 013 FR-001).
     InvalidSpeedLevel = 25,
+    /// A control-manifest read with an index past its list: the entry index at or past
+    /// `rr_dr60_control_count()`, or an option, source or assumption index past the entry's
+    /// count; nothing is written (spec 014 FR-013).
+    NoSuchControl = 26,
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -2637,6 +2641,348 @@ unsafe fn manifest_id(
     }
 }
 
+// ---- Spec 014: the control manifest (contracts/api.md) ---------------------------------------
+
+/// `RR_DR60_CONTROL_PATH_*` bit: the record path (spec 014 FR-013).
+pub const RR_DR60_CONTROL_PATH_RECORD: u32 = 1; // 014 FR-013: rr_dr60::ControlPaths::RECORD (pinned)
+/// `RR_DR60_CONTROL_PATH_*` bit: the playback path.
+pub const RR_DR60_CONTROL_PATH_PLAYBACK: u32 = 2; // 014 FR-013: rr_dr60::ControlPaths::PLAYBACK (pinned)
+/// `RR_DR60_CONTROL_PATH_*` bit: the one-pass engine (`rr_dr60_process`).
+pub const RR_DR60_CONTROL_PATH_ONE_PASS: u32 = 4; // 014 FR-013: rr_dr60::ControlPaths::ONE_PASS (pinned)
+
+/// What kind of adjustment a control is (spec 014 FR-003); carried in `RrDr60Control.kind`.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RrDr60ControlKind {
+    /// A control the owner's manual or the service manual gives the user.
+    DeviceControl = 0,
+    /// A physical state of one unit.
+    UnitCondition = 1,
+    /// A value the device has that its user cannot reach.
+    ModelInternal = 2,
+    /// Something the device cannot do.
+    EmulatorOption = 3,
+    /// Set by the host for reproducibility or by its audio session.
+    HostParameter = 4,
+}
+
+/// When a control may change (spec 014 FR-004); carried in `RrDr60Control.timing`.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RrDr60ControlTiming {
+    /// Changes while the engine runs (a `rr_dr60_set_*` function).
+    Live = 0,
+    /// Applied by `rr_dr60_reconfigure` when nothing is recording or playing.
+    Idle = 1,
+    /// Idle, and refused while the stored recordings do not fit the new value.
+    IdleMemoryDependent = 2,
+    /// Set by the host to match its audio session.
+    HostFixed = 3,
+}
+
+/// A control's value type (spec 014 FR-002); carried in `RrDr60Control.value_type`.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RrDr60ControlValueType {
+    /// Off or on; the default in `int_default` (0 or 1).
+    Switch = 0,
+    /// An integer in `int_min ..= int_max`, step 1.
+    Integer = 1,
+    /// A continuous value in `float_min ..= float_max`.
+    Continuous = 2,
+    /// One of `option_count` options (`rr_dr60_control_option`); the default's value in
+    /// `choice_default` when `has_default` is 1.
+    Choice = 3,
+}
+
+/// One control of the control manifest (spec 014 FR-002, FR-013), filled by
+/// `rr_dr60_control`. Strings are static, NUL-terminated UTF-8, never NULL (an empty unit is
+/// `""`). Fields of the value types the control does not have are zero. No size field and no
+/// growth promise: the struct is on the pre-1.0 ABI-pass list (spec 014, owner decision 4).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct RrDr60Control {
+    /// The stable identifier (the key for localization), e.g. `vas.sensitivity`.
+    pub identifier: *const c_char,
+    /// The display name.
+    pub name: *const c_char,
+    /// The unit, or `""`.
+    pub unit: *const c_char,
+    /// One sentence on what changing the control does to the sound.
+    pub description: *const c_char,
+    /// `RrDr60ControlKind`.
+    pub kind: u32,
+    /// `RrDr60ControlTiming`.
+    pub timing: u32,
+    /// `RR_DR60_CONTROL_PATH_*` bits.
+    pub paths: u32,
+    /// The signal-chain stage, 1 to 15, or 0 for none.
+    pub stage: u32,
+    /// `RrDr60ControlValueType`.
+    pub value_type: u32,
+    /// Explicit padding before the 64-bit fields (spec 010 lesson); always 0.
+    pub reserved_014: u32,
+    /// Integer minimum.
+    pub int_min: u64,
+    /// Integer maximum.
+    pub int_max: u64,
+    /// Integer default, or a switch's default (0 or 1).
+    pub int_default: u64,
+    /// Continuous minimum.
+    pub float_min: f32,
+    /// Continuous maximum.
+    pub float_max: f32,
+    /// Continuous default.
+    pub float_default: f32,
+    /// How many options `rr_dr60_control_option` can return.
+    pub option_count: u32,
+    /// The default option's value (when `has_default` is 1).
+    pub choice_default: u32,
+    /// 1 when the control has an engine default (the host rate has none).
+    pub has_default: u32,
+    /// How many source IDs `rr_dr60_control_source` can return.
+    pub source_count: u32,
+    /// How many assumption IDs `rr_dr60_control_assumption` can return.
+    pub assumption_count: u32,
+}
+
+const _: () = assert!(
+    std::mem::offset_of!(RrDr60Control, reserved_014) + 4
+        == std::mem::offset_of!(RrDr60Control, int_min)
+);
+const _: () = assert!(std::mem::offset_of!(RrDr60Control, int_min) % 8 == 0);
+const _: () = assert!(
+    std::mem::offset_of!(RrDr60Control, assumption_count) + 4 == size_of::<RrDr60Control>()
+);
+
+impl Default for RrDr60Control {
+    fn default() -> Self {
+        Self {
+            identifier: std::ptr::null(),
+            name: std::ptr::null(),
+            unit: std::ptr::null(),
+            description: std::ptr::null(),
+            kind: 0,
+            timing: 0,
+            paths: 0,
+            stage: 0,
+            value_type: 0,
+            reserved_014: 0,
+            int_min: 0,
+            int_max: 0,
+            int_default: 0,
+            float_min: 0.0,
+            float_max: 0.0,
+            float_default: 0.0,
+            option_count: 0,
+            choice_default: 0,
+            has_default: 0,
+            source_count: 0,
+            assumption_count: 0,
+        }
+    }
+}
+
+/// One option of a choice (spec 014 FR-002), filled by `rr_dr60_control_option`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct RrDr60ControlOption {
+    /// The stable identifier, e.g. `earphone`, `after_record`, `hz_48000`.
+    pub identifier: *const c_char,
+    /// The value the engine takes: the C enumeration value, or the rate in hertz.
+    pub value: u32,
+}
+
+impl Default for RrDr60ControlOption {
+    fn default() -> Self {
+        Self {
+            identifier: std::ptr::null(),
+            value: 0,
+        }
+    }
+}
+
+fn control_c(index: usize) -> RrDr60Control {
+    let e = &rr_dr60::controls()[index];
+    let c = &rr_dr60::controls::__c::CONTROLS[index];
+    let mut out = RrDr60Control {
+        identifier: manifest_cstr(c.identifier),
+        name: manifest_cstr(c.name),
+        unit: manifest_cstr(c.unit),
+        description: manifest_cstr(c.description),
+        kind: e.kind as u32,
+        timing: e.timing as u32,
+        paths: u32::from(e.paths.bits()),
+        stage: u32::from(e.stage),
+        source_count: e.sources.len() as u32,
+        assumption_count: e.assumptions.len() as u32,
+        has_default: 1,
+        ..RrDr60Control::default()
+    };
+    match e.value {
+        rr_dr60::ControlValue::Switch { default } => {
+            out.value_type = RrDr60ControlValueType::Switch as u32;
+            out.int_max = 1;
+            out.int_default = u64::from(default);
+        }
+        rr_dr60::ControlValue::Integer { min, max, default } => {
+            out.value_type = RrDr60ControlValueType::Integer as u32;
+            out.int_min = min;
+            out.int_max = max;
+            out.int_default = default;
+        }
+        rr_dr60::ControlValue::Continuous { min, max, default } => {
+            out.value_type = RrDr60ControlValueType::Continuous as u32;
+            out.float_min = min;
+            out.float_max = max;
+            out.float_default = default;
+        }
+        rr_dr60::ControlValue::Choice { options, default } => {
+            out.value_type = RrDr60ControlValueType::Choice as u32;
+            out.option_count = options.len() as u32;
+            out.choice_default = default.unwrap_or(0);
+            out.has_default = u32::from(default.is_some());
+        }
+        // coverage: unreachable, every value type is listed (Constitution III)
+        _ => {}
+    }
+    out
+}
+
+/// The number of controls in the control manifest, 29 (spec 014 FR-013). Real-time safe.
+#[unsafe(no_mangle)]
+pub extern "C" fn rr_dr60_control_count() -> u32 {
+    rr_dr60::controls::CONTROL_COUNT as u32
+}
+
+/// Copies control `index` (0-based, in the manifest's order) into `*out` (spec 014 FR-013).
+/// Real-time safe; needs no handle. Check order: NULL first (`RR_DR60_STATUS_NULL_POINTER`),
+/// then the index (`RR_DR60_STATUS_NO_SUCH_CONTROL`); nothing is written on a refusal.
+///
+/// # Safety
+///
+/// `out` must be NULL or point to a writable `RrDr60Control`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_control(index: u32, out: *mut RrDr60Control) -> RrDr60Status {
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    if index as usize >= rr_dr60::controls::CONTROL_COUNT {
+        return RrDr60Status::NoSuchControl;
+    }
+    match manifest_guard(|| control_c(index as usize)) {
+        Ok(v) => {
+            // SAFETY: out is non-null and writable (caller contract).
+            unsafe { put(out, v) };
+            RrDr60Status::Ok
+        }
+        // coverage: unreachable, static data (Constitution III)
+        Err(status) => status,
+    }
+}
+
+/// Copies option `option` (0-based) of control `index` into `*out` (spec 014 FR-013).
+/// `RR_DR60_STATUS_NO_SUCH_CONTROL` for an index past the controls or past the control's
+/// `option_count` (0 unless a choice); nothing written on a refusal. Real-time safe.
+///
+/// # Safety
+///
+/// `out` must be NULL (then `RR_DR60_STATUS_NULL_POINTER`) or point to a writable
+/// `RrDr60ControlOption`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_control_option(
+    index: u32,
+    option: u32,
+    out: *mut RrDr60ControlOption,
+) -> RrDr60Status {
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    match manifest_guard(|| {
+        let i = index as usize;
+        let e = rr_dr60::controls().get(i)?;
+        let rr_dr60::ControlValue::Choice { options, .. } = e.value else {
+            return None;
+        };
+        let o = options.get(option as usize)?;
+        let name = rr_dr60::controls::__c::CONTROLS[i].options[option as usize];
+        Some(RrDr60ControlOption {
+            identifier: manifest_cstr(name),
+            value: o.value,
+        })
+    }) {
+        Ok(Some(v)) => {
+            // SAFETY: out is non-null and writable (caller contract).
+            unsafe { put(out, v) };
+            RrDr60Status::Ok
+        }
+        Ok(None) => RrDr60Status::NoSuchControl,
+        // coverage: unreachable, static data (Constitution III)
+        Err(status) => status,
+    }
+}
+
+/// Writes the `i`-th (0-based, ascending) source ID of control `index` into `*out_id` (spec
+/// 014 FR-013); `RR_DR60_STATUS_NO_SUCH_CONTROL` for an index past either list. Real-time safe.
+///
+/// # Safety
+///
+/// `out_id` must be NULL (then `RR_DR60_STATUS_NULL_POINTER`) or point to a writable pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_control_source(
+    index: u32,
+    i: u32,
+    out_id: *mut *const c_char,
+) -> RrDr60Status {
+    // SAFETY: forwarded caller contract.
+    unsafe { control_id(index, i, out_id, |c| c.sources) }
+}
+
+/// Writes the `i`-th (0-based, ascending) assumption ID of control `index` into `*out_id`;
+/// refusals as `rr_dr60_control_source`. Real-time safe.
+///
+/// # Safety
+///
+/// `out_id` must be NULL (then `RR_DR60_STATUS_NULL_POINTER`) or point to a writable pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_control_assumption(
+    index: u32,
+    i: u32,
+    out_id: *mut *const c_char,
+) -> RrDr60Status {
+    // SAFETY: forwarded caller contract.
+    unsafe { control_id(index, i, out_id, |c| c.assumptions) }
+}
+
+/// The shared body of the two control ID accessors: NULL, then the indices.
+///
+/// # Safety
+///
+/// `out_id` must be NULL or point to a writable pointer.
+unsafe fn control_id(
+    index: u32,
+    i: u32,
+    out_id: *mut *const c_char,
+    list: impl FnOnce(&'static rr_dr60::controls::__c::ControlStringsC) -> &'static [&'static [u8]],
+) -> RrDr60Status {
+    if out_id.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    match manifest_guard(|| {
+        let c = rr_dr60::controls::__c::CONTROLS.get(index as usize)?;
+        list(c).get(i as usize).map(|id| manifest_cstr(id))
+    }) {
+        Ok(Some(ptr)) => {
+            // SAFETY: out_id is non-null and writable (caller contract).
+            unsafe { put(out_id, ptr) };
+            RrDr60Status::Ok
+        }
+        Ok(None) => RrDr60Status::NoSuchControl,
+        // coverage: unreachable, static data (Constitution III)
+        Err(status) => status,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3539,6 +3885,27 @@ mod tests {
     #[test]
     fn status_code_20_is_no_such_stage() {
         assert_eq!(RrDr60Status::NoSuchStage as i32, 20);
+        assert_eq!(RrDr60Status::NoSuchControl as i32, 26); // spec 014
+        assert_eq!(
+            [
+                RR_DR60_CONTROL_PATH_RECORD,
+                RR_DR60_CONTROL_PATH_PLAYBACK,
+                RR_DR60_CONTROL_PATH_ONE_PASS
+            ],
+            [
+                u32::from(rr_dr60::ControlPaths::RECORD.bits()),
+                u32::from(rr_dr60::ControlPaths::PLAYBACK.bits()),
+                u32::from(rr_dr60::ControlPaths::ONE_PASS.bits())
+            ]
+        );
+        assert_eq!(
+            rr_dr60::ControlKind::HostParameter as u32,
+            RrDr60ControlKind::HostParameter as u32
+        );
+        assert_eq!(
+            rr_dr60::ControlTiming::HostFixed as u32,
+            RrDr60ControlTiming::HostFixed as u32
+        );
     }
 
     #[test]

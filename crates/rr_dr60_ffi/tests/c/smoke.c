@@ -171,7 +171,103 @@ static void print_manifest(void) {
 }
 /* manifest-example-c:end */
 
+/* The control manifest (spec 014): prints the canonical text, byte for byte the Rust
+   example's (`cargo run -p rr_dr60_harness --example control_manifest`). An f32 is printed with
+   the fewest decimals (0 to 9) that read back as the same float: Rust's shortest form. */
+static void print_f32(float x) {
+  char buf[64];
+  for (int d = 0; d <= 9; d++) {
+    snprintf(buf, sizeof buf, "%.*f", d, (double)x);
+    if (strtof(buf, NULL) == x) break;
+  }
+  printf("%s", buf);
+}
+
+static const char *control_kind_word(uint32_t k) {
+  switch (k) {
+    case RR_DR60_CONTROL_KIND_DEVICE_CONTROL: return "device control";
+    case RR_DR60_CONTROL_KIND_UNIT_CONDITION: return "unit condition";
+    case RR_DR60_CONTROL_KIND_MODEL_INTERNAL: return "model internal";
+    case RR_DR60_CONTROL_KIND_EMULATOR_OPTION: return "emulator option";
+    case RR_DR60_CONTROL_KIND_HOST_PARAMETER: return "host parameter";
+    default: return "unknown";
+  }
+}
+
+static const char *control_timing_word(uint32_t t) {
+  switch (t) {
+    case RR_DR60_CONTROL_TIMING_LIVE: return "live";
+    case RR_DR60_CONTROL_TIMING_IDLE: return "idle";
+    case RR_DR60_CONTROL_TIMING_IDLE_MEMORY_DEPENDENT: return "idle, memory-dependent";
+    case RR_DR60_CONTROL_TIMING_HOST_FIXED: return "host-fixed";
+    default: return "unknown";
+  }
+}
+
+static void print_controls(void) {
+  uint32_t n = rr_dr60_control_count();
+  printf("control_count: %u\n", n);
+  for (uint32_t i = 0; i < n; i++) {
+    RrDr60Control c;
+    if (rr_dr60_control(i, &c) != RR_DR60_STATUS_OK) return;
+    printf("\n[%u] %s\n", i, c.identifier);
+    printf("name: %s\n", c.name);
+    printf("kind: %s\n", control_kind_word(c.kind));
+    printf("timing: %s\n", control_timing_word(c.timing));
+    const char *sep = "";
+    printf("paths: ");
+    if (c.paths & RR_DR60_CONTROL_PATH_RECORD) { printf("%srecord", sep); sep = ", "; }
+    if (c.paths & RR_DR60_CONTROL_PATH_PLAYBACK) { printf("%splayback", sep); sep = ", "; }
+    if (c.paths & RR_DR60_CONTROL_PATH_ONE_PASS) { printf("%sone-pass", sep); }
+    printf("\nstage: %u\n", c.stage);
+    switch (c.value_type) {
+      case RR_DR60_CONTROL_VALUE_TYPE_SWITCH:
+        printf("value: switch\ndefault: %s\n", c.int_default ? "on" : "off");
+        break;
+      case RR_DR60_CONTROL_VALUE_TYPE_INTEGER:
+        printf("value: integer\nmin: %llu\nmax: %llu\nstep: 1\ndefault: %llu\n", (unsigned long long)c.int_min,
+               (unsigned long long)c.int_max, (unsigned long long)c.int_default);
+        break;
+      case RR_DR60_CONTROL_VALUE_TYPE_CONTINUOUS:
+        printf("value: continuous\nmin: ");
+        print_f32(c.float_min);
+        printf("\nmax: ");
+        print_f32(c.float_max);
+        printf("\nstep: 0\ndefault: ");
+        print_f32(c.float_default);
+        printf("\n");
+        break;
+      case RR_DR60_CONTROL_VALUE_TYPE_CHOICE:
+        printf("value: choice\noptions: ");
+        for (uint32_t k = 0; k < c.option_count; k++) {
+          RrDr60ControlOption o;
+          if (rr_dr60_control_option(i, k, &o) == RR_DR60_STATUS_OK) printf("%s%s=%u", k ? ", " : "", o.identifier, o.value);
+        }
+        if (c.has_default) printf("\ndefault: %u\n", c.choice_default);
+        else printf("\ndefault: none\n");
+        break;
+      default:
+        printf("value: unknown\n");
+    }
+    printf("unit: %s\nsources: ", c.unit);
+    for (uint32_t k = 0; k < c.source_count; k++) {
+      const char *id = NULL;
+      if (rr_dr60_control_source(i, k, &id) == RR_DR60_STATUS_OK) printf("%s%s", k ? ", " : "", id);
+    }
+    printf("\nassumptions: ");
+    for (uint32_t k = 0; k < c.assumption_count; k++) {
+      const char *id = NULL;
+      if (rr_dr60_control_assumption(i, k, &id) == RR_DR60_STATUS_OK) printf("%s%s", k ? ", " : "", id);
+    }
+    printf("\ndescription: %s\n", c.description);
+  }
+}
+
 int main(int argc, char **argv) {
+  if (argc > 1 && strcmp(argv[1], "--controls") == 0) {
+    print_controls();
+    return 0;
+  }
   if (argc > 1 && strcmp(argv[1], "--manifest") == 0) {
     print_manifest();
     return 0;

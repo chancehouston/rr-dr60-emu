@@ -91,6 +91,15 @@
 // Level 5's speed ratio numerator: 7/5, the fastest (A-054).
 #define RR_DR60_SPEED_RATIO_NUMERATOR_5 7
 
+// `RR_DR60_CONTROL_PATH_*` bit: the record path (spec 014 FR-013).
+#define RR_DR60_CONTROL_PATH_RECORD 1
+
+// `RR_DR60_CONTROL_PATH_*` bit: the playback path.
+#define RR_DR60_CONTROL_PATH_PLAYBACK 2
+
+// `RR_DR60_CONTROL_PATH_*` bit: the one-pass engine (`rr_dr60_process`).
+#define RR_DR60_CONTROL_PATH_ONE_PASS 4
+
 // Result of every fallible C API call.
 enum RrDr60Status
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -159,6 +168,10 @@ enum RrDr60Status
   // `rr_dr60_set_playback_speed` or `rr_dr60_playback_length_samples` with a level other
   // than 1 … 5; the level is unchanged (spec 013 FR-001).
   RR_DR60_STATUS_INVALID_SPEED_LEVEL = 25,
+  // A control-manifest read with an index past its list: the entry index at or past
+  // `rr_dr60_control_count()`, or an option, source or assumption index past the entry's
+  // count; nothing is written (spec 014 FR-013).
+  RR_DR60_STATUS_NO_SUCH_CONTROL = 26,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -436,6 +449,78 @@ enum RrDr60Encoding
 typedef enum RrDr60Encoding RrDr60Encoding;
 #else
 typedef uint32_t RrDr60Encoding;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// What kind of adjustment a control is (spec 014 FR-003); carried in `RrDr60Control.kind`.
+enum RrDr60ControlKind
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+  // A control the owner's manual or the service manual gives the user.
+  RR_DR60_CONTROL_KIND_DEVICE_CONTROL = 0,
+  // A physical state of one unit.
+  RR_DR60_CONTROL_KIND_UNIT_CONDITION = 1,
+  // A value the device has that its user cannot reach.
+  RR_DR60_CONTROL_KIND_MODEL_INTERNAL = 2,
+  // Something the device cannot do.
+  RR_DR60_CONTROL_KIND_EMULATOR_OPTION = 3,
+  // Set by the host for reproducibility or by its audio session.
+  RR_DR60_CONTROL_KIND_HOST_PARAMETER = 4,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum RrDr60ControlKind RrDr60ControlKind;
+#else
+typedef uint32_t RrDr60ControlKind;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// When a control may change (spec 014 FR-004); carried in `RrDr60Control.timing`.
+enum RrDr60ControlTiming
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+  // Changes while the engine runs (a `rr_dr60_set_*` function).
+  RR_DR60_CONTROL_TIMING_LIVE = 0,
+  // Applied by `rr_dr60_reconfigure` when nothing is recording or playing.
+  RR_DR60_CONTROL_TIMING_IDLE = 1,
+  // Idle, and refused while the stored recordings do not fit the new value.
+  RR_DR60_CONTROL_TIMING_IDLE_MEMORY_DEPENDENT = 2,
+  // Set by the host to match its audio session.
+  RR_DR60_CONTROL_TIMING_HOST_FIXED = 3,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum RrDr60ControlTiming RrDr60ControlTiming;
+#else
+typedef uint32_t RrDr60ControlTiming;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// A control's value type (spec 014 FR-002); carried in `RrDr60Control.value_type`.
+enum RrDr60ControlValueType
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+  // Off or on; the default in `int_default` (0 or 1).
+  RR_DR60_CONTROL_VALUE_TYPE_SWITCH = 0,
+  // An integer in `int_min ..= int_max`, step 1.
+  RR_DR60_CONTROL_VALUE_TYPE_INTEGER = 1,
+  // A continuous value in `float_min ..= float_max`.
+  RR_DR60_CONTROL_VALUE_TYPE_CONTINUOUS = 2,
+  // One of `option_count` options (`rr_dr60_control_option`); the default's value in
+  // `choice_default` when `has_default` is 1.
+  RR_DR60_CONTROL_VALUE_TYPE_CHOICE = 3,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum RrDr60ControlValueType RrDr60ControlValueType;
+#else
+typedef uint32_t RrDr60ControlValueType;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -762,6 +847,63 @@ typedef struct RrDr60StageEntry {
   // The library version in which the stage's model last changed (`""` when not modeled).
   const char *model_version;
 } RrDr60StageEntry;
+
+// One control of the control manifest (spec 014 FR-002, FR-013), filled by
+// `rr_dr60_control`. Strings are static, NUL-terminated UTF-8, never NULL (an empty unit is
+// `""`). Fields of the value types the control does not have are zero. No size field and no
+// growth promise: the struct is on the pre-1.0 ABI-pass list (spec 014, owner decision 4).
+typedef struct RrDr60Control {
+  // The stable identifier (the key for localization), e.g. `vas.sensitivity`.
+  const char *identifier;
+  // The display name.
+  const char *name;
+  // The unit, or `""`.
+  const char *unit;
+  // One sentence on what changing the control does to the sound.
+  const char *description;
+  // `RrDr60ControlKind`.
+  uint32_t kind;
+  // `RrDr60ControlTiming`.
+  uint32_t timing;
+  // `RR_DR60_CONTROL_PATH_*` bits.
+  uint32_t paths;
+  // The signal-chain stage, 1 to 15, or 0 for none.
+  uint32_t stage;
+  // `RrDr60ControlValueType`.
+  uint32_t value_type;
+  // Explicit padding before the 64-bit fields (spec 010 lesson); always 0.
+  uint32_t reserved_014;
+  // Integer minimum.
+  uint64_t int_min;
+  // Integer maximum.
+  uint64_t int_max;
+  // Integer default, or a switch's default (0 or 1).
+  uint64_t int_default;
+  // Continuous minimum.
+  float float_min;
+  // Continuous maximum.
+  float float_max;
+  // Continuous default.
+  float float_default;
+  // How many options `rr_dr60_control_option` can return.
+  uint32_t option_count;
+  // The default option's value (when `has_default` is 1).
+  uint32_t choice_default;
+  // 1 when the control has an engine default (the host rate has none).
+  uint32_t has_default;
+  // How many source IDs `rr_dr60_control_source` can return.
+  uint32_t source_count;
+  // How many assumption IDs `rr_dr60_control_assumption` can return.
+  uint32_t assumption_count;
+} RrDr60Control;
+
+// One option of a choice (spec 014 FR-002), filled by `rr_dr60_control_option`.
+typedef struct RrDr60ControlOption {
+  // The stable identifier, e.g. `earphone`, `after_record`, `hz_48000`.
+  const char *identifier;
+  // The value the engine takes: the C enumeration value, or the rate in hertz.
+  uint32_t value;
+} RrDr60ControlOption;
 
 // `RR_DR60_TAP_AFTER_PLAYBACK` under the stage's name: after stage 10, before the output chain
 // (version 0.8's default output; spec 009 FR-011).
@@ -1300,6 +1442,46 @@ RrDr60Status rr_dr60_manifest_stage_source(uint32_t number, uint32_t index, cons
 RrDr60Status rr_dr60_manifest_stage_assumption(uint32_t number,
                                                uint32_t index,
                                                const char **out_id);
+
+// The number of controls in the control manifest, 29 (spec 014 FR-013). Real-time safe.
+uint32_t rr_dr60_control_count(void);
+
+// Copies control `index` (0-based, in the manifest's order) into `*out` (spec 014 FR-013).
+// Real-time safe; needs no handle. Check order: NULL first (`RR_DR60_STATUS_NULL_POINTER`),
+// then the index (`RR_DR60_STATUS_NO_SUCH_CONTROL`); nothing is written on a refusal.
+//
+// # Safety
+//
+// `out` must be NULL or point to a writable `RrDr60Control`.
+RrDr60Status rr_dr60_control(uint32_t index, struct RrDr60Control *out);
+
+// Copies option `option` (0-based) of control `index` into `*out` (spec 014 FR-013).
+// `RR_DR60_STATUS_NO_SUCH_CONTROL` for an index past the controls or past the control's
+// `option_count` (0 unless a choice); nothing written on a refusal. Real-time safe.
+//
+// # Safety
+//
+// `out` must be NULL (then `RR_DR60_STATUS_NULL_POINTER`) or point to a writable
+// `RrDr60ControlOption`.
+RrDr60Status rr_dr60_control_option(uint32_t index,
+                                    uint32_t option,
+                                    struct RrDr60ControlOption *out);
+
+// Writes the `i`-th (0-based, ascending) source ID of control `index` into `*out_id` (spec
+// 014 FR-013); `RR_DR60_STATUS_NO_SUCH_CONTROL` for an index past either list. Real-time safe.
+//
+// # Safety
+//
+// `out_id` must be NULL (then `RR_DR60_STATUS_NULL_POINTER`) or point to a writable pointer.
+RrDr60Status rr_dr60_control_source(uint32_t index, uint32_t i, const char **out_id);
+
+// Writes the `i`-th (0-based, ascending) assumption ID of control `index` into `*out_id`;
+// refusals as `rr_dr60_control_source`. Real-time safe.
+//
+// # Safety
+//
+// `out_id` must be NULL (then `RR_DR60_STATUS_NULL_POINTER`) or point to a writable pointer.
+RrDr60Status rr_dr60_control_assumption(uint32_t index, uint32_t i, const char **out_id);
 
 #ifdef __cplusplus
 }  // extern "C"
