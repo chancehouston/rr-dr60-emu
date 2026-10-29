@@ -88,3 +88,7 @@ description: "Task list for the control manifest (014)"
 ## Implementation strategy
 
 MVP = Phase 1 – 3 (US1): the table readable from Rust with its oracles. Then US2 (drift guards), US3 (C), Polish. Commit after each task or logical group, Conventional Commits.
+
+## Phase 7: Convergence
+
+- [x] T022 State that each control description gives the effect in the default engine configuration (other stages on, the speech coder on), in `docs/guide.md` › "The controls the engine accepts", in the rustdoc of `ControlEntry::description` in `crates/rr_dr60/src/controls.rs`, and in `specs/014-control-manifest/data-model.md` › Form rules, per FR-006 and the spec's 2026-10-29 post-implementation clarification (partial)

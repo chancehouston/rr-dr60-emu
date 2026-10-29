@@ -159,7 +159,8 @@ pub struct ControlEntry {
     pub sources: &'static [&'static str],
     /// Assumption IDs, ascending.
     pub assumptions: &'static [&'static str],
-    /// One English sentence: what changing it does to the sound or the recording.
+    /// One English sentence: what changing it does to the sound or the recording, in the
+    /// default engine configuration (every other stage on, the speech coder on).
     pub description: &'static str,
 }
 
