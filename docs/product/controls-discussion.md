@@ -273,6 +273,8 @@ Recommendation:
 
 ## 6. Decisions for the owner
 
+**Answered 2026-10-29** (rows of that date in [decisions.md](decisions.md)): 1 settled by the decision review's round 2 (O-3 decided, engine first); 2 yes; 3 yes; **4 no AI control for now**; **5 the order 014 → 016 → 015 → 017 → 018 → 019 → 020 → 021**; 6 yes; **7 pitch-kept speed added as an option**, default unchanged. The questions stay below as asked.
+
 Each question gives the recommended answer first.
 
 1. **Is engine core development complete enough to reopen product questions?** Recommended: yes for O-1, O-3 and O-4; keep O-2, O-5 and O-6 deferred until a prototype. Alternative: keep all deferred until 014 – 016 ship, at the risk of specs that encode guesses. Reversal cost: low.
