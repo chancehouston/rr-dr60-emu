@@ -261,6 +261,41 @@ static void print_manifest(void) {
 
 C names derive from the Rust names: `RrDr60Settings` fields are the Rust field path in snake case with the group as prefix (`agc.knee_dbfs` → `agc_knee_dbfs`, `vas.hang_ms` → `vas_hang_ms`, `memory.capacity_s` → `memory_capacity_s`), top-level fields keep their names (`record_stage_enabled`), enum variants are `RR_DR60_` plus the type and the variant in screaming snake case (`Tap::AfterAgc` → `RR_DR60_TAP_AFTER_AGC`, `Route::Speaker` → `RR_DR60_ROUTE_SPEAKER`), functions are `rr_dr60_` plus the method name, and the value readers `route` and `state` take `get_` (`rr_dr60_get_route`, `rr_dr60_get_state`); `EngineState.speaker_muted` is `RrDr60EngineState.speaker_muted`. The manifest's own C functions are `rr_dr60_manifest_stage_count`, `rr_dr60_manifest_header`, `rr_dr60_manifest_stage`, `rr_dr60_manifest_stage_source` and `rr_dr60_manifest_stage_assumption`; a stage number outside 1 to 15 is refused with `RR_DR60_STATUS_NO_SUCH_STAGE`, and every string pointer stays valid for the life of the process.
 
+## The controls the engine accepts
+
+Since [spec 014](../specs/014-control-manifest/spec.md) the library also carries a **control manifest**: constant data describing every adjustable setting and live control, 29 today (the three live controls, then every field of `Settings` in declaration order). An app builds its sliders, switches and pickers from it instead of copying ranges and defaults by hand. Each entry gives a stable identifier (the setting's path, `vas.sensitivity`, or the live control's name, `volume`; the key for localization), a name, its **kind**, its **timing**, the paths it applies to, its signal-chain stage (0 for none), its value (a switch; an integer with exact `u64` bounds; a continuous `f32` range; or a choice whose options carry the value the engine takes), its default, its unit, the source and assumption IDs it rests on, and one sentence on what changing it does to the sound.
+
+The **kinds**: a *device control* is one the owner's manual or the service manual gives the user (route, volume, playback speed, microphone sensitivity); a *unit condition* is an audible difference an owner could hear between two units or over one unit's life (the hiss level; component spreads that are inaudible or not directly hearable stay model internals); a *model internal* is a value the device has that its user cannot reach (the limiter's threshold, attack and release; the pause threshold, delay and resume delay); an *emulator option* is something the device cannot do (the stage switches, the pause handling, the memory size, the output clamp, the listen point); a *host parameter* is set by the host (the seed, the host sample rate). The **timing classes**: *live* (a `set_*` call while running), *idle* (applied by `reconfigure` when nothing records or plays), *idle, memory-dependent* (also refused while the stored recordings do not fit: the speech coder switch and the memory figures) and *host-fixed* (the host rate, matched to the audio session).
+
+The app's free and Workbench line is an app rule, not an engine field: the device controls and unit conditions are the free knobs; curated free presets may set any value; the Workbench gives knobs for the rest (the owner's decisions of 2026-10-29). To show a control's evidence status, join it to the stage manifest by stage number; a stage-0 control has none and is labelled by its kind.
+
+Tests keep the control manifest honest: every range, default and option is checked against the engine's validation, `Settings::new` at all seven host rates and the C header; every control appears in its stage's controls note above and vice versa; every ID exists, is current and equals the tags on the default's line in the code; the kind rules hold (a device control cites S-001 or S-002, a unit condition or model internal cites an assumption); and a new setting or `set_*` method without an entry fails the build's tests. `cargo run -p rr_dr60_harness --example control_manifest` prints the canonical text (`crates/rr_dr60_harness/golden/control-manifest-v1.txt`).
+
+Rust:
+
+```rust
+for c in rr_dr60::controls() {
+    println!("{} ({:?}, {:?}): {}", c.identifier, c.kind, c.timing, c.description);
+}
+let speed = rr_dr60::control("playback_speed").unwrap();
+```
+
+C:
+
+```c
+for (uint32_t i = 0; i < rr_dr60_control_count(); i++) {
+  RrDr60Control c;
+  if (rr_dr60_control(i, &c) != RR_DR60_STATUS_OK) break;
+  printf("%s: %s\n", c.identifier, c.description);
+  for (uint32_t k = 0; k < c.option_count; k++) {
+    RrDr60ControlOption o;
+    rr_dr60_control_option(i, k, &o); /* o.identifier, o.value */
+  }
+}
+```
+
+An index past any list is refused with `RR_DR60_STATUS_NO_SUCH_CONTROL` and nothing is written. `RrDr60Control` and `RrDr60ControlOption` have no size field; they join the pre-1.0 ABI pass.
+
 ## Microphone (signal-chain stages 1 – 2)
 
 <!-- mic-section:start -->
