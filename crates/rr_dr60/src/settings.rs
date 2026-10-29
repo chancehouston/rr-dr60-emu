@@ -191,7 +191,7 @@ pub struct AgcSettings {
 impl AgcSettings {
     /// The modeled device values (A-020, A-028, A-034, A-035).
     pub const DEVICE: Self = Self {
-        enabled: true,      // A-020
+        enabled: true,      // A-020; held below A-030's full scale by A-028
         knee_dbfs: -1.0,    // A-028: the knee just below the codec's full scale
         attack_ms: 3.0,     // A-034: dead time at 10 dB over the knee
         release_ms: 1370.0, // A-035: to −1 dB from 10 dB of attenuation
@@ -480,7 +480,7 @@ impl MicSettings {
 pub enum Route {
     /// The built-in speaker (the default: nothing plugged in).
     #[default]
-    Speaker, // S-001, A-032, A-042
+    Speaker, // S-001, A-010, A-032, A-042
     /// The earphone jack (S-001; its path bypasses the power amplifier, A-032).
     Earphone,
 }
@@ -558,11 +558,11 @@ impl Settings {
             tap: Tap::RouteOutput,          // 009 FR-010: the selected route's output
             seed: 0,                        // FR-009; A-049
             agc: AgcSettings::DEVICE,       // A-020, A-028, A-034, A-035
-            vas: VasSettings::DEVICE,       // S-001, A-008, A-021 – A-024
+            vas: VasSettings::DEVICE,       // S-001, A-008, A-021 – A-024, A-033
             memory: MemorySettings::DEVICE, // S-001: 60 min, 99 items (006 FR-010)
-            speech_codec_enabled: true, // A-004 adopted, A-040, A-041 (008 FR-002): the device has no bypass
-            output: OutputSettings::DEVICE, // A-031, A-010, A-032 (009 FR-002)
-            mic: MicSettings::DEVICE,   // A-046 – A-053 (012 FR-001)
+            speech_codec_enabled: true,     // A-004, A-040, A-041 (008 FR-002)
+            output: OutputSettings::DEVICE, // A-031, A-010, A-032, A-042 (009 FR-002)
+            mic: MicSettings::DEVICE,       // A-046 – A-053 (012 FR-001)
         }
     }
 

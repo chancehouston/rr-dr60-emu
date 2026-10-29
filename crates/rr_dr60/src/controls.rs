@@ -50,7 +50,8 @@ pub enum ControlKind {
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ControlTiming {
-    /// Changes while the engine runs; real-time safe.
+    /// Changes while the engine runs; real-time safe. A live control's value is kept by
+    /// [`Pipeline::reset`](crate::Pipeline::reset) and [`Pipeline::reconfigure`](crate::Pipeline::reconfigure).
     Live = 0,
     /// Applied only when nothing is recording or playing ([`Pipeline::reconfigure`](crate::Pipeline::reconfigure)).
     Idle = 1,
@@ -269,14 +270,14 @@ control_table! {
         identifier: "route", name: "Speaker or earphone", kind: DeviceControl, timing: Live,
         paths: [PLAYBACK, ONE_PASS], stage: 11,
         value: choice([("speaker", 0), ("earphone", 1)], Some(0)), unit: "",
-        sources: ["S-001"], assumptions: ["A-032", "A-042"],
+        sources: ["S-001"], assumptions: ["A-010", "A-032", "A-042"],
         description: "Sends playback to the modeled speaker or to the earphone output, each with its own response; their relative loudness is left to the host.",
     },
     {
         identifier: "volume", name: "Volume", kind: DeviceControl, timing: Live,
         paths: [PLAYBACK, ONE_PASS], stage: 11,
         value: continuous(0.0, 1.0, crate::output::VOLUME_REFERENCE), unit: "",
-        sources: ["S-002"], assumptions: ["A-043", "A-044", "A-045"],
+        sources: ["S-002"], assumptions: ["A-031", "A-043", "A-044", "A-045"],
         description: "Sets the playback level; turned up, loud passages clip in the speaker amplifier.",
     },
     {
@@ -294,7 +295,7 @@ control_table! {
             ("hz_48000", 48000), ("hz_88200", 88200), ("hz_96000", 96000),
         ], None), unit: "Hz",
         sources: [], assumptions: ["A-026"],
-        description: "Tells the engine the sample rate of the host's audio; the engine converts to and from the device's own lower rate.",
+        description: "Tells the engine the sample rate of the host's audio; the engine converts to and from the device's own rate when they differ.",
     },
     {
         identifier: "record_stage_enabled", name: "Codec input filter", kind: EmulatorOption, timing: Idle,
@@ -315,7 +316,7 @@ control_table! {
         paths: [RECORD, ONE_PASS], stage: 4,
         value: switch(true), unit: "",
         sources: [], assumptions: ["A-030"],
-        description: "Switches the converter's full-scale clipping off, so loud peaks pass above full scale instead of flattening at it.",
+        description: "Switches the converter's full-scale clipping off, so loud peaks pass above full scale; the speech coder, when on, still clips them at its input.",
     },
     {
         identifier: "tap", name: "Listen point", kind: EmulatorOption, timing: Idle,
@@ -340,7 +341,7 @@ control_table! {
         identifier: "agc.enabled", name: "Limiter (AGC)", kind: EmulatorOption, timing: Idle,
         paths: [RECORD, ONE_PASS], stage: 3,
         value: switch(true), unit: "",
-        sources: [], assumptions: ["A-020"],
+        sources: [], assumptions: ["A-020", "A-028", "A-030"],
         description: "Switches the limiter off, so loud sounds reach the converter's clipping instead of being held just below it.",
     },
     {
@@ -376,7 +377,7 @@ control_table! {
         paths: [RECORD, ONE_PASS], stage: 5,
         value: choice([("drop", 0), ("mute", 1)], Some(0)), unit: "",
         sources: ["S-001"], assumptions: ["A-008"],
-        description: "Chooses whether paused stretches are left out of the recording or kept as digital silence.",
+        description: "Chooses whether paused stretches are left out of the recording or kept as silence.",
     },
     {
         identifier: "vas.sensitivity", name: "Microphone sensitivity", kind: DeviceControl, timing: Idle,
@@ -425,7 +426,7 @@ control_table! {
         paths: [RECORD, PLAYBACK, ONE_PASS], stage: 7,
         value: switch(true), unit: "",
         sources: [], assumptions: ["A-004", "A-040", "A-041"],
-        description: "Switches the speech coder off, removing its compression artifacts from recordings.",
+        description: "Switches the speech coder off, removing its coding artifacts from recordings.",
     },
     {
         identifier: "output.volume_amp_enabled", name: "Volume and power amplifier", kind: EmulatorOption, timing: Idle,
@@ -474,7 +475,7 @@ control_table! {
         paths: [RECORD, ONE_PASS], stage: 1,
         value: continuous(-18.0, 12.0, 0.0), unit: "dB",
         sources: [], assumptions: ["A-048"],
-        description: "Raises or lowers the microphone hiss, as capsules differ between units; lowering it also helps when the host's microphone adds its own floor.",
+        description: "Raises or lowers the microphone hiss, whose level differs between capsules and is unknown for this unit; lower it when the host's microphone adds its own floor.",
     },
 }
 
@@ -1034,6 +1035,64 @@ mod tests {
             }],
             default: None
         }));
+    }
+
+    /// 014 FR-016 (hardware review B9): every entry's unit, by an exhaustive match on `Setting`
+    /// (a new variant fails to compile) for the validated settings, and literally for the rest.
+    #[test]
+    fn units_equal_the_engine() {
+        fn setting_id(s: Setting) -> &'static str {
+            match s {
+                Setting::AgcKneeDbfs => "agc.knee_dbfs",
+                Setting::AgcAttackMs => "agc.attack_ms",
+                Setting::AgcReleaseMs => "agc.release_ms",
+                Setting::VasSensitivity => "vas.sensitivity",
+                Setting::VasThresholdDbfs => "vas.threshold_dbfs",
+                Setting::VasHangMs => "vas.hang_ms",
+                Setting::VasOnsetMs => "vas.onset_ms",
+                Setting::MemoryCapacityS => "memory.capacity_s",
+                Setting::MemoryMaxRecordings => "memory.max_recordings",
+                Setting::MicHissOffsetDb => "mic.hiss_offset_db",
+            }
+        }
+        let all = [
+            Setting::AgcKneeDbfs,
+            Setting::AgcAttackMs,
+            Setting::AgcReleaseMs,
+            Setting::VasSensitivity,
+            Setting::VasThresholdDbfs,
+            Setting::VasHangMs,
+            Setting::VasOnsetMs,
+            Setting::MemoryCapacityS,
+            Setting::MemoryMaxRecordings,
+            Setting::MicHissOffsetDb,
+        ];
+        for s in all {
+            let (name, unit) = s.name_and_unit();
+            let id = setting_id(s);
+            assert_eq!(name, id);
+            // The engine names no unit for a level or a count; the table's word is pinned here.
+            let want = match (id, unit) {
+                ("vas.sensitivity", "") => "level",
+                (_, u) => u,
+            };
+            assert_eq!(control(id).map(|e| e.unit), Some(want), "{id}");
+        }
+        for (id, want) in [
+            ("route", ""),
+            ("volume", ""),
+            ("playback_speed", "level"),
+            ("host_rate_hz", "Hz"),
+            ("seed", ""),
+            ("tap", ""),
+        ] {
+            assert_eq!(control(id).map(|e| e.unit), Some(want), "{id}");
+        }
+        for e in controls() {
+            if let ControlValue::Switch { .. } = e.value {
+                assert_eq!(e.unit, "", "{}", e.identifier);
+            }
+        }
     }
 
     #[test]

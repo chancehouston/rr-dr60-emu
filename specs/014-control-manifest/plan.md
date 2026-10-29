@@ -51,7 +51,7 @@ Constant data in the core describing all 29 controls (3 live, 26 settings), boun
 | FR-014 no audio change | — | SHA guards; `us2_cross_check` canonical (version line) |
 | FR-015 docs | R-11 | review; README/guide generated-region tests |
 | FR-016 unit, timing, IDs | R-06, R-09 | `us1_controls` (live while recording/playing, idle refusals, memory-dependent refusals); `us2_controls` (`ids`) |
-| SC-001 – SC-005 | as above | SC-003's seven cases: "missing entry" in the core, six in `us2_controls` |
+| SC-001 – SC-005 | as above | SC-003's seven cases: "missing entry" in the core, five in `us2_controls`, "superseded ID" in `us2_cross_check` |
 
 US1 AS4 also reads the manifest on a second thread while the first records.
 
@@ -88,7 +88,8 @@ specs/014-control-manifest/  plan.md, research.md, data-model.md, contracts/api.
 crates/rr_dr60/src/controls.rs              # new: types, control_table!, the 29 entries, const assertions, unit tests
 crates/rr_dr60/src/lib.rs                   # pub mod controls; re-exports
 crates/rr_dr60/src/settings.rs, output.rs, speed.rs  # comment work (R-06) only
-crates/rr_dr60_ffi/src/lib.rs, include/rr_dr60.h, tests/c/smoke.c
+crates/rr_dr60_ffi/src/lib.rs, include/rr_dr60.h, cbindgen.toml (enum exports), tests/c/smoke.c, tests/c/run_smoke.sh
+.github/workflows/registers.yml             # runs the control checks on register-only changes
 crates/rr_dr60_harness/src/controls_checks.rs   # tokenizer, setter scan, ID-from-comment reader, renderer
 crates/rr_dr60_harness/tests/us1_controls.rs, us2_controls.rs
 crates/rr_dr60_harness/examples/control_manifest.rs

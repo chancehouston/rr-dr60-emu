@@ -8,7 +8,7 @@
 use rr_dr60::{ControlEntry, ControlValue, controls, manifest};
 use rr_dr60_harness::controls_checks::{
     Token, core_sources, defaults, edges, header_text, ids, notes, options_vs_header, setters,
-    strings, tokens,
+    strings, timing_behavior, tokens,
 };
 
 fn table() -> Vec<ControlEntry> {
@@ -211,4 +211,44 @@ fn doctored_ids_and_options_are_named() {
     let f = options_vs_header(controls(), &header);
     assert_eq!(f.len(), 1, "{f:?}");
     assert!(f[0].starts_with("tap: option after_agc=2"), "{f:?}");
+}
+
+#[test]
+fn doctored_memory_class_is_named() {
+    // Hardware review B2: `memory.max_recordings` classed plain idle is caught (two stored
+    // recordings do not fit a limit of one), and so is the codec switch classed plain idle.
+    let mut t = table();
+    let i = index(&t, "memory.max_recordings");
+    t[i].timing = rr_dr60::ControlTiming::Idle;
+    let f = timing_behavior(&t);
+    assert!(
+        f.iter()
+            .any(|s| s.starts_with("memory.max_recordings: an idle change was refused")),
+        "{f:?}"
+    );
+    let mut t = table();
+    let i = index(&t, "speech_codec_enabled");
+    t[i].timing = rr_dr60::ControlTiming::Idle;
+    let f = timing_behavior(&t);
+    assert!(
+        f.iter()
+            .any(|s| s.starts_with("speech_codec_enabled: an idle change was refused")),
+        "{f:?}"
+    );
+}
+
+#[test]
+fn doctored_void_setter_and_late_setter_are_named() {
+    // Hardware review B11 and coach review 6: a C setter with another return type, and a core
+    // setter after a test module, are both found.
+    let header = header_text() + "\nvoid rr_dr60_set_battery(RrDr60 *e, float v);\n";
+    let f = setters(controls(), &core_sources(), &header);
+    assert_eq!(f, ["rr_dr60.h: rr_dr60_set_battery has no live entry"]);
+    let text = "#[cfg(test)]\nmod test_util;\n#[cfg(test)]\nmod tests {\n    fn set_x() { if true { } }\n}\nimpl Pipeline {\n    pub fn set_battery(&mut self) {}\n}\n";
+    let stripped = rr_dr60_harness::controls_checks::without_tests(text);
+    assert!(!stripped.contains("set_x"), "{stripped}");
+    let mut sources = core_sources();
+    sources.push(("late.rs".into(), stripped));
+    let f = setters(controls(), &sources, &header_text());
+    assert_eq!(f, ["late.rs: setter set_battery has no live entry"]);
 }

@@ -13,3 +13,6 @@ indent_size = 2
 
 [*.md]
 trim_trailing_whitespace = false
+
+[crates/rr_dr60_harness/golden/*.txt]
+trim_trailing_whitespace = false

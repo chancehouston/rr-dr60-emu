@@ -429,10 +429,46 @@ fn reconfigured(p: &mut Pipeline, id: &str, v: Val) -> Option<bool> {
     Some(p.reconfigure(s).is_ok())
 }
 
-/// 014 FR-016: live setters succeed while recording and while playing; an idle change is
-/// refused while recording or playing and accepted when idle with recordings present; an
-/// idle, memory-dependent change is refused with recordings present that do not fit and
-/// accepted with an empty memory.
+/// The three idle assertions on a pipeline that holds two recordings: a change is refused
+/// while recording and while playing, and accepted (`fits`) or refused when idle.
+fn idle_refusals(id: &str, v: Val, idle_value: Val, accepted_when_idle: bool) -> Vec<String> {
+    let mut f = Vec::new();
+    let mut p = Pipeline::new(Settings::new(RATE)).expect("pipeline");
+    record(&mut p, 1.0);
+    record(&mut p, 1.0);
+    p.start_recording().expect("start");
+    if reconfigured(&mut p, id, v) != Some(false) {
+        f.push(format!(
+            "{id}: an idle change was not refused while recording"
+        ));
+    }
+    let mut ev = vec![VasEvent::default(); 64];
+    let _ = p.stop_recording(&mut ev).expect("stop");
+    p.start_playback(1).expect("play");
+    if reconfigured(&mut p, id, v) != Some(false) {
+        f.push(format!(
+            "{id}: an idle change was not refused while playing"
+        ));
+    }
+    p.stop_playback().expect("stop playback");
+    if reconfigured(&mut p, id, idle_value) != Some(accepted_when_idle) {
+        f.push(format!(
+            "{id}: an idle change was {} when idle with two recordings present",
+            if accepted_when_idle {
+                "refused"
+            } else {
+                "accepted"
+            }
+        ));
+    }
+    f
+}
+
+/// 014 FR-016 (hardware review B2, coach review 7): live setters succeed while recording and
+/// while playing; an idle change is refused while recording or playing and accepted when idle
+/// with two recordings present; an idle, memory-dependent change is refused while recording or
+/// playing, accepted with an empty memory, refused when the two stored recordings do not fit and,
+/// for the memory figures, accepted when they do.
 pub fn timing_behavior(entries: &[ControlEntry]) -> Vec<String> {
     let mut f = Vec::new();
     for e in entries {
@@ -441,9 +477,9 @@ pub fn timing_behavior(entries: &[ControlEntry]) -> Vec<String> {
             f.push(format!("{id}: no other value to offer"));
             continue;
         };
-        let mut p = Pipeline::new(Settings::new(RATE)).expect("pipeline");
         match e.timing {
             ControlTiming::Live => {
+                let mut p = Pipeline::new(Settings::new(RATE)).expect("pipeline");
                 let mut ok = true;
                 p.start_recording().expect("start");
                 ok &= live_set(&mut p, id, v);
@@ -459,43 +495,25 @@ pub fn timing_behavior(entries: &[ControlEntry]) -> Vec<String> {
                 }
             }
             ControlTiming::Idle | ControlTiming::HostFixed => {
-                p.start_recording().expect("start");
-                if reconfigured(&mut p, id, v) != Some(false) {
-                    f.push(format!(
-                        "{id}: an idle change was not refused while recording"
-                    ));
-                }
-                let mut ev = vec![VasEvent::default(); 64];
-                let _ = p.stop_recording(&mut ev).expect("stop");
-                record(&mut p, 1.0);
-                p.start_playback(1).expect("play");
-                if reconfigured(&mut p, id, v) != Some(false) {
-                    f.push(format!(
-                        "{id}: an idle change was not refused while playing"
-                    ));
-                }
-                p.stop_playback().expect("stop playback");
-                if reconfigured(&mut p, id, v) != Some(true) {
-                    f.push(format!(
-                        "{id}: an idle change was refused when idle with recordings present"
-                    ));
-                }
+                f.extend(idle_refusals(id, v, v, true));
             }
             ControlTiming::IdleMemoryDependent => {
+                let mut p = Pipeline::new(Settings::new(RATE)).expect("pipeline");
                 if reconfigured(&mut p, id, v) != Some(true) {
                     f.push(format!("{id}: refused with an empty memory"));
                 }
-                let mut p = Pipeline::new(Settings::new(RATE)).expect("pipeline");
-                record(&mut p, 2.0);
-                record(&mut p, 2.0);
                 let unfit = match id {
                     "memory.capacity_s" | "memory.max_recordings" => Val::I(1),
                     _ => v,
                 };
-                if reconfigured(&mut p, id, unfit) != Some(false) {
-                    f.push(format!(
-                        "{id}: accepted with recordings present that do not fit"
-                    ));
+                f.extend(idle_refusals(id, v, unfit, false));
+                let fits = match id {
+                    "memory.capacity_s" => Some(Val::I(3599)),
+                    "memory.max_recordings" => Some(Val::I(98)),
+                    _ => None,
+                };
+                if let Some(fits) = fits {
+                    f.extend(idle_refusals(id, v, fits, true));
                 }
             }
             _ => f.push(format!("{id}: unknown timing class")),
@@ -679,9 +697,50 @@ pub fn notes(entries: &[ControlEntry], manifest: &Manifest) -> Vec<String> {
 
 // ---- Setters, options and IDs from the source (014 FR-007, FR-005, FR-016) -------------------
 
-/// Text before the first `#[cfg(test)]` line.
-pub fn without_tests(text: &str) -> &str {
-    text.find("\n#[cfg(test)]").map_or(text, |i| &text[..i])
+/// The text with every `#[cfg(test)]` item removed: the attribute line and the item it
+/// applies to (a `mod x;` line, or a block up to its matching closing brace), wherever it sits,
+/// so public items after a test module are still scanned (coach review 6).
+pub fn without_tests(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("#[cfg(test)]") {
+        let at_line_start = i == 0 || rest.as_bytes()[i - 1] == b'\n';
+        if !at_line_start {
+            out.push_str(&rest[..i + 1]);
+            rest = &rest[i + 1..];
+            continue;
+        }
+        out.push_str(&rest[..i]);
+        let item = &rest[i..];
+        let semi = item.find(';');
+        let brace = item.find('{');
+        let end = match (semi, brace) {
+            (Some(sc), Some(b)) if sc < b => sc + 1,
+            (_, Some(b)) => {
+                let mut depth = 0usize;
+                let mut end = item.len();
+                for (k, ch) in item[b..].char_indices() {
+                    match ch {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end = b + k + 1;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                end
+            }
+            (Some(sc), None) => sc + 1,
+            (None, None) => item.len(),
+        };
+        rest = &item[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The core's sources: (path relative to the repository, text without its test module).
@@ -708,7 +767,7 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, String)>) {
                 .unwrap_or(&path)
                 .display()
                 .to_string();
-            out.push((rel, without_tests(&text).to_string()));
+            out.push((rel, without_tests(&text)));
         }
     }
 }
@@ -729,7 +788,7 @@ pub fn setters(
     header: &str,
 ) -> Vec<String> {
     let core = Regex::new(r"pub(\s+const)?\s+fn\s+set_(\w+)").expect("regex");
-    let c = Regex::new(r"(?m)^RrDr60Status rr_dr60_set_(\w+)\(").expect("regex");
+    let c = Regex::new(r"(?m)^[A-Za-z_][\w \*]*\brr_dr60_set_(\w+)\(").expect("regex");
     let live: Vec<&str> = entries
         .iter()
         .filter(|e| e.timing == ControlTiming::Live)
@@ -816,10 +875,17 @@ fn default_line<'a>(id: &str, sources: &'a [(String, String)]) -> Option<&'a str
     let settings = file("settings.rs")?;
     match id {
         "route" => {
+            // The tags are read from the variant that carries `#[default]` (hardware review B10).
             let from = settings.find("pub enum Route")?;
-            settings[from..]
-                .lines()
-                .find(|l| l.trim_start().starts_with("Speaker,"))
+            let mut lines = settings[from..].lines();
+            let mut previous = "";
+            loop {
+                let l = lines.next()?;
+                if l.trim_start().starts_with("Speaker,") {
+                    return (previous.trim() == "#[default]").then_some(l);
+                }
+                previous = l;
+            }
         }
         "volume" => file("output.rs")?
             .lines()
@@ -840,6 +906,10 @@ fn default_line<'a>(id: &str, sources: &'a [(String, String)]) -> Option<&'a str
                     "mic" => "MicSettings",
                     _ => return None,
                 };
+                // The tags are read from `DEVICE` only if `Settings::new` uses it (B10).
+                if !settings.contains(&format!("{group}: {name}::DEVICE,")) {
+                    return None;
+                }
                 let imp = settings.find(&format!("impl {name} {{"))?;
                 let rest = &settings[imp..];
                 let dev = rest.find("pub const DEVICE: Self = Self {")?;

@@ -2688,7 +2688,7 @@ pub enum RrDr60ControlValueType {
     Switch = 0,
     /// An integer in `int_min ..= int_max`, step 1.
     Integer = 1,
-    /// A continuous value in `float_min ..= float_max`.
+    /// A continuous value in `float_min ..= float_max`, step 0 (continuous).
     Continuous = 2,
     /// One of `option_count` options (`rr_dr60_control_option`); the default's value in
     /// `choice_default` when `has_default` is 1.

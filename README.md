@@ -68,7 +68,7 @@ Four things to know before you ship:
 3. **There is latency.** 1923 samples (about 40 ms) at 48 kHz by default; `latency_samples()` reports it for any configuration.
 4. **The hiss is seeded.** Output is deterministic; set a different `seed` per session if recordings must not share the same hiss.
 
-The engine also models the device's recording memory (60 minutes, 99 recordings, with export and import), its volume control, speaker/earphone routing and playback speed as live controls, and it describes its own stages through a built-in stage manifest. The [user guide](docs/guide.md) covers all of it.
+The engine also models the device's recording memory (60 minutes, 99 recordings, with export and import), its volume control, speaker/earphone routing and playback speed as live controls, and it describes its own stages and its controls through a built-in stage manifest and control manifest. The [user guide](docs/guide.md) covers all of it.
 
 ## Documentation
 

@@ -114,7 +114,13 @@ fn control_manifest_ids_pass_and_superseded_is_named() {
         ..r
     };
     let f = mc::control_id_findings(rr_dr60::controls(), &r2);
-    assert_eq!(f, ["agc.knee_dbfs: cites A-028, which is superseded"]);
+    assert_eq!(
+        f,
+        [
+            "agc.enabled: cites A-028, which is superseded",
+            "agc.knee_dbfs: cites A-028, which is superseded"
+        ]
+    );
     let mut entries = rr_dr60::controls().to_vec();
     entries[0].assumptions = &["A-999"];
     let f = mc::control_id_findings(&entries, &r);

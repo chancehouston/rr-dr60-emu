@@ -186,7 +186,7 @@ impl Setting {
         }
     }
 
-    const fn name_and_unit(self) -> (&'static str, &'static str) {
+    pub(crate) const fn name_and_unit(self) -> (&'static str, &'static str) {
         match self {
             Setting::AgcKneeDbfs => ("agc.knee_dbfs", "dBFS"),
             Setting::AgcAttackMs => ("agc.attack_ms", "ms"),
