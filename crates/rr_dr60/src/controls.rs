@@ -67,11 +67,11 @@ pub struct ControlPaths(u8);
 
 impl ControlPaths {
     /// The record path.
-    pub const RECORD: Self = Self(1);
+    pub const RECORD: Self = Self(1); // 014 FR-013: RR_DR60_CONTROL_PATH_RECORD
     /// The playback path.
-    pub const PLAYBACK: Self = Self(2);
+    pub const PLAYBACK: Self = Self(2); // 014 FR-013: RR_DR60_CONTROL_PATH_PLAYBACK
     /// The one-pass engine ([`Pipeline::process`](crate::Pipeline::process)).
-    pub const ONE_PASS: Self = Self(4);
+    pub const ONE_PASS: Self = Self(4); // 014 FR-013: RR_DR60_CONTROL_PATH_ONE_PASS
 
     /// The bits: `RECORD = 1`, `PLAYBACK = 2`, `ONE_PASS = 4`.
     pub const fn bits(self) -> u8 {

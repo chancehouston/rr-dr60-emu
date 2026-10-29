@@ -1385,3 +1385,35 @@ mod tests {
         );
     }
 }
+
+/// Spec 014 FR-010: every ID the control manifest cites exists in its register and no cited
+/// assumption is superseded. Unlike the stage manifest, the control manifest need not cite
+/// every current assumption. One string per problem, naming the control and the ID.
+pub fn control_id_findings(entries: &[rr_dr60::ControlEntry], r: &Registers<'_>) -> Vec<String> {
+    let (assumptions, _) = parse_assumptions(r.assumptions);
+    let (sources, _) = parse_sources(r.sources);
+    let mut f = Vec::new();
+    for e in entries {
+        for s in e.sources {
+            if !sources.iter().any(|row| row.id == *s) {
+                f.push(format!(
+                    "{}: cites {s}, which has no row in sources.md",
+                    e.identifier
+                ));
+            }
+        }
+        for a in e.assumptions {
+            match assumptions.iter().find(|row| row.id == *a) {
+                None => f.push(format!(
+                    "{}: cites {a}, which has no row in assumptions.md",
+                    e.identifier
+                )),
+                Some(row) if row.class == StatusClass::Superseded => {
+                    f.push(format!("{}: cites {a}, which is superseded", e.identifier))
+                }
+                Some(_) => {}
+            }
+        }
+    }
+    f
+}
