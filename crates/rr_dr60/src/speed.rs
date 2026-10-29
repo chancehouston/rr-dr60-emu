@@ -14,7 +14,7 @@
 pub const LEVEL_COUNT: u8 = 5;
 
 /// The default level: normal speed (S-001: level 3 at purchase).
-pub const DEFAULT_LEVEL: u8 = 3;
+pub const DEFAULT_LEVEL: u8 = 3; // S-001, S-012, A-054
 
 /// The denominator of every speed ratio: the ratios are exact fifths (spec 013 FR-002).
 pub const RATIO_DENOMINATOR: u32 = 5;
