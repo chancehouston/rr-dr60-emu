@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-29
 
-**Status**: Draft
+**Status**: Implemented, merged to `main` (PR #43, 2026-10-29; merge commit a1bd822)
 
 **Input**: User description: "014 control manifest. As an app developer building on the engine, I want the engine to describe every adjustable setting and live control as constant, machine-readable data, so that the app's controls, the "inside" view's cards and the free/Workbench line all come from one cross-checked source and cannot drift from what the engine actually accepts. Each entry gives: a stable identifier; its kind, one of four (device control, unit condition, model internal, emulator option); its timing class; which path it applies to; its unit, range, step and default; the signal-chain stage it belongs to; the source and assumption IDs it traces to; and one neutral sentence describing what changing it does to the sound. Covers the 3 live controls and every construction-time setting. Owner decisions 2026-10-29: the four kinds adopted; record-side values change between recordings only for now; no AI control for now; free stays free. Must be checkable against the engine's validation, the stage manifest (spec 007), the denylist and the registers. Available to Rust and C callers. No audio change. Brief: docs/product/controls-discussion.md section 1 and section 4 item 1."
 
