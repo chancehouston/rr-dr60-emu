@@ -13,7 +13,7 @@
 
 Reads: `controls() -> &'static [ControlEntry]`, `control(identifier) -> Option<&ControlEntry>`. The step (1 for integers, 0 for continuous) is derived by the renderers, not stored. All static; no allocation. `CONTROL_COUNT` carries an `// FR-001` tag.
 
-Form rules, const-asserted in the core (and the const functions also called from a test, as `llvm-cov` does not see const evaluation): identifier ASCII `[a-z0-9_.]`, ≤ 32 chars, unique; name ≤ 40 chars; description one sentence, ≤ 160 chars, ends with ".", no digits; IDs ascending; a choice's default is one of its options' values; `min ≤ default ≤ max`. Harness only: the denylist (007 FR-011) on names and descriptions.
+Form rules, const-asserted in the core (and the const functions also called from a test, as `llvm-cov` does not see const evaluation): identifier ASCII `[a-z0-9_.]`, ≤ 32 chars, unique; name ≤ 40 chars; description one sentence, ≤ 160 chars, ends with ".", no digits; IDs ascending; a choice's default is one of its options' values; `min ≤ default ≤ max`. Harness only: the denylist (007 FR-011) on names and descriptions. Content rule (2026-10-29, post-implementation review): a description states the effect in the default engine configuration (every other stage on, the speech coder on).
 
 ## The 29 entries
 

@@ -73,7 +73,7 @@ description: "Task list for the control manifest (014)"
 - [x] T018 [P] Swift package parity: rebuild `scripts/build-xcframework.sh` and run `cd swift && swift test` (no Swift change expected; confirms the header still builds). **Done:** 2 of 2 green. A stray Swift 6.0.3 toolchain in `~/Library/Developer/Toolchains` fails against the Xcode SDK's module maps; run `TOOLCHAINS=com.apple.dt.toolchain.XcodeDefault xcrun swift test`.
 - [x] T019 Full gate: `cargo fmt --all -- --check`; `cargo clippy --all-targets --all-features -- -D warnings`; `cargo test --all-features`; the MSRV 1.85 build with `RUSTFLAGS="-D warnings"`; `scripts/check-traceability.sh`; the header drift check; every audio golden SHA guard unchanged (T002); `cargo llvm-cov --all-features --workspace --fail-under-lines 80` within 1 point of T002's baseline. **Recorded:** fmt, clippy (`-D warnings`), MSRV 1.85 build with `RUSTFLAGS="-D warnings"`, traceability, header drift, the nine audio golden files byte-identical, coverage **97.81 %** lines (baseline 97.96 %; `controls.rs` 98.54 %, `controls_checks.rs` 92.35 %); after the review fixes `cargo test --all-features` 859 passed, 0 failed.
 - [x] T020 Reviews of the landed branch: coach (process, requirement coverage) and hardware-emulation reviewer (strings and IDs against the code); apply findings; stop only for a new decision. **Done:** coach (11 findings, ready with fixes) and hardware (B1 – B11, sound with fixes), all applied (spec Clarifications 2026-10-29, post-implementation); the two questions the hardware review raised were taken at its recommended defaults (descriptions state the default configuration; the golden is exempt from whitespace trimming); the control manifest's canonical text re-blessed once for the reworded strings and added IDs.
-- [ ] T021 Push the branch, open a PR, CI green on all jobs; then `/speckit-converge`; the owner merges.
+- [x] T021 Push the branch, open a PR, CI green on all jobs; then `/speckit-converge`; the owner merges. **Done:** PR #43, CI green on all 12 jobs after one fix (the first run's header-drift check caught a rustdoc change made after the last cbindgen run; 89a9d0d); merged 2026-10-29 on the owner's standing instruction, merge commit a1bd822.
 
 ## Dependencies
 
@@ -88,3 +88,7 @@ description: "Task list for the control manifest (014)"
 ## Implementation strategy
 
 MVP = Phase 1 – 3 (US1): the table readable from Rust with its oracles. Then US2 (drift guards), US3 (C), Polish. Commit after each task or logical group, Conventional Commits.
+
+## Phase 7: Convergence
+
+- [x] T022 State that each control description gives the effect in the default engine configuration (other stages on, the speech coder on), in `docs/guide.md` › "The controls the engine accepts", in the rustdoc of `ControlEntry::description` in `crates/rr_dr60/src/controls.rs`, and in `specs/014-control-manifest/data-model.md` › Form rules, per FR-006 and the spec's 2026-10-29 post-implementation clarification (partial)
