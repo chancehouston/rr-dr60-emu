@@ -17,9 +17,20 @@ The owner reads this section first. Each decision gives the recommendation; the 
 | D1 | **The engine carries the kind, not the price tier.** Each entry says which of the four kinds it is. The free/Workbench line ("device controls and unit conditions are free", decisions.md 2026-10-29) is an app rule applied to the kind, documented in the README, not a field in the MIT engine. | Kind only |
 | D2 | **Seed and host rate are a fifth value, "host parameter"**, outside the four kinds: neither is something a user adjusts (the seed picks a hiss realization for reproducibility; the host rate is fixed by the app's audio session). | Fifth value |
 | D3 | **The memory figures are emulator options.** The device's capacity is fixed (60 min, 99 recordings, S-001); changing it is something the device cannot do. The device value is the default. | Emulator option |
-| D4 | **Timing classes are four:** live (changes while running, real-time safe), idle (applied between recordings or playbacks), idle with an empty memory (the speech codec, which fixes the stored encoding), and fixed by the host (the host rate). Record-side values are idle, per the owner's 2026-10-29 decision. | Four classes |
+| D4 | **Timing classes are four:** live (changes while running, real-time safe), idle (applied between recordings or playbacks), idle and memory-dependent (refused while the stored recordings do not fit: the speech codec, which fixes the stored encoding, and the memory figures), and host-fixed (the host rate). Record-side values are idle, per the owner's 2026-10-29 decision. | Four classes |
 | D5 | **No serialized (JSON) form, no AI framing.** Structured access only, as spec 007 decided; the descriptions are written for app users and developers. | As stated |
 | D6 | **The stage manifest's controls notes stay** as they are; the new manifest is cross-checked against them, so the two cannot disagree. | Keep both |
+
+## Clarifications
+
+### Session 2026-10-29 (owner sign-off)
+
+- Q: Approve the spec with D1 – D6 as recommended? → A: **Yes**, all six as recommended. The clarify step is covered by these decisions.
+
+### Session 2026-10-29 (speckit-coach review of the draft, findings 1 – 14)
+
+- Applied without a decision: the version bump re-blesses the stage manifest's canonical text (FR-014, SC-005: "audio golden files"); FR-009 defined as a tokenizer over the controls notes, and the note rewrite dropped (D6 and the 120-character limit); value representation for u64, choices with engine values and "no default" (FR-002, FR-013); "just outside a bound" defined per type (FR-008); live controls found by a source scan (FR-007); the seed and host-rate rows split and "host-fixed" reworded to the engine's behavior; FR-016 checks unit, timing, path and the cited IDs; a canonical text golden as the cross-platform and Rust/C oracle (FR-012, SC-004); identifiers at most 32 characters; descriptions contain no digits; the Rust declaration order; a new C status code; SC-003 grows to 7 cases.
+- Q: The memory figures are refused when the stored recordings do not fit, like the codec switch. Which class? → A: **Widen the third class to "idle, memory-dependent"** (finding 7, option b); still four classes, D4 stands.
 
 ## Overview
 
@@ -42,7 +53,7 @@ An app developer reads the control manifest once at start-up and builds every sl
 1. **Given** a program that has constructed nothing, **When** it reads the control manifest, **Then** it receives 29 entries in a stable order, each with an identifier, a name, a kind, a timing class, a path, a stage, a value type, a unit, a range, a step, a default, its source and assumption IDs and a description.
 2. **Given** each entry, **When** its default is compared with the engine's defaults at every supported host rate, **Then** they are equal (the host rate's default is "set by the host").
 3. **Given** each numeric entry, **When** a value at its minimum and at its maximum is offered to the engine, **Then** both are accepted, and the nearest representable values just outside are refused, by construction-time validation for settings and by the live setter for live controls.
-4. **Given** the manifest, **When** it is read twice, on two platforms, or while an engine is recording or playing on another thread, **Then** every field is identical, and reading allocates nothing.
+4. **Given** the manifest, **When** it is read twice, on any golden target, or while an engine is recording or playing on another thread, **Then** its canonical text equals the committed golden, and reading allocates nothing.
 
 ---
 
@@ -58,7 +69,7 @@ A maintainer adds a setting, moves a range or default, or changes a stage's cont
 
 1. **Given** the committed tree, **When** the checks run, **Then** they pass: every setting field and live control has exactly one entry; every range, step and default agrees with the engine; every entry's identifier appears in its stage's controls note in the stage manifest; every cited ID exists and is not superseded; every string passes the wording rules.
 2. **Given** a new setting field added to the engine without an entry, **When** the library is built with its tests, **Then** it fails to compile or a test fails, naming the field.
-3. **Given** a doctored entry with a range edge moved by one step, or a default changed, **When** the checks run, **Then** they fail and name the entry.
+3. **Given** a doctored entry with a range edge moved by one representable value, or a default changed, **When** the checks run, **Then** they fail and name the entry.
 4. **Given** a doctored entry citing a superseded or nonexistent ID, or a string containing a denylisted word, **When** the checks run, **Then** they fail and name the entry and the ID or word.
 
 ---
@@ -69,7 +80,7 @@ The iOS app reads the same manifest through the C API: the count and each entry 
 
 **Why this priority**: the first app reaches the engine through C.
 
-**Independent Test**: a C program prints every entry and the output equals the Rust manifest field for field; index 29 is refused.
+**Independent Test**: a C program prints every entry and its output equals the canonical text golden; index 29 is refused.
 
 **Acceptance Scenarios**:
 
@@ -82,7 +93,7 @@ The iOS app reads the same manifest through the C API: the count and each entry 
 - **A setting on two stages.** The speech codec switch covers stages 7 and 9; the entry names the first stage (7) and the stage manifest's controls note for either stage must mention it.
 - **Booleans and choices.** A switch has range off–on; a choice (VAS mode, route, tap) lists its options by stable identifier, with the default among them.
 - **Integer versus continuous values.** Sensitivity and speed levels step by 1; continuous values (dBFS, ms, volume position) have step 0, meaning continuous.
-- **The tap's eleven options.** Listed by their stable identifiers; the recorder and playback ignore the tap, which the description says.
+- **The tap's eleven options.** Listed by their stable identifiers with their C enumeration values, which do not follow the Rust declaration order; `Tap::AFTER_STAGE_10` is an alias, not a twelfth option. The recorder and playback ignore the tap, which the description says.
 - **A range that depends on another setting.** None today; the hiss offset's range applies whether or not the capsule is on (spec 012). If a dependent range appears, it is a breaking change to this feature's model and needs a spec.
 - **Speed and route are kept by reset and reconfigure; volume is too.** That is a property of the live class, stated once in the documentation, not a field.
 
@@ -92,27 +103,28 @@ The iOS app reads the same manifest through the C API: the count and each entry 
 
 **The manifest**
 
-- **FR-001**: The library MUST provide a **control manifest**: constant data, available without constructing an engine, with one entry per construction-time setting field and per live control (29 today), in a stable order: live controls first, then the settings in the order of the settings structure.
-- **FR-002**: Each entry MUST carry: an **identifier** (the setting's canonical dotted path, e.g. `vas.sensitivity`, or the live control's name, e.g. `volume`; ASCII, stable; renaming is a breaking change); a **name** (at most 40 characters); a **kind** (FR-003); a **timing class** (FR-004); a **path** (record, playback, one-pass, or a combination); a **stage number** (1–15, or 0 for none); a **value type** (switch, integer, continuous, choice); a **unit** (empty when unitless); a **minimum**, **maximum** and **step** for numeric types, or the **options** for a choice; a **default**; the **source IDs** and **assumption IDs** it traces to, ascending; and a **description** (FR-006).
+- **FR-001**: The library MUST provide a **control manifest**: constant data, available without constructing an engine, with one entry per construction-time setting field and per live control (29 today), in a stable order: live controls first (route, volume, playback speed), then the settings in the Rust `Settings` declaration order, each sub-structure's fields in place, in its own declaration order.
+- **FR-002**: Each entry MUST carry: an **identifier** (the setting's canonical dotted path, e.g. `vas.sensitivity`, or the live control's name, e.g. `volume`; ASCII, at most 32 characters, stable; renaming is a breaking change); a **name** (at most 40 characters); a **kind** (FR-003); a **timing class** (FR-004); a **path** (record, playback, one-pass, or a combination); a **stage number** (1–15, or 0 for none); a **value type** (switch, integer, continuous, choice); a **unit** (empty when unitless); a **minimum**, **maximum** and **step** for numeric types, or the **options** for a choice; a **default**; the **source IDs** and **assumption IDs** it traces to, ascending; and a **description** (FR-006). Integer bounds and defaults are exact for every integer type up to u64; continuous ones are the engine's f32 values. A choice's options each carry a stable identifier and the engine's value: the C enumeration value for the tap, the VAS mode and the route, the rate in hertz for the host rate. An entry with no engine default (the host rate) says so explicitly.
 - **FR-003**: **Kind** MUST be one of: **device control** (a control the owner's manual gives the user), **unit condition** (a physical state of one unit), **model internal** (a value the device has that its user cannot reach), **emulator option** (something the device cannot do), or **host parameter** (D2: set by the host for reproducibility or by its audio session). The initial kinds are the table in Key Entities.
-- **FR-004**: **Timing class** MUST be one of: **live** (changes while the engine runs, real-time safe), **idle** (applied only when nothing is recording or playing), **idle, empty memory** (also needs an empty memory), or **host-fixed** (chosen at construction by the host).
+- **FR-004**: **Timing class** MUST be one of: **live** (changes while the engine runs, real-time safe), **idle** (applied only when nothing is recording or playing), **idle, memory-dependent** (also refused while the stored recordings do not fit: any recording for the speech codec, too many or too long for the memory figures), or **host-fixed** (set by the host to match its audio session; the engine accepts a new rate at construction or reconfigure like an idle setting).
 - **FR-005**: The **default** MUST equal the engine's default at every supported host rate; the **minimum** and **maximum** MUST equal the inclusive bounds the engine's validation accepts; the **step** MUST be 1 for integer types and 0 for continuous types; the options of a choice MUST be exactly the values the engine accepts.
-- **FR-006**: The **description** MUST be one English sentence of at most 160 characters, ending with a full stop, saying what changing the control does to the sound or to the recording. It MUST follow the claims policy and pass the stage manifest's denylist (spec 007 FR-011), and MUST NOT state an assumed figure (the figures live in the numeric fields and the registers).
+- **FR-006**: The **description** MUST be one English sentence of at most 160 characters, ending with a full stop, saying what changing the control does to the sound or to the recording. It MUST follow the claims policy and pass the stage manifest's denylist (spec 007 FR-011), and MUST contain no digits (the figures live in the numeric fields and the registers).
 
 **Consistency**
 
-- **FR-007**: A test MUST fail, naming the field, when a construction-time setting field or a live control exists without an entry, or an entry exists for nothing.
-- **FR-008**: Tests MUST verify FR-005 for every entry: default equality at all supported host rates; acceptance at the minimum and maximum; refusal just outside each bound; the options of each choice.
-- **FR-009**: Every entry with a stage number 1–15 MUST be named in that stage's controls note in the stage manifest, and every setting or live control named in a stage's controls note MUST have an entry with that stage (the speech codec switch: stage 7 or 9).
+- **FR-007**: A test MUST fail, naming the field, when a construction-time setting field or a live control exists without an entry, or an entry exists for nothing. Settings are covered by an exhaustive destructuring of the settings structures. Live controls are the engine's public `set_*` methods: a harness check reads the core's source, as the register cross-check reads the registers, and the C header's `rr_dr60_set_*` functions, and fails naming any setter without an entry.
+- **FR-008**: Tests MUST verify FR-005 for every entry: default equality at all supported host rates; acceptance at the minimum and maximum; refusal just outside each bound; the options of each choice. Just outside means: the adjacent f32 for continuous values; bound ∓ 1 for integers (through C, `vas_sensitivity` also bound + 256, which must not wrap); for the host rate, each option ± 1 and 0; for a choice, the first value past the last C enumeration value, through the C API (status `INVALID_ARGUMENT`); none for switches and for the seed, whose range is the type's full domain. Settings are checked with the engine's validation, live controls with their setter.
+- **FR-009**: A stage's controls note is split into tokens on `;` and `,` and trimmed. A bare token that follows a dotted token in the same `;` group takes that token's prefix (`vas.enabled, mode` → `vas.mode`). Each token is exactly one of: (a) an entry identifier or a setting path; (b) a live control's setter or getter (`set_<id>` or `<id>`), which names the live control `<id>`; (c) an option value (`Tap::*`, `Route::*`), which names no entry; (d) any other API item, which names no entry. A token with a settings prefix (`agc.`, `vas.`, `mic.`, `output.`, `memory.`), or equal to a top-level settings field name, that does not resolve under (a) fails the check. Every entry with stage 1 – 15 MUST be named in that stage's note under (a) or (b), and every token resolved under (a) or (b) MUST belong to an entry with that stage; the speech codec switch may appear under stage 7 or 9.
 - **FR-010**: The register cross-check (spec 007 FR-013) MUST cover the control manifest's IDs: each exists and is not superseded. It is not required that every assumption be cited here.
 - **FR-011**: The traceability audit script MUST cover the control manifest's source like the stage manifest's.
 
 **Access and scope**
 
-- **FR-012**: The manifest MUST be readable in Rust (all entries, and a lookup by identifier that returns nothing for an unknown one) with no allocation, I/O or synchronization, identical on every platform.
-- **FR-013**: The manifest MUST be readable through the C API with no Rust-only types and no allocation: the count and an entry by index; strings UTF-8, NUL-terminated, valid for the life of the process; enumerated fields comparable without string comparison; an index at or past the count refused with a distinct status code and no write. Existing C functions are unchanged; the header is regenerated.
-- **FR-014**: The audio processing MUST NOT change: every golden file and SHA guard byte-identical, the settings structures unchanged.
+- **FR-012**: The manifest MUST be readable in Rust (all entries, and a lookup by identifier that returns nothing for an unknown one) with no allocation, I/O or synchronization, identical on every platform. The manifest has a canonical text form, committed as a golden, reproduced on every golden target and printed identically by the C smoke program (f32 values as their shortest round-trip decimal).
+- **FR-013**: The manifest MUST be readable through the C API with no Rust-only types and no allocation: the count, an entry by index, and each entry's options and cited IDs by index; strings UTF-8, NUL-terminated, valid for the life of the process; enumerated fields comparable without string comparison; an index past any list refused with a new status code (not `NO_SUCH_STAGE`), appended after 25, with no write. Existing C functions are unchanged; the header is regenerated.
+- **FR-014**: The audio processing MUST NOT change: every audio golden file and its SHA guard byte-identical, the settings structures unchanged. The stage manifest's canonical text and the README's generated regions change only in the library version line (one re-bless, a CHANGELOG entry).
 - **FR-015**: **Documentation.** The README's user guide MUST show how to read the control manifest in Rust and C and MUST state the app rule of D1 (free = device controls and unit conditions); the CHANGELOG MUST record the feature as version 0.14.0; controls-discussion.md section 1 MUST point to the manifest as the current inventory.
+- **FR-016**: Tests MUST also verify, for every entry: the unit equals the engine's own unit where it names one (the setting's display unit); a live entry's setter succeeds while recording and while playing; an idle entry's change through reconfiguration is refused while recording or playing; an "idle, memory-dependent" entry's change is refused with recordings present that do not fit. An entry's IDs are those its default's code comment cites (the `// A-0xx` and `S-0xx` tags in the settings, output and speed modules); an emulator option or host parameter with no such tag cites none.
 
 ### Out of Scope
 
@@ -138,20 +150,22 @@ Initial kinds and timing (from controls-discussion.md section 1, with D2 – D4 
 | `vas.threshold_dbfs`, `vas.hang_ms`, `vas.onset_ms` | model internal | idle | 5 |
 | `agc.enabled` | emulator option | idle | 3 |
 | `agc.knee_dbfs`, `agc.attack_ms`, `agc.release_ms` | model internal | idle | 3 |
-| `mic.capsule_enabled`, `mic.amp_enabled` | emulator option | idle | 1, 2 |
+| `mic.capsule_enabled` | emulator option | idle | 1 |
+| `mic.amp_enabled` | emulator option | idle | 2 |
 | `mic.hiss_offset_db` | unit condition | idle | 1 |
 | `record_stage_enabled`, `adc_clamp_enabled` | emulator option | idle | 4 |
-| `speech_codec_enabled` | emulator option | idle, empty memory | 7 |
+| `speech_codec_enabled` | emulator option | idle, memory-dependent | 7 |
 | `playback_stage_enabled` | emulator option | idle | 10 |
 | `output.volume_amp_enabled` | emulator option | idle | 11 |
 | `output.speaker_enabled` | emulator option | idle | 12 |
 | `output.earphone_enabled` | emulator option | idle | 13 |
 | `output.clamp_enabled` | emulator option | idle | 0 |
-| `memory.capacity_s`, `memory.max_recordings` | emulator option | idle | 8 |
+| `memory.capacity_s`, `memory.max_recordings` | emulator option | idle, memory-dependent | 8 |
 | `tap` | emulator option | idle | 0 |
-| `seed`, `host_rate_hz` | host parameter | idle, host-fixed | 0 |
+| `seed` | host parameter | idle | 0 |
+| `host_rate_hz` | host parameter | host-fixed | 0 |
 
-The stage numbers follow the stage manifest's controls notes as committed (`set_playback_speed` is in stage 9's note, `set_volume` and `set_route` in stage 11's). The stage 5 note names the VAS fields in a short form (`vas.enabled, mode, sensitivity, …`); the plan defines how FR-009 matches such forms, or rewrites the note in full paths (a manifest re-bless, no audio change).
+The stage numbers follow the stage manifest's controls notes as committed (`set_playback_speed` is in stage 9's note, `set_volume` and `set_route` in stage 11's). The stage 5 note names the VAS fields in a short form (`vas.enabled, mode, sensitivity, …`); FR-009's tokenizer expands them; the notes are not rewritten (D6, and the stage 5 note is 118 of its 120 characters).
 
 ## Success Criteria *(mandatory)*
 
@@ -159,9 +173,9 @@ The stage numbers follow the stage manifest's controls notes as committed (`set_
 
 - **SC-001**: 29 of 29 settings and live controls have an entry, and a new setting without one fails the build's tests.
 - **SC-002**: For 100 % of entries, the default, bounds, step and options agree with the engine at all seven host rates.
-- **SC-003**: Each of the doctored inputs of US2 (a missing entry, a moved bound, a changed default, a superseded ID, a denylisted word) is caught and named: 5 of 5.
-- **SC-004**: The README examples print every entry, and the Rust and C outputs are identical.
-- **SC-005**: Every golden file is byte-identical; reading the manifest allocates nothing; coverage stays at or above 80 % and within 1 point of the baseline.
+- **SC-003**: Each doctored input (a missing entry, a moved bound, a changed default, a superseded ID, a denylisted word, an entry whose stage disagrees with the controls notes, a setter without an entry) is caught and named: 7 of 7.
+- **SC-004**: The Rust example and the C smoke program each print the canonical text, and both equal the committed golden on every golden target.
+- **SC-005**: Every audio golden file is byte-identical; reading the manifest allocates nothing; coverage stays at or above 80 % and within 1 point of the baseline.
 
 ## Assumptions
 
