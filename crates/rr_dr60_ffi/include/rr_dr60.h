@@ -510,7 +510,7 @@ enum RrDr60ControlValueType
   RR_DR60_CONTROL_VALUE_TYPE_SWITCH = 0,
   // An integer in `int_min ..= int_max`, step 1.
   RR_DR60_CONTROL_VALUE_TYPE_INTEGER = 1,
-  // A continuous value in `float_min ..= float_max`.
+  // A continuous value in `float_min ..= float_max`, step 0 (continuous).
   RR_DR60_CONTROL_VALUE_TYPE_CONTINUOUS = 2,
   // One of `option_count` options (`rr_dr60_control_option`); the default's value in
   // `choice_default` when `has_default` is 1.
