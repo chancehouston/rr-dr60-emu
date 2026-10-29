@@ -16,3 +16,9 @@ cc -std=c11 -Wall -Wextra -Werror -O2 -I crates/rr_dr60_ffi/include \
 cargo run -q -p rr_dr60_harness --example manifest > target/example-manifest.txt
 diff target/smoke-manifest.txt target/example-manifest.txt
 echo "smoke --manifest matches the Rust example"
+# Spec 014 SC-004: the C program's control-manifest print equals the Rust example's, byte for
+# byte (f32 values in the shortest round-trip form on both sides).
+./target/smoke --controls > target/smoke-controls.txt
+cargo run -q -p rr_dr60_harness --example control_manifest > target/example-controls.txt
+diff target/smoke-controls.txt target/example-controls.txt
+echo "smoke --controls matches the Rust example"

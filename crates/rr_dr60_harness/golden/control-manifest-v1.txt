@@ -1,0 +1,421 @@
+control_count: 29
+
+[0] route
+name: Speaker or earphone
+kind: device control
+timing: live
+paths: playback, one-pass
+stage: 11
+value: choice
+options: speaker=0, earphone=1
+default: 0
+unit: 
+sources: S-001
+assumptions: A-010, A-032, A-042
+description: Sends playback to the modeled speaker or to the earphone output, each with its own response; their relative loudness is left to the host.
+
+[1] volume
+name: Volume
+kind: device control
+timing: live
+paths: playback, one-pass
+stage: 11
+value: continuous
+min: 0
+max: 1
+step: 0
+default: 0.13345174
+unit: 
+sources: S-002
+assumptions: A-031, A-043, A-044, A-045
+description: Sets the playback level; turned up, loud passages clip in the speaker amplifier.
+
+[2] playback_speed
+name: Playback speed
+kind: device control
+timing: live
+paths: playback
+stage: 9
+value: integer
+min: 1
+max: 5
+step: 1
+default: 3
+unit: level
+sources: S-001, S-012
+assumptions: A-054
+description: Plays recordings slower or faster than normal; the model lets the pitch follow the speed.
+
+[3] host_rate_hz
+name: Host sample rate
+kind: host parameter
+timing: host-fixed
+paths: record, playback, one-pass
+stage: 0
+value: choice
+options: hz_6000=6000, hz_8000=8000, hz_16000=16000, hz_44100=44100, hz_48000=48000, hz_88200=88200, hz_96000=96000
+default: none
+unit: Hz
+sources: 
+assumptions: A-026
+description: Tells the engine the sample rate of the host's audio; the engine converts to and from the device's own rate when they differ.
+
+[4] record_stage_enabled
+name: Codec input filter
+kind: emulator option
+timing: idle
+paths: record, one-pass
+stage: 4
+value: switch
+default: on
+unit: 
+sources: 
+assumptions: A-027
+description: Switches the codec's input band-pass filter off, passing the lows and the top edge it removes; the device's sample rate still limits the top.
+
+[5] playback_stage_enabled
+name: Codec output filter
+kind: emulator option
+timing: idle
+paths: playback, one-pass
+stage: 10
+value: switch
+default: on
+unit: 
+sources: 
+assumptions: A-027
+description: Switches the codec's playback low-pass filter off, removing its roll-off at the top of the band.
+
+[6] adc_clamp_enabled
+name: Converter clipping
+kind: emulator option
+timing: idle
+paths: record, one-pass
+stage: 4
+value: switch
+default: on
+unit: 
+sources: 
+assumptions: A-030
+description: Switches the converter's full-scale clipping off, so loud peaks pass above full scale; the speech coder, when on, still clips them at its input.
+
+[7] tap
+name: Listen point
+kind: emulator option
+timing: idle
+paths: one-pass
+stage: 0
+value: choice
+options: after_record=0, after_playback=1, after_agc=2, after_vas=3, after_decoder=4, route_output=5, after_volume_amp=6, after_speaker=7, after_earphone=8, after_mic_capsule=9, after_mic_amp=10
+default: 5
+unit: 
+sources: 
+assumptions: 
+description: Chooses which stage's output the one-pass engine returns, to hear the chain up to that point; recording and playback ignore it.
+
+[8] seed
+name: Hiss seed
+kind: host parameter
+timing: idle
+paths: record, one-pass
+stage: 0
+value: integer
+min: 0
+max: 18446744073709551615
+step: 1
+default: 0
+unit: 
+sources: 
+assumptions: A-049
+description: Picks a different but repeatable pattern of microphone hiss, with the same level and tone.
+
+[9] agc.enabled
+name: Limiter (AGC)
+kind: emulator option
+timing: idle
+paths: record, one-pass
+stage: 3
+value: switch
+default: on
+unit: 
+sources: 
+assumptions: A-020, A-028, A-030
+description: Switches the limiter off, so loud sounds reach the converter's clipping instead of being held just below it.
+
+[10] agc.knee_dbfs
+name: Limiter threshold
+kind: model internal
+timing: idle
+paths: record, one-pass
+stage: 3
+value: continuous
+min: -40
+max: 3
+step: 0
+default: -1
+unit: dBFS
+sources: 
+assumptions: A-028
+description: Sets the level above which the limiter holds sound down; lowered, ordinary speech is limited and pumps.
+
+[11] agc.attack_ms
+name: Limiter attack
+kind: model internal
+timing: idle
+paths: record, one-pass
+stage: 3
+value: continuous
+min: 1
+max: 50
+step: 0
+default: 3
+unit: ms
+sources: 
+assumptions: A-034
+description: Sets how long a loud onset passes at full level before the limiter acts; smaller overloads pass for longer.
+
+[12] agc.release_ms
+name: Limiter release
+kind: model internal
+timing: idle
+paths: record, one-pass
+stage: 3
+value: continuous
+min: 200
+max: 10000
+step: 0
+default: 1370
+unit: ms
+sources: 
+assumptions: A-035
+description: Sets how long the level stays down after a loud sound.
+
+[13] vas.enabled
+name: Voice-activated pause (VAS)
+kind: emulator option
+timing: idle
+paths: record, one-pass
+stage: 5
+value: switch
+default: on
+unit: 
+sources: S-001
+assumptions: A-008
+description: Switches voice-activated pausing off, so quiet stretches stay in the recording.
+
+[14] vas.mode
+name: Pause handling
+kind: emulator option
+timing: idle
+paths: record, one-pass
+stage: 5
+value: choice
+options: drop=0, mute=1
+default: 0
+unit: 
+sources: S-001
+assumptions: A-008
+description: Chooses whether paused stretches are left out of the recording or kept as silence.
+
+[15] vas.sensitivity
+name: Microphone sensitivity
+kind: device control
+timing: idle
+paths: record, one-pass
+stage: 5
+value: integer
+min: 1
+max: 5
+step: 1
+default: 3
+unit: level
+sources: S-001
+assumptions: A-021, A-022, A-033
+description: Sets how quiet the input must be before recording pauses; the model applies the level to the pause threshold only.
+
+[16] vas.threshold_dbfs
+name: Pause threshold
+kind: model internal
+timing: idle
+paths: record, one-pass
+stage: 5
+value: continuous
+min: -60
+max: 0
+step: 0
+default: -40
+unit: dBFS
+sources: 
+assumptions: A-022
+description: Sets the pause threshold at the factory sensitivity level; the other levels step up or down from it.
+
+[17] vas.hang_ms
+name: Pause delay
+kind: model internal
+timing: idle
+paths: record, one-pass
+stage: 5
+value: continuous
+min: 50
+max: 10000
+step: 0
+default: 1000
+unit: ms
+sources: 
+assumptions: A-023
+description: Sets how long the input must stay quiet before recording pauses.
+
+[18] vas.onset_ms
+name: Resume delay
+kind: model internal
+timing: idle
+paths: record, one-pass
+stage: 5
+value: continuous
+min: 0
+max: 200
+step: 0
+default: 20
+unit: ms
+sources: 
+assumptions: A-024
+description: Sets how much of the first sound after a pause is lost before recording resumes.
+
+[19] memory.capacity_s
+name: Memory length
+kind: emulator option
+timing: idle, memory-dependent
+paths: record, playback
+stage: 8
+value: integer
+min: 1
+max: 86400
+step: 1
+default: 3600
+unit: s
+sources: S-001
+assumptions: A-038
+description: Sets the total recording time the memory holds; when it is used up, recording stops.
+
+[20] memory.max_recordings
+name: Maximum recordings
+kind: emulator option
+timing: idle, memory-dependent
+paths: record, playback
+stage: 8
+value: integer
+min: 1
+max: 9999
+step: 1
+default: 99
+unit: 
+sources: S-001
+assumptions: 
+description: Sets how many recordings the memory holds before it refuses a new one.
+
+[21] speech_codec_enabled
+name: Speech coder (CELP)
+kind: emulator option
+timing: idle, memory-dependent
+paths: record, playback, one-pass
+stage: 7
+value: switch
+default: on
+unit: 
+sources: 
+assumptions: A-004, A-040, A-041
+description: Switches the speech coder off, removing its coding artifacts from recordings.
+
+[22] output.volume_amp_enabled
+name: Volume and power amplifier
+kind: emulator option
+timing: idle
+paths: playback, one-pass
+stage: 11
+value: switch
+default: on
+unit: 
+sources: 
+assumptions: A-031
+description: Switches the volume control and speaker amplifier off: unity gain and no clipping, and the volume control has no effect.
+
+[23] output.speaker_enabled
+name: Speaker
+kind: emulator option
+timing: idle
+paths: playback, one-pass
+stage: 12
+value: switch
+default: on
+unit: 
+sources: 
+assumptions: A-010
+description: Switches the small speaker's modeled tone off on the speaker route, removing its midrange resonance.
+
+[24] output.earphone_enabled
+name: Earphone output
+kind: emulator option
+timing: idle
+paths: playback, one-pass
+stage: 13
+value: switch
+default: on
+unit: 
+sources: 
+assumptions: A-032
+description: Switches the earphone output's modeled tone off on the earphone route, removing its low-frequency cut.
+
+[25] output.clamp_enabled
+name: Output clamp
+kind: emulator option
+timing: idle
+paths: playback, one-pass
+stage: 0
+value: switch
+default: off
+unit: 
+sources: 
+assumptions: A-042
+description: Bounds the returned output to full scale, flattening the peaks the modeled speaker and earphone paths produce above it.
+
+[26] mic.capsule_enabled
+name: Microphone hiss
+kind: emulator option
+timing: idle
+paths: record, one-pass
+stage: 1
+value: switch
+default: on
+unit: 
+sources: 
+assumptions: A-048, A-052
+description: Switches the microphone capsule's hiss off, removing the steady background hiss from quiet passages.
+
+[27] mic.amp_enabled
+name: Microphone amplifier
+kind: emulator option
+timing: idle
+paths: record, one-pass
+stage: 2
+value: switch
+default: on
+unit: 
+sources: 
+assumptions: A-046, A-047, A-051
+description: Switches the microphone amplifier off, removing its thin low end and its clipping on loud input.
+
+[28] mic.hiss_offset_db
+name: Hiss level
+kind: unit condition
+timing: idle
+paths: record, one-pass
+stage: 1
+value: continuous
+min: -18
+max: 12
+step: 0
+default: 0
+unit: dB
+sources: 
+assumptions: A-048
+description: Raises or lowers the microphone hiss, whose level differs between capsules and is unknown for this unit; lower it when the host's microphone adds its own floor.

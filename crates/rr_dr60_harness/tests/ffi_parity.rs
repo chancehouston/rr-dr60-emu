@@ -2392,3 +2392,187 @@ fn speed_parity() {
         assert_eq!(c_infos, rust_infos, "the C reports equal the Rust reports");
     }
 }
+
+/// Spec 014 US3 (FR-013): every field of every control, option and ID read through the C API
+/// equals the Rust manifest; NULL first, then the indices; nothing is written on a refusal.
+#[test]
+fn control_manifest_parity_and_refusals() {
+    use rr_dr60::ControlValue;
+    let entries = rr_dr60::controls();
+    assert_eq!(rr_dr60_control_count() as usize, entries.len());
+    for (i, e) in entries.iter().enumerate() {
+        let i = i as u32;
+        let mut c = RrDr60Control::default();
+        // SAFETY: valid out pointer.
+        assert_eq!(unsafe { rr_dr60_control(i, &mut c) }, RrDr60Status::Ok);
+        assert_eq!(cstr(c.identifier), e.identifier);
+        assert_eq!(cstr(c.name), e.name);
+        assert_eq!(cstr(c.unit), e.unit);
+        assert_eq!(cstr(c.description), e.description);
+        assert_eq!(c.kind, e.kind as u32);
+        assert_eq!(c.timing, e.timing as u32);
+        assert_eq!(c.paths, u32::from(e.paths.bits()));
+        assert_eq!(c.stage, u32::from(e.stage));
+        assert_eq!(c.reserved_014, 0);
+        match e.value {
+            ControlValue::Switch { default } => {
+                assert_eq!(c.value_type, RrDr60ControlValueType::Switch as u32);
+                assert_eq!(
+                    (c.int_min, c.int_max, c.int_default),
+                    (0, 1, u64::from(default))
+                );
+            }
+            ControlValue::Integer { min, max, default } => {
+                assert_eq!(c.value_type, RrDr60ControlValueType::Integer as u32);
+                assert_eq!((c.int_min, c.int_max, c.int_default), (min, max, default));
+            }
+            ControlValue::Continuous { min, max, default } => {
+                assert_eq!(c.value_type, RrDr60ControlValueType::Continuous as u32);
+                assert_eq!(
+                    (
+                        c.float_min.to_bits(),
+                        c.float_max.to_bits(),
+                        c.float_default.to_bits()
+                    ),
+                    (min.to_bits(), max.to_bits(), default.to_bits())
+                );
+            }
+            ControlValue::Choice { options, default } => {
+                assert_eq!(c.value_type, RrDr60ControlValueType::Choice as u32);
+                assert_eq!(c.option_count as usize, options.len());
+                assert_eq!(c.has_default, u32::from(default.is_some()));
+                assert_eq!(c.choice_default, default.unwrap_or(0));
+                for (k, o) in options.iter().enumerate() {
+                    let mut out = RrDr60ControlOption::default();
+                    // SAFETY: valid out pointer.
+                    let st = unsafe { rr_dr60_control_option(i, k as u32, &mut out) };
+                    assert_eq!(st, RrDr60Status::Ok);
+                    assert_eq!((cstr(out.identifier), out.value), (o.identifier, o.value));
+                }
+            }
+            _ => panic!("unknown value type"),
+        }
+        let mut sentinel = RrDr60ControlOption::default();
+        // SAFETY: valid out pointer.
+        let st = unsafe { rr_dr60_control_option(i, c.option_count, &mut sentinel) };
+        assert_eq!(st, RrDr60Status::NoSuchControl);
+        assert!(
+            sentinel.identifier.is_null(),
+            "nothing written on a refusal"
+        );
+        assert_eq!(c.source_count as usize, e.sources.len());
+        assert_eq!(c.assumption_count as usize, e.assumptions.len());
+        for (k, s) in e.sources.iter().enumerate() {
+            let mut id = std::ptr::null();
+            // SAFETY: valid out pointer.
+            assert_eq!(
+                unsafe { rr_dr60_control_source(i, k as u32, &mut id) },
+                RrDr60Status::Ok
+            );
+            assert_eq!(cstr(id), *s);
+        }
+        for (k, a) in e.assumptions.iter().enumerate() {
+            let mut id = std::ptr::null();
+            // SAFETY: valid out pointer.
+            let st = unsafe { rr_dr60_control_assumption(i, k as u32, &mut id) };
+            assert_eq!(st, RrDr60Status::Ok);
+            assert_eq!(cstr(id), *a);
+        }
+        let mut id = std::ptr::null();
+        // SAFETY: valid out pointer.
+        let st = unsafe { rr_dr60_control_source(i, c.source_count, &mut id) };
+        assert_eq!(st, RrDr60Status::NoSuchControl);
+        // SAFETY: valid out pointer.
+        let st = unsafe { rr_dr60_control_assumption(i, c.assumption_count, &mut id) };
+        assert_eq!(st, RrDr60Status::NoSuchControl);
+        assert!(id.is_null(), "nothing written on a refusal");
+    }
+    // Index 29 and NULL.
+    let n = rr_dr60_control_count();
+    let mut c = RrDr60Control::default();
+    let mut o = RrDr60ControlOption::default();
+    let mut id = std::ptr::null();
+    // SAFETY: valid out pointers, or NULL on purpose.
+    unsafe {
+        assert_eq!(rr_dr60_control(n, &mut c), RrDr60Status::NoSuchControl);
+        assert!(c.identifier.is_null());
+        assert_eq!(
+            rr_dr60_control_option(n, 0, &mut o),
+            RrDr60Status::NoSuchControl
+        );
+        assert_eq!(
+            rr_dr60_control_source(n, 0, &mut id),
+            RrDr60Status::NoSuchControl
+        );
+        assert_eq!(
+            rr_dr60_control_assumption(n, 0, &mut id),
+            RrDr60Status::NoSuchControl
+        );
+        assert_eq!(
+            rr_dr60_control(n, std::ptr::null_mut()),
+            RrDr60Status::NullPointer
+        );
+        assert_eq!(
+            rr_dr60_control(0, std::ptr::null_mut()),
+            RrDr60Status::NullPointer
+        );
+        assert_eq!(
+            rr_dr60_control_option(n, 0, std::ptr::null_mut()),
+            RrDr60Status::NullPointer
+        );
+        assert_eq!(
+            rr_dr60_control_source(n, 0, std::ptr::null_mut()),
+            RrDr60Status::NullPointer
+        );
+        assert_eq!(
+            rr_dr60_control_assumption(n, 0, std::ptr::null_mut()),
+            RrDr60Status::NullPointer
+        );
+    }
+}
+
+/// Spec 014 FR-008 (research R-03): the choices' outside values and the saturating
+/// `vas_sensitivity`, through the C settings.
+#[test]
+fn control_manifest_c_edges() {
+    let validate = |s: &RrDr60Settings| {
+        let mut field = RrDr60SettingField::None;
+        // SAFETY: valid pointers.
+        unsafe { rr_dr60_settings_validate(s, &mut field) }
+    };
+    let last = |id: &str| match rr_dr60::control(id).map(|e| e.value) {
+        Some(rr_dr60::ControlValue::Choice { options, .. }) => {
+            options.iter().map(|o| o.value).max().unwrap()
+        }
+        _ => panic!("{id}"),
+    };
+    let mut s = rr_dr60_settings_default(48_000);
+    s.tap = last("tap");
+    assert_eq!(validate(&s), RrDr60Status::Ok);
+    s.tap = last("tap") + 1;
+    assert_eq!(validate(&s), RrDr60Status::InvalidArgument);
+    let mut s = rr_dr60_settings_default(48_000);
+    s.vas_mode = last("vas.mode");
+    assert_eq!(validate(&s), RrDr60Status::Ok);
+    s.vas_mode = last("vas.mode") + 1;
+    assert_eq!(validate(&s), RrDr60Status::InvalidArgument);
+    let mut s = rr_dr60_settings_default(48_000);
+    for (v, want) in [
+        (5, RrDr60Status::Ok),
+        (6, RrDr60Status::InvalidSetting),
+        (261, RrDr60Status::InvalidSetting),
+    ] {
+        s.vas_sensitivity = v;
+        assert_eq!(validate(&s), want, "vas_sensitivity {v}");
+    }
+    let p = create(&rr_dr60_settings_default(48_000));
+    // SAFETY: a valid handle.
+    unsafe {
+        assert_eq!(rr_dr60_set_route(p, last("route")), RrDr60Status::Ok);
+        assert_eq!(
+            rr_dr60_set_route(p, last("route") + 1),
+            RrDr60Status::InvalidArgument
+        );
+        rr_dr60_destroy(p);
+    }
+}

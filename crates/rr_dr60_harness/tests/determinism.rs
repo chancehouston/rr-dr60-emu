@@ -436,6 +436,20 @@ fn manifest_canonical_text_is_identical_on_every_target() {
     );
 }
 
+#[test]
+fn control_manifest_canonical_text_is_identical_on_every_target() {
+    // Spec 014 FR-012, SC-004: the control manifest's canonical text equals the committed
+    // golden on every CI target, also after audio has been processed.
+    let path = rr_dr60_harness::controls_checks::golden_controls_path();
+    let want = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let render = || rr_dr60_harness::controls_checks::render_controls(rr_dr60::controls());
+    assert_eq!(render(), want);
+    let mut p = rr_dr60::Pipeline::new(rr_dr60::Settings::new(48_000)).unwrap();
+    let mut buf = vec![0.25f32; 4800];
+    let _ = p.process_in_place(&mut buf);
+    assert_eq!(render(), want);
+}
+
 /// Spec 009 FR-012 (SC-006; tasks.md T017): the 0.9 default on both routes at two volume
 /// positions is partition-invariant (ten random partitions per case; a hundred for the
 /// speaker route at the reference position at 48 kHz), and record-then-play with a route

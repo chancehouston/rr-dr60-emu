@@ -174,6 +174,52 @@ fn processing_never_touches_the_heap() {
 
     // Spec 007 FR-016, FR-017, SC-004: the manifest reads, Rust and C.
     manifest_reads();
+    // Spec 014 FR-012, FR-013, SC-005: the control manifest reads.
+    control_reads();
+}
+
+/// Spec 014 FR-012: reading every control entry, every option and every lookup allocates
+/// nothing.
+fn control_reads() {
+    let before = counts();
+    let mut touched = 0usize;
+    for e in rr_dr60::controls() {
+        touched += e.identifier.len() + e.name.len() + e.description.len() + e.unit.len();
+        touched += e.sources.len() + e.assumptions.len();
+        if let rr_dr60::ControlValue::Choice { options, .. } = e.value {
+            touched += options.iter().map(|o| o.identifier.len()).sum::<usize>();
+        }
+        touched += usize::from(rr_dr60::control(e.identifier).is_some());
+    }
+    touched += usize::from(rr_dr60::control("battery").is_none());
+    // Spec 014 FR-013: the five C functions over every control, option and ID.
+    let mut c = rr_dr60_ffi::RrDr60Control::default();
+    let mut o = rr_dr60_ffi::RrDr60ControlOption::default();
+    let mut id: *const std::ffi::c_char = std::ptr::null();
+    // SAFETY: valid out pointers.
+    unsafe {
+        for i in 0..=rr_dr60_ffi::rr_dr60_control_count() {
+            if rr_dr60_ffi::rr_dr60_control(i, &mut c) != RrDr60Status::Ok {
+                continue;
+            }
+            for k in 0..=c.option_count {
+                let _ = rr_dr60_ffi::rr_dr60_control_option(i, k, &mut o);
+            }
+            for k in 0..=c.source_count {
+                let _ = rr_dr60_ffi::rr_dr60_control_source(i, k, &mut id);
+            }
+            for k in 0..=c.assumption_count {
+                let _ = rr_dr60_ffi::rr_dr60_control_assumption(i, k, &mut id);
+            }
+            touched += c.stage as usize;
+        }
+    }
+    let after = counts();
+    assert!(touched > 0);
+    assert_eq!(
+        after, before,
+        "heap activity [allocs, deallocs, reallocs] while reading the control manifest"
+    );
 }
 
 /// Spec 007 FR-016, FR-017: reading the whole manifest, every lookup and the five C functions

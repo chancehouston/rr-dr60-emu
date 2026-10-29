@@ -18,7 +18,7 @@ use crate::stages::output_coeffs as c;
 /// clip ceiling, so the default output does not clip on full-scale material. About 0.1335
 /// (−17.5 dB of travel). Positions above it clip full-scale material on the speaker route.
 /// An engine convention: the device's knob sits wherever the user left it.
-pub const VOLUME_REFERENCE: f32 = c::VOLUME_REFERENCE as f32; // A-043 (009 FR-003)
+pub const VOLUME_REFERENCE: f32 = c::VOLUME_REFERENCE as f32; // A-043 from A-044, A-031; control: S-002, A-045
 
 /// The position at which the loaded law puts full-scale material **6 dB over** the clip ceiling
 /// on the speaker route (about 0.365): the clipper fully engaged. Used by the measurement

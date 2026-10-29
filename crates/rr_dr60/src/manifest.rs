@@ -527,7 +527,7 @@ const fn count_statuses(stages: &[StageEntry; STAGE_COUNT]) -> StatusCounts {
 // targets (007 FR-002, FR-003).
 
 /// The number of UTF-8 scalar values in `s` (bytes that are not continuation bytes).
-const fn chars(s: &str) -> usize {
+pub(crate) const fn chars(s: &str) -> usize {
     let b = s.as_bytes();
     let mut i = 0;
     let mut n = 0;
@@ -540,7 +540,7 @@ const fn chars(s: &str) -> usize {
     n
 }
 
-const fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) const fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -555,7 +555,7 @@ const fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// Lexicographic `a < b` on byte strings.
-const fn bytes_lt(a: &[u8], b: &[u8]) -> bool {
+pub(crate) const fn bytes_lt(a: &[u8], b: &[u8]) -> bool {
     let mut i = 0;
     while i < a.len() && i < b.len() {
         if a[i] != b[i] {
@@ -595,7 +595,7 @@ const fn is_id(s: &str, prefix: u8) -> bool {
 }
 
 /// Every ID well-formed and the list strictly ascending (007 FR-002).
-const fn ids_ok(list: &[&str], prefix: u8) -> bool {
+pub(crate) const fn ids_ok(list: &[&str], prefix: u8) -> bool {
     let mut i = 0;
     while i < list.len() {
         if !is_id(list[i], prefix) {
@@ -609,7 +609,7 @@ const fn ids_ok(list: &[&str], prefix: u8) -> bool {
     true
 }
 
-const fn ends_with_dot(s: &str) -> bool {
+pub(crate) const fn ends_with_dot(s: &str) -> bool {
     let b = s.as_bytes();
     !b.is_empty() && b[b.len() - 1] == b'.'
 }

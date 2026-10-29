@@ -101,6 +101,35 @@ fn wording_is_clean() {
     assert!(f.is_empty(), "{} findings", f.len());
 }
 
+#[test]
+fn control_manifest_ids_pass_and_superseded_is_named() {
+    // Spec 014 FR-010: the control manifest's IDs exist and are current on the committed
+    // registers; a register with one cited assumption superseded names the control and the ID.
+    let r = committed_registers();
+    let f = mc::control_id_findings(rr_dr60::controls(), &r);
+    assert!(f.is_empty(), "{f:?}");
+    let doctored = with_status(r.assumptions, "A-028", "superseded (doctored)");
+    let r2 = Registers {
+        assumptions: &doctored,
+        ..r
+    };
+    let f = mc::control_id_findings(rr_dr60::controls(), &r2);
+    assert_eq!(
+        f,
+        [
+            "agc.enabled: cites A-028, which is superseded",
+            "agc.knee_dbfs: cites A-028, which is superseded"
+        ]
+    );
+    let mut entries = rr_dr60::controls().to_vec();
+    entries[0].assumptions = &["A-999"];
+    let f = mc::control_id_findings(&entries, &r);
+    assert_eq!(
+        f,
+        ["route: cites A-999, which has no row in assumptions.md"]
+    );
+}
+
 // ---- US2 scenarios 2–7; SC-002 (7 of 7) --------------------------------------------------------
 
 #[test]

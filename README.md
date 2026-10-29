@@ -3,7 +3,7 @@
 **A software emulator of the Panasonic RR-DR60 voice recorder's sound, from the microphone to the speaker.** Feed it audio and get back what the recorder would have recorded and played back, as modeled from its service manual and the datasheets of its parts.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Version 0.13.0](https://img.shields.io/badge/version-0.13.0-informational)
+![Version 0.14.0](https://img.shields.io/badge/version-0.14.0-informational)
 ![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)
 ![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-lightgrey)
 
@@ -13,7 +13,7 @@ The RR-DR60 is a pocket digital voice recorder Panasonic sold in the late 1990s.
 
 | | |
 |---|---|
-| **Version** | 0.13.0, pre-alpha. Not yet released or published to crates.io; the API may still change before 1.0. |
+| **Version** | 0.14.0, pre-alpha. Not yet released or published to crates.io; the API may still change before 1.0. |
 | **Signal chain** | 12 of the 15 stages are modeled and on by default. Not modeled: noise reduction (no evidence the device has it), the clock and the power supply. |
 | **Accuracy** | Every modeled stage is built from documents (the service manual, the owner's manual, datasheets) plus recorded assumptions. **No stage has been checked against a real unit**; see [Accuracy](#accuracy). |
 | **Platforms** | Rust library (`no_std`), C API, and a Swift package for iOS and macOS. Bit-identical output on Linux, macOS, Windows, the iOS simulator and an iOS device. |
@@ -68,13 +68,13 @@ Four things to know before you ship:
 3. **There is latency.** 1923 samples (about 40 ms) at 48 kHz by default; `latency_samples()` reports it for any configuration.
 4. **The hiss is seeded.** Output is deterministic; set a different `seed` per session if recordings must not share the same hiss.
 
-The engine also models the device's recording memory (60 minutes, 99 recordings, with export and import), its volume control, speaker/earphone routing and playback speed as live controls, and it describes its own stages through a built-in stage manifest. The [user guide](docs/guide.md) covers all of it.
+The engine also models the device's recording memory (60 minutes, 99 recordings, with export and import), its volume control, speaker/earphone routing and playback speed as live controls, and it describes its own stages and its controls through a built-in stage manifest and control manifest. The [user guide](docs/guide.md) covers all of it.
 
 ## Documentation
 
 | Read this | For |
 |---|---|
-| [User guide](docs/guide.md) | Every stage's behavior, settings, figures and limits; recording and playback; the stage manifest; real-time and performance notes |
+| [User guide](docs/guide.md) | Every stage's behavior, settings, figures and limits; recording and playback; the stage manifest and the control manifest (every control with its kind, range and default); real-time and performance notes |
 | [C header](crates/rr_dr60_ffi/include/rr_dr60.h) · [Swift package](swift/README.md) | The C API and how to use it from Swift |
 | [Signal chain](docs/hardware/signal-chain.md) | The device's fifteen stages, component by component, with what is known and what is assumed |
 | [Assumptions](docs/hardware/assumptions.md) · [Sources](docs/hardware/sources.md) | Every modeled value traced to a document (S-###) or a registered assumption (A-###) |

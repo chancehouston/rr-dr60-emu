@@ -46,7 +46,7 @@ jobs:
           fi
           changed=$(git diff --name-only "$BASE" "${{ github.sha }}")
           echo "$changed"
-          if echo "$changed" | grep -Eq '^(docs/hardware/|CHANGELOG\.md$|README\.md$|docs/guide\.md$|crates/rr_dr60/src/manifest\.rs$|crates/rr_dr60_harness/src/manifest_checks\.rs$|crates/rr_dr60_harness/tests/us1_manifest\.rs$|crates/rr_dr60_harness/tests/us2_cross_check\.rs$|crates/rr_dr60_harness/examples/manifest\.rs$|crates/rr_dr60_harness/golden/manifest-v1\.txt$|crates/rr_dr60_ffi/tests/c/smoke\.c$|scripts/check-traceability\.sh$|\.github/workflows/registers\.yml$)'; then
+          if echo "$changed" | grep -Eq '^(docs/hardware/|CHANGELOG\.md$|README\.md$|docs/guide\.md$|crates/rr_dr60/src/manifest\.rs$|crates/rr_dr60/src/controls\.rs$|crates/rr_dr60_harness/src/controls_checks\.rs$|crates/rr_dr60_harness/tests/us1_controls\.rs$|crates/rr_dr60_harness/tests/us2_controls\.rs$|crates/rr_dr60_harness/golden/control-manifest-v1\.txt$|crates/rr_dr60/src/settings\.rs$|crates/rr_dr60_harness/src/manifest_checks\.rs$|crates/rr_dr60_harness/tests/us1_manifest\.rs$|crates/rr_dr60_harness/tests/us2_cross_check\.rs$|crates/rr_dr60_harness/examples/manifest\.rs$|crates/rr_dr60_harness/golden/manifest-v1\.txt$|crates/rr_dr60_ffi/tests/c/smoke\.c$|scripts/check-traceability\.sh$|\.github/workflows/registers\.yml$)'; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "nothing the manifest mirrors changed; the cargo steps are skipped"
@@ -59,7 +59,7 @@ jobs:
         if: steps.changes.outputs.run == 'true'
       - name: Manifest versus the registers (spec 007 FR-013, FR-019)
         if: steps.changes.outputs.run == 'true'
-        run: cargo test -p rr_dr60_harness --test us1_manifest --test us2_cross_check
+        run: cargo test -p rr_dr60_harness --test us1_manifest --test us2_cross_check --test us1_controls --test us2_controls
       - name: Traceability audit (spec 007 FR-014)
         if: steps.changes.outputs.run == 'true'
         run: scripts/check-traceability.sh

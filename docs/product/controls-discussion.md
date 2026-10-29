@@ -32,6 +32,8 @@ Related notes: [brief.md](brief.md) (O-1, O-9, O-13), [front-and-inside.md](fron
 
 ## 1. Inventory of every engine parameter
 
+> **Superseded as the current inventory (2026-10-29):** the engine's control manifest (spec 014, `rr_dr60::controls()`, the guide's "The controls the engine accepts") is the checked, current list of every control with its kind, timing, range, default and IDs. The tables below are the 2026-10-18 brief that fed it.
+
 Timing classes used below:
 
 | Class | Meaning |

@@ -42,10 +42,11 @@ check_file crates/rr_dr60_harness/src/split_checks.rs 'Tolerance::(Range|AtLeast
 check_file crates/rr_dr60_harness/src/volume_ramp_checks.rs 'Tolerance::(Range|AtLeast|AtMost|Exact)[(][-0-9]' # spec 011
 check_file crates/rr_dr60_harness/src/mic_checks.rs 'Tolerance::(Range|AtLeast|AtMost|Exact)[(][-0-9]' # spec 012
 
-# Spec 007 FR-014: every S-/A-ID the stage manifest cites must be a row of its register.
-# (The harness test `us2_cross_check` checks the rest: supersession, completeness, statuses.)
-# The scan stops at the module's `#[cfg(test)]` line: the tests use made-up IDs on purpose.
-manifest=crates/rr_dr60/src/manifest.rs
+# Spec 007 FR-014 and spec 014 FR-011: every S-/A-ID the stage manifest and the control
+# manifest cite must be a row of its register. (The harness tests `us2_cross_check` and
+# `us2_controls` check the rest: supersession, completeness, statuses, default lines.)
+# The scan stops at each module's `#[cfg(test)]` line: the tests use made-up IDs on purpose.
+for manifest in crates/rr_dr60/src/manifest.rs crates/rr_dr60/src/controls.rs; do
 while IFS= read -r id; do
   case "$id" in
     A-*) register=docs/hardware/assumptions.md ;;
@@ -56,6 +57,7 @@ while IFS= read -r id; do
     status=1
   fi
 done < <(sed '/^#\[cfg(test)\]/,$d' "$manifest" | grep -oE '[AS]-[0-9]{3}' | sort -u)
+done
 
 if [[ $status -eq 0 ]]; then
   echo "check-traceability: OK"

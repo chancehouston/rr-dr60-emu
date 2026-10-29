@@ -152,6 +152,17 @@
 //! }
 //! ```
 //!
+//! **The controls the engine accepts** (spec 014): [`controls()`] describes every adjustable
+//! setting and live control, one [`ControlEntry`] each, with its kind, timing, paths, stage,
+//! range, default, unit, IDs and one sentence on what it does to the sound; [`control()`] looks
+//! one up by identifier. Tests bind it to the engine's validation and defaults. Reading it
+//! allocates nothing:
+//!
+//! ```
+//! let speed = rr_dr60::control("playback_speed").unwrap();
+//! println!("{}: {}", speed.name, speed.description);
+//! ```
+//!
 //! **Level scale:** 0 dBFS (a sine of peak amplitude 1.0) is the codec's full scale, about
 //! 0.196 V peak at the microphone amplifier's output (A-030); speech at a conversational
 //! distance is assumed roughly 10–35 dB below it (A-029, low confidence). The limiter holds
@@ -195,6 +206,7 @@ pub mod speech_codec {
 }
 
 mod codec;
+pub mod controls;
 mod error;
 mod form;
 pub mod manifest;
@@ -214,6 +226,10 @@ mod test_util;
 mod transport;
 mod validate;
 
+pub use controls::{
+    ControlEntry, ControlKind, ControlOption, ControlPaths, ControlTiming, ControlValue, control,
+    controls,
+};
 pub use error::{Error, Setting};
 pub use manifest::{
     Confidence, Header, Manifest, StageEntry, StagePath, StageStatus, StatusCounts, manifest,

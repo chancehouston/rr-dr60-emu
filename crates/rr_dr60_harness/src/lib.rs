@@ -11,6 +11,7 @@ pub mod chain_checks;
 pub mod checks;
 pub mod codec_checks;
 pub mod configs;
+pub mod controls_checks;
 pub mod golden;
 pub mod manifest_checks;
 pub mod mic_checks;

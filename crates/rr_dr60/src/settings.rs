@@ -7,7 +7,7 @@
 /// 16 kHz are ordinary conversions (3:4 and 3:8), not the identity. Any other rate is rejected
 /// by [`Pipeline::new`](crate::Pipeline::new) with
 /// [`Error::UnsupportedHostRate`](crate::Error::UnsupportedHostRate).
-pub const SUPPORTED_HOST_RATES: [u32; 7] = [6000, 8000, 16000, 44100, 48000, 88200, 96000]; // 004 FR-002
+pub const SUPPORTED_HOST_RATES: [u32; 7] = [6000, 8000, 16000, 44100, 48000, 88200, 96000]; // 004 FR-002; A-026
 
 /// The emulated device's internal sample rate, in Hz.
 ///
@@ -191,7 +191,7 @@ pub struct AgcSettings {
 impl AgcSettings {
     /// The modeled device values (A-020, A-028, A-034, A-035).
     pub const DEVICE: Self = Self {
-        enabled: true,      // A-020
+        enabled: true,      // A-020; held below A-030's full scale by A-028
         knee_dbfs: -1.0,    // A-028: the knee just below the codec's full scale
         attack_ms: 3.0,     // A-034: dead time at 10 dB over the knee
         release_ms: 1370.0, // A-035: to −1 dB from 10 dB of attenuation
@@ -292,7 +292,7 @@ impl VasSettings {
     pub const DEVICE: Self = Self {
         enabled: true,         // S-001, A-008
         mode: VasMode::Drop,   // S-001, A-008
-        sensitivity: 3,        // S-001, A-021
+        sensitivity: 3,        // S-001, A-021, A-022, A-033
         threshold_dbfs: -40.0, // A-022 (revised by spec 005): −40 dBFS at level 3, 3 dB per step
         hang_ms: 1000.0,       // A-023
         onset_ms: 20.0,        // A-024
@@ -328,7 +328,7 @@ pub struct MemorySettings {
 impl MemorySettings {
     /// The device's figures (S-001: 60 minutes, 99 items).
     pub const DEVICE: Self = Self {
-        capacity_s: 3600,   // S-001: 60 minutes
+        capacity_s: 3600,   // S-001: 60 minutes; A-038
         max_recordings: 99, // S-001: 99 items
     };
 }
@@ -395,7 +395,7 @@ impl OutputSettings {
         volume_amp_enabled: true, // A-031 adopted (009 FR-002)
         speaker_enabled: true,    // A-010 revised (009 FR-002)
         earphone_enabled: true,   // A-032 adopted (009 FR-002)
-        clamp_enabled: false,     // 010 FR-002: the device has no such bound
+        clamp_enabled: false,     // 010 FR-002: the device has no such bound; A-042
     };
     /// Every output stage bypassed: the engine of version 0.8 at [`Tap::AfterPlayback`]. Not a
     /// device configuration (spec 009 FR-002, FR-016: the earlier specs' checks run with it).
@@ -451,9 +451,9 @@ pub struct MicSettings {
 impl MicSettings {
     /// The device: both stages on, the hiss at its documented level (spec 012 FR-001).
     pub const DEVICE: Self = Self {
-        capsule_enabled: true, // A-048 (012 FR-003)
+        capsule_enabled: true, // A-048, A-052 (012 FR-003)
         amp_enabled: true,     // A-046, A-047, A-051 (012 FR-005, FR-006)
-        hiss_offset_db: 0.0,   // 012 FR-003: the documented level
+        hiss_offset_db: 0.0,   // A-048 (012 FR-003): the documented level
     };
     /// Both stages bypassed: the engine of version 0.11, whose input is the microphone
     /// amplifier's output (spec 012 FR-010; the earlier specs' checks run with it).
@@ -480,7 +480,7 @@ impl MicSettings {
 pub enum Route {
     /// The built-in speaker (the default: nothing plugged in).
     #[default]
-    Speaker,
+    Speaker, // S-001, A-010, A-032, A-042
     /// The earphone jack (S-001; its path bypasses the power amplifier, A-032).
     Earphone,
 }
@@ -496,9 +496,9 @@ pub enum Route {
 pub struct Settings {
     /// Host sample rate in Hz. Must be one of [`SUPPORTED_HOST_RATES`].
     pub host_rate_hz: u32,
-    /// Stage 4 (record anti-alias filter + ADC) on (`true`, default, A-002) or bypassed.
+    /// Stage 4 (record anti-alias filter + ADC) on (`true`, default, A-027) or bypassed.
     pub record_stage_enabled: bool,
-    /// Stage 10 (playback DAC + reconstruction filter) on (`true`, default, A-002) or bypassed.
+    /// Stage 10 (playback DAC + reconstruction filter) on (`true`, default, A-027) or bypassed.
     /// Ignored when `tap` is [`Tap::AfterRecord`].
     pub playback_stage_enabled: bool,
     /// The ADC's full-scale saturation after stage 4: output beyond ±1.0 is clamped to ±1.0
@@ -552,16 +552,16 @@ impl Settings {
     pub const fn new(host_rate_hz: u32) -> Self {
         Self {
             host_rate_hz,
-            record_stage_enabled: true,     // A-002
-            playback_stage_enabled: true,   // A-002
+            record_stage_enabled: true,     // A-027
+            playback_stage_enabled: true,   // A-027
             adc_clamp_enabled: true,        // A-030
             tap: Tap::RouteOutput,          // 009 FR-010: the selected route's output
-            seed: 0,                        // FR-009
+            seed: 0,                        // FR-009; A-049
             agc: AgcSettings::DEVICE,       // A-020, A-028, A-034, A-035
-            vas: VasSettings::DEVICE,       // S-001, A-008, A-021 – A-024
+            vas: VasSettings::DEVICE,       // S-001, A-008, A-021 – A-024, A-033
             memory: MemorySettings::DEVICE, // S-001: 60 min, 99 items (006 FR-010)
-            speech_codec_enabled: true,     // A-004 adopted (008 FR-002): the device has no bypass
-            output: OutputSettings::DEVICE, // A-031, A-010, A-032 (009 FR-002)
+            speech_codec_enabled: true,     // A-004, A-040, A-041 (008 FR-002)
+            output: OutputSettings::DEVICE, // A-031, A-010, A-032, A-042 (009 FR-002)
             mic: MicSettings::DEVICE,       // A-046 – A-053 (012 FR-001)
         }
     }
@@ -588,11 +588,11 @@ mod tests {
     use std::string::ToString;
 
     #[test]
-    fn defaults_cite_a002_and_fr009() {
+    fn defaults_cite_a027_and_fr009() {
         let s = Settings::new(48_000);
         assert_eq!(s.host_rate_hz, 48_000);
-        assert!(s.record_stage_enabled); // A-002
-        assert!(s.playback_stage_enabled); // A-002
+        assert!(s.record_stage_enabled); // A-027
+        assert!(s.playback_stage_enabled); // A-027
         assert_eq!(s.tap, Tap::RouteOutput); // 009 FR-010
         assert_eq!(s.seed, 0); // FR-009
         assert_eq!(s.mic, MicSettings::DEVICE); // 012 FR-001: on by default since 0.12
