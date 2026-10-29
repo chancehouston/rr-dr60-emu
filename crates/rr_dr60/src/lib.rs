@@ -195,6 +195,7 @@ pub mod speech_codec {
 }
 
 mod codec;
+pub mod controls;
 mod error;
 mod form;
 pub mod manifest;
@@ -214,6 +215,10 @@ mod test_util;
 mod transport;
 mod validate;
 
+pub use controls::{
+    ControlEntry, ControlKind, ControlOption, ControlPaths, ControlTiming, ControlValue, control,
+    controls,
+};
 pub use error::{Error, Setting};
 pub use manifest::{
     Confidence, Header, Manifest, StageEntry, StagePath, StageStatus, StatusCounts, manifest,
