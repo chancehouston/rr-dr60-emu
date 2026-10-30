@@ -260,6 +260,24 @@ pub mod __test_hooks {
         crate::stages::voiceband_coeffs::PLAYBACK_SOS
     }
 
+    /// Deliberate defects of the meter read-out for the spec 016 mutation tests (research
+    /// R-12); `Default` is the committed behavior. Each is caught by a named oracle: the
+    /// clamp-on cells of AS3 (a peak read after the clamp), the 0.01 dB onset rows of AS2 (the
+    /// gain from the state after the update), the reference gate's countdown of AS5 (off by
+    /// one), the second-block rows of any stimulus (a missing clear).
+    #[derive(Clone, Copy, Debug, Default, PartialEq)]
+    pub struct MeterMutation {
+        /// The record-filter peak read after the converter clamp.
+        pub filter_peak_after_clamp: bool,
+        /// The gain reduction from the hold after the call's last update, not the deepest
+        /// applied gain.
+        pub gain_from_state_after_update: bool,
+        /// The hang remaining one device sample short.
+        pub hang_off_by_one: bool,
+        /// The input peak's accumulator not cleared at finalization.
+        pub skip_clear: bool,
+    }
+
     /// The limiter's hold-capacitor voltage, in volts: 0.0 when discharged (spec 005 R-03;
     /// contracts/rust-api.md › Test hooks).
     pub fn limiter_state(pipeline: &crate::Pipeline) -> f64 {

@@ -909,6 +909,23 @@ impl Pipeline {
         Ok(p)
     }
 
+    /// Test-only (hidden): a pipeline whose meter read-out carries the mutation `m` (spec 016
+    /// research R-12; tasks.md T016).
+    ///
+    /// # Errors
+    ///
+    /// As [`Pipeline::new`].
+    #[doc(hidden)]
+    pub fn __with_meter_mutation(
+        settings: Settings,
+        m: &crate::__test_hooks::MeterMutation,
+    ) -> Result<Self, Error> {
+        let mut p = Self::new(settings)?;
+        p.one_pass.rec.mutate_meters(m);
+        p.recorder.mutate_meters(m);
+        Ok(p)
+    }
+
     /// Test-only (hidden): a pipeline whose playback speed control carries the mutation `m`
     /// (spec 013 research R-12; tasks.md T021).
     ///

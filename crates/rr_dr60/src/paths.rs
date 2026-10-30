@@ -151,6 +151,9 @@ pub(crate) struct RecordHalf {
     filter_peak: f64,
     /// Spec 016 FR-002 (f): the device samples of the current call the clamp bounded.
     clamp_count: u32,
+    /// Test-only: the spec 016 mutants (research R-12).
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) mutation: crate::__test_hooks::MeterMutation,
 }
 
 impl RecordHalf {
@@ -172,6 +175,8 @@ impl RecordHalf {
             after_drop: false,
             filter_peak: 0.0,
             clamp_count: 0,
+            #[cfg(feature = "__test-hooks")]
+            mutation: Default::default(),
         }
     }
 
@@ -189,6 +194,8 @@ impl RecordHalf {
         }
         // Spec 016 FR-002 (e), (f): the peak before the clamp; the count of bounded samples
         // (a bypassed clamp returns `d` bit-exact, so the test needs no branch on it).
+        #[cfg(feature = "__test-hooks")]
+        let before = d;
         let a = d.abs();
         if a > self.filter_peak {
             self.filter_peak = a;
@@ -198,6 +205,13 @@ impl RecordHalf {
             self.clamp_count += 1;
         }
         d = c;
+        #[cfg(feature = "__test-hooks")]
+        if self.mutation.filter_peak_after_clamp {
+            // The mutant: the peak after the clamp (undo the pre-clamp reading).
+            if before.abs() > c.abs() && self.filter_peak == before.abs() {
+                self.filter_peak = c.abs();
+            }
+        }
         let decision = if self.run_vas {
             self.vas.process(d)
         } else {
@@ -260,6 +274,10 @@ impl RecordHalf {
         if self.run_vas {
             m.vas_paused = self.vas.is_paused();
             m.hang_remaining_samples = self.vas.hang_remaining();
+            #[cfg(feature = "__test-hooks")]
+            if self.mutation.hang_off_by_one {
+                m.hang_remaining_samples = m.hang_remaining_samples.saturating_sub(1);
+            }
         }
     }
 
@@ -629,10 +647,22 @@ impl RecordPath {
     /// Spec 016 (research R-01, R-04): writes the record group into `m` (meters whose stage
     /// did not run keep their rest values) and clears the accumulators.
     pub(crate) fn finalize_into(&mut self, m: &mut crate::pipeline::Meters) {
+        #[cfg(feature = "__test-hooks")]
+        let mutation = self.half.mutation;
         m.input_peak = narrow_out(core::mem::replace(&mut self.input_peak, 0.0));
+        #[cfg(feature = "__test-hooks")]
+        if mutation.skip_clear {
+            self.input_peak = f64::from(m.input_peak);
+        }
         m.limiter_input_peak = narrow_out(core::mem::replace(&mut self.limiter_input_peak, 0.0));
         if self.run_limiter {
             let vc_max = self.limiter.take_vc_max();
+            #[cfg(feature = "__test-hooks")]
+            let vc_max = if mutation.gain_from_state_after_update {
+                self.limiter.state()
+            } else {
+                vc_max
+            };
             m.gain_reduction_db = self.limiter.reduction_db_at(vc_max) as f32;
             m.hold_charge = self.limiter.charge() as f32;
         }
@@ -649,6 +679,12 @@ impl RecordPath {
             Some(down) => down.push(x)?,
         };
         Some(self.half.stage4_only(d))
+    }
+
+    /// Test-only: the spec 016 mutants (research R-12).
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn mutate_meters(&mut self, m: &crate::__test_hooks::MeterMutation) {
+        self.half.mutation = *m;
     }
 
     /// Test-only: the limiter's `v_limit`, V (spec 016 research R-07).

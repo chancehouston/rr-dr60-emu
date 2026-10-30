@@ -813,3 +813,135 @@ mod speed {
         assert!(failed(&sc::level3_identity(&standard, "speed_only_codec")).is_empty());
     }
 }
+
+/// Spec 016 research R-12: each `MeterMutation` defect is caught by its named oracle and the
+/// committed behavior passes it.
+mod meters {
+    use rr_dr60::__test_hooks::MeterMutation;
+    use rr_dr60::{Pipeline, Settings, Tap};
+    use rr_dr60_harness::checks::{MeasurementResult, assert_all};
+    use rr_dr60_harness::meters_checks as mc;
+    use rr_dr60_harness::{configs, golden};
+
+    const RATE: u32 = 48_000;
+
+    fn failed(results: &[MeasurementResult]) -> Vec<&'static str> {
+        results
+            .iter()
+            .filter(|r| !r.passed)
+            .map(|r| r.property)
+            .collect()
+    }
+
+    fn mutant(s: Settings, m: MeterMutation) -> Pipeline {
+        Pipeline::__with_meter_mutation(s, &m).unwrap()
+    }
+
+    /// The peak read after the clamp saturates at 1.0 while the stream reads above: AS3's
+    /// "record-filter peak above 1.0 on every counting block" fails.
+    #[test]
+    fn filter_peak_after_clamp_is_caught() {
+        let x = mc::clamp_square(RATE, 0.5);
+        let mut s = configs::settings_011(RATE);
+        s.agc.enabled = false;
+        s.tap = Tap::AfterRecord;
+        let m = MeterMutation {
+            filter_peak_after_clamp: true,
+            ..MeterMutation::default()
+        };
+        let mut p = mutant(s, m);
+        let blocks = mc::one_pass_blocks(&mut p, &x, mc::ONE_PASS_BLOCK);
+        assert!(
+            blocks
+                .iter()
+                .any(|b| b.meters.adc_clamp_count > 0 && b.meters.record_filter_peak <= 1.0),
+            "the mutant reads at most 1.0 on a counting block"
+        );
+        assert_all(&mc::adc_clamp_counts(RATE));
+    }
+
+    /// The gain from the state after the update is one ramp step deeper on onset blocks: AS2's
+    /// 0.01 dB row fails.
+    #[test]
+    fn gain_from_state_after_update_is_caught() {
+        let f = f64::from(RATE);
+        let x = rr_dr60_harness::stimulus::tone_at_phase(
+            1000.0,
+            9.0,
+            rr_dr60_harness::stimulus::peak_phase(1000.0, RATE),
+            f,
+            (0.5 * f) as usize,
+        );
+        let mut on = configs::settings_011(RATE);
+        on.tap = Tap::AfterAgc;
+        let mut off = on;
+        off.agc.enabled = false;
+        let m = MeterMutation {
+            gain_from_state_after_update: true,
+            ..MeterMutation::default()
+        };
+        let mut p_on = mutant(on, m);
+        let mut p_off = Pipeline::new(off).unwrap();
+        let a = mc::one_pass_blocks(&mut p_on, &x, 64);
+        let b = mc::one_pass_blocks(&mut p_off, &x, 64);
+        let worst = a
+            .iter()
+            .zip(&b)
+            .map(|(u, v)| {
+                let (r, _, _) = mc::gain_ratio_db(&u.output, &v.output);
+                (f64::from(u.meters.gain_reduction_db) - r).abs()
+            })
+            .fold(0.0, f64::max);
+        assert!(worst > 0.01, "the mutant's worst block is {worst} dB");
+        assert!(failed(&mc::limiter_figures(RATE, 1.0, 64)).is_empty());
+    }
+
+    /// One device sample short: the reference gate's countdown row fails.
+    #[test]
+    fn hang_off_by_one_is_caught() {
+        let x = golden::meters_stimulus("vas_burst", RATE);
+        let s = configs::settings("meters_short_hang", RATE);
+        let m = MeterMutation {
+            hang_off_by_one: true,
+            ..MeterMutation::default()
+        };
+        let mut p = mutant(s, m);
+        let blocks = mc::one_pass_blocks(&mut p, &x, 121);
+        let stream = mc::stage4_stream(s, &x, 121);
+        let mut gate = mc::ReferenceGate::new(&s);
+        let mut mismatches = 0;
+        for (b, d) in blocks.iter().zip(&stream) {
+            for &v in d {
+                gate.push(v.clamp(-1.0, 1.0));
+            }
+            if b.meters.hang_remaining_samples != gate.hang_remaining() {
+                mismatches += 1;
+            }
+        }
+        assert!(mismatches > 0, "the mutant agrees with the gate");
+        assert!(failed(&mc::vas_figures(RATE, false)).is_empty());
+    }
+
+    /// A missing clear carries the first block's peak into the second: the partition identity
+    /// and the tap oracle fail from the second block on.
+    #[test]
+    fn skip_clear_is_caught() {
+        let x = golden::meters_stimulus("voiced_m20_half", RATE);
+        let mut s = Settings::new(RATE);
+        s.tap = Tap::AfterMicAmp;
+        let m = MeterMutation {
+            skip_clear: true,
+            ..MeterMutation::default()
+        };
+        let mut p = mutant(s, m);
+        let blocks = mc::one_pass_blocks(&mut p, &x, 1024);
+        let sanitized: Vec<f32> = x.clone();
+        let mismatches = blocks
+            .iter()
+            .zip(sanitized.chunks(1024))
+            .filter(|(b, chunk)| b.meters.input_peak.to_bits() != mc::peak_of(chunk).to_bits())
+            .count();
+        assert!(mismatches > 0, "the mutant equals the per-block input peak");
+        assert!(failed(&mc::host_rate_peaks(RATE)).is_empty());
+    }
+}

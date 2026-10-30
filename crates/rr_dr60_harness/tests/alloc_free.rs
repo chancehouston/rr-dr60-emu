@@ -761,3 +761,54 @@ fn speed_cases(rate: u32, sizes: &[usize]) {
         );
     }
 }
+
+/// Spec 016 FR-010: reading the meters in Rust and in C allocates nothing, between calls and
+/// inside the counting window at every measurement rate.
+#[test]
+fn meters_read_allocates_nothing() {
+    use rr_dr60_ffi::{RrDr60Meters, rr_dr60_meters};
+    MEASURING.with(|m| m.set(true));
+    let input = stimulus::noise(0x016, 1024);
+    let mut output = vec![0.0f32; 1024];
+    for &rate in configs::measurement_rates() {
+        let s = rr_dr60::Settings::new(rate);
+        let mut p = Pipeline::new(s).unwrap();
+        let c = configs::c_settings(&s);
+        let mut handle: *mut RrDr60Pipeline = core::ptr::null_mut();
+        // SAFETY: a valid settings struct and an out-pointer.
+        let st = unsafe { rr_dr60_create(&c, &mut handle) };
+        assert_eq!(st, RrDr60Status::Ok);
+        let mut cm = RrDr60Meters {
+            struct_size: size_of::<RrDr60Meters>() as u32,
+            ..Default::default()
+        };
+        let (a0, d0, r0) = (
+            ALLOCS.load(Relaxed),
+            DEALLOCS.load(Relaxed),
+            REALLOCS.load(Relaxed),
+        );
+        let _ = p.process(&input, &mut output).unwrap();
+        let m1 = p.meters();
+        let m2 = p.rest_meters();
+        let mut info = RrDr60BlockInfo::default();
+        // SAFETY: the handle is live; the buffers are 1024 samples; the struct carries its size.
+        let st = unsafe {
+            rr_dr60_process(handle, input.as_ptr(), output.as_mut_ptr(), 1024, &mut info)
+        };
+        assert_eq!(st, RrDr60Status::Ok);
+        // SAFETY: as above.
+        let st = unsafe { rr_dr60_meters(handle, &mut cm) };
+        assert_eq!(st, RrDr60Status::Ok);
+        let (a1, d1, r1) = (
+            ALLOCS.load(Relaxed),
+            DEALLOCS.load(Relaxed),
+            REALLOCS.load(Relaxed),
+        );
+        assert_eq!((a0, d0, r0), (a1, d1, r1), "{rate} Hz: the reads allocated");
+        assert_eq!(m1.input_peak, cm.input_peak);
+        assert_ne!(m1, m2);
+        // SAFETY: destroying the handle once.
+        unsafe { rr_dr60_destroy(handle) };
+    }
+    MEASURING.with(|m| m.set(false));
+}

@@ -151,7 +151,7 @@ impl ReferenceGate {
                     self.run += 1;
                 }
             }
-            if sound && self.run >= self.onset + 1 {
+            if sound && self.run > self.onset {
                 self.paused = false;
                 self.silent = 0;
                 true
@@ -229,6 +229,7 @@ pub fn stage4_stream(settings: Settings, x: &[f32], block: usize) -> Vec<Vec<f64
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn result(
     requirement: &'static str,
     property: &'static str,
@@ -277,7 +278,8 @@ pub fn host_rate_peaks(rate: u32) -> Vec<MeasurementResult> {
         })
         .collect();
     let mut rows = Vec::new();
-    let cases: [(&str, Tap, fn(&Meters) -> f32); 3] = [
+    type Read = fn(&Meters) -> f32;
+    let cases: [(&str, Tap, Read); 3] = [
         (
             "limiter-input peak == AfterMicAmp output",
             Tap::AfterMicAmp,
@@ -713,16 +715,14 @@ pub fn vas_burst(rate: u32) -> Vec<f32> {
 /// The short-hang configuration (research R-10): `settings_011` with the gate at a 50 ms hang
 /// and a 20 ms onset, drop or mute mode, so a 0.5 s stimulus pauses and resumes.
 pub fn short_hang(rate: u32, mute: bool) -> Settings {
-    let mut s = configs::settings_011(rate);
-    s.vas.enabled = true;
-    s.vas.mode = if mute {
-        rr_dr60::VasMode::Mute
-    } else {
-        rr_dr60::VasMode::Drop
-    };
-    s.vas.hang_ms = 50.0;
-    s.vas.onset_ms = 20.0;
-    s
+    configs::settings(
+        if mute {
+            "meters_short_hang_mute"
+        } else {
+            "meters_short_hang"
+        },
+        rate,
+    )
 }
 
 /// US1 AS5 (FR-008): the state and the hang remaining against the reference gate per block,

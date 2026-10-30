@@ -187,7 +187,7 @@ fn read_is_pure() {
         let s = Settings::new(rate);
         let mut read = Pipeline::new(s).unwrap();
         let mut unread = Pipeline::new(s).unwrap();
-        let mut ev = vec![VasEvent::default(); 0];
+        let mut ev: Vec<VasEvent> = Vec::new();
         for chunk in x.chunks(256) {
             let mut a = vec![0.0f32; chunk.len()];
             let mut b = vec![0.0f32; chunk.len()];
