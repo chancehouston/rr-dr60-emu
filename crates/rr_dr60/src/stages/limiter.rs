@@ -340,6 +340,7 @@ impl Limiter {
     }
 
     /// `v_limit` in volts (the charge's denominator; the `limiter_v_limit` test hook).
+    #[cfg(any(test, feature = "__test-hooks"))]
     pub(crate) fn v_limit(&self) -> f64 {
         self.v_limit
     }
