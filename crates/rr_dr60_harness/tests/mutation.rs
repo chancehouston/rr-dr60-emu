@@ -1165,3 +1165,236 @@ mod changes {
         );
     }
 }
+
+/// Spec 017 (research R-14): the six mutants of `RecordMutation`, each caught by a named
+/// oracle and passing on the committed behavior.
+mod record {
+    use rr_dr60::__test_hooks::RecordMutation;
+    use rr_dr60::changes::record_landing;
+    use rr_dr60::{MicSettings, Pipeline, Settings, Stream, VasMode};
+    use rr_dr60_harness::changes_checks::{self as cc, Partition, same};
+    use rr_dr60_harness::checks::standard;
+    use rr_dr60_harness::mic_checks::HISS_SIGMA;
+    use rr_dr60_harness::record_checks::{self as rc, Value};
+    use rr_dr60_harness::{configs, stimulus};
+
+    const RATE: u32 = 48_000;
+
+    fn mutant(m: RecordMutation) -> impl Fn(Settings) -> Pipeline {
+        move |s| Pipeline::__with_record_mutation(s, &m).unwrap()
+    }
+
+    fn front(mode: VasMode) -> Settings {
+        let mut s = configs::settings("default_output", RATE);
+        s.mic = MicSettings::DEVICE;
+        s.vas.mode = mode;
+        s.speech_codec_enabled = false;
+        s
+    }
+
+    /// The input-0 identity (US1 AS1) on the capsule-only tap: a hiss change at 0 against
+    /// the constant configuration.
+    fn input_zero_identity(make: &dyn Fn(Settings) -> Pipeline) -> bool {
+        let mut s = configs::settings("mic_capsule_only", RATE);
+        s.mic.hiss_offset_db = 0.0;
+        let x = stimulus::silence(4096);
+        let a = rc::one_pass_run(
+            &mut make(s),
+            &x,
+            Partition::Fixed(1024),
+            &[rc::change(Stream::OnePass, 0, Value::Hiss(6.0), 1)],
+        )
+        .out;
+        let b = rc::one_pass_run(
+            &mut make(rc::constant_settings(&s, Value::Hiss(6.0))),
+            &x,
+            Partition::Fixed(1024),
+            &[],
+        )
+        .out;
+        same(&a, &b)
+    }
+
+    #[test]
+    fn apply_after_front_is_caught() {
+        assert!(input_zero_identity(&standard));
+        let m = RecordMutation {
+            apply_after_front: true,
+            ..RecordMutation::default()
+        };
+        assert!(
+            !input_zero_identity(&mutant(m)),
+            "the mutant lands one sample late"
+        );
+    }
+
+    /// The continuity assert (US1 AS3): the landing sample's output equals the old run's.
+    fn landing_sample_is_the_old_runs(make: &dyn Fn(Settings) -> Pipeline) -> bool {
+        let s = configs::settings("agc_only", RATE);
+        let x = stimulus::tone_at_phase(
+            1000.0,
+            9.0,
+            stimulus::peak_phase(1000.0, RATE),
+            f64::from(RATE),
+            2 * RATE as usize,
+        );
+        // P on a peak of the 48-sample cycle (a zero crossing would hide a reset hold).
+        let p = RATE as usize + 12;
+        assert!(x[p].abs() > 2.0);
+        let old = rc::one_pass_run(&mut make(s), &x, Partition::Fixed(4096), &[]).out;
+        let sched = rc::one_pass_run(
+            &mut make(s),
+            &x,
+            Partition::Fixed(4096),
+            &[rc::change(Stream::OnePass, p as u64, Value::Knee(-5.0), 1)],
+        )
+        .out;
+        same(&sched[..=p], &old[..=p])
+    }
+
+    #[test]
+    fn reset_vc_on_retune_is_caught() {
+        assert!(landing_sample_is_the_old_runs(&standard));
+        let m = RecordMutation {
+            reset_vc_on_retune: true,
+            ..RecordMutation::default()
+        };
+        assert!(
+            !landing_sample_is_the_old_runs(&mutant(m)),
+            "the mutant discharges the hold at P"
+        );
+    }
+
+    /// The reference gate (US1 AS5): a hang shortening with the silent count past the new hang
+    /// pauses at k(P).
+    fn pause_at_k_of_p(make: &dyn Fn(Settings) -> Pipeline) -> bool {
+        let s = front(VasMode::Mute);
+        let x = stimulus::burst_gap(1000.0, -20.0, &[(true, 0.5), (false, 1.0)], f64::from(RATE));
+        let p = ((3000 + 400) as u128 * u128::from(RATE)).div_ceil(6000) as u64;
+        let k = rc::k_of(p, RATE) as usize;
+        let r = rc::record_run(
+            &mut make(s),
+            &x,
+            Partition::Fixed(1024),
+            &[rc::change(Stream::Record, p, Value::Hang(50.0), 1)],
+        );
+        r.samples[k].to_bits() == 0 && r.samples[k - 1].to_bits() != 0
+    }
+
+    #[test]
+    fn reset_counts_on_hang_is_caught() {
+        assert!(pause_at_k_of_p(&standard));
+        let m = RecordMutation {
+            reset_counts_on_hang: true,
+            ..RecordMutation::default()
+        };
+        assert!(
+            !pause_at_k_of_p(&mutant(m)),
+            "the mutant restarts the silent count"
+        );
+    }
+
+    /// The hiss ratio (US1 AS6): the transition's samples follow the smoothstep.
+    fn hiss_ratio_holds(make: &dyn Fn(Settings) -> Pipeline) -> bool {
+        let mut s = configs::settings("mic_capsule_only", RATE);
+        s.mic.hiss_offset_db = 0.0;
+        let x = stimulus::silence(3 * 4096);
+        let p = 4096usize;
+        let n = rr_dr60::output::volume_transition_samples(RATE).unwrap() as usize;
+        let old = rc::one_pass_run(&mut make(s), &x, Partition::Fixed(1024), &[]).out;
+        let sched = rc::one_pass_run(
+            &mut make(s),
+            &x,
+            Partition::Fixed(1024),
+            &[rc::change(Stream::OnePass, p as u64, Value::Hiss(12.0), 1)],
+        )
+        .out;
+        let sigma = HISS_SIGMA[4];
+        rc::hiss_ratio_mismatches(
+            &old,
+            &sched,
+            rc::hiss_gain(sigma, 0.0),
+            rc::hiss_gain(sigma, 12.0),
+            p,
+            n,
+        ) == 0
+    }
+
+    #[test]
+    fn step_hiss_is_caught() {
+        assert!(hiss_ratio_holds(&standard));
+        let m = RecordMutation {
+            step_hiss: true,
+            ..RecordMutation::default()
+        };
+        assert!(!hiss_ratio_holds(&mutant(m)), "the mutant steps the gain");
+    }
+
+    /// The k(P) pin (record_matrix): the hook twin of `record_landing` against the stored sum.
+    #[test]
+    fn landing_floor_is_caught() {
+        let mut s = configs::settings("bypass_all", RATE);
+        s.speech_codec_enabled = false;
+        let mut p = standard(s);
+        p.start_recording().unwrap();
+        let m = RecordMutation {
+            landing_floor: true,
+            ..RecordMutation::default()
+        };
+        let mut stored = 0u64;
+        let mut caught = 0;
+        for pos in 1..=64u64 {
+            stored += p.record(&[0.01], &mut []).unwrap().stored as u64;
+            assert_eq!(stored, record_landing(pos, RATE).unwrap());
+            assert_eq!(
+                stored,
+                rr_dr60::__test_hooks::record_landing_mutated(
+                    pos,
+                    RATE,
+                    &RecordMutation::default()
+                )
+            );
+            if stored != rr_dr60::__test_hooks::record_landing_mutated(pos, RATE, &m) {
+                caught += 1;
+            }
+        }
+        assert!(
+            caught > 0,
+            "the floor formula is caught by the stored-sum pin"
+        );
+    }
+
+    /// US2 AS4: a value landed on the recorder reaches the one-pass at its next call.
+    fn cross_stream_lands(make: &dyn Fn(Settings) -> Pipeline) -> bool {
+        let s = front(VasMode::Drop);
+        let x = stimulus::voiced(f64::from(RATE), 0.2, -20.0, 0x017);
+        let mut p = make(s);
+        let _ = rc::record_run(
+            &mut p,
+            &x,
+            Partition::Fixed(1024),
+            &[rc::change(Stream::Record, 0, Value::Knee(-5.0), 1)],
+        );
+        let r = rc::one_pass_run(&mut p, &x, Partition::Fixed(1024), &[]);
+        r.log.len() == 1 && r.log[0].after == -5.0
+    }
+
+    #[test]
+    fn skip_other_stream_is_caught() {
+        assert!(cross_stream_lands(&standard));
+        let m = RecordMutation {
+            skip_other_stream: true,
+            ..RecordMutation::default()
+        };
+        assert!(
+            !cross_stream_lands(&mutant(m)),
+            "the mutant never lands the other stream's value"
+        );
+        // The committed settings still show the landing even on the mutant (the stream's own
+        // landing wrote them); only the mirror is missing.
+        assert_eq!(
+            cc::control_index("agc.knee_dbfs"),
+            Value::Knee(0.0).control()
+        );
+    }
+}

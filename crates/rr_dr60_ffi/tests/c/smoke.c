@@ -327,6 +327,75 @@ static int print_changes(void) {
   return 0;
 }
 
+/* Spec 017 SC-003: a scheduled recording and a one-pass with record-side changes, as the Rust
+   example `record_changes_rows` prints them. */
+static int print_record_changes(void) {
+  enum { CRATE = 48000, CN = CRATE / 2, CBLOCK = 1024 };
+  static float cin[CN], cout[CN];
+  for (size_t i = 0; i < CN; i++) cin[i] = (i % 48 < 24) ? 0.125f : -0.125f;
+  uint32_t sens = control_index("vas.sensitivity"), hiss = control_index("mic.hiss_offset_db");
+  uint32_t knee = control_index("agc.knee_dbfs"), route = control_index("route");
+  if (sens == UINT32_MAX || hiss == UINT32_MAX || knee == UINT32_MAX || route == UINT32_MAX) return 1;
+  RrDr60Settings s = rr_dr60_settings_default(CRATE);
+  s.speech_codec_enabled = false;
+  RrDr60Pipeline *p = NULL;
+  if (rr_dr60_create(&s, &p) != RR_DR60_STATUS_OK) return 1;
+  RrDr60ChangeEntry entries[RR_DR60_MAX_CHANGES_PER_CALL];
+  if (rr_dr60_schedule_change(p, RR_DR60_STREAM_RECORD, 700, sens, 5.0, 1) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_schedule_change(p, RR_DR60_STREAM_RECORD, 1500, hiss, 6.0, 2) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_start_recording(p) != RR_DR60_STATUS_OK) return 1;
+  printf("record\n");
+  for (size_t pos = 0; pos < CN; pos += CBLOCK) {
+    size_t n = CN - pos < CBLOCK ? CN - pos : CBLOCK;
+    RrDr60RecordInfo info;
+    size_t count = 0;
+    uint64_t total = 0;
+    if (rr_dr60_record_with_changes(p, cin + pos, n, &info, NULL, 0, entries, RR_DR60_MAX_CHANGES_PER_CALL, &count,
+                                    &total) != RR_DR60_STATUS_OK)
+      return 1;
+    for (size_t k = 0; k < count; k++) print_entry(&entries[k]);
+  }
+  RrDr60StopOutcome so;
+  size_t count = 0;
+  uint64_t total = 0;
+  if (rr_dr60_stop_recording_with_changes(p, &so, NULL, 0, entries, RR_DR60_MAX_CHANGES_PER_CALL, &count, &total) !=
+      RR_DR60_STATUS_OK)
+    return 1;
+  for (size_t k = 0; k < count; k++) print_entry(&entries[k]);
+  printf("final %llu\n", (unsigned long long)total);
+  size_t len = 0;
+  if (rr_dr60_export_len(p, 1, &len) != RR_DR60_STATUS_OK) return 1;
+  unsigned char *bytes = malloc(len);
+  if (!bytes) return 1;
+  size_t written = 0;
+  if (rr_dr60_export(p, 1, bytes, len, &written) != RR_DR60_STATUS_OK) return 1;
+  uint64_t h = 0xcbf29ce484222325ULL;
+  for (size_t i = 0; i < written; i++) {
+    h ^= (uint64_t)bytes[i];
+    h *= 0x0100000001b3ULL;
+  }
+  free(bytes);
+  printf("digest %016llx\n", (unsigned long long)h);
+  /* The one-pass: a knee change at input 500 and a route change at output 900. */
+  if (rr_dr60_schedule_change(p, RR_DR60_STREAM_ONE_PASS, 500, knee, -5.0, 3) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_schedule_change(p, RR_DR60_STREAM_ONE_PASS, 900, route, 1.0, 4) != RR_DR60_STATUS_OK) return 1;
+  printf("one-pass\n");
+  h = 0xcbf29ce484222325ULL;
+  for (size_t pos = 0; pos < CN; pos += CBLOCK) {
+    size_t n = CN - pos < CBLOCK ? CN - pos : CBLOCK;
+    RrDr60BlockInfo info;
+    size_t count2 = 0;
+    if (rr_dr60_process_with_events_and_changes(p, cin + pos, cout + pos, n, &info, NULL, 0, entries,
+                                                RR_DR60_MAX_CHANGES_PER_CALL, &count2) != RR_DR60_STATUS_OK)
+      return 1;
+    for (size_t k = 0; k < count2; k++) print_entry(&entries[k]);
+    h = digest_add(h, cout + pos, info.produced);
+  }
+  printf("digest %016llx\n", (unsigned long long)h);
+  rr_dr60_destroy(p);
+  return 0;
+}
+
 static void print_controls(void) {
   uint32_t n = rr_dr60_control_count();
   printf("control_count: %u\n", n);
@@ -396,6 +465,9 @@ int main(int argc, char **argv) {
   }
   if (argc > 1 && strcmp(argv[1], "--changes") == 0) {
     return print_changes();
+  }
+  if (argc > 1 && strcmp(argv[1], "--record-changes") == 0) {
+    return print_record_changes();
   }
   if (argc > 1 && strcmp(argv[1], "--manifest") == 0) {
     print_manifest();

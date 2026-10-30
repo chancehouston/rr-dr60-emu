@@ -137,8 +137,9 @@ pub enum Error {
         /// The stream.
         stream: crate::Stream,
     },
-    /// A schedule, pending-count, position or clear call on the reserved record stream (spec
-    /// 015 FR-001; the record-side values are spec 017's); nothing changes.
+    /// A call on a reserved stream value (spec 015 FR-001). Declared for future reserved
+    /// [`Stream`](crate::Stream) values; **no call returns it since 0.17**, where the record
+    /// stream carries the record-side values (spec 017).
     ReservedStream {
         /// The stream.
         stream: crate::Stream,
@@ -151,6 +152,19 @@ pub enum Error {
         control: u32,
         /// The rejected value.
         value: f64,
+    },
+    /// A position read in a clock the stream does not have (spec 017 D2):
+    /// `stream_position(Stream::Record)` (the recorder has no output clock) or
+    /// `input_position(Stream::Playback)` (the player has no input clock); nothing changes.
+    NoSuchClock {
+        /// The stream.
+        stream: crate::Stream,
+    },
+    /// A control manifest index at or past [`CONTROL_COUNT`](crate::controls::CONTROL_COUNT) (spec 017:
+    /// `changes::clock_of`).
+    NoSuchControl {
+        /// The index given.
+        control: u32,
     },
 }
 
@@ -330,6 +344,12 @@ impl fmt::Display for Error {
             Error::InvalidControlValue { control, value } => {
                 write!(f, "invalid value {value} for control {control}")
             }
+            Error::NoSuchClock { stream } => {
+                write!(f, "the {stream:?} stream has no such clock")
+            }
+            Error::NoSuchControl { control } => {
+                write!(f, "no such control: {control}")
+            }
         }
     }
 }
@@ -490,5 +510,15 @@ mod tests {
             value.contains("2") && value.contains("control 0"),
             "{value}"
         );
+        let clock = Error::NoSuchClock {
+            stream: crate::Stream::Record,
+        }
+        .to_string();
+        assert!(
+            clock.contains("Record") && clock.contains("clock"),
+            "{clock}"
+        );
+        let control = Error::NoSuchControl { control: 29 }.to_string();
+        assert!(control.contains("29"), "{control}");
     }
 }

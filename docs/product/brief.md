@@ -224,7 +224,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
 - **The volume position.** A change moves the knob over 20 ms (spec 011).
 - **The output route:** speaker or earphone.
 
-**Settings** apply only through `reconfigure`. It is refused while a recording or a playback is in progress, it may allocate, and it is not real-time safe. Today no setting can change during a recording. The settings are:
+**Settings** apply only through `reconfigure`. It is refused while a recording or a playback is in progress, it may allocate, and it is not real-time safe. Today no setting can change during a recording. *(Since 0.17.0 the eight record-side values above can, through the schedule; see § 4.)* The settings are:
 
 - **Record side:**
   - the limiter: on/off, knee, attack (dead time), release;
@@ -293,7 +293,7 @@ The limiter's internal state is a test-only hook. Also not built: a scope copy a
 
 **Recordings:** export and import as a versioned, checksummed byte sequence (stored form version 2).
 
-**Settings:** a fixed struct with a version-checked size in C. There is no serialization format for settings or for a chain, and no versioned session contract (spec 020). Since engine 0.16.0 (spec 015) the three live controls can be scheduled at an output-sample position and every change a stream applies is logged with its position, the values before and after and a caller tag; the record-side values follow in spec 017.
+**Settings:** a fixed struct with a version-checked size in C. There is no serialization format for settings or for a chain, and no versioned session contract (spec 020). Since engine 0.16.0 (spec 015) the three live controls can be scheduled at an output-sample position and every change a stream applies is logged with its position, the values before and after and a caller tag. Since 0.17.0 (spec 017) eight record-side values (the sensitivity, the voice activation's threshold, hang and onset, the limiter's knee, attack and release, the hiss level) can be scheduled on the record stream and the one-pass in the stream's input clock and are logged the same way; a landed value shows in `settings()`. The switches, the codec, the memory and the host rate still change only through `reconfigure`.
 
 ### 5. Ownership
 

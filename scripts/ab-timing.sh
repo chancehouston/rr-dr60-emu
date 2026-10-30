@@ -19,6 +19,10 @@
 #   HEAD_TEST = changes: spec 015's sample-timed changes against the baseline (015 FR-010: the
 #     player and the one-pass with the schedule empty, 3 %; RR_DR60_CHANGES_COST_CEILING on the
 #     runner; one change per block reported).
+#   HEAD_TEST = record: spec 017's live record-side values against the baseline (017 FR-009: the
+#     record path and the one-pass with the record schedule empty, 3 %;
+#     RR_DR60_RECORD_COST_CEILING on the runner; one knee change per block and the worst block
+#     reported).
 #   HEAD_TEST = meters: spec 016's per-block meters against the baseline (016 FR-013: the default
 #     front within 5 %, every stage off within the same absolute nanoseconds; the ceiling from
 #     RR_DR60_METERS_COST_CEILING, 0.12 on the CI runner); asserted, exits 1 when over.
@@ -126,6 +130,63 @@ print(f"A/B meters vs {rev}, 48 kHz, 4096 blocks, speaker route, codec bypassed 
 print(f"  default front (stages 1 – 2 on): {rev} {bf:.2f} ns, working tree {hf:.2f} ns per host sample, {hf - bf:+.2f} ns ({100 * (hf / bf - 1):+.2f} %; ceiling {100 * ceiling:.0f} %) {'PASS' if front_ok else 'FAIL'}")
 print(f"  every stage off: {rev} {bo:.2f} ns, working tree {ho:.2f} ns per host sample, {ho - bo:+.2f} ns (budget {budget_ns:.2f} ns, the same absolute nanoseconds) {'PASS' if off_ok else 'FAIL'}")
 sys.exit(0 if front_ok and off_ok else 1)
+PY
+  exit $?
+fi
+
+if [ "$head_test" = "record" ]; then
+  # Spec 017 FR-009 (research R-11): the record-side values' idle cost. `tests/record_timing.rs`
+  # is written against 0.16's public API and copied into the baseline worktree; each build prints
+  # the fastest-of-45 figure of the record path and of the one-pass (the default front, the codec
+  # bypassed, the record schedule empty). Asserted: both within the ceiling (3 % by default,
+  # RR_DR60_RECORD_COST_CEILING on the CI runner: 0.05); exits 1 when over. Then the head's
+  # `record_pending_timing` (one knee change per block; the worst block) is run alone and reported.
+  cp "$root/crates/rr_dr60_harness/tests/record_timing.rs" "$work/base/crates/rr_dr60_harness/tests/"
+  rbin_of() {
+    (cd "$1" && cargo test -q -p rr_dr60_harness --release --test "$2" --no-run --message-format=json 2>/dev/null) |
+      python3 -c 'import json,sys
+name = sys.argv[1]
+for l in sys.stdin:
+    try: m = json.loads(l)
+    except ValueError: continue
+    if m.get("reason") == "compiler-artifact" and m.get("target", {}).get("name") == name and m.get("executable"):
+        print(m["executable"])' "$2" | tail -1
+  }
+  echo "building the baseline ($baseline) and the working tree (record) ..." >&2
+  base_bin="$(rbin_of "$work/base" record_timing)"
+  head_bin="$(rbin_of "$root" record_timing)"
+  pending_bin="$(rbin_of "$root" record_pending_timing)"
+  [ -x "$base_bin" ] && [ -x "$head_bin" ] && [ -x "$pending_bin" ] || { echo "ab-timing: a build failed" >&2; exit 1; }
+  : >"$work/base.txt"
+  : >"$work/head.txt"
+  for i in 1 2 3; do
+    echo "round $i of 3" >&2
+    "$base_bin" --ignored --exact record_cost --nocapture --test-threads=1 2>/dev/null | grep -oE '(record_ns|one_pass_ns)=[0-9.]+' >>"$work/base.txt"
+    "$head_bin" --ignored --exact record_cost --nocapture --test-threads=1 2>/dev/null | grep -oE '(record_ns|one_pass_ns)=[0-9.]+' >>"$work/head.txt"
+  done
+  pending="$("$pending_bin" --ignored --exact record_pending_cost --nocapture --test-threads=1 2>/dev/null | grep -oE '(record_pending_ns|worst_block_us)=[0-9.]+' | tr '\n' ' ')"
+  python3 - "$work/base.txt" "$work/head.txt" "$baseline" "${RR_DR60_RECORD_COST_CEILING:-0.03}" "$pending" <<'PY'
+import re, sys
+def best(path):
+    out = {}
+    for line in open(path):
+        m = re.search(r"(\w+)=([\d.]+)", line.strip())
+        if m:
+            out[m.group(1)] = min(out.get(m.group(1), float("inf")), float(m.group(2)))
+    return out
+b, h, rev, ceiling, pending = best(sys.argv[1]), best(sys.argv[2]), sys.argv[3], float(sys.argv[4]), sys.argv[5]
+br, hr = b["record_ns"], h["record_ns"]
+bo, ho = b["one_pass_ns"], h["one_pass_ns"]
+r_ok = hr / br - 1 <= ceiling
+o_ok = ho / bo - 1 <= ceiling
+pend = dict(re.findall(r"(\w+)=([\d.]+)", pending))
+pn = float(pend.get("record_pending_ns", "nan"))
+wb = float(pend.get("worst_block_us", "nan"))
+print(f"A/B record vs {rev}, 48 kHz, 4096 blocks, the default front, codec bypassed, the record schedule empty (017 FR-009; fastest of 45 runs × 3 alternations):")
+print(f"  record path: {rev} {br:.2f} ns, working tree {hr:.2f} ns per host sample, {hr - br:+.2f} ns ({100 * (hr / br - 1):+.2f} %; ceiling {100 * ceiling:.0f} %) {'PASS' if r_ok else 'FAIL'}")
+print(f"  one-pass: {rev} {bo:.2f} ns, working tree {ho:.2f} ns per host sample, {ho - bo:+.2f} ns ({100 * (ho / bo - 1):+.2f} %; ceiling {100 * ceiling:.0f} %) {'PASS' if o_ok else 'FAIL'}")
+print(f"  record path with one knee change per block (reported): {pn:.2f} ns per host sample, {pn - hr:+.2f} ns ({100 * (pn / hr - 1):+.2f} %) against the empty schedule; worst 4096-sample block {wb:.1f} µs of 85333")
+sys.exit(0 if r_ok and o_ok else 1)
 PY
   exit $?
 fi

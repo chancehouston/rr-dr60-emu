@@ -280,8 +280,45 @@ fn live_accepts(p: &mut Pipeline, id: &str, v: Val) -> Option<bool> {
     match (id, v) {
         ("volume", Val::F(x)) => Some(p.set_volume(x).is_ok()),
         ("playback_speed", Val::I(x)) => Some(p.set_playback_speed(x.min(255) as u8).is_ok()),
+        // Spec 017: the eight record-side values change live through the schedule only, on the
+        // record stream while recording and on the one-pass otherwise (there is no plain
+        // setter); the value is validated as the setting.
+        (_, Val::F(x)) if is_record_side(id) => Some(schedule_record_side(p, id, f64::from(x))),
+        (_, Val::I(x)) if is_record_side(id) => Some(schedule_record_side(p, id, x as f64)),
         _ => None,
     }
+}
+
+/// Spec 017 FR-001: the eight record-side values.
+pub fn is_record_side(id: &str) -> bool {
+    matches!(
+        id,
+        "vas.sensitivity"
+            | "vas.threshold_dbfs"
+            | "vas.hang_ms"
+            | "vas.onset_ms"
+            | "agc.knee_dbfs"
+            | "agc.attack_ms"
+            | "agc.release_ms"
+            | "mic.hiss_offset_db"
+    )
+}
+
+/// Schedules `id` at the next input position of the active stream (the record stream while
+/// recording, the one-pass otherwise) and returns whether the call was accepted.
+fn schedule_record_side(p: &mut Pipeline, id: &str, value: f64) -> bool {
+    let control = rr_dr60::controls()
+        .iter()
+        .position(|e| e.identifier == id)
+        .expect("a control") as u32;
+    let stream = if p.state().state == rr_dr60::State::Recording {
+        rr_dr60::Stream::Record
+    } else {
+        rr_dr60::Stream::OnePass
+    };
+    let position = p.input_position(stream).expect("an input clock");
+    p.schedule_change(stream, position, control, value, 1)
+        .is_ok()
 }
 
 /// 014 FR-008: each bound is accepted and the nearest value outside is refused, by
@@ -816,6 +853,19 @@ pub fn setters(
         }
     }
     for id in live {
+        // Spec 017 D4 (restated): the eight record-side values are live through the schedule
+        // only; a plain setter for one of them would be a defect.
+        if is_record_side(id) {
+            let bare = id.rsplit('.').next().unwrap_or(id);
+            if found_core.iter().any(|(_, n)| n == id || n == bare)
+                || found_c.iter().any(|n| n == id || n == bare)
+            {
+                f.push(format!(
+                    "{id}: a record-side value with a plain setter (spec 017: the schedule only)"
+                ));
+            }
+            continue;
+        }
         if !found_core.iter().any(|(_, n)| n == id) {
             f.push(format!("{id}: live entry without a core setter"));
         }

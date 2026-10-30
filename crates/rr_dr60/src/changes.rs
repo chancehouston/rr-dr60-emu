@@ -13,9 +13,11 @@ use crate::settings::SUPPORTED_HOST_RATES;
 /// Pending changes a stream's schedule holds (spec 015 D4, FR-002): reserved at construction.
 pub const SCHEDULE_CAPACITY: usize = 64; // engineering target (015 D4)
 
-/// A change-log length that is always enough for one processing call (spec 015 FR-005): the
-/// schedule's capacity plus one plain change per live control.
-pub const MAX_CHANGES_PER_CALL: usize = SCHEDULE_CAPACITY + 3; // 015 FR-005
+/// A change-log length that is always enough for one processing call (spec 015 FR-005; spec
+/// 017 FR-005, restated at the plan): the one-pass's two schedules (one per clock, spec 017 D2),
+/// one plain change per live control, and one cross-stream landing per record-side value (spec
+/// 017 D4). The one-pass attains 138 in one call, the recorder 72, the player 67. 67 in 0.16.
+pub const MAX_CHANGES_PER_CALL: usize = 2 * SCHEDULE_CAPACITY + 3 + 8; // 015 FR-005; 017 FR-005
 
 /// The stream a change is scheduled on (spec 015 D2): each has its own clock and schedule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -30,7 +32,9 @@ pub enum Stream {
     /// [`reset`](crate::Pipeline::reset) and [`reconfigure`](crate::Pipeline::reconfigure), the
     /// clock the voice-activation events use.
     OnePass = 1,
-    /// Reserved for the record-side values (spec 017); every call refuses it today.
+    /// The recorder (spec 017 D2): the clock is the **input** clock, host input samples fed
+    /// since [`start_recording`](crate::Pipeline::start_recording) (the stop's silence
+    /// included), and it carries the eight record-side values only.
     Record = 2,
 }
 
@@ -46,7 +50,9 @@ pub enum Stream {
 #[non_exhaustive]
 #[repr(C)]
 pub struct ChangeEntry {
-    /// The host output index the change landed on, in the stream's clock.
+    /// The index the change landed on, in the stream's clock: a host **output** sample for the
+    /// route, the volume and the playback speed; a host **input** sample for a record-side value
+    /// (spec 017 D2; the control's side is [`clock_of`]). The one-pass has both clocks.
     pub position: u64,
     /// The stream's last applied value for the control.
     pub before: f64,
@@ -231,6 +237,12 @@ impl Schedule {
     pub(crate) fn earliest(&self) -> u64 {
         self.earliest
     }
+
+    /// The pending entries, in position order (spec 017: the event bound reads the pending hang
+    /// changes).
+    pub(crate) fn entries(&self) -> &[Entry] {
+        &self.entries[..self.len]
+    }
 }
 
 /// Deliberate defects for the spec 015 mutation tests (research R-13); `Default` is the
@@ -360,7 +372,7 @@ mod tests {
                 reserved: 0,
             }
         );
-        assert_eq!(MAX_CHANGES_PER_CALL, 67);
+        assert_eq!(MAX_CHANGES_PER_CALL, 139); // 017: 2 · 64 + 3 + 8
     }
 
     #[test]
@@ -643,5 +655,695 @@ mod index_tests {
         assert_eq!(c[LIVE_ROUTE as usize].identifier, "route");
         assert_eq!(c[LIVE_VOLUME as usize].identifier, "volume");
         assert_eq!(c[LIVE_SPEED as usize].identifier, "playback_speed");
+    }
+}
+
+// ---- Spec 017: the record-side values -----------------------------------------------------------
+
+/// Which clock a control's positions count in (spec 017 D2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+#[repr(u32)]
+pub enum Clock {
+    /// Host input samples the stream has processed (the record-side values: the one-pass's
+    /// record path and the recorder).
+    Input = 0,
+    /// Host output samples the stream has produced (the route, the volume, the playback speed:
+    /// the player and the one-pass's playback side).
+    Output = 1,
+}
+
+/// The clock a control's scheduled positions count in (spec 017 D2, FR-010): [`Clock::Input`]
+/// for a control whose control manifest paths include the record path (the record path wins
+/// for the idle settings on both paths), else [`Clock::Output`]. Total over the manifest.
+///
+/// # Errors
+///
+/// [`Error::NoSuchControl`] for an index at or past [`CONTROL_COUNT`](crate::controls::CONTROL_COUNT).
+pub fn clock_of(control: u32) -> Result<Clock, Error> {
+    let entry = crate::controls::controls()
+        .get(control as usize)
+        .ok_or(Error::NoSuchControl { control })?;
+    if entry.paths.contains(crate::controls::ControlPaths::RECORD) {
+        Ok(Clock::Input)
+    } else {
+        Ok(Clock::Output)
+    }
+}
+
+/// The device sample at which a gate value (`vas.*`) scheduled at input sample `position` takes
+/// effect (spec 017 D3): k(0) = 0 and k(P) = ⌈P · 6000 ÷ rate⌉, the first device sample the
+/// conversion produces from input samples at or after P (research R-04). The limiter's and the
+/// hiss's values act on sample P itself at the host rate.
+///
+/// # Errors
+///
+/// [`Error::UnsupportedHostRate`] for a rate not in
+/// [`SUPPORTED_HOST_RATES`](crate::SUPPORTED_HOST_RATES).
+pub fn record_landing(position: u64, host_rate_hz: u32) -> Result<u64, Error> {
+    if !SUPPORTED_HOST_RATES.contains(&host_rate_hz) {
+        return Err(Error::UnsupportedHostRate {
+            requested: host_rate_hz,
+        });
+    }
+    let k = (u128::from(position) * u128::from(crate::settings::DEVICE_RATE_HZ))
+        .div_ceil(u128::from(host_rate_hz));
+    Ok(k as u64)
+}
+
+/// The record-side values' slots, in the order of [`LIVE_RECORD`].
+pub(crate) const SLOT_SENSITIVITY: usize = 0;
+pub(crate) const SLOT_THRESHOLD: usize = 1;
+pub(crate) const SLOT_HANG: usize = 2;
+pub(crate) const SLOT_ONSET: usize = 3;
+pub(crate) const SLOT_KNEE: usize = 4;
+pub(crate) const SLOT_ATTACK: usize = 5;
+pub(crate) const SLOT_RELEASE: usize = 6;
+pub(crate) const SLOT_HISS: usize = 7;
+
+/// The control manifest's indices of the eight record-side values (spec 017 FR-001), by slot:
+/// `vas.sensitivity`, `vas.threshold_dbfs`, `vas.hang_ms`, `vas.onset_ms`, `agc.knee_dbfs`,
+/// `agc.attack_ms`, `agc.release_ms`, `mic.hiss_offset_db` (pinned by a test against the
+/// manifest).
+pub(crate) const LIVE_RECORD: [u32; 8] = [15, 16, 17, 18, 10, 11, 12, 28];
+
+/// The setting each slot validates as (spec 017 FR-001: exactly as `validate` does).
+pub(crate) const SETTING_OF_SLOT: [crate::error::Setting; 8] = [
+    crate::error::Setting::VasSensitivity,
+    crate::error::Setting::VasThresholdDbfs,
+    crate::error::Setting::VasHangMs,
+    crate::error::Setting::VasOnsetMs,
+    crate::error::Setting::AgcKneeDbfs,
+    crate::error::Setting::AgcAttackMs,
+    crate::error::Setting::AgcReleaseMs,
+    crate::error::Setting::MicHissOffsetDb,
+];
+
+/// A record-side value as the schedule stores it (spec 017 FR-001; research R-06): within the
+/// setting's inclusive range after narrowing to single precision (NaN and ±Inf refused), the
+/// sensitivity integral; −0.0 normalized.
+pub(crate) fn record_value(slot: usize, value: f64) -> Result<f64, Error> {
+    let setting = SETTING_OF_SLOT[slot];
+    let (lo, hi) = setting.range();
+    let v = value as f32;
+    if !value.is_finite() || !(v >= lo && v <= hi) {
+        return Err(Error::InvalidSetting { setting });
+    }
+    if slot == SLOT_SENSITIVITY && f64::from(value as u8) != value {
+        return Err(Error::InvalidSetting { setting });
+    }
+    Ok(f64::from(v) + 0.0)
+}
+
+/// The slot of a record-side control, or `None` for any other control.
+#[inline]
+pub(crate) fn slot_of(control: u32) -> Option<usize> {
+    LIVE_RECORD.iter().position(|&c| c == control)
+}
+
+/// The eight record-side values as one copyable record (data-model.md › Record-side values).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct RecordValues {
+    pub(crate) sensitivity: u8,
+    pub(crate) threshold_dbfs: f32,
+    pub(crate) hang_ms: f32,
+    pub(crate) onset_ms: f32,
+    pub(crate) knee_dbfs: f32,
+    pub(crate) attack_ms: f32,
+    pub(crate) release_ms: f32,
+    pub(crate) hiss_offset_db: f32,
+}
+
+impl RecordValues {
+    /// The values of `settings`.
+    pub(crate) fn from(settings: &crate::Settings) -> Self {
+        Self {
+            sensitivity: settings.vas.sensitivity,
+            threshold_dbfs: settings.vas.threshold_dbfs,
+            hang_ms: settings.vas.hang_ms,
+            onset_ms: settings.vas.onset_ms,
+            knee_dbfs: settings.agc.knee_dbfs,
+            attack_ms: settings.agc.attack_ms,
+            release_ms: settings.agc.release_ms,
+            hiss_offset_db: settings.mic.hiss_offset_db,
+        }
+    }
+
+    /// Writes slot `slot` into `settings` (the engine's readings follow the landings, D4).
+    pub(crate) fn write_slot(&self, slot: usize, settings: &mut crate::Settings) {
+        match slot {
+            SLOT_SENSITIVITY => settings.vas.sensitivity = self.sensitivity,
+            SLOT_THRESHOLD => settings.vas.threshold_dbfs = self.threshold_dbfs,
+            SLOT_HANG => settings.vas.hang_ms = self.hang_ms,
+            SLOT_ONSET => settings.vas.onset_ms = self.onset_ms,
+            SLOT_KNEE => settings.agc.knee_dbfs = self.knee_dbfs,
+            SLOT_ATTACK => settings.agc.attack_ms = self.attack_ms,
+            SLOT_RELEASE => settings.agc.release_ms = self.release_ms,
+            _ => settings.mic.hiss_offset_db = self.hiss_offset_db,
+        }
+    }
+
+    /// Slot `slot` as the entry's double.
+    #[inline]
+    pub(crate) fn get(&self, slot: usize) -> f64 {
+        match slot {
+            SLOT_SENSITIVITY => f64::from(self.sensitivity),
+            SLOT_THRESHOLD => f64::from(self.threshold_dbfs),
+            SLOT_HANG => f64::from(self.hang_ms),
+            SLOT_ONSET => f64::from(self.onset_ms),
+            SLOT_KNEE => f64::from(self.knee_dbfs),
+            SLOT_ATTACK => f64::from(self.attack_ms),
+            SLOT_RELEASE => f64::from(self.release_ms),
+            _ => f64::from(self.hiss_offset_db),
+        }
+    }
+
+    /// Sets slot `slot` from the entry's double (validated at the schedule call: within the
+    /// setting's range, the sensitivity integral).
+    #[inline]
+    pub(crate) fn set(&mut self, slot: usize, value: f64) {
+        match slot {
+            SLOT_SENSITIVITY => self.sensitivity = value as u8,
+            SLOT_THRESHOLD => self.threshold_dbfs = value as f32,
+            SLOT_HANG => self.hang_ms = value as f32,
+            SLOT_ONSET => self.onset_ms = value as f32,
+            SLOT_KNEE => self.knee_dbfs = value as f32,
+            SLOT_ATTACK => self.attack_ms = value as f32,
+            SLOT_RELEASE => self.release_ms = value as f32,
+            _ => self.hiss_offset_db = value as f32,
+        }
+    }
+
+    /// The slots whose values differ between `self` and `other`, as a bit mask.
+    fn differing(&self, other: &Self) -> u8 {
+        let mut mask = 0u8;
+        for slot in 0..8 {
+            if self.get(slot) != other.get(slot) {
+                mask |= 1 << slot;
+            }
+        }
+        mask
+    }
+}
+
+/// Deliberate defects of the record-side landing for the spec 017 mutation tests (research
+/// R-14); `Default` is the committed behavior. Each is caught by a named oracle: the input-0
+/// identity (the apply after the front), the continuity assert (the hold reset at a retune),
+/// the reference gate (the counts reset at a hang change), the hiss ratio (a stepped hiss), the
+/// k(P) pin (a floored landing), US2 AS4 (the other stream not landing).
+#[cfg(feature = "__test-hooks")]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RecordMutation {
+    /// The apply point one input sample late (as if after the front), so a value first affects
+    /// sample P + 1; folded into the armed position, never into the hot compare.
+    pub apply_after_front: bool,
+    /// A retune discharges the hold capacitor.
+    pub reset_vc_on_retune: bool,
+    /// A hang or onset change resets the gate's running counts.
+    pub reset_counts_on_hang: bool,
+    /// The hiss gain steps to the target at once instead of the 20 ms transition.
+    pub step_hiss: bool,
+    /// The published k(P) written as ⌊P · 6000 ÷ rate⌋ (one device sample early above 6 kHz).
+    pub landing_floor: bool,
+    /// A value landed on the other stream never becomes pending here.
+    pub skip_other_stream: bool,
+}
+
+/// The record side's staging log: the schedule's capacity plus one cross-stream landing per
+/// value (data-model.md › Record control state). The recorder itself attains 64 (a one-pass
+/// landing reaches it through `start_recording`'s adopt, with no entry); the eight are the
+/// one-pass's record side's.
+const RECORD_LOG: usize = SCHEDULE_CAPACITY + 8;
+
+/// The record side's control state (spec 017 research R-01; data-model.md › Record control
+/// state): the input clock, the schedule, the last applied values, the cross-stream pending
+/// changes, the landed record and the staging log. Lives in each `RecordPath`. `repr(C)` with
+/// the hot pair `input` / `next_apply` first and the two arrays last (spec 015's lesson).
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub(crate) struct RecordCtl {
+    /// The clock: host input samples processed; the next sample has this index (D2).
+    pub(crate) input: u64,
+    /// 0 while a cross-stream pending change waits, else the schedule's earliest position.
+    pub(crate) next_apply: u64,
+    log_len: usize,
+    /// The last applied values (the entries' `before`).
+    last: RecordValues,
+    /// The cross-stream pending changes: a slot mask, with the value and the tag per slot.
+    pending_mask: u8,
+    pending_value: [f64; 8],
+    pending_tag: [u64; 8],
+    /// The last landed value and tag per slot in the call (the epilogue writes them into the
+    /// settings), as a slot mask.
+    landed_mask: u8,
+    landed_tag: [u64; 8],
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) mutation: RecordMutation,
+    pub(crate) schedule: Schedule,
+    log: [ChangeEntry; RECORD_LOG],
+}
+
+impl RecordCtl {
+    /// A control state whose last applied values are `settings`'s, the clock at 0.
+    pub(crate) fn new(settings: &crate::Settings) -> Self {
+        Self {
+            input: 0,
+            next_apply: u64::MAX,
+            log_len: 0,
+            last: RecordValues::from(settings),
+            pending_mask: 0,
+            pending_value: [0.0; 8],
+            pending_tag: [0; 8],
+            landed_mask: 0,
+            landed_tag: [0; 8],
+            #[cfg(feature = "__test-hooks")]
+            mutation: RecordMutation::default(),
+            schedule: Schedule::new(),
+            log: [ChangeEntry::default(); RECORD_LOG],
+        }
+    }
+
+    /// The last applied values.
+    pub(crate) fn last(&self) -> RecordValues {
+        self.last
+    }
+
+    /// The adopt rule (D4, restated at the plan): the stream's values become `values` with no
+    /// entry (`start_recording`, `reset`; the caller applied them to the stages).
+    pub(crate) fn set_last(&mut self, values: RecordValues) {
+        self.last = values;
+    }
+
+    /// A processing call's entry (research R-02): every value of `settings` that differs from
+    /// the stream's last applied value becomes a pending cross-stream change with that value's
+    /// tag, applied at the call's first input sample; the log and the landed record cleared.
+    #[inline]
+    pub(crate) fn begin_call(&mut self, settings: &crate::Settings, tags: &[u64; 8]) {
+        let values = RecordValues::from(settings);
+        let mask = values.differing(&self.last);
+        #[cfg(feature = "__test-hooks")]
+        let mask = if self.mutation.skip_other_stream {
+            0
+        } else {
+            mask
+        };
+        self.pending_mask = mask;
+        if mask != 0 {
+            for (slot, &tag) in tags.iter().enumerate() {
+                if mask & (1 << slot) != 0 {
+                    self.pending_value[slot] = values.get(slot);
+                    self.pending_tag[slot] = tag;
+                }
+            }
+            self.next_apply = 0;
+        } else {
+            self.next_apply = self.arm(self.schedule.earliest());
+        }
+        self.log_len = 0;
+        self.landed_mask = 0;
+    }
+
+    /// Whether the apply point is due for the input sample about to be processed: one `u64`
+    /// compare (the hot path).
+    #[inline]
+    pub(crate) fn due(&self) -> bool {
+        self.input >= self.next_apply
+    }
+
+    /// The cached earliest position (the `apply_after_front` mutant lands one sample late).
+    #[inline]
+    fn arm(&self, earliest: u64) -> u64 {
+        #[cfg(feature = "__test-hooks")]
+        if self.mutation.apply_after_front {
+            return earliest.saturating_add(1);
+        }
+        earliest
+    }
+
+    /// The due changes for the input sample about to be processed (the cold path): the
+    /// cross-stream pending changes first, in slot order, then every scheduled entry at or
+    /// before the position, in position order. `apply` receives the merged values and the slot
+    /// that changed; each change is logged (a scheduled one always, D5).
+    #[inline(never)]
+    pub(crate) fn apply_due(&mut self, apply: &mut dyn FnMut(&RecordValues, usize)) {
+        let pos = self.input;
+        #[cfg(feature = "__test-hooks")]
+        let pos = if self.mutation.apply_after_front {
+            pos.saturating_sub(1)
+        } else {
+            pos
+        };
+        if self.pending_mask != 0 {
+            let mask = core::mem::replace(&mut self.pending_mask, 0);
+            for slot in 0..8 {
+                if mask & (1 << slot) != 0 {
+                    let (value, tag) = (self.pending_value[slot], self.pending_tag[slot]);
+                    self.land(pos, slot, value, tag, apply);
+                }
+            }
+        }
+        while let Some(e) = self.schedule.pop_due(pos) {
+            match slot_of(e.control) {
+                Some(slot) => self.land(pos, slot, e.value, e.tag, apply),
+                // Validation at the schedule call admits only the eight record-side controls.
+                None => debug_assert!(false, "an unknown control in the record schedule"),
+            }
+        }
+        self.next_apply = self.arm(self.schedule.earliest());
+    }
+
+    #[inline]
+    fn land(
+        &mut self,
+        pos: u64,
+        slot: usize,
+        value: f64,
+        tag: u64,
+        apply: &mut dyn FnMut(&RecordValues, usize),
+    ) {
+        let before = self.last.get(slot);
+        let mut values = self.last;
+        values.set(slot, value);
+        apply(&values, slot);
+        if let Some(e) = self.log.get_mut(self.log_len) {
+            *e = ChangeEntry::new(pos, LIVE_RECORD[slot], before, values.get(slot), tag);
+        }
+        self.log_len += 1;
+        self.last = values;
+        self.landed_mask |= 1 << slot;
+        self.landed_tag[slot] = tag;
+    }
+
+    /// The call's landed slots and their tags, cleared (the epilogue writes the values into the
+    /// settings): `(mask, tags, values)`.
+    pub(crate) fn take_landed(&mut self) -> (u8, [u64; 8], RecordValues) {
+        let mask = core::mem::replace(&mut self.landed_mask, 0);
+        (mask, self.landed_tag, self.last)
+    }
+
+    /// Copies the call's entries into `into` (the first ones when it is shorter) and returns
+    /// how many the call applied (FR-005).
+    pub(crate) fn drain_log(&self, into: &mut [ChangeEntry]) -> usize {
+        let n = self.log_len.min(into.len()).min(RECORD_LOG);
+        into[..n].copy_from_slice(&self.log[..n]);
+        self.log_len
+    }
+
+    /// The call's applied-change count.
+    pub(crate) fn log_len(&self) -> usize {
+        self.log_len
+    }
+
+    /// The stream's clock restarts (`start_recording`, the one-pass's `reset`): the pending
+    /// changes and the log cleared; never the schedule (D5: `start_recording` keeps it).
+    pub(crate) fn reset_clock(&mut self) {
+        self.input = 0;
+        self.pending_mask = 0;
+        self.landed_mask = 0;
+        self.log_len = 0;
+        self.next_apply = self.arm(self.schedule.earliest());
+    }
+
+    /// Drops every pending scheduled change (FR-002).
+    pub(crate) fn clear_schedule(&mut self) {
+        self.schedule.clear();
+        self.rearm();
+    }
+
+    /// Holds the apply point on the next input sample (spec 017 research R-05's fold): while a
+    /// hiss transition runs, the cold path steps the gain once per sample, so the capsule's
+    /// hot path carries no compare.
+    #[inline]
+    pub(crate) fn hold_next_sample(&mut self) {
+        self.next_apply = self.next_apply.min(self.input.saturating_add(1));
+    }
+
+    /// Holds the apply point on the sample about to be processed (between samples: a call's
+    /// entry, a schedule call, a clear), while a hiss transition runs.
+    #[inline]
+    pub(crate) fn hold_now(&mut self) {
+        self.next_apply = self.next_apply.min(self.input);
+    }
+
+    /// Re-arms the apply point after a schedule change (the schedule call): the earliest
+    /// pending position, unless a cross-stream pending change keeps it at 0.
+    pub(crate) fn rearm(&mut self) {
+        if self.next_apply != 0 || self.pending_mask == 0 {
+            self.next_apply = self.arm(self.schedule.earliest());
+        }
+    }
+
+    /// The hang length, in device samples, of the shortest pending hang change, if any (the
+    /// event bound, FR-002).
+    pub(crate) fn shortest_pending_hang(&self) -> Option<u64> {
+        self.schedule
+            .entries()
+            .iter()
+            .filter(|e| e.control == LIVE_RECORD[SLOT_HANG])
+            .map(|e| crate::stages::vas::device_samples(e.value as f32))
+            .min()
+    }
+}
+
+#[cfg(test)]
+mod record_tests {
+    use super::*;
+
+    #[test]
+    fn record_ctl_live_record_indices_match_the_manifest() {
+        let c = crate::controls::controls();
+        let ids = [
+            "vas.sensitivity",
+            "vas.threshold_dbfs",
+            "vas.hang_ms",
+            "vas.onset_ms",
+            "agc.knee_dbfs",
+            "agc.attack_ms",
+            "agc.release_ms",
+            "mic.hiss_offset_db",
+        ];
+        for (slot, id) in ids.iter().enumerate() {
+            assert_eq!(c[LIVE_RECORD[slot] as usize].identifier, *id, "slot {slot}");
+            assert_eq!(slot_of(LIVE_RECORD[slot]), Some(slot));
+        }
+        assert_eq!(slot_of(0), None);
+        assert_eq!(slot_of(99), None);
+    }
+
+    #[test]
+    fn record_ctl_bound() {
+        assert_eq!(MAX_CHANGES_PER_CALL, 139);
+        assert_eq!(MAX_CHANGES_PER_CALL, 2 * SCHEDULE_CAPACITY + 3 + 8);
+        assert_eq!(RECORD_LOG, 72);
+    }
+
+    #[test]
+    fn record_ctl_clock_of() {
+        use crate::controls::{ControlPaths, controls};
+        for (i, e) in controls().iter().enumerate() {
+            let want = if e.paths.contains(ControlPaths::RECORD) {
+                Clock::Input
+            } else {
+                Clock::Output
+            };
+            assert_eq!(clock_of(i as u32).unwrap(), want, "{}", e.identifier);
+        }
+        for c in LIVE_RECORD {
+            assert_eq!(clock_of(c).unwrap(), Clock::Input);
+        }
+        for c in [LIVE_ROUTE, LIVE_VOLUME, LIVE_SPEED] {
+            assert_eq!(clock_of(c).unwrap(), Clock::Output);
+        }
+        assert!(matches!(
+            clock_of(crate::controls::CONTROL_COUNT as u32),
+            Err(Error::NoSuchControl { control: 29 })
+        ));
+        assert_eq!(Clock::Input as u32, 0);
+        assert_eq!(Clock::Output as u32, 1);
+    }
+
+    #[test]
+    fn record_ctl_landing_at_the_seven_rates() {
+        for rate in SUPPORTED_HOST_RATES {
+            assert_eq!(record_landing(0, rate).unwrap(), 0, "{rate}");
+        }
+        for p in 0..=100 {
+            assert_eq!(record_landing(p, 6000).unwrap(), p);
+        }
+        for (p, k) in [(1, 1), (8, 1), (9, 2), (16, 2), (17, 3)] {
+            assert_eq!(record_landing(p, 48_000).unwrap(), k, "48 kHz P={p}");
+        }
+        for p in 0..=40u64 {
+            assert_eq!(
+                record_landing(p, 8000).unwrap(),
+                (3 * p).div_ceil(4),
+                "8 kHz P={p}"
+            );
+        }
+        // The inverse rule: k(P) is the smallest k with ⌊k · rate ÷ 6000⌋ ≥ P, i.e. the first
+        // device sample whose input window starts at or after P.
+        for rate in SUPPORTED_HOST_RATES {
+            let (l, m) = (
+                u128::from(crate::settings::DEVICE_RATE_HZ),
+                u128::from(rate),
+            );
+            for p in 1..=400u128 {
+                let k = u128::from(record_landing(p as u64, rate).unwrap());
+                assert!(k * m / l >= p, "{rate} P={p} k={k}");
+                assert!(k == 0 || (k - 1) * m / l < p, "{rate} P={p} k={k}");
+            }
+        }
+        assert!(matches!(
+            record_landing(5, 0),
+            Err(Error::UnsupportedHostRate { requested: 0 })
+        ));
+        assert!(matches!(
+            record_landing(5, 22_050),
+            Err(Error::UnsupportedHostRate { requested: 22_050 })
+        ));
+    }
+
+    #[test]
+    fn record_ctl_record_value_validates_as_the_setting() {
+        use crate::error::Setting;
+        assert_eq!(record_value(SLOT_SENSITIVITY, 5.0), Ok(5.0));
+        assert!(matches!(
+            record_value(SLOT_SENSITIVITY, 6.0),
+            Err(Error::InvalidSetting {
+                setting: Setting::VasSensitivity
+            })
+        ));
+        assert!(matches!(
+            record_value(SLOT_SENSITIVITY, 2.5),
+            Err(Error::InvalidSetting {
+                setting: Setting::VasSensitivity
+            })
+        ));
+        assert_eq!(record_value(SLOT_HANG, 50.0), Ok(50.0));
+        assert!(matches!(
+            record_value(SLOT_HANG, 20.0),
+            Err(Error::InvalidSetting {
+                setting: Setting::VasHangMs
+            })
+        ));
+        assert!(matches!(
+            record_value(SLOT_KNEE, f64::NAN),
+            Err(Error::InvalidSetting {
+                setting: Setting::AgcKneeDbfs
+            })
+        ));
+        assert!(matches!(
+            record_value(SLOT_HISS, f64::INFINITY),
+            Err(Error::InvalidSetting {
+                setting: Setting::MicHissOffsetDb
+            })
+        ));
+        assert_eq!(
+            record_value(SLOT_THRESHOLD, -0.0).unwrap().to_bits(),
+            0.0f64.to_bits()
+        );
+        // Narrowed to single precision before the range check and the store.
+        let v = record_value(SLOT_ATTACK, 3.000_000_000_1).unwrap();
+        assert_eq!(v, f64::from(3.000_000_000_1f64 as f32));
+        assert_eq!(record_value(SLOT_RELEASE, 10_000.0), Ok(10_000.0));
+        assert_eq!(record_value(SLOT_ONSET, 0.0), Ok(0.0));
+    }
+
+    #[test]
+    fn record_ctl_values_round_trip_and_differ() {
+        let s = crate::Settings::new(48_000);
+        let mut v = RecordValues::from(&s);
+        assert_eq!(v.differing(&v), 0);
+        let mut t = s;
+        for slot in 0..8 {
+            let mut w = v;
+            w.set(slot, v.get(slot) + 1.0);
+            assert_eq!(w.differing(&v), 1 << slot);
+            w.write_slot(slot, &mut t);
+            assert_eq!(RecordValues::from(&t).get(slot), v.get(slot) + 1.0);
+        }
+        v.set(SLOT_SENSITIVITY, 5.0);
+        assert_eq!(v.sensitivity, 5);
+        assert_eq!(v.get(SLOT_SENSITIVITY), 5.0);
+    }
+
+    #[test]
+    fn record_ctl_cross_stream_then_scheduled() {
+        let s = crate::Settings::new(48_000);
+        let mut ctl = RecordCtl::new(&s);
+        let mut other = s;
+        other.agc.knee_dbfs = -5.0;
+        other.vas.hang_ms = 50.0;
+        let mut tags = [0u64; 8];
+        tags[SLOT_KNEE] = 7;
+        tags[SLOT_HANG] = 9;
+        ctl.schedule
+            .insert(0, LIVE_RECORD[SLOT_HISS], 3.0, 11)
+            .unwrap();
+        ctl.schedule
+            .insert(2, LIVE_RECORD[SLOT_ONSET], 5.0, 12)
+            .unwrap();
+        ctl.begin_call(&other, &tags);
+        assert_eq!(ctl.next_apply, 0);
+        let mut seen = alloc::vec::Vec::new();
+        assert!(ctl.due());
+        ctl.apply_due(&mut |v, slot| seen.push((slot, v.get(slot))));
+        // The cross-stream pair in slot order, then the scheduled entry at 0.
+        assert_eq!(
+            seen,
+            alloc::vec![(SLOT_HANG, 50.0), (SLOT_KNEE, -5.0), (SLOT_HISS, 3.0)]
+        );
+        assert_eq!(ctl.log_len(), 3);
+        let mut log = [ChangeEntry::default(); 4];
+        assert_eq!(ctl.drain_log(&mut log), 3);
+        assert_eq!(
+            log[0],
+            ChangeEntry::new(0, LIVE_RECORD[SLOT_HANG], 1000.0, 50.0, 9)
+        );
+        assert_eq!(
+            log[1],
+            ChangeEntry::new(0, LIVE_RECORD[SLOT_KNEE], -1.0, -5.0, 7)
+        );
+        assert_eq!(
+            log[2],
+            ChangeEntry::new(0, LIVE_RECORD[SLOT_HISS], 0.0, 3.0, 11)
+        );
+        assert_eq!(ctl.next_apply, 2);
+        ctl.input = 1;
+        assert!(!ctl.due());
+        ctl.input = 2;
+        assert!(ctl.due());
+        ctl.apply_due(&mut |_, _| {});
+        assert_eq!(ctl.log_len(), 4);
+        assert_eq!(ctl.next_apply, u64::MAX);
+        let (mask, t, values) = ctl.take_landed();
+        assert_eq!(
+            mask,
+            (1 << SLOT_HANG) | (1 << SLOT_KNEE) | (1 << SLOT_HISS) | (1 << SLOT_ONSET)
+        );
+        assert_eq!((t[SLOT_KNEE], t[SLOT_ONSET]), (7, 12));
+        assert_eq!(values.onset_ms, 5.0);
+        // The settings now equal the last applied values: nothing pending.
+        let mut same = other;
+        same.mic.hiss_offset_db = 3.0;
+        same.vas.onset_ms = 5.0;
+        ctl.begin_call(&same, &tags);
+        assert_eq!(ctl.next_apply, u64::MAX);
+        assert_eq!(ctl.log_len(), 0);
+        ctl.schedule
+            .insert(10, LIVE_RECORD[SLOT_HANG], 60.0, 1)
+            .unwrap();
+        ctl.schedule
+            .insert(20, LIVE_RECORD[SLOT_HANG], 55.0, 2)
+            .unwrap();
+        ctl.rearm();
+        assert_eq!(ctl.next_apply, 10);
+        assert_eq!(ctl.shortest_pending_hang(), Some(330));
+        ctl.reset_clock();
+        assert_eq!(ctl.input, 0);
+        assert_eq!(ctl.schedule.len(), 2);
+        ctl.clear_schedule();
+        assert_eq!(ctl.shortest_pending_hang(), None);
+        assert_eq!(ctl.next_apply, u64::MAX);
     }
 }

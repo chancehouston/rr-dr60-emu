@@ -196,6 +196,20 @@ fn doctored_setter_without_entry_is_named() {
     let header = header_text() + "\nRrDr60Status rr_dr60_set_battery(RrDr60 *e, float v);\n";
     let f = setters(controls(), &core_sources(), &header);
     assert_eq!(f, ["rr_dr60.h: rr_dr60_set_battery has no live entry"]);
+    // Spec 017: a plain setter for a record-side value is named (the schedule is the only way).
+    let mut sources = core_sources();
+    sources.push((
+        "doctored.rs".into(),
+        "impl Pipeline {\n    pub fn set_hiss_offset_db(&mut self, v: f32) {}\n}\n".into(),
+    ));
+    let f = setters(controls(), &sources, &header_text());
+    assert_eq!(
+        f,
+        [
+            "doctored.rs: setter set_hiss_offset_db has no live entry",
+            "mic.hiss_offset_db: a record-side value with a plain setter (spec 017: the schedule only)"
+        ]
+    );
 }
 
 #[test]

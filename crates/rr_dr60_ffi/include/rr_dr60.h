@@ -48,7 +48,7 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 16
+#define RR_DR60_VERSION_MINOR 17
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
@@ -59,7 +59,7 @@
 
 // A `changes_capacity` that is always enough for one call (spec 015 FR-005). Equal to the
 // Rust `changes::MAX_CHANGES_PER_CALL`.
-#define RR_DR60_MAX_CHANGES_PER_CALL 67
+#define RR_DR60_MAX_CHANGES_PER_CALL 139
 
 // The volume control's default position (spec 009 FR-003; A-043): the reference position at
 // which a full-scale codec output just reaches the amplifier's clip ceiling under the loaded
@@ -184,9 +184,15 @@ enum RrDr60Status
   // `RR_DR60_SCHEDULE_CAPACITY` pending changes; nothing stored (spec 015 FR-002).
   RR_DR60_STATUS_SCHEDULE_FULL = 27,
   // `rr_dr60_schedule_change` with a control that is not a live control of the stream (the
-  // route, the volume, or on the playback stream the speed), or any stream call with a
-  // reserved or unknown stream value; nothing changes (spec 015 FR-001).
+  // route, the volume, or on the playback stream the speed; a record-side value on the
+  // record stream or the one-pass, spec 017 FR-001), or any stream call with an unknown
+  // stream value; nothing changes (spec 015 FR-001).
   RR_DR60_STATUS_CONTROL_NOT_ON_STREAM = 28,
+  // A position read in a clock the stream does not have (spec 017 D2):
+  // `rr_dr60_stream_position` on the record stream (it has only the input clock) or
+  // `rr_dr60_input_position` on the playback stream (it has only the output clock); nothing
+  // is written.
+  RR_DR60_STATUS_NO_SUCH_CLOCK = 29,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -539,12 +545,15 @@ typedef uint32_t RrDr60ControlValueType;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
-// The stream a control change is scheduled on (spec 015 D2), passed as `uint32_t`: the
-// playback stream (its clock counts the samples the current playback has produced since
-// `rr_dr60_start_playback`, the drain included) or the one-pass stream (its clock counts the
-// samples produced since construction, `rr_dr60_reset` or `rr_dr60_reconfigure`, the clock the
-// VAS events use). `RR_DR60_STREAM_RECORD` is reserved for the record-side values (spec 017):
-// every call refuses it with `CONTROL_NOT_ON_STREAM`.
+// The stream a control change is scheduled on (spec 015 D2; spec 017 D2), passed as
+// `uint32_t`: the playback stream (its **output** clock counts the samples the current
+// playback has produced since `rr_dr60_start_playback`, the drain included), the one-pass
+// stream (its output clock counts the samples produced since construction, `rr_dr60_reset` or
+// `rr_dr60_reconfigure`, the clock the VAS events use; its **input** clock the input samples
+// processed since then) or the record stream (the recorder: its input clock counts the host
+// samples fed since `rr_dr60_start_recording`, the stop's silence included; it carries the
+// eight record-side values only). A control whose manifest paths include the record path is
+// positioned in the input clock (`rr_dr60_clock_of`).
 enum RrDr60Stream
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint32_t
@@ -554,7 +563,7 @@ enum RrDr60Stream
   RR_DR60_STREAM_PLAYBACK = 0,
   // The one-pass processing.
   RR_DR60_STREAM_ONE_PASS = 1,
-  // Reserved (spec 017).
+  // The recorder (spec 017).
   RR_DR60_STREAM_RECORD = 2,
 };
 #ifndef __cplusplus
@@ -562,6 +571,26 @@ enum RrDr60Stream
 typedef enum RrDr60Stream RrDr60Stream;
 #else
 typedef uint32_t RrDr60Stream;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// Which clock a control's positions count in (spec 017 D2), written by `rr_dr60_clock_of` as
+// `uint32_t`.
+enum RrDr60Clock
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+  // Host input samples the stream has processed (the record-side values).
+  RR_DR60_CLOCK_INPUT = 0,
+  // Host output samples the stream has produced (the route, the volume, the speed).
+  RR_DR60_CLOCK_OUTPUT = 1,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum RrDr60Clock RrDr60Clock;
+#else
+typedef uint32_t RrDr60Clock;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -726,7 +755,8 @@ typedef struct RrDr60VasEvent {
 // a volume position (rounded to single precision), a level 1 … 5. 40 bytes, no size field
 // (the pre-1.0 ABI pass); `reserved` is 0.
 typedef struct RrDr60ChangeEntry {
-  // The host output index the change landed on.
+  // The index the change landed on: a host output sample for the route, the volume and the
+  // speed; a host input sample for a record-side value (spec 017; `rr_dr60_clock_of`).
   uint64_t position;
   // The stream's last applied value for the control.
   double before;
@@ -1319,10 +1349,10 @@ RrDr60Status rr_dr60_schedule_change(struct RrDr60Pipeline *pipeline,
                                      double value,
                                      uint64_t tag);
 
-// Writes to `*out_count` the pending changes on `stream`'s schedule (spec 015 FR-002).
-// Real-time safe.
+// Writes to `*out_count` the pending changes on `stream`'s schedules (spec 015 FR-002; spec
+// 017 FR-002: the one-pass's two, one per clock, summed). Real-time safe.
 //
-// Statuses: `CONTROL_NOT_ON_STREAM` for a reserved or unknown stream (nothing written).
+// Statuses: `CONTROL_NOT_ON_STREAM` for an unknown stream (nothing written).
 //
 // # Safety
 //
@@ -1331,10 +1361,12 @@ RrDr60Status rr_dr60_pending_changes(const struct RrDr60Pipeline *pipeline,
                                      uint32_t stream,
                                      uint32_t *out_count);
 
-// Writes to `*out_position` `stream`'s position (spec 015 D2): the host output samples it has
-// produced; the next sample produced has this index. Real-time safe.
+// Writes to `*out_position` `stream`'s **output** position (spec 015 D2): the host output
+// samples it has produced; the next sample produced has this index. Real-time safe.
 //
-// Statuses: `CONTROL_NOT_ON_STREAM` for a reserved or unknown stream (nothing written).
+// Statuses: `NO_SUCH_CLOCK` for the record stream (it has only the input clock,
+// `rr_dr60_input_position`); `CONTROL_NOT_ON_STREAM` for an unknown stream (nothing
+// written).
 //
 // # Safety
 //
@@ -1343,10 +1375,10 @@ RrDr60Status rr_dr60_stream_position(const struct RrDr60Pipeline *pipeline,
                                      uint32_t stream,
                                      uint64_t *out_position);
 
-// Drops every pending change on `stream`'s schedule (spec 015 FR-002); nothing already applied
-// is affected. Real-time safe.
+// Drops every pending change on `stream`'s schedules (spec 015 FR-002; both of the one-pass's,
+// spec 017); nothing already applied is affected. Real-time safe.
 //
-// Statuses: `CONTROL_NOT_ON_STREAM` for a reserved or unknown stream.
+// Statuses: `CONTROL_NOT_ON_STREAM` for an unknown stream.
 //
 // # Safety
 //
@@ -1375,6 +1407,96 @@ RrDr60Status rr_dr60_recording_counter(const struct RrDr60Pipeline *pipeline,
 RrDr60Status rr_dr60_speed_landing(uint64_t position,
                                    uint32_t host_rate_hz,
                                    uint64_t *out_index);
+
+// Writes to `*out_clock` the clock `control`'s positions count in (spec 017 D2), an
+// `RrDr60Clock` value: `INPUT` for a control whose control manifest paths include the record
+// path (the eight record-side values), `OUTPUT` otherwise (the route, the volume, the speed).
+// No handle. Real-time safe.
+//
+// Statuses: `NO_SUCH_CONTROL` for an index at or past `rr_dr60_control_count()` (nothing
+// written).
+//
+// # Safety
+//
+// `out_clock` must be NULL or writable.
+RrDr60Status rr_dr60_clock_of(uint32_t control, uint32_t *out_clock);
+
+// Writes to `*out_index` the device sample at which a gate value (`vas.*`) scheduled at input
+// sample `position` takes effect (spec 017 D3): k(0) = 0, k(P) = ⌈P · 6000 ÷ rate⌉ (P at
+// 6 kHz). The limiter's and the hiss's values act on input sample P itself. No handle.
+//
+// Statuses: `INVALID_ARGUMENT` for a rate not in the supported list (nothing written).
+//
+// # Safety
+//
+// `out_index` must be NULL or writable.
+RrDr60Status rr_dr60_record_landing(uint64_t position, uint32_t host_rate_hz, uint64_t *out_index);
+
+// Writes to `*out_position` `stream`'s **input** position (spec 017 D2): the host input
+// samples it has processed; the next sample fed has this index. The record stream's count
+// starts at 0 at `rr_dr60_start_recording`, counts the stop's fed silence and reads 0 while
+// idle; the one-pass's starts at construction, `rr_dr60_reset` and `rr_dr60_reconfigure`.
+// Real-time safe.
+//
+// Statuses: `NO_SUCH_CLOCK` for the playback stream (it has only the output clock,
+// `rr_dr60_stream_position`); `CONTROL_NOT_ON_STREAM` for an unknown stream (nothing
+// written).
+//
+// # Safety
+//
+// `pipeline` must be a live handle; `out_position` must be NULL or writable.
+RrDr60Status rr_dr60_input_position(const struct RrDr60Pipeline *pipeline,
+                                    uint32_t stream,
+                                    uint64_t *out_position);
+
+// As `rr_dr60_record`, and writes the record-side changes this call applied to `changes`
+// (spec 017 FR-005): the first `changes_capacity` of them, each an `RrDr60ChangeEntry` at the
+// **input** index it landed on; `*out_change_count` (NULL allowed) receives how many the call
+// applied (`RR_DR60_MAX_CHANGES_PER_CALL` is always enough) and `*out_input_samples_total`
+// (NULL allowed) the record stream's input position after the call (after a self-stop, the
+// recording's final input position). `changes` may be NULL only when `changes_capacity` is
+// 0. Real-time safe.
+//
+// Statuses: as `rr_dr60_record`.
+//
+// # Safety
+//
+// As `rr_dr60_record`; additionally, when `changes_capacity > 0`, `changes` must be writable
+// for that many `RrDr60ChangeEntry` values; `out_change_count` and `out_input_samples_total`
+// must be NULL or writable.
+RrDr60Status rr_dr60_record_with_changes(struct RrDr60Pipeline *pipeline,
+                                         const float *input,
+                                         uintptr_t frames,
+                                         struct RrDr60RecordInfo *out_info,
+                                         struct RrDr60VasEvent *events,
+                                         uintptr_t events_capacity,
+                                         struct RrDr60ChangeEntry *changes,
+                                         uintptr_t changes_capacity,
+                                         uintptr_t *out_change_count,
+                                         uint64_t *out_input_samples_total);
+
+// As `rr_dr60_stop_recording`, and writes the record-side changes the stop's feed applied to
+// `changes` (spec 017 FR-005; the schedule applies during the flush and is cleared at the
+// end); `*out_change_count` (NULL allowed) receives how many, `*out_input_samples_total` (NULL
+// allowed) the recording's final input position: every host sample fed since the start, the
+// stop's silence included (a change at or past it was dropped without an entry). Both are 0
+// when the flush was skipped. Real-time safe.
+//
+// Statuses: as `rr_dr60_stop_recording`.
+//
+// # Safety
+//
+// As `rr_dr60_stop_recording`; additionally, when `changes_capacity > 0`, `changes` must be
+// writable for that many values; `out_change_count` and `out_input_samples_total` must be
+// NULL or writable.
+RrDr60Status rr_dr60_stop_recording_with_changes(struct RrDr60Pipeline *pipeline,
+                                                 struct RrDr60StopOutcome *out_outcome,
+                                                 struct RrDr60VasEvent *events,
+                                                 uintptr_t events_capacity,
+                                                 struct RrDr60ChangeEntry *changes,
+                                                 uintptr_t changes_capacity,
+                                                 uintptr_t *out_change_count,
+                                                 uint64_t *out_input_samples_total);
 
 // Selects the output route, an `RrDr60Route` value (spec 006 FR-015): at any time, during
 // playback too; it survives `rr_dr60_reset` and `rr_dr60_reconfigure`. Real-time safe.

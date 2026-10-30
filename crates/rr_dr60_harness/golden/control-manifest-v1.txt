@@ -145,7 +145,7 @@ description: Switches the limiter off, so loud sounds reach the converter's clip
 [10] agc.knee_dbfs
 name: Limiter threshold
 kind: model internal
-timing: idle
+timing: live
 paths: record, one-pass
 stage: 3
 value: continuous
@@ -161,7 +161,7 @@ description: Sets the level above which the limiter holds sound down; lowered, o
 [11] agc.attack_ms
 name: Limiter attack
 kind: model internal
-timing: idle
+timing: live
 paths: record, one-pass
 stage: 3
 value: continuous
@@ -177,7 +177,7 @@ description: Sets how long a loud onset passes at full level before the limiter 
 [12] agc.release_ms
 name: Limiter release
 kind: model internal
-timing: idle
+timing: live
 paths: record, one-pass
 stage: 3
 value: continuous
@@ -220,7 +220,7 @@ description: Chooses whether paused stretches are left out of the recording or k
 [15] vas.sensitivity
 name: Microphone sensitivity
 kind: device control
-timing: idle
+timing: live
 paths: record, one-pass
 stage: 5
 value: integer
@@ -236,7 +236,7 @@ description: Sets how quiet the input must be before recording pauses; the model
 [16] vas.threshold_dbfs
 name: Pause threshold
 kind: model internal
-timing: idle
+timing: live
 paths: record, one-pass
 stage: 5
 value: continuous
@@ -252,7 +252,7 @@ description: Sets the pause threshold at the factory sensitivity level; the othe
 [17] vas.hang_ms
 name: Pause delay
 kind: model internal
-timing: idle
+timing: live
 paths: record, one-pass
 stage: 5
 value: continuous
@@ -268,7 +268,7 @@ description: Sets how long the input must stay quiet before recording pauses.
 [18] vas.onset_ms
 name: Resume delay
 kind: model internal
-timing: idle
+timing: live
 paths: record, one-pass
 stage: 5
 value: continuous
@@ -407,7 +407,7 @@ description: Switches the microphone amplifier off, removing its thin low end an
 [28] mic.hiss_offset_db
 name: Hiss level
 kind: unit condition
-timing: idle
+timing: live
 paths: record, one-pass
 stage: 1
 value: continuous

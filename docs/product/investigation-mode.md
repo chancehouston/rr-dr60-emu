@@ -236,6 +236,7 @@ Feature descriptions (WHAT/WHY), ready for `/speckit-specify`:
   - an offline reader for codec frame parameters (pitch lag, gains), with no live cost;
   - optionally, a state checkpoint and restore.
 - **015 (built, engine 0.16.0):** each change a stream applies is logged at its output-sample position with the control, the values before and after and a caller tag; the recording counter has a public getter. Moved to 020: the host-input index a change maps to (through the voice-activation events), construct-at-counter, and the map from a playback position to the recording's place under a speed schedule.
+- **017 (built, engine 0.17.0):** the sensitivity, the voice activation's threshold, hang and onset, the hiss level and the limiter's knee, attack and release change during a recording through the schedule, positioned in the input clock and logged; a change scheduled while stopped lands on the recording's first sample. The session's setting changes therefore come from the engine's log in microphone time. Still 020's: the entry's stream word, the flush boundary in the stop's report, the host-input index of a voice-activation event.
 - **014:** unchanged, plus descriptions of the meter fields, so the app labels them from one source.
 - **Chore:** an Android arm64 golden target before case files are shared across platforms.
 

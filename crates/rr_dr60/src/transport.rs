@@ -79,6 +79,14 @@ pub struct RecordInfo {
     pub frames: usize,
     /// Speech-codec frames in the recording so far, this call's included (spec 008 FR-008).
     pub frames_total: u64,
+    /// Record-side changes this call applied (spec 017 FR-005): scheduled changes that landed
+    /// (a value landed on the one-pass reaches the recorder through `start_recording`'s adopt,
+    /// with no entry);
+    /// [`record_with_changes`](crate::Pipeline::record_with_changes) writes the entries.
+    pub changes: usize,
+    /// The record stream's input position after the call (spec 017 FR-005): the host samples
+    /// fed since `start_recording`; after a self-stop, the recording's final input position.
+    pub input_samples_total: u64,
 }
 
 /// What `stop_recording` did with the recording (spec 006 FR-005, FR-012).
@@ -117,6 +125,14 @@ pub struct StopOutcome {
     /// **zero-valued input**: the stop feeds zeros through the whole record path, so with stage 1
     /// on the recording carries the capsule's hiss there (spec 012 FR-009).
     pub silence_fed_samples: u64,
+    /// Record-side changes the stop's feed applied (spec 017 FR-005);
+    /// [`stop_recording_with_changes`](crate::Pipeline::stop_recording_with_changes) writes
+    /// the entries. 0 when the flush was skipped.
+    pub changes: usize,
+    /// The recording's final input position (spec 017 FR-005): every host sample fed since
+    /// `start_recording`, the stop's silence included. A change scheduled at or past it was
+    /// dropped without an entry.
+    pub input_samples_total: u64,
 }
 
 /// The report of one `play` call (spec 006 FR-006, FR-008; spec 008 FR-008).
@@ -173,7 +189,7 @@ const LOOKAHEAD: u64 = codec::LOOKAHEAD_SAMPLES as u64; // A-040 (design constan
 /// The engine's state machine (research R-05).
 #[derive(Clone, Debug)]
 pub(crate) struct Transport {
-    state: State,
+    pub(crate) state: State,
     /// Any host sample was pushed since the recording started (an empty block does not count):
     /// decides the flush and the empty case (hardware review B5).
     fed_any: bool,
@@ -263,6 +279,10 @@ impl Pipeline {
         self.recorder.reset();
         // 012 FR-009: the recorder's hiss is stream `counter`; the counter never rewinds.
         self.recorder.rekey(self.transport.counter);
+        // 017 D4 (the adopt rule): the settings' record-side values, a one-pass landing's
+        // included, are in the stages when the recording starts; no entry. The record
+        // schedule is kept (D5).
+        self.recorder.adopt(&self.settings);
         self.transport.counter = self.transport.counter.wrapping_add(1);
         if let Some(enc) = &mut self.encoder {
             enc.reset();
@@ -297,18 +317,44 @@ impl Pipeline {
         if !input.is_empty() {
             self.transport.fed_any = true;
         }
+        // Spec 017 research R-02: values landed on the one-pass become pending here.
+        self.recorder.begin_call(&self.settings, &self.record_tags);
         let mut info = RecordInfo::default();
         let _ = self.feed(input, events, &mut info);
         if !input.is_empty() {
             self.finalize_record(); // 016 FR-001: a non-empty call
         }
+        self.take_landed_record(true); // 017 D4
+        info.changes = self.recorder.ctl.log_len();
+        info.input_samples_total = self.recorder.ctl.input;
+        Ok(info)
+    }
+
+    /// As [`record`](Self::record), and writes the record-side changes this call applied to
+    /// `changes` (spec 017 FR-005), each a [`ChangeEntry`] at the **input** index it landed on;
+    /// `info.changes` counts them all;
+    /// [`changes::MAX_CHANGES_PER_CALL`](crate::changes::MAX_CHANGES_PER_CALL) is always
+    /// enough. Real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// As [`record`](Self::record).
+    pub fn record_with_changes(
+        &mut self,
+        input: &[f32],
+        events: &mut [VasEvent],
+        changes: &mut [ChangeEntry],
+    ) -> Result<RecordInfo, Error> {
+        let info = self.record(input, events)?;
+        self.recorder.ctl.drain_log(changes);
         Ok(info)
     }
 
     /// An `events` length for [`record`](Self::record) that is always enough for a block of
-    /// `frames` host samples with the current settings (spec 003 R-07). Never allocates.
+    /// `frames` host samples with the current settings (spec 003 R-07), every pending hang
+    /// change included (spec 017 FR-002). Never allocates.
     pub fn max_record_events(&self, frames: usize) -> usize {
-        self.recorder.max_events(frames)
+        self.recorder.max_events(frames, self.settings.vas.hang_ms)
     }
 
     /// Stops the recording (spec 006 FR-005): passes the record path's own latency of silence
@@ -335,6 +381,34 @@ impl Pipeline {
         if self.transport.state != State::Recording {
             return Err(Error::NotRecording);
         }
+        // Spec 017 FR-002, FR-005: the record schedule applies during the stop's feed; values
+        // landed on the one-pass become pending here; the end of the recording clears the
+        // schedule (`close_recording`) and the report carries the final input position.
+        self.recorder.begin_call(&self.settings, &self.record_tags);
+        let mut outcome = self.stop_recording_inner(events)?;
+        self.take_landed_record(true);
+        outcome.changes = self.recorder.ctl.log_len();
+        outcome.input_samples_total = self.recorder.ctl.input;
+        Ok(outcome)
+    }
+
+    /// As [`stop_recording`](Self::stop_recording), and writes the record-side changes the
+    /// stop's feed applied to `changes` (spec 017 FR-005). Real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// As [`stop_recording`](Self::stop_recording).
+    pub fn stop_recording_with_changes(
+        &mut self,
+        events: &mut [VasEvent],
+        changes: &mut [ChangeEntry],
+    ) -> Result<StopOutcome, Error> {
+        let outcome = self.stop_recording(events)?;
+        self.recorder.ctl.drain_log(changes);
+        Ok(outcome)
+    }
+
+    fn stop_recording_inner(&mut self, events: &mut [VasEvent]) -> Result<StopOutcome, Error> {
         let codec_on = self.encoder.is_some();
         // The second condition (spec 008 FR-013: no kept sample before the stop) cannot occur
         // through the API: the VAS starts open and the conversion yields a device sample on the
@@ -342,11 +416,14 @@ impl Pipeline {
         // coverage: unreachable by construction (Constitution III)
         if !self.transport.fed_any || (codec_on && self.transport.kept == 0) {
             self.transport.state = State::Idle;
+            self.recorder.clear_schedule(); // 017 D5: the skipped flush is an end too
             let result = self.memory.close(false);
             return Ok(StopOutcome {
                 flush: RecordInfo::default(),
                 result,
                 silence_fed_samples: 0,
+                changes: 0,
+                input_samples_total: 0,
             });
         }
         let mut flush = RecordInfo::default();
@@ -365,6 +442,8 @@ impl Pipeline {
                 flush,
                 result,
                 silence_fed_samples: 0,
+                changes: 0,
+                input_samples_total: 0,
             });
         }
         let drop_mode = self.settings.vas.enabled && self.settings.vas.mode == VasMode::Drop;
@@ -410,6 +489,8 @@ impl Pipeline {
             flush,
             result,
             silence_fed_samples,
+            changes: 0,
+            input_samples_total: 0,
         })
     }
 
@@ -951,6 +1032,7 @@ impl Pipeline {
         }
         info.frames_total = self.transport.frames_total;
         self.transport.state = State::Idle;
+        self.recorder.clear_schedule(); // 017 D5: every end of a recording
         self.memory.close(true)
     }
 }

@@ -447,8 +447,10 @@ enum FrontStop {
 
 /// The record path: the front at the host rate (stages 1 – 2, spec 012 FR-001; the limiter,
 /// spec 005 research R-01), the host-to-device conversion and a [`RecordHalf`], with the event
-/// counters (spec 006 FR-001; research R-01).
+/// counters (spec 006 FR-001; research R-01). Since 0.17 it carries the record side's control
+/// state (spec 017 research R-01); `repr(C)` keeps `ctl`, with its hot pair first, last.
 #[derive(Clone, Debug)]
+#[repr(C)]
 pub(crate) struct RecordPath {
     /// Stages 1 – 2 at the host rate, ahead of the limiter (spec 012 FR-001), each skipped when
     /// off (FR-007).
@@ -481,6 +483,9 @@ pub(crate) struct RecordPath {
     /// of the current call; cleared at finalization (research R-02).
     input_peak: f64,
     limiter_input_peak: f64,
+    /// Spec 017 (research R-01): the input clock, the record schedule, the last applied
+    /// record-side values, the cross-stream pending changes and the staging log.
+    pub(crate) ctl: crate::changes::RecordCtl,
 }
 
 impl RecordPath {
@@ -544,6 +549,127 @@ impl RecordPath {
             codec_delay,
             input_peak: 0.0,
             limiter_input_peak: 0.0,
+            ctl: crate::changes::RecordCtl::new(settings),
+        }
+    }
+
+    /// Spec 017 research R-02: the apply point at the top of input sample `ctl.input`, one
+    /// `u64` compare on the hot path (the `apply_after_front` mutant is folded into the armed
+    /// position, never into this path: spec 015's lesson).
+    #[inline(always)]
+    fn apply_if_due(&mut self) {
+        if self.ctl.due() {
+            self.apply_due_cold();
+        }
+    }
+
+    /// The due record-side changes (the cold path): each value routed to its stage by spec 017
+    /// D3: the gate's four to `VasStage::set_values` (effective from device sample k(P), the
+    /// counts kept), the limiter's three to `Limiter::retune` (the hold carried), the hiss
+    /// offset to `MicCapsule::set_offset` (a 20 ms transition, or at once on the stream's first
+    /// input sample).
+    #[inline(never)]
+    fn apply_due_cold(&mut self) {
+        use crate::changes::{SLOT_HISS, SLOT_KNEE, SLOT_ONSET, SLOT_RELEASE, SLOT_SENSITIVITY};
+        let Self {
+            mic,
+            limiter,
+            half,
+            ctl,
+            ..
+        } = self;
+
+        let at_once = ctl.input == 0;
+        #[cfg(feature = "__test-hooks")]
+        let m = ctl.mutation;
+        ctl.apply_due(&mut |v, slot| match slot {
+            SLOT_SENSITIVITY..=SLOT_ONSET => {
+                half.vas
+                    .set_values(v.sensitivity, v.threshold_dbfs, v.hang_ms, v.onset_ms);
+                #[cfg(feature = "__test-hooks")]
+                if m.reset_counts_on_hang {
+                    half.vas.reset();
+                }
+            }
+            SLOT_KNEE..=SLOT_RELEASE => {
+                limiter.retune(v.knee_dbfs, v.attack_ms, v.release_ms);
+                #[cfg(feature = "__test-hooks")]
+                if m.reset_vc_on_retune {
+                    limiter.reset();
+                }
+            }
+            SLOT_HISS => {
+                let step = at_once;
+                #[cfg(feature = "__test-hooks")]
+                let step = step || m.step_hiss;
+                let _ = mic.set_hiss_offset(v.hiss_offset_db, step);
+            }
+            _ => debug_assert!(false, "a record-side slot"),
+        });
+        // Research R-05's fold: the landing sample is transition sample 1; the apply point then
+        // runs on every sample of the transition and steps the gain before the draw.
+        if mic.ramping() {
+            mic.ramp_step();
+            if mic.ramping() {
+                ctl.hold_next_sample();
+            }
+        }
+    }
+
+    /// The apply point re-armed after a schedule change or a clear, a running hiss transition
+    /// kept on the next sample (research R-05's fold).
+    pub(crate) fn rearm(&mut self) {
+        self.ctl.rearm();
+        if self.mic.ramping() {
+            self.ctl.hold_now();
+        }
+    }
+
+    /// The adopt rule (spec 017 D4, restated at the plan): `settings`' record-side values are
+    /// applied to the stages at once where they differ from the stream's last applied values
+    /// (`start_recording` after the path's reset; the one-pass's `reset`), and recorded with no
+    /// entry.
+    pub(crate) fn adopt(&mut self, settings: &Settings) {
+        let v = crate::changes::RecordValues::from(settings);
+        let last = self.ctl.last();
+        if (v.sensitivity, v.threshold_dbfs, v.hang_ms, v.onset_ms)
+            != (
+                last.sensitivity,
+                last.threshold_dbfs,
+                last.hang_ms,
+                last.onset_ms,
+            )
+        {
+            self.half
+                .vas
+                .set_values(v.sensitivity, v.threshold_dbfs, v.hang_ms, v.onset_ms);
+        }
+        if (v.knee_dbfs, v.attack_ms, v.release_ms)
+            != (last.knee_dbfs, last.attack_ms, last.release_ms)
+        {
+            self.limiter.retune(v.knee_dbfs, v.attack_ms, v.release_ms);
+        }
+        if v.hiss_offset_db != last.hiss_offset_db {
+            let _ = self.mic.set_hiss_offset(v.hiss_offset_db, true);
+        }
+        self.ctl.set_last(v);
+    }
+
+    /// A processing call's entry (spec 017 research R-02): the settings' values that differ
+    /// from the stream's last applied ones become pending, landing at the first input sample.
+    #[inline]
+    pub(crate) fn begin_call(&mut self, settings: &Settings, tags: &[u64; 8]) {
+        self.ctl.begin_call(settings, tags);
+        if self.mic.ramping() {
+            self.ctl.hold_now(); // R-05's fold across a call boundary
+        }
+    }
+
+    /// Drops every pending record-side change (spec 017 FR-002).
+    pub(crate) fn clear_schedule(&mut self) {
+        self.ctl.clear_schedule();
+        if self.mic.ramping() {
+            self.ctl.hold_now();
         }
     }
 
@@ -567,7 +693,9 @@ impl RecordPath {
     /// The 64-bit post-VAS sample this host sample produced, if any (+0.0 for a muted one).
     #[inline]
     fn step(&mut self, x: f32) -> Option<f64> {
+        self.apply_if_due(); // 017 R-02: the top of input sample P
         let x = self.front(x);
+        self.ctl.input += 1;
         let d = match &mut self.down {
             None => x,
             Some(down) => down.push(x)?,
@@ -586,9 +714,10 @@ impl RecordPath {
     /// No conversion, no chain, no events.
     #[inline]
     pub(crate) fn front_only(&mut self, x: f32) -> f32 {
+        self.apply_if_due(); // 017 R-02: the clock and the changes run at a front tap too
         let s = sanitize_in(x);
         self.peak_input(s);
-        narrow_out(match self.front_stop {
+        let y = narrow_out(match self.front_stop {
             FrontStop::Capsule => self.mic.process_upto(s, MicStop::Capsule),
             FrontStop::Amp => {
                 let v = self.mic.process_upto(s, MicStop::Amp);
@@ -596,7 +725,9 @@ impl RecordPath {
                 v
             }
             FrontStop::Limiter => self.front_from(s),
-        })
+        });
+        self.ctl.input += 1;
+        y
     }
 
     /// Spec 016 FR-002 (a): one compare-select on the sanitized input.
@@ -673,7 +804,9 @@ impl RecordPath {
     /// is due; nothing after it runs (spec 016 research R-06).
     #[cfg(feature = "__test-hooks")]
     pub(crate) fn stage4_trace(&mut self, x: f32) -> Option<f64> {
+        self.apply_if_due();
         let x = self.front(x);
+        self.ctl.input += 1;
         let d = match &mut self.down {
             None => x,
             Some(down) => down.push(x)?,
@@ -720,12 +853,21 @@ impl RecordPath {
     /// R-07): splices are at least H + 2 device samples apart, and `frames` host samples hold
     /// at most ⌊frames·l/m⌋ + 1 device samples (+ 2 at the non-integer rates); the "+ 2" also
     /// covers a splice on the block's first device sample (engineering target, 003 R-15).
-    pub(crate) fn max_events(&self, frames: usize) -> usize {
+    /// Since 0.17 (spec 017 FR-002) the hang is the smallest of the stage's, the settings'
+    /// (`settings_hang_ms`: a value landed on the other stream and pending here) and every
+    /// pending hang change on this stream's schedule.
+    pub(crate) fn max_events(&self, frames: usize, settings_hang_ms: f32) -> usize {
         if self.front_tap {
             return 0;
         }
         let device = frames as u128 * u128::from(self.plan_l) / u128::from(self.plan_m);
-        let spacing = u128::from(self.half.vas.hang_samples()) + 2;
+        let hang = self
+            .half
+            .vas
+            .hang_samples()
+            .min(crate::stages::vas::device_samples(settings_hang_ms))
+            .min(self.ctl.shortest_pending_hang().unwrap_or(u64::MAX));
+        let spacing = u128::from(hang) + 2;
         usize::try_from(device / spacing + 2).unwrap_or(usize::MAX)
     }
 
@@ -771,6 +913,7 @@ impl RecordPath {
         self.counters.reset();
         self.input_peak = 0.0;
         self.limiter_input_peak = 0.0;
+        self.ctl.reset_clock(); // 017 D2: the clock restarts; the schedule is kept (D5)
     }
 
     /// Test-only: stages 1 – 2 altered by `m` (spec 012 T033).

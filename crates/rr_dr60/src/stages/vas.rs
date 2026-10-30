@@ -73,17 +73,22 @@ pub(crate) struct VasStage {
 }
 
 /// `ms` milliseconds in whole device samples, rounded to nearest (engineering target, 003 R-15).
-fn device_samples(ms: f32) -> u64 {
+pub(crate) fn device_samples(ms: f32) -> u64 {
     (f64::from(ms) * f64::from(DEVICE_RATE_HZ) / 1000.0 + 0.5) as u64
+}
+
+/// The linear sound threshold for a sensitivity level and the level-3 threshold (A-022).
+fn threshold_of(sensitivity: u8, threshold_dbfs: f32) -> f64 {
+    let level_db =
+        f64::from(threshold_dbfs) + DB_PER_LEVEL * (REFERENCE_LEVEL - f64::from(sensitivity));
+    exp(level_db * LN_10 / 20.0)
 }
 
 impl VasStage {
     /// A stage for validated `settings`, in the recording state (A-025).
     pub(crate) fn new(settings: &VasSettings) -> Self {
-        let level_db = f64::from(settings.threshold_dbfs)
-            + DB_PER_LEVEL * (REFERENCE_LEVEL - f64::from(settings.sensitivity));
         Self {
-            threshold: exp(level_db * LN_10 / 20.0),
+            threshold: threshold_of(settings.sensitivity, settings.threshold_dbfs),
             hang: device_samples(settings.hang_ms),
             onset: device_samples(settings.onset_ms),
             state: State::Recording,
@@ -98,6 +103,22 @@ impl VasStage {
     /// Hang time H in device samples.
     pub(crate) fn hang_samples(&self) -> u64 {
         self.hang
+    }
+
+    /// Spec 017 FR-003 (research R-04): the threshold and the two lengths recomputed for the
+    /// new values by construction's arithmetic, the state and the running counts kept: a silent
+    /// count already past the new hang pauses at the next non-sound sample; a sound run already
+    /// past the new onset resumes at the next sound sample.
+    pub(crate) fn set_values(
+        &mut self,
+        sensitivity: u8,
+        threshold_dbfs: f32,
+        hang_ms: f32,
+        onset_ms: f32,
+    ) {
+        self.threshold = threshold_of(sensitivity, threshold_dbfs);
+        self.hang = device_samples(hang_ms);
+        self.onset = device_samples(onset_ms);
     }
 
     /// The VAS is paused.
@@ -397,6 +418,45 @@ mod tests {
     }
 
     /// Plan review finding 16: `since_sound` saturates in long silence (10 minutes).
+    /// Spec 017 (research R-04): `set_values` keeps the counts.
+    #[test]
+    fn set_values_keeps_the_counts() {
+        // Recording through 400 silent samples at hang 1000 ms, then hang 50 ms (300 samples):
+        // the count (400) is past the new hang, so the next non-sound sample pauses.
+        let mut stage = VasStage::new(&VasSettings::DEVICE);
+        let d = run(&mut stage, &silence(400));
+        assert_eq!(kept(&d), 400);
+        stage.set_values(3, -40.0, 50.0, 20.0);
+        assert_eq!(stage.hang_samples(), 300);
+        assert_eq!(stage.process(0.0), VasDecision::Drop);
+        assert!(stage.is_paused());
+        // The same, but a sound sample first: the count resets, so 300 more silent samples are
+        // kept and the 301st pauses.
+        let mut stage = VasStage::new(&VasSettings::DEVICE);
+        let _ = run(&mut stage, &silence(400));
+        stage.set_values(3, -40.0, 50.0, 20.0);
+        assert_eq!(stage.process(0.5), VasDecision::Keep);
+        let d = run(&mut stage, &silence(301));
+        assert_eq!(kept(&d), 300);
+        assert_eq!(d[300], VasDecision::Drop);
+        // Paused, a sound run of 50 at onset 120 (20 ms), then onset 5 ms (30 samples): the run
+        // is past the new onset, so the next sound sample resumes.
+        let mut stage = with(|s| s.hang_ms = 50.0);
+        let _ = run(&mut stage, &silence(400));
+        assert!(stage.is_paused());
+        let d = run(&mut stage, &loud(50));
+        assert_eq!(kept(&d), 0);
+        stage.set_values(3, -40.0, 50.0, 5.0);
+        assert_eq!(stage.process(amp(-30.0)), VasDecision::Resume);
+        // The threshold from a new sensitivity equals a gate built at those values.
+        let mut a = VasStage::new(&VasSettings::DEVICE);
+        a.set_values(5, -40.0, 1000.0, 20.0);
+        let b = with(|s| s.sensitivity = 5);
+        assert_eq!(a.threshold.to_bits(), b.threshold.to_bits());
+        assert_eq!(a, b);
+        assert_eq!(device_samples(50.0), 300);
+    }
+
     #[test]
     fn counters_saturate_in_long_silence() {
         let mut stage = VasStage::new(&VasSettings::DEVICE);

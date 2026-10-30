@@ -840,3 +840,49 @@ fn changes_same_calls_same_log() {
         assert_eq!(a.log, b.log, "{rate}: the playback log");
     }
 }
+
+/// Spec 017 FR-008: the same calls give the same recording bytes and the same log, at two
+/// rates, with a record-side schedule on the recorder and on the one-pass.
+#[test]
+fn record_same_calls_same_log() {
+    use rr_dr60::{MicSettings, Stream};
+    use rr_dr60_harness::changes_checks::Partition;
+    use rr_dr60_harness::record_checks::{self as rc, Value};
+    for rate in [6000u32, 48_000] {
+        let x = rr_dr60_harness::stimulus::voiced(f64::from(rate), 0.5, -20.0, 0x017);
+        let mut s = configs::settings("default_output", rate);
+        s.mic = MicSettings::DEVICE;
+        s.speech_codec_enabled = false;
+        let changes = [
+            rc::change(Stream::Record, 333, Value::Knee(-5.0), 1),
+            rc::change(Stream::Record, 444, Value::Sensitivity(5), 2),
+        ];
+        let run = || {
+            let mut p = Pipeline::new(s).unwrap();
+            let r = rc::record_run(&mut p, &x, Partition::Irregular, &changes);
+            (
+                rr_dr60_harness::split_checks::export_bytes(&p, r.number),
+                r.log,
+                r.stop.input_samples_total,
+            )
+        };
+        let (a, b) = (run(), run());
+        assert_eq!(a.0, b.0, "{rate}: the recording's bytes");
+        assert_eq!(a.1, b.1, "{rate}: the log");
+        assert_eq!(a.2, b.2, "{rate}: the final position");
+        let one = [
+            rc::change(Stream::OnePass, 333, Value::Hiss(6.0), 1),
+            rc::change(Stream::OnePass, 444, Value::Hang(50.0), 2),
+        ];
+        let run1 = || {
+            let mut p = Pipeline::new(s).unwrap();
+            rc::one_pass_run(&mut p, &x, Partition::Irregular, &one)
+        };
+        let (a, b) = (run1(), run1());
+        assert!(
+            rr_dr60_harness::changes_checks::same(&a.out, &b.out),
+            "{rate}: the one-pass"
+        );
+        assert_eq!(a.log, b.log, "{rate}: the one-pass log");
+    }
+}

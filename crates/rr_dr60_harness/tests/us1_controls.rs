@@ -107,7 +107,38 @@ fn literal_kinds_and_timing() {
         .filter(|e| e.timing == ControlTiming::Live)
         .map(|e| e.identifier)
         .collect();
-    assert_eq!(live, ["route", "volume", "playback_speed"]);
+    // Spec 017: the eight record-side values are live too (through the schedule).
+    assert_eq!(
+        live,
+        [
+            "route",
+            "volume",
+            "playback_speed",
+            "agc.knee_dbfs",
+            "agc.attack_ms",
+            "agc.release_ms",
+            "vas.sensitivity",
+            "vas.threshold_dbfs",
+            "vas.hang_ms",
+            "vas.onset_ms",
+            "mic.hiss_offset_db",
+        ]
+    );
+    // Spec 017 FR-010: the eleven live entries are the three output-clock controls and the
+    // eight input-clock values (`clock_of` over all 29).
+    for (i, e) in controls().iter().enumerate() {
+        let clock = rr_dr60::changes::clock_of(i as u32).expect("control");
+        let want = if e.paths.contains(rr_dr60::ControlPaths::RECORD) {
+            rr_dr60::Clock::Input
+        } else {
+            rr_dr60::Clock::Output
+        };
+        assert_eq!(clock, want, "{}", e.identifier);
+        if rr_dr60_harness::controls_checks::is_record_side(e.identifier) {
+            assert_eq!(clock, rr_dr60::Clock::Input, "{}", e.identifier);
+            assert_eq!(e.timing, ControlTiming::Live, "{}", e.identifier);
+        }
+    }
     assert!(matches!(
         rr_dr60::control("host_rate_hz").map(|e| e.value),
         Some(ControlValue::Choice { default: None, .. })

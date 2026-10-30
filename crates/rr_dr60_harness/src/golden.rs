@@ -285,6 +285,28 @@ pub struct GoldenEntry {
     /// entries only; absent (and not serialized) in the ten earlier files (FR-009).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timed_changes: Option<ChangesGolden>,
+    /// Spec 017: the schedule, the change log and the final input position of a record-side
+    /// scheduled run. Present in record-changes-file entries only; absent (and not serialized)
+    /// in the eleven earlier files (FR-008).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_changes: Option<RecordChangesGolden>,
+}
+
+/// Spec 017: the record-side part of a golden entry (research R-12).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RecordChangesGolden {
+    /// `record` or `one_pass`.
+    pub stream: String,
+    /// The changes scheduled, in submission order: `position control value tag`.
+    pub schedule: Vec<String>,
+    /// Every entry the calls reported, in order: `position control before after tag` (the
+    /// doubles as hex bit patterns).
+    pub log: Vec<String>,
+    /// The largest `changes` of one call.
+    pub max_per_call: u32,
+    /// The record stream's final input position (the stop's report); none on the one-pass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_position: Option<u64>,
 }
 
 /// Spec 016: the read-out rows of one entry (data-model.md › MetersGolden), each row the
@@ -465,6 +487,7 @@ pub fn entry(stimulus: &str, config: &str, host_rate_hz: u32, output: &[f32]) ->
         own_length: None,
         meters: None,
         timed_changes: None,
+        record_changes: None,
     }
 }
 
@@ -2082,6 +2105,327 @@ pub fn load(path: &std::path::Path) -> Result<GoldenFile, String> {
 pub fn bless(path: &std::path::Path, file: &GoldenFile) -> Result<(), String> {
     let text = serde_json::to_string_pretty(file).map_err(|e| e.to_string())? + "\n";
     std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+// ---- Spec 017: the record-changes golden (research R-12) --------------------------------------
+
+/// The spec 017 golden scenarios: `(scenario, stream)`. Per record-side value a change at
+/// input 0 (`zero`) and one inside a block (`inside`) on both streams, in drop and mute mode;
+/// then the hang shortening on a burst train, the stop case (a change inside the flush) and the
+/// cross-stream landing (a value landed on the recorder reaching the one-pass).
+pub const RECORD_CHANGES_VALUES: [&str; 8] = [
+    "vas.sensitivity",
+    "vas.threshold_dbfs",
+    "vas.hang_ms",
+    "vas.onset_ms",
+    "agc.knee_dbfs",
+    "agc.attack_ms",
+    "agc.release_ms",
+    "mic.hiss_offset_db",
+];
+
+/// The spec 017 golden configurations.
+pub const RECORD_CHANGES_CONFIGS: [&str; 3] = [
+    "record_default",
+    "record_default_mute",
+    "record_default_codec",
+];
+
+/// The spec 017 golden stimulus: 0.5 s of the voiced stimulus at `rate` (seed 0x017), or the
+/// burst train of the hang scenario (60 ms on, 140 ms off, 1.4 s).
+pub fn record_changes_stimulus(scenario: &str, rate: u32) -> Vec<f32> {
+    let f = f64::from(rate);
+    if scenario == "hang_shortening" {
+        let segments: Vec<(bool, f64)> =
+            (0..7).flat_map(|_| [(true, 0.06), (false, 0.14)]).collect();
+        stimulus::burst_gap(1000.0, -20.0, &segments, f)
+    } else {
+        stimulus::voiced(f, 0.5, -20.0, 0x017)
+    }
+}
+
+/// The representative value of each record-side control in the golden (one per identifier).
+pub fn record_changes_value(identifier: &str) -> crate::record_checks::Value {
+    use crate::record_checks::Value;
+    match identifier {
+        "vas.sensitivity" => Value::Sensitivity(5),
+        "vas.threshold_dbfs" => Value::Threshold(-50.0),
+        "vas.hang_ms" => Value::Hang(50.0),
+        "vas.onset_ms" => Value::Onset(5.0),
+        "agc.knee_dbfs" => Value::Knee(-5.0),
+        "agc.attack_ms" => Value::Attack(10.0),
+        "agc.release_ms" => Value::Release(400.0),
+        "mic.hiss_offset_db" => Value::Hiss(6.0),
+        other => panic!("unknown record-side value {other:?}"),
+    }
+}
+
+fn record_log_rows(log: &[rr_dr60::ChangeEntry]) -> Vec<String> {
+    log.iter()
+        .map(|e| {
+            format!(
+                "{} {} {:016x} {:016x} {}",
+                e.position,
+                e.control,
+                e.before.to_bits(),
+                e.after.to_bits(),
+                e.tag
+            )
+        })
+        .collect()
+}
+
+fn record_schedule_rows(changes: &[crate::changes_checks::Change]) -> Vec<String> {
+    changes
+        .iter()
+        .map(|c| format!("{} {} {:?} {}", c.position, c.control, c.value, c.tag))
+        .collect()
+}
+
+/// One scheduled run of a spec 017 scenario (research R-12): the "output" (the recorder's
+/// stored samples, or its frame bytes as the digest with the codec on; the one-pass's output)
+/// and the rows. `make` builds the engine.
+///
+/// # Panics
+///
+/// On an unknown scenario or a refused call.
+pub fn record_changes_scenario(
+    make: Make<'_>,
+    scenario: &str,
+    value: &str,
+    stream: &str,
+    config: &str,
+    rate: u32,
+    partition: crate::changes_checks::Partition,
+) -> (Vec<f32>, Vec<u8>, RecordChangesGolden) {
+    use crate::changes_checks as cc;
+    use crate::record_checks as rc;
+    use rr_dr60::Stream;
+    let x = record_changes_stimulus(scenario, rate);
+    let settings = configs::settings(config, rate);
+    let v = record_changes_value(value);
+    let p0 = u64::from(rate / 3) + 7;
+    let st = if stream == "record" {
+        Stream::Record
+    } else {
+        Stream::OnePass
+    };
+    let mut p = make(settings);
+    let changes: Vec<cc::Change> = match scenario {
+        "zero" => vec![rc::change(st, 0, v, 1)],
+        "inside" => vec![rc::change(st, p0, v, 1)],
+        "hang_shortening" => vec![rc::change(st, p0, rc::Value::Hang(50.0), 1)],
+        "stop_case" => {
+            // A change inside the flush (the recorder only): half-way through the record latency.
+            let latency = u64::from(p.record_latency_samples());
+            vec![
+                rc::change(Stream::Record, 100, rc::Value::Knee(-5.0), 1),
+                rc::change(
+                    Stream::Record,
+                    x.len() as u64 + latency / 2,
+                    rc::Value::Release(400.0),
+                    2,
+                ),
+            ]
+        }
+        "cross_stream" => {
+            // A value landed on the recorder, then the one-pass's first call lands it too.
+            let r = rc::record_run(
+                &mut p,
+                &x,
+                partition,
+                &[rc::change(Stream::Record, 0, v, 7)],
+            );
+            assert_eq!(r.log.len(), 1);
+            let run = rc::one_pass_run(&mut p, &x, partition, &[]);
+            return (
+                run.out,
+                Vec::new(),
+                RecordChangesGolden {
+                    stream: stream.into(),
+                    schedule: vec![format!(
+                        "0 {} {:?} 7 (on the record stream)",
+                        v.control(),
+                        v.as_f64()
+                    )],
+                    log: record_log_rows(&run.log),
+                    max_per_call: run.max_per_call as u32,
+                    final_position: None,
+                },
+            );
+        }
+        other => panic!("unknown scenario {other:?}"),
+    };
+    if st == Stream::Record {
+        let r = rc::record_run(&mut p, &x, partition, &changes);
+        (
+            r.samples.clone(),
+            r.frames.clone(),
+            RecordChangesGolden {
+                stream: stream.into(),
+                schedule: record_schedule_rows(&changes),
+                log: record_log_rows(&r.log),
+                max_per_call: r.max_per_call as u32,
+                final_position: Some(r.stop.input_samples_total),
+            },
+        )
+    } else {
+        let run = rc::one_pass_run(&mut p, &x, partition, &changes);
+        (
+            run.out,
+            Vec::new(),
+            RecordChangesGolden {
+                stream: stream.into(),
+                schedule: record_schedule_rows(&changes),
+                log: record_log_rows(&run.log),
+                max_per_call: run.max_per_call as u32,
+                final_position: None,
+            },
+        )
+    }
+}
+
+/// Spec 017 FR-008 (research R-12): per value, the `zero` and `inside` scenarios on both
+/// streams in the three configurations, then the hang shortening (both streams, drop and
+/// mute), the stop case (the recorder) and the cross-stream landing (the one-pass), at seven
+/// rates; each entry the output's digest (the stored samples, or the frame bytes' SHA with the
+/// codec on) and the full log. With `bless` the input-0 identity (a `zero` entry against the
+/// constant configuration) and the partition identity (an `inside` entry at the irregular
+/// partition) are asserted on every entry they apply to.
+pub fn generate_record_changes(make: Make<'_>, bless: bool) -> GoldenFile {
+    use crate::changes_checks::{self as cc, Partition};
+    use crate::record_checks as rc;
+    use rr_dr60::Stream;
+    let mut entries = Vec::new();
+    let mut push = |scenario: &str, value: &str, stream: &str, config: &str, rate: u32| {
+        let (y, frames, g) = record_changes_scenario(
+            make,
+            scenario,
+            value,
+            stream,
+            config,
+            rate,
+            Partition::Fixed(64),
+        );
+        let name = format!("{scenario}/{value}/{stream}");
+        let mut e = entry(&name, config, rate, &y);
+        if !frames.is_empty() {
+            let digest = Sha256::digest(&frames);
+            e.frames = Some(frames.len() as u64 / 10);
+            e.frames_sha256 = Some(digest.iter().fold(String::new(), |mut s, b| {
+                let _ = write!(s, "{b:02x}");
+                s
+            }));
+        }
+        e.seed = Some(configs::settings(config, rate).seed);
+        e.counter = Some(0);
+        if bless {
+            let tag = format!("{name}/{config}/{rate} Hz");
+            let (y2, frames2, g2) = record_changes_scenario(
+                make,
+                scenario,
+                value,
+                stream,
+                config,
+                rate,
+                Partition::Irregular,
+            );
+            assert!(cc::same(&y, &y2), "{tag}: the partition identity (output)");
+            assert_eq!(frames, frames2, "{tag}: the partition identity (frames)");
+            assert_eq!(g.log, g2.log, "{tag}: the partition identity (log)");
+            if scenario == "zero" {
+                let settings = configs::settings(config, rate);
+                let constant = rc::constant_settings(&settings, record_changes_value(value));
+                let x = record_changes_stimulus(scenario, rate);
+                if stream == "record" {
+                    let r = rc::record_run(&mut make(constant), &x, Partition::Fixed(64), &[]);
+                    assert!(
+                        cc::same(&y, &r.samples),
+                        "{tag}: the input-0 identity (samples)"
+                    );
+                    assert_eq!(frames, r.frames, "{tag}: the input-0 identity (frames)");
+                } else {
+                    let r = rc::one_pass_run(&mut make(constant), &x, Partition::Fixed(64), &[]);
+                    assert!(
+                        cc::same(&y, &r.out),
+                        "{tag}: the input-0 identity (one-pass)"
+                    );
+                }
+            }
+            if scenario == "hang_shortening" {
+                assert!(g.log.len() == 1, "{tag}: one landing");
+            }
+            if scenario == "cross_stream" {
+                assert!(
+                    g.log.len() == 1 && g.log[0].ends_with(" 7"),
+                    "{tag}: the landing's tag"
+                );
+            }
+            if scenario == "stop_case" {
+                assert_eq!(g.log.len(), 2, "{tag}: the entry inside the flush");
+            }
+            let _ = Stream::Record;
+        }
+        e.record_changes = Some(g);
+        entries.push(e);
+    };
+    for &value in &RECORD_CHANGES_VALUES {
+        for &scenario in &["zero", "inside"] {
+            for &stream in &["record", "one_pass"] {
+                for &config in &RECORD_CHANGES_CONFIGS {
+                    for rate in configs::all_rates() {
+                        push(scenario, value, stream, config, rate);
+                    }
+                }
+            }
+        }
+    }
+    for &stream in &["record", "one_pass"] {
+        for &config in &["record_default", "record_default_mute"] {
+            for rate in configs::all_rates() {
+                push("hang_shortening", "vas.hang_ms", stream, config, rate);
+            }
+        }
+    }
+    for rate in configs::all_rates() {
+        push(
+            "stop_case",
+            "agc.knee_dbfs",
+            "record",
+            "record_default",
+            rate,
+        );
+        push(
+            "cross_stream",
+            "agc.knee_dbfs",
+            "one_pass",
+            "record_default",
+            rate,
+        );
+    }
+    GoldenFile {
+        format: "rr_dr60-golden".into(),
+        version: 1,
+        library_version: rr_dr60::VERSION.into(),
+        entries,
+    }
+}
+
+/// The committed spec 017 record-changes golden file.
+///
+/// # Panics
+///
+/// If the embedded file is not valid golden JSON.
+pub fn committed_record_changes() -> GoldenFile {
+    serde_json::from_str(include_str!("../golden/golden-record-changes-v1.json"))
+        .expect("valid embedded record-changes golden file")
+}
+
+/// Path of the spec 017 record-changes golden file. Bless it only with
+/// `RR_DR60_BLESS=record_changes cargo test -p rr_dr60_harness --test golden_record_changes`,
+/// with a CHANGELOG entry.
+pub fn path_record_changes() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-record-changes-v1.json")
 }
 
 #[cfg(test)]
