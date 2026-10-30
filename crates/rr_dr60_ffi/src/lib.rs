@@ -32,8 +32,10 @@
 //! `rr_dr60_playback_length_samples`, `rr_dr60_meters` (spec 016), the scheduled changes
 //! (`rr_dr60_schedule_change`, `rr_dr60_pending_changes`, `rr_dr60_stream_position`,
 //! `rr_dr60_clear_schedule`, `rr_dr60_process_with_events_and_changes`,
-//! `rr_dr60_play_with_changes`, `rr_dr60_recording_counter`, `rr_dr60_speed_landing`; spec 015),
-//! `rr_dr60_get_state`,
+//! `rr_dr60_play_with_changes`, `rr_dr60_recording_counter`, `rr_dr60_speed_landing`; spec 015;
+//! `rr_dr60_input_position`, `rr_dr60_record_with_changes`,
+//! `rr_dr60_stop_recording_with_changes`, `rr_dr60_clock_of`, `rr_dr60_record_landing`; spec
+//! 017), `rr_dr60_get_state`,
 //! `rr_dr60_memory_status`, `rr_dr60_recording_length`, `rr_dr60_export_len`, the three
 //! latency and drain reads and `rr_dr60_footprint_bytes`. Not real-time safe:
 //! `rr_dr60_create`, `rr_dr60_destroy`, `rr_dr60_reconfigure` (allocate), `rr_dr60_erase`,
@@ -129,9 +131,15 @@ pub enum RrDr60Status {
     /// `RR_DR60_SCHEDULE_CAPACITY` pending changes; nothing stored (spec 015 FR-002).
     ScheduleFull = 27,
     /// `rr_dr60_schedule_change` with a control that is not a live control of the stream (the
-    /// route, the volume, or on the playback stream the speed), or any stream call with a
-    /// reserved or unknown stream value; nothing changes (spec 015 FR-001).
+    /// route, the volume, or on the playback stream the speed; a record-side value on the
+    /// record stream or the one-pass, spec 017 FR-001), or any stream call with an unknown
+    /// stream value; nothing changes (spec 015 FR-001).
     ControlNotOnStream = 28,
+    /// A position read in a clock the stream does not have (spec 017 D2):
+    /// `rr_dr60_stream_position` on the record stream (it has only the input clock) or
+    /// `rr_dr60_input_position` on the playback stream (it has only the output clock); nothing
+    /// is written.
+    NoSuchClock = 29,
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -273,12 +281,15 @@ pub enum RrDr60Route {
     Earphone = 1,
 }
 
-/// The stream a control change is scheduled on (spec 015 D2), passed as `uint32_t`: the
-/// playback stream (its clock counts the samples the current playback has produced since
-/// `rr_dr60_start_playback`, the drain included) or the one-pass stream (its clock counts the
-/// samples produced since construction, `rr_dr60_reset` or `rr_dr60_reconfigure`, the clock the
-/// VAS events use). `RR_DR60_STREAM_RECORD` is reserved for the record-side values (spec 017):
-/// every call refuses it with `CONTROL_NOT_ON_STREAM`.
+/// The stream a control change is scheduled on (spec 015 D2; spec 017 D2), passed as
+/// `uint32_t`: the playback stream (its **output** clock counts the samples the current
+/// playback has produced since `rr_dr60_start_playback`, the drain included), the one-pass
+/// stream (its output clock counts the samples produced since construction, `rr_dr60_reset` or
+/// `rr_dr60_reconfigure`, the clock the VAS events use; its **input** clock the input samples
+/// processed since then) or the record stream (the recorder: its input clock counts the host
+/// samples fed since `rr_dr60_start_recording`, the stop's silence included; it carries the
+/// eight record-side values only). A control whose manifest paths include the record path is
+/// positioned in the input clock (`rr_dr60_clock_of`).
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RrDr60Stream {
@@ -286,8 +297,19 @@ pub enum RrDr60Stream {
     Playback = 0,
     /// The one-pass processing.
     OnePass = 1,
-    /// Reserved (spec 017).
+    /// The recorder (spec 017).
     Record = 2,
+}
+
+/// Which clock a control's positions count in (spec 017 D2), written by `rr_dr60_clock_of` as
+/// `uint32_t`.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RrDr60Clock {
+    /// Host input samples the stream has processed (the record-side values).
+    Input = 0,
+    /// Host output samples the stream has produced (the route, the volume, the speed).
+    Output = 1,
 }
 
 /// One applied control change (spec 015 FR-005), from `rr_dr60_process_with_events_and_changes`
@@ -303,7 +325,8 @@ pub enum RrDr60Stream {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct RrDr60ChangeEntry {
-    /// The host output index the change landed on.
+    /// The index the change landed on: a host output sample for the route, the volume and the
+    /// speed; a host input sample for a record-side value (spec 017; `rr_dr60_clock_of`).
     pub position: u64,
     /// The stream's last applied value for the control.
     pub before: f64,
@@ -752,6 +775,9 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
         Error::InvalidControlValue { .. } => {
             (RrDr60Status::InvalidArgument, RrDr60SettingField::None)
         }
+        // Spec 017 contracts/api.md: status 29; a bad control index is the manifest's status.
+        Error::NoSuchClock { .. } => (RrDr60Status::NoSuchClock, RrDr60SettingField::None),
+        Error::NoSuchControl { .. } => (RrDr60Status::NoSuchControl, RrDr60SettingField::None),
         // Spec 013 contracts/c-api.md: status 25.
         Error::InvalidSpeedLevel { .. } => {
             (RrDr60Status::InvalidSpeedLevel, RrDr60SettingField::None)
@@ -1886,10 +1912,10 @@ pub unsafe extern "C" fn rr_dr60_schedule_change(
     }
 }
 
-/// Writes to `*out_count` the pending changes on `stream`'s schedule (spec 015 FR-002).
-/// Real-time safe.
+/// Writes to `*out_count` the pending changes on `stream`'s schedules (spec 015 FR-002; spec
+/// 017 FR-002: the one-pass's two, one per clock, summed). Real-time safe.
 ///
-/// Statuses: `CONTROL_NOT_ON_STREAM` for a reserved or unknown stream (nothing written).
+/// Statuses: `CONTROL_NOT_ON_STREAM` for an unknown stream (nothing written).
 ///
 /// # Safety
 ///
@@ -1921,10 +1947,12 @@ pub unsafe extern "C" fn rr_dr60_pending_changes(
     }
 }
 
-/// Writes to `*out_position` `stream`'s position (spec 015 D2): the host output samples it has
-/// produced; the next sample produced has this index. Real-time safe.
+/// Writes to `*out_position` `stream`'s **output** position (spec 015 D2): the host output
+/// samples it has produced; the next sample produced has this index. Real-time safe.
 ///
-/// Statuses: `CONTROL_NOT_ON_STREAM` for a reserved or unknown stream (nothing written).
+/// Statuses: `NO_SUCH_CLOCK` for the record stream (it has only the input clock,
+/// `rr_dr60_input_position`); `CONTROL_NOT_ON_STREAM` for an unknown stream (nothing
+/// written).
 ///
 /// # Safety
 ///
@@ -1956,10 +1984,10 @@ pub unsafe extern "C" fn rr_dr60_stream_position(
     }
 }
 
-/// Drops every pending change on `stream`'s schedule (spec 015 FR-002); nothing already applied
-/// is affected. Real-time safe.
+/// Drops every pending change on `stream`'s schedules (spec 015 FR-002; both of the one-pass's,
+/// spec 017); nothing already applied is affected. Real-time safe.
 ///
-/// Statuses: `CONTROL_NOT_ON_STREAM` for a reserved or unknown stream.
+/// Statuses: `CONTROL_NOT_ON_STREAM` for an unknown stream.
 ///
 /// # Safety
 ///
@@ -2033,6 +2061,245 @@ pub unsafe extern "C" fn rr_dr60_speed_landing(
             RrDr60Status::Ok
         }
         Err(_) => RrDr60Status::InvalidArgument,
+    }
+}
+
+/// Writes to `*out_clock` the clock `control`'s positions count in (spec 017 D2), an
+/// `RrDr60Clock` value: `INPUT` for a control whose control manifest paths include the record
+/// path (the eight record-side values), `OUTPUT` otherwise (the route, the volume, the speed).
+/// No handle. Real-time safe.
+///
+/// Statuses: `NO_SUCH_CONTROL` for an index at or past `rr_dr60_control_count()` (nothing
+/// written).
+///
+/// # Safety
+///
+/// `out_clock` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_clock_of(control: u32, out_clock: *mut u32) -> RrDr60Status {
+    if out_clock.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    match rr_dr60::changes::clock_of(control) {
+        Ok(c) => {
+            // SAFETY: non-null and writable (caller contract).
+            unsafe { put(out_clock, c as u32) };
+            RrDr60Status::Ok
+        }
+        Err(e) => status_from_error(e),
+    }
+}
+
+/// Writes to `*out_index` the device sample at which a gate value (`vas.*`) scheduled at input
+/// sample `position` takes effect (spec 017 D3): k(0) = 0, k(P) = ⌈P · 6000 ÷ rate⌉ (P at
+/// 6 kHz). The limiter's and the hiss's values act on input sample P itself. No handle.
+///
+/// Statuses: `INVALID_ARGUMENT` for a rate not in the supported list (nothing written).
+///
+/// # Safety
+///
+/// `out_index` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_record_landing(
+    position: u64,
+    host_rate_hz: u32,
+    out_index: *mut u64,
+) -> RrDr60Status {
+    if out_index.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    match rr_dr60::changes::record_landing(position, host_rate_hz) {
+        Ok(k) => {
+            // SAFETY: non-null and writable (caller contract).
+            unsafe { put(out_index, k) };
+            RrDr60Status::Ok
+        }
+        Err(_) => RrDr60Status::InvalidArgument,
+    }
+}
+
+/// Writes to `*out_position` `stream`'s **input** position (spec 017 D2): the host input
+/// samples it has processed; the next sample fed has this index. The record stream's count
+/// starts at 0 at `rr_dr60_start_recording`, counts the stop's fed silence and reads 0 while
+/// idle; the one-pass's starts at construction, `rr_dr60_reset` and `rr_dr60_reconfigure`.
+/// Real-time safe.
+///
+/// Statuses: `NO_SUCH_CLOCK` for the playback stream (it has only the output clock,
+/// `rr_dr60_stream_position`); `CONTROL_NOT_ON_STREAM` for an unknown stream (nothing
+/// written).
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle; `out_position` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_input_position(
+    pipeline: *const RrDr60Pipeline,
+    stream: u32,
+    out_position: *mut u64,
+) -> RrDr60Status {
+    if pipeline.is_null() || out_position.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: non-null live handle (caller contract).
+    let p = unsafe { &*pipeline };
+    if p.poisoned {
+        return RrDr60Status::InternalError;
+    }
+    let Some(stream) = stream_from_c(stream) else {
+        return RrDr60Status::ControlNotOnStream;
+    };
+    match p.inner.input_position(stream) {
+        Ok(n) => {
+            // SAFETY: non-null and writable (caller contract).
+            unsafe { put(out_position, n) };
+            RrDr60Status::Ok
+        }
+        Err(e) => status_from_error(e),
+    }
+}
+
+/// As `rr_dr60_record`, and writes the record-side changes this call applied to `changes`
+/// (spec 017 FR-005): the first `changes_capacity` of them, each an `RrDr60ChangeEntry` at the
+/// **input** index it landed on; `*out_change_count` (NULL allowed) receives how many the call
+/// applied (`RR_DR60_MAX_CHANGES_PER_CALL` is always enough) and `*out_input_samples_total`
+/// (NULL allowed) the record stream's input position after the call (after a self-stop, the
+/// recording's final input position). `changes` may be NULL only when `changes_capacity` is
+/// 0. Real-time safe.
+///
+/// Statuses: as `rr_dr60_record`.
+///
+/// # Safety
+///
+/// As `rr_dr60_record`; additionally, when `changes_capacity > 0`, `changes` must be writable
+/// for that many `RrDr60ChangeEntry` values; `out_change_count` and `out_input_samples_total`
+/// must be NULL or writable.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)] // the C surface: two caller buffers with their capacities and the two counts
+pub unsafe extern "C" fn rr_dr60_record_with_changes(
+    pipeline: *mut RrDr60Pipeline,
+    input: *const f32,
+    frames: usize,
+    out_info: *mut RrDr60RecordInfo,
+    events: *mut RrDr60VasEvent,
+    events_capacity: usize,
+    changes: *mut RrDr60ChangeEntry,
+    changes_capacity: usize,
+    out_change_count: *mut usize,
+    out_input_samples_total: *mut u64,
+) -> RrDr60Status {
+    let early = |status| {
+        // SAFETY: out_info is NULL or writable (caller contract).
+        unsafe { put(out_info, RrDr60RecordInfo::default()) };
+        status
+    };
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return early(status),
+    };
+    if (input.is_null() && frames > 0)
+        || (events.is_null() && events_capacity > 0)
+        || (changes.is_null() && changes_capacity > 0)
+    {
+        return early(RrDr60Status::NullPointer);
+    }
+    let result = guarded(p, |inner| {
+        // SAFETY: input is readable for `frames` floats, or `frames` is 0 (caller contract).
+        let x: &[f32] = if frames == 0 {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(input, frames) }
+        };
+        // SAFETY: the caller's event storage (caller contract).
+        let slots = unsafe { event_slots(events, events_capacity) };
+        // SAFETY: `ChangeEntry` has the layout of `RrDr60ChangeEntry` (the const assert); the
+        // slice is the caller's storage, writable for `changes_capacity` values (or empty).
+        let log: &mut [ChangeEntry] = if changes_capacity == 0 {
+            &mut []
+        } else {
+            unsafe {
+                std::slice::from_raw_parts_mut(changes.cast::<ChangeEntry>(), changes_capacity)
+            }
+        };
+        inner.record_with_changes(x, slots, log)
+    });
+    match result {
+        Ok(info) => {
+            // SAFETY: out_info is NULL or writable (caller contract).
+            unsafe { put(out_info, c_record_info(info)) };
+            // SAFETY: NULL or writable (caller contract).
+            unsafe { put(out_change_count, info.changes) };
+            // SAFETY: NULL or writable (caller contract).
+            unsafe { put(out_input_samples_total, info.input_samples_total) };
+            RrDr60Status::Ok
+        }
+        Err(status) => early(status),
+    }
+}
+
+/// As `rr_dr60_stop_recording`, and writes the record-side changes the stop's feed applied to
+/// `changes` (spec 017 FR-005; the schedule applies during the flush and is cleared at the
+/// end); `*out_change_count` (NULL allowed) receives how many, `*out_input_samples_total` (NULL
+/// allowed) the recording's final input position: every host sample fed since the start, the
+/// stop's silence included (a change at or past it was dropped without an entry). Both are 0
+/// when the flush was skipped. Real-time safe.
+///
+/// Statuses: as `rr_dr60_stop_recording`.
+///
+/// # Safety
+///
+/// As `rr_dr60_stop_recording`; additionally, when `changes_capacity > 0`, `changes` must be
+/// writable for that many values; `out_change_count` and `out_input_samples_total` must be
+/// NULL or writable.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)] // the C surface: two caller buffers with their capacities and the two counts
+pub unsafe extern "C" fn rr_dr60_stop_recording_with_changes(
+    pipeline: *mut RrDr60Pipeline,
+    out_outcome: *mut RrDr60StopOutcome,
+    events: *mut RrDr60VasEvent,
+    events_capacity: usize,
+    changes: *mut RrDr60ChangeEntry,
+    changes_capacity: usize,
+    out_change_count: *mut usize,
+    out_input_samples_total: *mut u64,
+) -> RrDr60Status {
+    let early = |status| {
+        // SAFETY: out_outcome is NULL or writable (caller contract).
+        unsafe { put(out_outcome, RrDr60StopOutcome::default()) };
+        status
+    };
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return early(status),
+    };
+    if (events.is_null() && events_capacity > 0) || (changes.is_null() && changes_capacity > 0) {
+        return early(RrDr60Status::NullPointer);
+    }
+    let result = guarded(p, |inner| {
+        // SAFETY: the caller's event storage (caller contract).
+        let slots = unsafe { event_slots(events, events_capacity) };
+        // SAFETY: as in `rr_dr60_record_with_changes`.
+        let log: &mut [ChangeEntry] = if changes_capacity == 0 {
+            &mut []
+        } else {
+            unsafe {
+                std::slice::from_raw_parts_mut(changes.cast::<ChangeEntry>(), changes_capacity)
+            }
+        };
+        inner.stop_recording_with_changes(slots, log)
+    });
+    match result {
+        Ok(outcome) => {
+            // SAFETY: out_outcome is NULL or writable (caller contract).
+            unsafe { put(out_outcome, c_outcome(outcome)) };
+            // SAFETY: NULL or writable (caller contract).
+            unsafe { put(out_change_count, outcome.changes) };
+            // SAFETY: NULL or writable (caller contract).
+            unsafe { put(out_input_samples_total, outcome.input_samples_total) };
+            RrDr60Status::Ok
+        }
+        Err(status) => early(status),
     }
 }
 
@@ -5299,6 +5566,8 @@ mod changes_tests {
         );
         assert_eq!(RrDr60Status::ScheduleFull as u32, 27);
         assert_eq!(RrDr60Status::ControlNotOnStream as u32, 28);
+        assert_eq!(RrDr60Status::NoSuchClock as u32, 29); // spec 017
+        assert_eq!(RR_DR60_MAX_CHANGES_PER_CALL, 139); // spec 017 FR-005
         assert_eq!(
             status_from_error(Error::ReservedStream {
                 stream: Stream::Record
@@ -5312,5 +5581,247 @@ mod changes_tests {
             }),
             RrDr60Status::InvalidArgument
         );
+    }
+}
+
+/// Spec 017 (tasks.md T013): the C surface of the record-side values.
+#[cfg(test)]
+mod record_tests {
+    use super::*;
+
+    fn handle() -> *mut RrDr60Pipeline {
+        let mut s = rr_dr60_settings_default(48_000);
+        s.speech_codec_enabled = false;
+        let mut h: *mut RrDr60Pipeline = core::ptr::null_mut();
+        // SAFETY: valid pointers.
+        assert_eq!(unsafe { rr_dr60_create(&s, &mut h) }, RrDr60Status::Ok);
+        h
+    }
+
+    fn index(id: &str) -> u32 {
+        rr_dr60::controls()
+            .iter()
+            .position(|e| e.identifier == id)
+            .expect("a control") as u32
+    }
+
+    const RECORD: u32 = RrDr60Stream::Record as u32;
+    const ONE_PASS: u32 = RrDr60Stream::OnePass as u32;
+    const PLAYBACK: u32 = RrDr60Stream::Playback as u32;
+
+    #[test]
+    fn statuses_clocks_and_helpers() {
+        let h = handle();
+        let sens = index("vas.sensitivity");
+        let hang = index("vas.hang_ms");
+        let volume = index("volume");
+        // SAFETY: a live handle.
+        unsafe {
+            assert_eq!(
+                rr_dr60_schedule_change(h, RECORD, 0, sens, 6.0, 1),
+                RrDr60Status::InvalidSetting
+            );
+            assert_eq!(
+                rr_dr60_schedule_change(h, ONE_PASS, 0, hang, 20.0, 1),
+                RrDr60Status::InvalidSetting
+            );
+            assert_eq!(
+                rr_dr60_schedule_change(h, PLAYBACK, 0, sens, 5.0, 1),
+                RrDr60Status::ControlNotOnStream
+            );
+            assert_eq!(
+                rr_dr60_schedule_change(h, RECORD, 0, index("vas.mode"), 1.0, 1),
+                RrDr60Status::ControlNotOnStream
+            );
+            assert_eq!(
+                rr_dr60_schedule_change(h, RECORD, 0, volume, 0.5, 1),
+                RrDr60Status::ControlNotOnStream
+            );
+            let mut n = 7u32;
+            assert_eq!(rr_dr60_pending_changes(h, RECORD, &mut n), RrDr60Status::Ok);
+            assert_eq!(n, 0, "nothing stored");
+            let mut pos = 7u64;
+            assert_eq!(
+                rr_dr60_input_position(h, PLAYBACK, &mut pos),
+                RrDr60Status::NoSuchClock
+            );
+            assert_eq!(pos, 7, "nothing written");
+            assert_eq!(
+                rr_dr60_stream_position(h, RECORD, &mut pos),
+                RrDr60Status::NoSuchClock
+            );
+            assert_eq!(pos, 7);
+            assert_eq!(
+                rr_dr60_input_position(h, RECORD, &mut pos),
+                RrDr60Status::Ok
+            );
+            assert_eq!(pos, 0);
+            assert_eq!(
+                rr_dr60_input_position(h, ONE_PASS, &mut pos),
+                RrDr60Status::Ok
+            );
+            assert_eq!(pos, 0);
+            assert_eq!(
+                rr_dr60_input_position(h, 9, &mut pos),
+                RrDr60Status::ControlNotOnStream
+            );
+            assert_eq!(
+                rr_dr60_input_position(core::ptr::null(), RECORD, &mut pos),
+                RrDr60Status::NullPointer
+            );
+            assert_eq!(
+                rr_dr60_input_position(h, RECORD, core::ptr::null_mut()),
+                RrDr60Status::NullPointer
+            );
+            let mut clock = 7u32;
+            assert_eq!(rr_dr60_clock_of(sens, &mut clock), RrDr60Status::Ok);
+            assert_eq!(clock, RrDr60Clock::Input as u32);
+            assert_eq!(rr_dr60_clock_of(volume, &mut clock), RrDr60Status::Ok);
+            assert_eq!(clock, RrDr60Clock::Output as u32);
+            assert_eq!(
+                rr_dr60_clock_of(rr_dr60_control_count(), &mut clock),
+                RrDr60Status::NoSuchControl
+            );
+            assert_eq!(clock, RrDr60Clock::Output as u32, "nothing written");
+            assert_eq!(
+                rr_dr60_clock_of(sens, core::ptr::null_mut()),
+                RrDr60Status::NullPointer
+            );
+            let mut k = 7u64;
+            assert_eq!(rr_dr60_record_landing(9, 48_000, &mut k), RrDr60Status::Ok);
+            assert_eq!(k, 2);
+            assert_eq!(rr_dr60_record_landing(0, 6000, &mut k), RrDr60Status::Ok);
+            assert_eq!(k, 0);
+            assert_eq!(
+                rr_dr60_record_landing(9, 22_050, &mut k),
+                RrDr60Status::InvalidArgument
+            );
+            assert_eq!(k, 0, "nothing written");
+            assert_eq!(
+                rr_dr60_record_landing(9, 48_000, core::ptr::null_mut()),
+                RrDr60Status::NullPointer
+            );
+            rr_dr60_destroy(h);
+        }
+        assert_eq!(RrDr60Clock::Input as u32, rr_dr60::Clock::Input as u32);
+        assert_eq!(RrDr60Clock::Output as u32, rr_dr60::Clock::Output as u32);
+        assert_eq!(
+            status_from_error(Error::NoSuchClock {
+                stream: Stream::Record
+            }),
+            RrDr60Status::NoSuchClock
+        );
+        assert_eq!(
+            status_from_error(Error::NoSuchControl { control: 29 }),
+            RrDr60Status::NoSuchControl
+        );
+    }
+
+    #[test]
+    fn a_scheduled_landing_through_record_and_stop() {
+        let h = handle();
+        let sens = index("vas.sensitivity");
+        let knee = index("agc.knee_dbfs");
+        let input = vec![0.01f32; 2000];
+        let mut entries = [RrDr60ChangeEntry::default(); RR_DR60_MAX_CHANGES_PER_CALL];
+        let mut info = RrDr60RecordInfo::default();
+        let mut count = 0usize;
+        let mut total = 0u64;
+        // SAFETY: a live handle and valid buffers.
+        unsafe {
+            assert_eq!(
+                rr_dr60_schedule_change(h, RECORD, 700, sens, 5.0, 11),
+                RrDr60Status::Ok
+            );
+            assert_eq!(rr_dr60_start_recording(h), RrDr60Status::Ok);
+            assert_eq!(
+                rr_dr60_record_with_changes(
+                    h,
+                    input.as_ptr(),
+                    1000,
+                    &mut info,
+                    core::ptr::null_mut(),
+                    0,
+                    entries.as_mut_ptr(),
+                    RR_DR60_MAX_CHANGES_PER_CALL,
+                    &mut count,
+                    &mut total,
+                ),
+                RrDr60Status::Ok
+            );
+            assert_eq!(count, 1);
+            assert_eq!(total, 1000);
+            assert_eq!(
+                (entries[0].position, entries[0].control, entries[0].tag),
+                (700, sens, 11)
+            );
+            assert_eq!((entries[0].before, entries[0].after), (3.0, 5.0));
+            let mut pos = 0u64;
+            assert_eq!(
+                rr_dr60_input_position(h, RECORD, &mut pos),
+                RrDr60Status::Ok
+            );
+            assert_eq!(pos, 1000);
+            // A change inside the flush, reported by the stop with the final position.
+            let mut latency = 0u32;
+            assert_eq!(
+                rr_dr60_record_latency_samples(h, &mut latency),
+                RrDr60Status::Ok
+            );
+            assert_eq!(
+                rr_dr60_schedule_change(h, RECORD, 1000 + u64::from(latency) / 2, knee, -5.0, 12),
+                RrDr60Status::Ok
+            );
+            let mut outcome = RrDr60StopOutcome::default();
+            assert_eq!(
+                rr_dr60_stop_recording_with_changes(
+                    h,
+                    &mut outcome,
+                    core::ptr::null_mut(),
+                    0,
+                    entries.as_mut_ptr(),
+                    RR_DR60_MAX_CHANGES_PER_CALL,
+                    &mut count,
+                    &mut total,
+                ),
+                RrDr60Status::Ok
+            );
+            assert!(outcome.kept);
+            assert_eq!(count, 1);
+            assert_eq!(entries[0].tag, 12);
+            assert_eq!(total, 1000 + u64::from(latency));
+            let mut n = 9u32;
+            assert_eq!(rr_dr60_pending_changes(h, RECORD, &mut n), RrDr60Status::Ok);
+            assert_eq!(n, 0, "the end clears");
+            assert_eq!(
+                rr_dr60_stop_recording_with_changes(
+                    h,
+                    &mut outcome,
+                    core::ptr::null_mut(),
+                    0,
+                    core::ptr::null_mut(),
+                    0,
+                    &mut count,
+                    &mut total,
+                ),
+                RrDr60Status::NotRecording
+            );
+            assert_eq!(
+                rr_dr60_record_with_changes(
+                    h,
+                    input.as_ptr(),
+                    10,
+                    &mut info,
+                    core::ptr::null_mut(),
+                    0,
+                    core::ptr::null_mut(),
+                    5,
+                    &mut count,
+                    &mut total,
+                ),
+                RrDr60Status::NullPointer
+            );
+            rr_dr60_destroy(h);
+        }
     }
 }

@@ -34,3 +34,9 @@ echo "smoke --meters matches the Rust example"
 cargo run -q -p rr_dr60_harness --example changes_rows > target/example-changes.txt
 diff target/smoke-changes.txt target/example-changes.txt
 echo "smoke --changes matches the Rust example"
+# Spec 017 SC-003: the C program's scheduled recording and one-pass with record-side changes
+# (entries, the final position and the digests) equal the Rust example's, byte for byte.
+./target/smoke --record-changes > target/smoke-record-changes.txt
+cargo run -q -p rr_dr60_harness --example record_changes_rows > target/example-record-changes.txt
+diff target/smoke-record-changes.txt target/example-record-changes.txt
+echo "smoke --record-changes matches the Rust example"

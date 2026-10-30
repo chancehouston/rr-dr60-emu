@@ -2852,3 +2852,197 @@ fn changes_parity() {
         unsafe { rr_dr60_destroy(h) };
     }
 }
+
+/// Spec 017 FR-010, SC-003: the Rust and C runs of a record-side schedule on the recorder and
+/// on the one-pass are bit-identical in output and entries.
+#[test]
+fn record_parity() {
+    use rr_dr60::changes::MAX_CHANGES_PER_CALL;
+    use rr_dr60::{ChangeEntry, MicSettings, Stream};
+    use rr_dr60_harness::changes_checks::{self as cc, Partition};
+    use rr_dr60_harness::record_checks::{self as rc, Value};
+    let same_entry = |c: &RrDr60ChangeEntry, r: &ChangeEntry| {
+        c.position == r.position
+            && c.before.to_bits() == r.before.to_bits()
+            && c.after.to_bits() == r.after.to_bits()
+            && c.tag == r.tag
+            && c.control == r.control
+            && c.reserved == 0
+    };
+    for &rate in configs::measurement_rates() {
+        let x = stimulus::voiced(f64::from(rate), 0.5, -20.0, 0x017);
+        let mut s = configs::settings("default_output", rate);
+        s.mic = MicSettings::DEVICE;
+        s.speech_codec_enabled = false;
+        let cs = configs::c_settings(&s);
+        let changes = [
+            rc::change(Stream::Record, 700, Value::Sensitivity(5), 1),
+            rc::change(Stream::Record, 1500, Value::Hiss(6.0), 2),
+        ];
+        // Rust: the recorder.
+        let mut p = Pipeline::new(s).unwrap();
+        let r = rc::record_run(&mut p, &x, Partition::Fixed(1024), &changes);
+        // C: the recorder.
+        let h = create(&cs);
+        for c in &changes {
+            // SAFETY: a live handle.
+            assert_eq!(
+                unsafe {
+                    rr_dr60_schedule_change(
+                        h,
+                        c.stream as u32,
+                        c.position,
+                        c.control,
+                        c.value,
+                        c.tag,
+                    )
+                },
+                RrDr60Status::Ok
+            );
+        }
+        // SAFETY: a live handle.
+        assert_eq!(unsafe { rr_dr60_start_recording(h) }, RrDr60Status::Ok);
+        let mut log = Vec::new();
+        let mut entries = vec![RrDr60ChangeEntry::default(); MAX_CHANGES_PER_CALL];
+        for chunk in x.chunks(1024) {
+            let mut info = RrDr60RecordInfo::default();
+            let (mut count, mut total) = (0usize, 0u64);
+            // SAFETY: a live handle and valid buffers.
+            assert_eq!(
+                unsafe {
+                    rr_dr60_record_with_changes(
+                        h,
+                        chunk.as_ptr(),
+                        chunk.len(),
+                        &mut info,
+                        core::ptr::null_mut(),
+                        0,
+                        entries.as_mut_ptr(),
+                        MAX_CHANGES_PER_CALL,
+                        &mut count,
+                        &mut total,
+                    )
+                },
+                RrDr60Status::Ok
+            );
+            log.extend_from_slice(&entries[..count]);
+        }
+        let mut so = RrDr60StopOutcome::default();
+        let (mut count, mut total) = (0usize, 0u64);
+        // SAFETY: a live handle and valid buffers.
+        assert_eq!(
+            unsafe {
+                rr_dr60_stop_recording_with_changes(
+                    h,
+                    &mut so,
+                    core::ptr::null_mut(),
+                    0,
+                    entries.as_mut_ptr(),
+                    MAX_CHANGES_PER_CALL,
+                    &mut count,
+                    &mut total,
+                )
+            },
+            RrDr60Status::Ok
+        );
+        log.extend_from_slice(&entries[..count]);
+        assert_eq!(
+            total, r.stop.input_samples_total,
+            "{rate}: the final position"
+        );
+        assert_eq!(log.len(), r.log.len(), "{rate}: the entry count");
+        assert!(
+            log.iter().zip(&r.log).all(|(c, r)| same_entry(c, r)),
+            "{rate}: the entries"
+        );
+        // The recordings: exported bytes.
+        let mut len = 0usize;
+        // SAFETY: a live handle.
+        assert_eq!(
+            unsafe { rr_dr60_export_len(h, 1, &mut len) },
+            RrDr60Status::Ok
+        );
+        let mut bytes = vec![0u8; len];
+        let mut written = 0usize;
+        // SAFETY: a live handle and a buffer of `len` bytes.
+        assert_eq!(
+            unsafe { rr_dr60_export(h, 1, bytes.as_mut_ptr(), len, &mut written) },
+            RrDr60Status::Ok
+        );
+        let rust_bytes = split_checks::export_bytes(&p, r.number);
+        assert_eq!(bytes, rust_bytes, "{rate}: the recording");
+        // The one-pass on a fresh handle and engine.
+        // SAFETY: a live handle.
+        unsafe { rr_dr60_destroy(h) };
+        let h = create(&cs);
+        let one = [
+            rc::change(Stream::OnePass, 700, Value::Knee(-5.0), 3),
+            cc::Change::route(Stream::OnePass, 900, Route::Earphone, 4),
+        ];
+        let mut q = Pipeline::new(s).unwrap();
+        let rr = cc::run_scheduled(
+            &mut q,
+            cc::Source::OnePass(&x),
+            &one,
+            Partition::Fixed(1024),
+        );
+        for c in &one {
+            // SAFETY: a live handle.
+            assert_eq!(
+                unsafe {
+                    rr_dr60_schedule_change(
+                        h,
+                        c.stream as u32,
+                        c.position,
+                        c.control,
+                        c.value,
+                        c.tag,
+                    )
+                },
+                RrDr60Status::Ok
+            );
+        }
+        let mut out = Vec::new();
+        let mut log = Vec::new();
+        let mut y = vec![0.0f32; 1024];
+        for chunk in x.chunks(1024) {
+            let mut info = RrDr60BlockInfo::default();
+            let mut count = 0usize;
+            // SAFETY: a live handle and buffers of the chunk's length.
+            assert_eq!(
+                unsafe {
+                    rr_dr60_process_with_events_and_changes(
+                        h,
+                        chunk.as_ptr(),
+                        y.as_mut_ptr(),
+                        chunk.len(),
+                        &mut info,
+                        core::ptr::null_mut(),
+                        0,
+                        entries.as_mut_ptr(),
+                        MAX_CHANGES_PER_CALL,
+                        &mut count,
+                    )
+                },
+                RrDr60Status::Ok
+            );
+            out.extend_from_slice(&y[..info.produced]);
+            log.extend_from_slice(&entries[..count]);
+        }
+        assert!(cc::same(&out, &rr.out), "{rate}: the one-pass output");
+        assert_eq!(log.len(), rr.log.len(), "{rate}: the one-pass entry count");
+        assert!(
+            log.iter().zip(&rr.log).all(|(c, r)| same_entry(c, r)),
+            "{rate}: the one-pass entries"
+        );
+        let mut pos = 0u64;
+        // SAFETY: a live handle.
+        assert_eq!(
+            unsafe { rr_dr60_input_position(h, 1, &mut pos) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(pos, q.input_position(Stream::OnePass).unwrap());
+        // SAFETY: a live handle.
+        unsafe { rr_dr60_destroy(h) };
+    }
+}
