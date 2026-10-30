@@ -42,16 +42,14 @@ fn record_pending_cost() {
     let mut worst_block_us = 0.0f64;
     for _ in 0..45 {
         p.start_recording().unwrap();
-        let mut k = 0u64;
         let t = Instant::now();
-        for chunk in x.chunks(4096) {
+        for (k, chunk) in x.chunks(4096).enumerate() {
             // One change inside every block (the pending compare is live on every sample and
             // the limiter's derivation runs once per block).
             let pos = p.input_position(Stream::Record).unwrap() + 2000;
             let v = if k % 2 == 0 { -5.0 } else { -1.0 };
-            p.schedule_change(Stream::Record, pos, knee, v, k + 1)
+            p.schedule_change(Stream::Record, pos, knee, v, k as u64 + 1)
                 .unwrap();
-            k += 1;
             let tb = Instant::now();
             let _ = p.record(chunk, &mut []).unwrap();
             worst_block_us = worst_block_us.max(tb.elapsed().as_nanos() as f64 / 1000.0);
