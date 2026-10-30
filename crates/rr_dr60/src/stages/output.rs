@@ -197,6 +197,9 @@ pub(crate) struct OutputChain {
     /// the knob moved linearly in time. Both false in production.
     volume_step: bool,
     shape_linear: bool,
+    /// Test hook (spec 015 research R-13): a route switch runs the full reset, losing the
+    /// call's meter accumulators. False in production.
+    pub(crate) full_reset_on_route: bool,
 }
 
 impl OutputChain {
@@ -260,6 +263,7 @@ impl OutputChain {
             fresh: true, // 011 FR-005: the first block takes the position at once
             volume_step: false,
             shape_linear: false,
+            full_reset_on_route: false,
         };
         // A-045: N = 20 ms of host samples. Unreachable fallback: `Pipeline::new` validated the
         // rate before building the chain; 120 (the 6 kHz figure) only avoids a panic site.
@@ -284,7 +288,11 @@ impl OutputChain {
             // T043 N3). The sections-only reset marks the chain fresh: the new route starts at
             // the new position; the meter accumulators keep the samples before the switch
             // (spec 015 research R-05).
-            self.reset_sections();
+            if self.full_reset_on_route {
+                self.reset(); // the mutant (research R-13)
+            } else {
+                self.reset_sections();
+            }
         }
         if self.fresh || !self.active || !self.run_amp || self.volume_step {
             self.take_at_once(volume); // 011 FR-005 (the hook: 0.10's step)

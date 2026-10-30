@@ -9,6 +9,7 @@
 //! each playback starts from its path's reset state (A-037, an engine decision required by
 //! FR-007).
 
+use crate::changes::ChangeEntry;
 use crate::codec::{self, Frame};
 use crate::error::Error;
 use crate::form;
@@ -141,6 +142,10 @@ pub struct PlayInfo {
     /// [`playback_latency_samples`](crate::Pipeline::playback_latency_samples), like
     /// `frame_index`.
     pub place: u64,
+    /// Since 0.16 (spec 015 FR-005): the control changes the playback stream applied in this
+    /// call (scheduled ones and plain setters that moved the stream); the entries themselves
+    /// are written by [`Pipeline::play_with_changes`].
+    pub changes: usize,
 }
 
 /// The player's cursor into the recording being played (data-model.md › Transport; spec 008
@@ -423,6 +428,9 @@ impl Pipeline {
             .ok_or(Error::NoSuchRecording { number })?;
         self.player.reset();
         self.player.set_controls(self.route, self.volume); // spec 009 FR-009
+        // Spec 015 D3: the stream starts with the readings, no entry; the schedule is kept.
+        self.player
+            .set_start_values(self.route, self.volume, self.speed_level);
         if let Some(dec) = &mut self.decoder {
             dec.reset();
         }
@@ -461,8 +469,10 @@ impl Pipeline {
         if self.transport.state != State::Playing {
             return Err(Error::NotPlaying);
         }
-        // Spec 009 FR-009: the route and the volume land at this block.
-        self.player.set_controls(self.route, self.volume);
+        // Spec 009 FR-009: the route, the volume and the level land at this call's first
+        // produced sample, with the scheduled changes (spec 015 research R-02, R-07).
+        self.player
+            .begin_call(self.route, self.volume, Some(self.speed_level));
         let mut produced = 0;
         let mut frames = 0;
         let Pipeline {
@@ -475,9 +485,7 @@ impl Pipeline {
             plan_l_m,
             ..
         } = self;
-        // Spec 013 FR-007: the host's level lands at this call (from the first device-rate
-        // sample it computes), under the latch and the deferred switch into level 3.
-        speed.request(*speed_level);
+        let _ = speed_level; // 015: the level lands through the stream's apply point below
         let (l, m) = *plan_l_m;
         let drain = u64::from(player.drain_len_host_samples());
         let span = transport.cursor.span;
@@ -519,10 +527,13 @@ impl Pipeline {
                 }
             }
         };
-        while produced < output.len() && cursor.produced < cursor.total {
+        while produced < output.len() && player.ctl.produced < cursor.total {
+            // Spec 015 research R-02: the apply point at the top of host sample `produced`,
+            // before any pull for it (a speed request then reaches the pull d(P)).
+            player.apply_if_due(&mut |level| speed.request(level));
             let y = loop {
-                if let Some(y) = player.try_next_host() {
-                    break y;
+                if let Some(y) = player.next_wide() {
+                    break player.emit_applied(y);
                 }
                 // The next device sample: the speed control's own part and tail, then the
                 // drain's silence (spec 013 FR-005; research R-04).
@@ -542,8 +553,8 @@ impl Pipeline {
             };
             output[produced] = y;
             produced += 1;
-            cursor.produced += 1;
         }
+        cursor.produced = player.ctl.produced;
         let done = cursor.produced >= cursor.total;
         // 013 FR-009: the place and the frame index from the speed control's place.
         let place = speed.place();
@@ -560,11 +571,49 @@ impl Pipeline {
             frames,
             frame_index: transport.frame_index,
             place,
+            changes: player.ctl.log_len(),
         };
         if produced > 0 {
             self.finalize_play(); // 016 FR-001: a non-empty call
         }
+        self.take_landed_play();
+        if finished {
+            self.player.clear_schedule(); // 015 FR-002: the end of a playback
+        }
         Ok(info)
+    }
+
+    /// As [`play`](Self::play), and writes the control changes the playback stream applied in
+    /// this call to `changes` (spec 015 FR-005), each a [`ChangeEntry`] at the output index it
+    /// landed on; `info.changes` counts them all;
+    /// [`changes::MAX_CHANGES_PER_CALL`](crate::changes::MAX_CHANGES_PER_CALL) is always
+    /// enough. Real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// As [`play`](Self::play).
+    pub fn play_with_changes(
+        &mut self,
+        output: &mut [f32],
+        changes: &mut [ChangeEntry],
+    ) -> Result<PlayInfo, Error> {
+        let info = self.play(output)?;
+        self.player.ctl.drain_log(changes);
+        Ok(info)
+    }
+
+    /// Spec 015 research R-07: the readings follow the changes the playback stream landed.
+    fn take_landed_play(&mut self) {
+        let ctl = &mut self.player.ctl;
+        if let Some(r) = ctl.landed_route.take() {
+            self.route = r;
+        }
+        if let Some(v) = ctl.landed_volume.take() {
+            self.volume = v;
+        }
+        if let Some(l) = ctl.landed_level.take() {
+            self.speed_level = l;
+        }
     }
 
     /// Stops the playback at once, without the drain (spec 006 FR-008). Real-time safe.
@@ -577,6 +626,7 @@ impl Pipeline {
             return Err(Error::NotPlaying);
         }
         self.transport.state = State::Idle;
+        self.player.clear_schedule(); // 015 FR-002
         Ok(())
     }
 
@@ -603,6 +653,7 @@ impl Pipeline {
             let cursor = &mut self.transport.cursor;
             if cursor.number == number {
                 self.transport.state = State::Idle;
+                self.player.clear_schedule(); // 015 FR-002: the playback ended
             } else if number < cursor.number {
                 cursor.number -= 1;
             }
@@ -629,6 +680,7 @@ impl Pipeline {
         }
         if self.transport.state == State::Playing {
             self.transport.state = State::Idle;
+            self.player.clear_schedule(); // 015 FR-002: the playback ended
         }
         self.memory.erase_all();
         Ok(())

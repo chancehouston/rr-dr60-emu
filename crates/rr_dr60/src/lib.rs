@@ -280,6 +280,8 @@ pub mod __test_hooks {
         pub skip_clear: bool,
     }
 
+    pub use crate::changes::ChangeMutation;
+
     /// The limiter's hold-capacitor voltage, in volts: 0.0 when discharged (spec 005 R-03;
     /// contracts/rust-api.md › Test hooks).
     pub fn limiter_state(pipeline: &crate::Pipeline) -> f64 {

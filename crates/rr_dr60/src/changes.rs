@@ -135,6 +135,9 @@ pub(crate) struct Schedule {
     len: usize,
     next_seq: u64,
     earliest: u64,
+    /// Test-only (research R-13): the schedule in submission order.
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) submission_order: bool,
 }
 
 impl Schedule {
@@ -145,6 +148,8 @@ impl Schedule {
             len: 0,
             next_seq: 0,
             earliest: u64::MAX,
+            #[cfg(feature = "__test-hooks")]
+            submission_order: false,
         }
     }
 
@@ -164,10 +169,16 @@ impl Schedule {
         self.next_seq += 1;
         // The first index whose position is greater: ties (same position) go after.
         let mut at = self.len;
-        for (i, e) in self.entries[..self.len].iter().enumerate() {
-            if e.position > position {
-                at = i;
-                break;
+        #[cfg(feature = "__test-hooks")]
+        let sorted = !self.submission_order;
+        #[cfg(not(feature = "__test-hooks"))]
+        let sorted = true;
+        if sorted {
+            for (i, e) in self.entries[..self.len].iter().enumerate() {
+                if e.position > position {
+                    at = i;
+                    break;
+                }
             }
         }
         self.entries.copy_within(at..self.len, at + 1);
@@ -357,5 +368,262 @@ mod tests {
         assert_eq!(Stream::Playback as u32, 0);
         assert_eq!(Stream::OnePass as u32, 1);
         assert_eq!(Stream::Record as u32, 2);
+    }
+}
+
+/// The control manifest's index of `route` (pinned by a test against the manifest).
+pub(crate) const LIVE_ROUTE: u32 = 0;
+/// The control manifest's index of `volume`.
+pub(crate) const LIVE_VOLUME: u32 = 1;
+/// The control manifest's index of `playback_speed`.
+pub(crate) const LIVE_SPEED: u32 = 2;
+
+/// A stream's control state (data-model.md › Stream; research R-01): the clock, the schedule,
+/// the last applied values, the pending plain change, the landed readings and the staging log.
+/// Lives in each `PlaybackPath`.
+#[derive(Clone, Debug)]
+pub(crate) struct StreamState {
+    /// The clock: host output samples produced; the next sample has this index (D2).
+    pub(crate) produced: u64,
+    pub(crate) schedule: Schedule,
+    /// 0 while a plain change is pending, else the schedule's earliest position (R-09).
+    pub(crate) next_apply: u64,
+    last_route: crate::Route,
+    last_volume: f32,
+    last_level: u8,
+    pending_route: crate::Route,
+    pending_volume: f32,
+    pending_level: Option<u8>,
+    plain_pending: bool,
+    /// The last landed value per control in the call, for the readings (R-07).
+    pub(crate) landed_route: Option<crate::Route>,
+    pub(crate) landed_volume: Option<f32>,
+    pub(crate) landed_level: Option<u8>,
+    log: [ChangeEntry; MAX_CHANGES_PER_CALL],
+    log_len: usize,
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) mutation: ChangeMutation,
+}
+
+/// What a scheduled or plain change asks the path to do (the chain pair, or the level).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Apply {
+    /// `chain.set_controls(route, volume)`.
+    Chain(crate::Route, f32),
+    /// `speed.request(level)`.
+    Level(u8),
+}
+
+impl StreamState {
+    pub(crate) fn new(route: crate::Route, volume: f32, level: u8) -> Self {
+        Self {
+            produced: 0,
+            schedule: Schedule::new(),
+            next_apply: u64::MAX,
+            last_route: route,
+            last_volume: volume,
+            last_level: level,
+            pending_route: route,
+            pending_volume: volume,
+            pending_level: None,
+            plain_pending: false,
+            landed_route: None,
+            landed_volume: None,
+            landed_level: None,
+            log: [ChangeEntry::default(); MAX_CHANGES_PER_CALL],
+            log_len: 0,
+            #[cfg(feature = "__test-hooks")]
+            mutation: ChangeMutation::default(),
+        }
+    }
+
+    /// The stream's reset (`PlaybackPath::reset`): the clock, the pending change and the log;
+    /// never the schedule (R-01).
+    pub(crate) fn reset(&mut self) {
+        self.produced = 0;
+        self.plain_pending = false;
+        self.pending_level = None;
+        self.next_apply = self.schedule.earliest();
+        self.log_len = 0;
+        self.landed_route = None;
+        self.landed_volume = None;
+        self.landed_level = None;
+    }
+
+    /// The lifecycle rule (R-07): the stream starts with the engine's values, no entry.
+    pub(crate) fn set_start_values(&mut self, route: crate::Route, volume: f32, level: u8) {
+        self.last_route = route;
+        self.last_volume = volume;
+        self.last_level = level;
+    }
+
+    /// A processing call's entry: the plain change pending (today's entry-time controls), the
+    /// log and the landed readings cleared, the apply armed for the first produced sample.
+    #[inline]
+    pub(crate) fn begin_call(&mut self, route: crate::Route, volume: f32, level: Option<u8>) {
+        self.pending_route = route;
+        self.pending_volume = volume;
+        self.pending_level = level;
+        self.plain_pending = true;
+        self.next_apply = 0;
+        self.log_len = 0;
+        self.landed_route = None;
+        self.landed_volume = None;
+        self.landed_level = None;
+    }
+
+    /// Whether the apply point is due for the sample about to be produced (the hot compare).
+    #[inline]
+    pub(crate) fn due(&self) -> bool {
+        #[cfg(feature = "__test-hooks")]
+        if self.mutation.off_by_one_position {
+            return self.produced > self.next_apply;
+        }
+        self.produced >= self.next_apply
+    }
+
+    /// The due changes, in order, for the sample about to be produced (the cold path, R-02):
+    /// the plain change first, then every scheduled entry at or before the position; each is
+    /// handed to `apply` (the chain pair or the level) and logged when the stream's own value
+    /// moved (a plain change) or always (a scheduled one, D5).
+    #[inline(never)]
+    pub(crate) fn apply_due(&mut self, apply: &mut dyn FnMut(Apply)) {
+        let pos = self.produced;
+        if self.plain_pending {
+            self.plain_pending = false;
+            let (r, v) = (self.pending_route, self.pending_volume);
+            apply(Apply::Chain(r, v));
+            if r != self.last_route {
+                self.push(
+                    pos,
+                    LIVE_ROUTE,
+                    route_value(self.last_route),
+                    route_value(r),
+                    0,
+                );
+                self.last_route = r;
+                self.landed_route = Some(r);
+            }
+            if v != self.last_volume {
+                self.push(
+                    pos,
+                    LIVE_VOLUME,
+                    f64::from(self.last_volume),
+                    f64::from(v),
+                    0,
+                );
+                self.last_volume = v;
+                self.landed_volume = Some(v);
+            }
+            if let Some(l) = self.pending_level.take() {
+                apply(Apply::Level(l));
+                if l != self.last_level {
+                    self.push(pos, LIVE_SPEED, f64::from(self.last_level), f64::from(l), 0);
+                    self.last_level = l;
+                    self.landed_level = Some(l);
+                }
+            }
+        }
+        while let Some(e) = self.schedule.pop_due(pos) {
+            match e.control {
+                LIVE_ROUTE => {
+                    let r = if e.value == 0.0 {
+                        crate::Route::Speaker
+                    } else {
+                        crate::Route::Earphone
+                    };
+                    apply(Apply::Chain(r, self.last_volume));
+                    let before = self.before(route_value(self.last_route), route_value(r));
+                    self.push(pos, LIVE_ROUTE, before, route_value(r), e.tag);
+                    self.last_route = r;
+                    self.landed_route = Some(r);
+                }
+                LIVE_VOLUME => {
+                    let v = e.value as f32;
+                    apply(Apply::Chain(self.last_route, v));
+                    let before = self.before(f64::from(self.last_volume), e.value);
+                    self.push(pos, LIVE_VOLUME, before, f64::from(v), e.tag);
+                    self.last_volume = v;
+                    self.landed_volume = Some(v);
+                }
+                _ => {
+                    let l = e.value as u8;
+                    apply(Apply::Level(l));
+                    let before = self.before(f64::from(self.last_level), e.value);
+                    self.push(pos, LIVE_SPEED, before, f64::from(l), e.tag);
+                    self.last_level = l;
+                    self.landed_level = Some(l);
+                }
+            }
+        }
+        self.next_apply = self.schedule.earliest();
+    }
+
+    /// The entry's `before` (the stream's last applied value; a mutant reads the engine's value).
+    #[inline]
+    fn before(&self, last: f64, after: f64) -> f64 {
+        #[cfg(feature = "__test-hooks")]
+        if self.mutation.log_reading_before {
+            return after;
+        }
+        let _ = after;
+        last
+    }
+
+    #[inline]
+    fn push(&mut self, position: u64, control: u32, before: f64, after: f64, tag: u64) {
+        if let Some(slot) = self.log.get_mut(self.log_len) {
+            *slot = ChangeEntry::new(position, control, before, after, tag);
+        }
+        self.log_len += 1;
+    }
+
+    /// Copies the call's entries into `into` (the first ones when it is shorter) and returns
+    /// how many the call applied (FR-005).
+    pub(crate) fn drain_log(&self, into: &mut [ChangeEntry]) -> usize {
+        let n = self.log_len.min(into.len()).min(MAX_CHANGES_PER_CALL);
+        into[..n].copy_from_slice(&self.log[..n]);
+        self.log_len
+    }
+
+    /// The call's applied-change count (every variant reports it).
+    pub(crate) fn log_len(&self) -> usize {
+        self.log_len
+    }
+
+    /// Test-only (research R-13): 0.15's entry-time apply of every scheduled entry, whatever
+    /// its position: caught by the partition identity.
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn mutant_pop_all_now(&mut self) {
+        if self.mutation.apply_at_entry {
+            self.schedule.earliest = 0;
+            for i in 0..self.schedule.len {
+                self.schedule.entries[i].position = 0;
+            }
+        }
+    }
+}
+
+/// The route's value in an entry: 0 speaker, 1 earphone.
+#[inline]
+pub(crate) fn route_value(route: crate::Route) -> f64 {
+    match route {
+        crate::Route::Speaker => 0.0,
+        crate::Route::Earphone => 1.0,
+    }
+}
+
+#[cfg(test)]
+mod index_tests {
+    use super::*;
+
+    /// The live controls' manifest indices (research R-04; the C smoke resolves them by
+    /// identifier, the engine pins them here).
+    #[test]
+    fn live_control_indices_match_the_manifest() {
+        let c = crate::controls::controls();
+        assert_eq!(c[LIVE_ROUTE as usize].identifier, "route");
+        assert_eq!(c[LIVE_VOLUME as usize].identifier, "volume");
+        assert_eq!(c[LIVE_SPEED as usize].identifier, "playback_speed");
     }
 }

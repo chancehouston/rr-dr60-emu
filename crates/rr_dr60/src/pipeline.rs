@@ -2,6 +2,7 @@
 //! R-01: the limiter runs at the host rate, before the rate conversion; spec 006 research R-01:
 //! the one-pass is a record path feeding a playback path).
 
+use crate::changes::{ChangeEntry, Stream};
 use crate::codec::{self, SpeechDecoder, SpeechEncoder};
 use crate::error::Error;
 use crate::memory::{Encoding, Memory};
@@ -182,6 +183,10 @@ pub struct BlockInfo {
     /// Speech-codec frames encoded in this block (spec 008 FR-008); 0 with the codec bypassed
     /// or at a tap before it.
     pub frames: usize,
+    /// Since 0.16 (spec 015 FR-005): the control changes the one-pass stream applied in this
+    /// call (scheduled ones and plain setters that moved the stream); the entries themselves
+    /// are written by [`Pipeline::process_with_events_and_changes`].
+    pub changes: usize,
 }
 
 /// The meter read-out of the last non-empty processing call (spec 016 FR-001 – FR-003): a
@@ -373,7 +378,9 @@ impl OnePass {
     fn tick(&mut self, x: f32, frames: &mut usize) -> Option<f32> {
         if self.front_tap {
             // A host-rate front tap, sample for sample: no conversion, no chain, no events
-            // (spec 005 FR-001; spec 012 FR-008).
+            // (spec 005 FR-001; spec 012 FR-008); the stream's clock and schedule still run
+            // (spec 015 research R-02).
+            self.play.tick_front();
             return Some(self.rec.front_only(x));
         }
         #[cfg(any(test, feature = "__test-hooks"))]
@@ -446,6 +453,7 @@ impl Pipeline {
     ) -> Self {
         let mut one_pass = OnePass::new(&settings, plan);
         one_pass.rec.rekey(counter); // 012 FR-009: the next recording's stream
+        one_pass.play.set_start_values(route, volume, speed_level); // 015 D3
         let latency = latency_samples(plan, &settings, &one_pass);
         let recorder = RecordPath::new(&settings, plan, false, true);
         Self {
@@ -457,7 +465,11 @@ impl Pipeline {
                 ..Meters::default()
             },
             recorder,
-            player: PlaybackPath::new(&settings, plan, false),
+            player: {
+                let mut p = PlaybackPath::new(&settings, plan, false);
+                p.set_start_values(route, volume, speed_level); // 015 D3
+                p
+            },
             memory,
             transport: Transport::with_counter(counter),
             route,
@@ -559,6 +571,194 @@ impl Pipeline {
         self.run_block(None, buffer, events)
     }
 
+    /// As [`process_with_events`](Self::process_with_events), and writes the control changes
+    /// the one-pass stream applied in this call to `changes` (spec 015 FR-005): scheduled
+    /// changes that landed and plain setters that moved the stream, each as a
+    /// [`ChangeEntry`] at the output index it landed on; `info.changes` counts them all, so
+    /// `info.changes > changes.len()` means some were not written;
+    /// [`changes::MAX_CHANGES_PER_CALL`](crate::changes::MAX_CHANGES_PER_CALL) is always
+    /// enough. Real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// As [`process_with_events`](Self::process_with_events).
+    pub fn process_with_events_and_changes(
+        &mut self,
+        input: &[f32],
+        output: &mut [f32],
+        events: &mut [VasEvent],
+        changes: &mut [ChangeEntry],
+    ) -> Result<BlockInfo, Error> {
+        let info = self.process_with_events(input, output, events)?;
+        self.one_pass.play.ctl.drain_log(changes);
+        Ok(info)
+    }
+
+    /// Schedules a change of a live control at a position of a stream's clock (spec 015
+    /// FR-001; D2, D3): the change lands so that output sample `position` is the first it
+    /// affects (the volume's transition starts there, the route switches there with the new
+    /// branch from rest, the speed level applies from device-rate sample
+    /// [`changes::speed_landing`](crate::changes::speed_landing)`(position)`); a position at or
+    /// before the stream's current [`stream_position`](Self::stream_position) lands on the
+    /// next sample produced. `control` is the control manifest's index of `route`, `volume` or
+    /// `playback_speed` (resolve it by identifier through [`control`](crate::control)); `value`
+    /// the control's own value (a route 0 or 1, a volume position, a level 1 … 5); the volume is
+    /// rounded to single precision. `tag` is echoed in the change entry; **0 means a plain
+    /// setter**, so tag from 1. Each stream holds up to
+    /// [`changes::SCHEDULE_CAPACITY`](crate::changes::SCHEDULE_CAPACITY) pending changes,
+    /// applied in position order (ties in submission order). Accepted in every engine state;
+    /// real-time safe. Positioning a change on a sample is a feature of the emulator's API,
+    /// not a device behavior (spec 015 D8).
+    ///
+    /// # Errors
+    ///
+    /// In this order, nothing stored on any: [`Error::ReservedStream`] for
+    /// [`Stream::Record`]; [`Error::ControlNotOnStream`] for a control that is not one of the
+    /// three or the speed on the one-pass stream; [`Error::InvalidVolume`],
+    /// [`Error::InvalidSpeedLevel`] or [`Error::InvalidControlValue`] for the value;
+    /// [`Error::TapNotOnRoute`] for a route the one-pass's configured named-route tap cannot
+    /// read; [`Error::ScheduleFull`].
+    pub fn schedule_change(
+        &mut self,
+        stream: Stream,
+        position: u64,
+        control: u32,
+        value: f64,
+        tag: u64,
+    ) -> Result<(), Error> {
+        use crate::changes::{LIVE_ROUTE, LIVE_SPEED, LIVE_VOLUME};
+        let path = match stream {
+            Stream::Playback => &mut self.player,
+            Stream::OnePass => &mut self.one_pass.play,
+            _ => return Err(Error::ReservedStream { stream }),
+        };
+        let on_stream = match control {
+            LIVE_ROUTE | LIVE_VOLUME => true,
+            LIVE_SPEED => stream == Stream::Playback,
+            _ => false,
+        };
+        if !on_stream {
+            return Err(Error::ControlNotOnStream { control, stream });
+        }
+        let stored = match control {
+            LIVE_VOLUME => {
+                if !value.is_finite() {
+                    return Err(Error::InvalidVolume {
+                        position: value as f32,
+                    });
+                }
+                let v = (value as f32) + 0.0; // single precision; −0.0 normalized (R-04)
+                if !(0.0..=1.0).contains(&v) {
+                    return Err(Error::InvalidVolume { position: v });
+                }
+                f64::from(v)
+            }
+            LIVE_SPEED => {
+                // no_std: integrality by the round trip through u8 within 1 … 5.
+                let integral = (1.0..=5.0).contains(&value) && f64::from(value as u8) == value;
+                if !integral {
+                    return Err(Error::InvalidSpeedLevel {
+                        level: if value.is_finite() && (0.0..=255.0).contains(&value) {
+                            value as u8
+                        } else {
+                            u8::MAX
+                        },
+                    });
+                }
+                value
+            }
+            _ => {
+                if !(value == 0.0 || value == 1.0) {
+                    return Err(Error::InvalidControlValue { control, value });
+                }
+                let route = if value == 0.0 {
+                    Route::Speaker
+                } else {
+                    Route::Earphone
+                };
+                if stream == Stream::OnePass {
+                    // Spec 009 FR-011 at schedule time (spec 015 research R-04, hardware B1).
+                    let tap = self.settings.tap;
+                    let named = match tap {
+                        Tap::AfterSpeaker => Some(Route::Speaker),
+                        Tap::AfterEarphone => Some(Route::Earphone),
+                        _ => None,
+                    };
+                    if named.is_some_and(|r| r != route) {
+                        return Err(Error::TapNotOnRoute { tap, route });
+                    }
+                }
+                value + 0.0
+            }
+        };
+        if path
+            .ctl
+            .schedule
+            .insert(position, control, stored, tag)
+            .is_err()
+        {
+            return Err(Error::ScheduleFull { stream });
+        }
+        // The apply is armed for the first produced sample at or past the earliest position
+        // (research R-09); a pending plain change keeps it at 0.
+        if path.ctl.next_apply != 0 {
+            path.ctl.next_apply = path.ctl.schedule.earliest();
+        }
+        Ok(())
+    }
+
+    /// Pending changes on `stream`'s schedule (spec 015 FR-002). Real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::ReservedStream`] for [`Stream::Record`].
+    pub fn pending_changes(&self, stream: Stream) -> Result<u32, Error> {
+        Ok(self.stream_path(stream)?.ctl.schedule.len() as u32)
+    }
+
+    /// `stream`'s position (spec 015 D2): the host output samples it has produced; the next
+    /// sample produced has this index. The playback stream's count starts at 0 at
+    /// [`start_playback`](Self::start_playback); the one-pass's at construction,
+    /// [`reset`](Self::reset) and [`reconfigure`](Self::reconfigure). Real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::ReservedStream`] for [`Stream::Record`].
+    pub fn stream_position(&self, stream: Stream) -> Result<u64, Error> {
+        Ok(self.stream_path(stream)?.ctl.produced)
+    }
+
+    /// Drops every pending change on `stream`'s schedule (spec 015 FR-002); nothing already
+    /// applied is affected. Real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::ReservedStream`] for [`Stream::Record`].
+    pub fn clear_schedule(&mut self, stream: Stream) -> Result<(), Error> {
+        match stream {
+            Stream::Playback => self.player.clear_schedule(),
+            Stream::OnePass => self.one_pass.play.clear_schedule(),
+            _ => return Err(Error::ReservedStream { stream }),
+        }
+        Ok(())
+    }
+
+    /// The recording counter (spec 015 D9; spec 012 FR-009, A-049): successful recording
+    /// starts since construction, never rewound by `reset` or `reconfigure`. A one-pass replay
+    /// reproduces the microphone hiss only with the same seed and the same counter (the
+    /// one-pass uses the next recording's stream). Real-time safe.
+    pub fn recording_counter(&self) -> u64 {
+        self.transport.counter
+    }
+
+    fn stream_path(&self, stream: Stream) -> Result<&paths::PlaybackPath, Error> {
+        match stream {
+            Stream::Playback => Ok(&self.player),
+            Stream::OnePass => Ok(&self.one_pass.play),
+            _ => Err(Error::ReservedStream { stream }),
+        }
+    }
+
     /// Spec 009 FR-011: a named route tap with the other route selected is refused at the
     /// processing call; the route output tap follows the route.
     fn tap_on_route(&self) -> Result<(), Error> {
@@ -657,6 +857,7 @@ impl Pipeline {
             events: 0,
             paused: self.one_pass.rec.paused(),
             frames: 0,
+            changes: 0,
         }
     }
 
@@ -679,8 +880,9 @@ impl Pipeline {
         out: &mut [f32],
         events: &mut [VasEvent],
     ) -> BlockInfo {
-        // Spec 009 FR-009: the controls are read once per call, at the block boundary.
-        self.one_pass.play.set_controls(self.route, self.volume);
+        // Spec 009 FR-009: the controls are read once per call; since 0.16 they land at the
+        // call's first produced sample, with the scheduled changes (spec 015 research R-07).
+        self.one_pass.play.begin_call(self.route, self.volume, None);
         let (mut produced, mut count, mut frames) = (0, 0, 0);
         for i in 0..out.len() {
             let x = match input {
@@ -701,11 +903,24 @@ impl Pipeline {
         if !out.is_empty() {
             self.finalize_one_pass(); // 016 FR-001: a non-empty call
         }
+        self.take_landed_one_pass();
         BlockInfo {
             produced,
             events: count,
             paused: self.one_pass.rec.paused(),
             frames,
+            changes: self.one_pass.play.ctl.log_len(),
+        }
+    }
+
+    /// Spec 015 research R-07: the readings follow the changes the one-pass stream landed.
+    fn take_landed_one_pass(&mut self) {
+        let ctl = &mut self.one_pass.play.ctl;
+        if let Some(r) = ctl.landed_route.take() {
+            self.route = r;
+        }
+        if let Some(v) = ctl.landed_volume.take() {
+            self.volume = v;
         }
     }
 
@@ -786,6 +1001,14 @@ impl Pipeline {
         self.transport.reset();
         self.one_pass.rec.rekey(self.transport.counter); // 012 FR-009
         self.meters = self.rest_meters(); // 016 FR-001
+        // Spec 015 FR-002, D3: both schedules cleared; the streams start with the readings.
+        self.one_pass.play.clear_schedule();
+        self.player.clear_schedule();
+        self.one_pass
+            .play
+            .set_start_values(self.route, self.volume, self.speed_level);
+        self.player
+            .set_start_values(self.route, self.volume, self.speed_level);
     }
 
     /// Applies new settings and resets all path state, as if the pipeline had been created
@@ -888,6 +1111,27 @@ impl Pipeline {
         let plan = RatePlan::for_host(settings.host_rate_hz)?;
         p.one_pass.play.mutate_chain(m, &plan);
         p.player.mutate_chain(m, &plan);
+        Ok(p)
+    }
+
+    /// Test-only (hidden): a pipeline whose sample-timed changes are altered by `m` on both
+    /// streams (spec 015 research R-13); `ChangeMutation::default()` is the committed engine.
+    ///
+    /// # Errors
+    ///
+    /// As [`Pipeline::new`].
+    #[doc(hidden)]
+    #[cfg(feature = "__test-hooks")]
+    pub fn __with_change_mutation(
+        settings: Settings,
+        m: &crate::changes::ChangeMutation,
+    ) -> Result<Self, Error> {
+        let mut p = Self::new(settings)?;
+        for path in [&mut p.one_pass.play, &mut p.player] {
+            path.ctl.mutation = *m;
+            path.ctl.schedule.submission_order = m.submission_order;
+            path.mutate_route_reset(m.full_reset_on_route);
+        }
         Ok(p)
     }
 
@@ -1350,6 +1594,7 @@ mod limiter_tests {
                     events: 0,
                     paused: false,
                     frames: 0,
+                    changes: 0,
                 },
                 "{rate} Hz"
             );
