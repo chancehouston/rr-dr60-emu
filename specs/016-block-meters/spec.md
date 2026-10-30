@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-29
 
-**Status**: Draft (awaiting the owner's spec sign-off)
+**Status**: Approved by the owner (2026-10-29); planning
 
 **Input**: User description: "016 per-block meters. As an app showing the signal chain live, I want one read-out per processing call of what the modeled stages did in that call, so that every moving element on screen is a number the engine computed, not a guess from the audio. Product request E-A (docs/product/front-and-inside.md › Engine requests) and controls-discussion.md § 4 item 3; engine order decided 2026-10-29 (decisions.md: 014 → 016 → 015 …). The read-out covers the record side and the playback side. Record side (the one-pass and the record path): the input's peak; the microphone amplifier's peak after its clipper (stage 2); the limiter's gain reduction as the call's deepest value in dB and its hold charge as a fraction 0–1 of the limiting ceiling (stage 3); the peak after the codec's input filter and the number of samples the converter's full-scale clamp bounded (stage 4); the voice-activation state at the end of the call and the hang time remaining before it pauses (stage 5). Playback side (the playback path and the one-pass): the peak after the playback reconstruction (stage 10); the peak at the route output and the number of samples the optional output clamp bounded (the clip indicator spec 010's review queued; stages 11 – 13). Peaks are sample peaks in full-scale units at the point where they are read; gain in dB; the clamp counts are per call. A pull API: the caller reads a plain struct of the last call's figures after each processing call, in Rust and in C, with no allocation and no I/O; the figures describe exactly the samples that call processed (including the stop flush and the drain). The meters never change the output or its determinism: every existing golden file and smoke hash stays byte-identical, and the read-out itself is deterministic (same input, settings and seed ⇒ the same figures on every platform). Bypassed stages read as their rest values, stated per meter. A tap before a stage leaves that stage's meters at rest. The cost per block must be small (a budget in percent against 0.14, like specs 010 – 013). Not a control: nothing is settable. Free tier. Out of scope: spectra, a scope copy of a stage (E-B), limiter ceiling events (E-E), per-sample meter streams, callbacks."
 
@@ -23,6 +23,10 @@ The owner reads this section first. Each decision gives the recommendation; the 
 | D7 | **Peaks are points, the rest are stages.** A peak reads the largest sample at its point whenever the call reaches that point, whatever ran before it (the limiter-input peak reads the sanitized input with stages 1 – 2 bypassed; the route peak reads the route output with the chain bypassed). The stage-owned meters (gain reduction, charge, the counts, the state, the hang) read rest when their stage does not run. | Points |
 
 ## Clarifications
+
+### Session 2026-10-29 (owner sign-off)
+
+- Q: Approve the spec with D1 – D7 as recommended? → A: **Yes**, all seven as recommended. The clarify step is covered by these decisions and the two reviews below.
 
 ### Session 2026-10-29 (speckit-coach review of the draft, findings 1 – 16; hw-emulation-reviewer B1 – B14)
 
