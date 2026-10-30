@@ -626,3 +626,35 @@ fn refused_start_and_untouched_one_pass() {
         "recording and playback leave the one-pass's clocks and schedules"
     );
 }
+
+/// FR-005 (convergence T024): the in-place log-taking one-pass variant carries both sides'
+/// entries, the record side's first, and equals the copy variant in output and entries.
+#[test]
+fn in_place_variant_carries_both_sides() {
+    let x = voiced(0.5);
+    let changes = [
+        rc::change(Stream::OnePass, 700, Value::Knee(-5.0), 1),
+        cc::Change::volume(Stream::OnePass, 900, 0.5, 2),
+    ];
+    let mut p = standard(front(VasMode::Drop));
+    let copy = rc::one_pass_run(&mut p, &x, Partition::Fixed(1024), &changes);
+    let mut q = standard(front(VasMode::Drop));
+    cc::schedule_all(&mut q, &changes);
+    let mut log = log_buf();
+    let (mut out, mut entries) = (Vec::new(), Vec::new());
+    for chunk in x.chunks(1024) {
+        let mut buf = chunk.to_vec();
+        let info = q.process_in_place_with_events_and_changes(&mut buf, &mut [], &mut log);
+        out.extend_from_slice(&buf[..info.produced]);
+        entries.extend_from_slice(&log[..info.changes]);
+    }
+    assert!(same(&out, &copy.out), "in place equals the copy");
+    assert_eq!(entries, copy.log);
+    assert_eq!(entries.len(), 2);
+    assert_eq!(
+        entries[0].control,
+        Value::Knee(0.0).control(),
+        "the record side first"
+    );
+    assert_eq!(entries[1].control, cc::volume_control());
+}

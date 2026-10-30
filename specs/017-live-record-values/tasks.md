@@ -92,3 +92,7 @@ description: "Task list for the live record-side values (017)"
 ## Implementation strategy
 
 MVP = Phases 1 – 3 (US1): every value lands by D3 on both streams with the input-0 and partition identities, no audio change. Then US2 (the session), US3 (C, the manifest, the golden, the cost), Polish. Commit after each task or logical group, Conventional Commits. Quote every timing figure from a solo release run; patch test files against their rustfmt-formatted text.
+
+## Phase 7: Convergence
+
+- [X] T024 Add a `record_edge_cases` test that the in-place log-taking one-pass variant (`process_in_place_with_events_and_changes`) with a record-side and a playback-side change scheduled equals the copy variant in output and entries per FR-005 (partial)
