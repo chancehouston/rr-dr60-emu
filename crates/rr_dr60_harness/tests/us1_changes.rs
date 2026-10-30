@@ -300,6 +300,9 @@ fn as4_speed_reference_and_oracle() {
             0,
             "{config}: the reference"
         );
+        // The speed-only drain is 0 at 6 kHz, so the playback is exactly the reference's
+        // length; `run` returns at the single `finished`.
+        assert_eq!(got.out.len(), want.len(), "{config}: the length");
         assert_eq!(got.log.len(), 5, "{config}: every change logged");
         assert_eq!(got.log[4].position, after_latch);
         assert_eq!((got.log[4].before, got.log[4].after), (5.0, 2.0));
@@ -613,6 +616,35 @@ fn as9_meters_across_a_route_switch() {
             m.route_peak, peak,
             "{rate}: the route peak covers both routes' samples"
         );
+        // The output-clamp count covers the whole call too (the clamp on, a full-scale square
+        // at position 1 drives both routes over the bound).
+        let mut c = s;
+        c.output.clamp_enabled = true;
+        let mut q = Pipeline::new(c).expect("settings");
+        q.set_volume(1.0).expect("valid");
+        let _ = cc::run(&mut q, Source::OnePass(&x[..1024]), Partition::Fixed(1024));
+        let rc = cc::run_scheduled(
+            &mut q,
+            Source::OnePass(&x[1024..]),
+            &[Change::route(
+                Stream::OnePass,
+                1024 + 300,
+                Route::Earphone,
+                1,
+            )],
+            Partition::Fixed(1024),
+        );
+        let bounded = r.out.iter().filter(|v| v.abs() > 1.0).count() as u32;
+        assert!(
+            bounded > 0,
+            "{rate}: the square drives the route output over the bound"
+        );
+        assert_eq!(
+            q.meters().output_clamp_count,
+            bounded,
+            "{rate}: the clamp count covers both routes' samples"
+        );
+        assert!(rc.out.iter().all(|v| v.abs() <= 1.0));
         assert!(
             r.out[..300].iter().any(|&v| v.abs() == peak)
                 || r.out[300..].iter().any(|&v| v.abs() == peak)

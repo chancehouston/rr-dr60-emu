@@ -801,6 +801,7 @@ impl RecordPath {
 /// The playback path: a [`PlaybackHalf`] and the device-to-host conversion (spec 006 FR-002;
 /// research R-01, R-06).
 #[derive(Clone, Debug)]
+#[repr(C)] // the stream state (5 KB) declared last stays last (hardware review B1)
 pub(crate) struct PlaybackPath {
     pub(crate) half: PlaybackHalf,
     /// `None` at the 6 kHz identity rate and at the honoured "after AGC" tap.

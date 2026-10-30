@@ -122,7 +122,14 @@ fn clearing_rules() {
         .expect("schedule");
     p.start_recording().expect("start");
     let _ = p.record(&x, &mut []).expect("record");
+    // A change on the one-pass stream while a path is active: accepted (the stream is idle).
+    p.schedule_change(Stream::OnePass, 9500, cc::route_control(), 1.0, 7)
+        .expect("schedule while recording");
     let _ = p.stop_recording(&mut []).expect("stop");
+    assert_eq!(p.pending_changes(Stream::OnePass).expect("stream"), 2);
+    p.clear_schedule(Stream::OnePass).expect("clear");
+    p.schedule_change(Stream::OnePass, 9000, cc::volume_control(), 0.4, 6)
+        .expect("schedule");
     assert_eq!(p.pending_changes(Stream::OnePass).expect("stream"), 1);
     assert_eq!(p.stream_position(Stream::OnePass).expect("stream"), pos);
     // reset and reconfigure clear both; clear_schedule clears one.

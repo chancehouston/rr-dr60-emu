@@ -41,6 +41,9 @@ impl Pipeline {
     /// `info.changes` counts them all; `MAX_CHANGES_PER_CALL` is always enough.
     pub fn process_with_events_and_changes(&mut self, input: &[f32], output: &mut [f32],
         events: &mut [VasEvent], changes: &mut [ChangeEntry]) -> Result<BlockInfo, Error>;
+    /// As process_in_place_with_events, and writes the call's change entries (FR-005; the C in-place path).
+    pub fn process_in_place_with_events_and_changes(&mut self, buffer: &mut [f32],
+        events: &mut [VasEvent], changes: &mut [ChangeEntry]) -> BlockInfo;
     /// As play, and writes the call's change entries (FR-005).
     pub fn play_with_changes(&mut self, output: &mut [f32], changes: &mut [ChangeEntry]) -> Result<PlayInfo, Error>;
 }

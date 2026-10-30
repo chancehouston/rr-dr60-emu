@@ -582,7 +582,7 @@ impl Pipeline {
         changes: &mut [ChangeEntry],
     ) -> BlockInfo {
         let info = self.process_in_place_with_events(buffer, events);
-        if info.produced > 0 || !buffer.is_empty() {
+        if info.changes > 0 {
             self.one_pass.play.ctl.drain_log(changes);
         }
         info

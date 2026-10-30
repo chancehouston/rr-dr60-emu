@@ -11,8 +11,8 @@ The spec's D1 – D9 stand. The three plan reviews of 2026-10-30 (coach 1 – 18
 1. **One apply point per stream, the speed included** (hardware P2): a speed change is requested at the top of host sample P like the chain controls; the device-index d(P) stays a published mapping and a harness pin, never engine logic (it removes a counter, a compare, a never-pulled hole at the end of a playback, and the draft's F2).
 2. **The one-pass's front taps keep the clock and the log** (hardware P1, coach 2): the apply point moves out of the resampler path into the path's emit, so a stream at `AfterAgc` still counts, lands and logs (the chain is inactive there; nothing audible changes).
 3. **A scheduled volume is rounded to single precision** (coach 6): a double `0.1` from C or Swift is accepted as `set_volume(0.1f)` is; the entry's `after` is the stored `f32` widened. The strict alternative (refuse a value not exactly an `f32`) is the owner's to prefer.
-4. **The stage manifest's two API-item lines are trimmed to fit** (coach 1): stage 11's line is 119 of 120 characters, so `schedule_change` fits only by dropping the implied getters and the `PlayInfo.` prefixes (the 016 precedent; the defaults in R-11, checked against the cross-check before the re-bless).
-5. **The audible lag of a speed change is `playback_latency_samples()`**, asserted ± 2 at the seven rates (product M1, coach 16), not a table in the guide; a helper is added only if the identity fails.
+4. **The stage manifest's two API-item lines are trimmed to fit** (coach 1) — **restated at implementation:** both trims drop a token an earlier spec's test pins (008 FR-020's `speech_codec_enabled` on stage 9; the 009/011/013 pins on both), so the lines keep their 0.15 text, the canonical moves in its version line only, and the guide and the control manifest carry the call (spec Clarifications).
+5. **The audible lag of a speed change is `playback_latency_samples()`** (product M1, coach 16) — **restated at implementation:** the first *bit* difference lies within two device periods after P (asserted per rate), while the perceptual lag is the configuration's playback latency (documented and printed, not asserted as a first difference).
 6. **The C stream is an enum `RrDr60Stream`** (product M2, coach 11), the spec 014 pattern; `speed_landing` is fallible (coach 7: no division by zero across the FFI); the control index is `u32` on the whole surface (coach 10).
 
 Plan choices, each traced to the research:
@@ -29,7 +29,7 @@ Plan choices, each traced to the research:
 | P8 | The primary oracle is the plain setter at block size 1 in a reference engine; the 011 splice, the 009 route oracle and a device-index schedule for the 013 reference at 6 kHz; d(P) pinned independently by the place reading; the lag asserted; a new irregular partition of 1 … 4096 that is not cut at the scheduled positions (R-08). | SC-001 – SC-002 without circularity. |
 | P9 | Cost by `tests/changes_timing.rs` against the 0.15 API in a new `changes` mode of the A/B script, asserting 3 % (5 % on the runner); the pending-change figure reported (R-09). | D7. |
 | P10 | `golden-changes-v1.json` with digests and full logs over the scenario set at seven rates; the C smoke `--changes` diffed against a Rust example (R-10). | FR-009, SC-003, SC-004 (the 64 + 3 entry). |
-| P11 | Stages 9 and 11's `controls` lines name the bare `schedule_change`, trimmed to the 120-character limit; one canonical re-bless; the control manifest unchanged; the guide's section is "Scheduled changes and the change log" and the records are the copy in records.md (R-11). | FR-012, FR-013; coach 1; product M8, M9. |
+| P11 | The stage manifest's lines keep their text (restated: the pinned tokens leave no room within 120 characters); the canonical moves in its version line only; the control manifest unchanged; the guide's section is "Scheduled changes and the change log" and the records are the copy in records.md (R-11). | FR-012, FR-013; coach 1; product M8, M9. |
 | P12 | `recording_counter()` in Rust and C; `speed_landing(P, rate)` published as a fallible mapping; the control index resolved by identifier in the smoke and the guide (R-12, contracts; product M4). | D9; the guide's lag arithmetic. |
 
 **Finding F1 (R-02):** 0.15 applies the plain setters at the call's entry even when the call produces nothing; the lazy apply moves that to the next call's first produced sample with no observable difference (the chain is only read through `process`), which the nine SHA guards and the block-size-1 oracle prove. The one place where the two forms differ is the *log*: an entry is reported by the call that produced the sample, never by an empty call (spec Edge Cases).
@@ -48,8 +48,8 @@ Each stream gets a clock, a sorted schedule and a staging log inside its `Playba
 
 | Req. | Mechanism | Test |
 |---|---|---|
-| FR-001 the schedule call, validation, the tap refusal | R-04 | core `changes::refusals`; `changes_edge_cases` (every refusal; nothing stored) |
-| FR-002 capacity, order, pending count, clearing, position | R-03, R-01 | core `changes::order_and_capacity` (start keeps, reset clears); `changes_edge_cases` (erase, erase_all, stop, finished, reset, reconfigure, the front taps' clock) |
+| FR-001 the schedule call, validation, the tap refusal | R-04 | `changes_edge_cases::refusals_store_nothing` (every refusal; nothing stored); FFI `changes_tests` |
+| FR-002 capacity, order, pending count, clearing, position | R-03, R-01 | core `changes::schedule_*` (order, capacity); `changes_edge_cases::clearing_rules` (start keeps; erase, erase_all, stop, finished, reset, reconfigure) and `the_clock_and_the_front_taps` |
 | FR-003 the landing rules, the meters intact | R-02, R-05 | `us1_changes` AS2 – AS5, AS7 – AS9; core `output::reset_sections_keeps_accumulators`; `changes_matrix` (the place pin, the lag) |
 | FR-004 plain setters unchanged; readings at landing | R-07 | the SHA guards; `us2_changes` AS2; `changes_edge_cases` (readings) |
 | FR-005 the log, chained, the tag, the count, 67 | R-06 | `us2_changes` AS1, AS3, AS4; `changes_matrix` (64 + 3) |
@@ -84,7 +84,7 @@ No NEEDS CLARIFICATION remains.
 | II. Evidence-Based Fidelity | No modeled value changes; no assumption (an API convention, D8); the guide says so in its lead sentence. | ✅ | ✅ |
 | III. Measured, Test-First Verification | The block-size-1 oracle, the splice, the route and the speed references are written first and fail before the lazy apply exists; the earlier guards prove no audio change; the A/B asserts the cost. | ✅ | ✅ |
 | IV. Deterministic & Real-Time Safe | Integer positions, a stable order, exact values; one compare per sample; no allocation (`alloc_free` covers the schedule call and the log). | ✅ | ✅ |
-| V. Modular, Traceable Signal Chain | The landing rules are per control at the stage the control manifest assigns; the stage manifest's API items name the call. | ✅ | ✅ |
+| V. Modular, Traceable Signal Chain | The landing rules are per control at the stage the control manifest assigns; the control manifest's entries lead to the call (the stage manifest's lines keep their text, restated). | ✅ | ✅ |
 | VI. Neutral, Honest Communication | The guide labels positioning as an emulator convention; no "provable", no assistant; the audible lag of a speed change is stated. | ✅ | ✅ |
 | VII. Independently Testable Features | US1 per control and stream with its own oracle; US2 through the log alone; US3 through C alone. | ✅ | ✅ |
 
@@ -100,7 +100,6 @@ crates/rr_dr60/src/transport.rs          # play: apply_due per host iteration (t
 crates/rr_dr60/src/pipeline.rs           # schedule_change, pending_changes, stream_position, clear_schedule, process_with_events_and_changes, BlockInfo.changes, reset/reconfigure clearing; tick's front branch counts and applies
 crates/rr_dr60/src/stages/output.rs      # reset_sections
 crates/rr_dr60/src/error.rs              # ScheduleFull, ControlNotOnStream, ReservedStream, InvalidControlValue
-crates/rr_dr60/src/manifest.rs           # stages 9 and 11 controls lines (trimmed; schedule_change)
 crates/rr_dr60/src/lib.rs                # re-exports; hooks
 crates/rr_dr60_ffi/src/lib.rs, cbindgen.toml, include/rr_dr60.h, tests/c/smoke.c (--changes), tests/c/run_smoke.sh
 crates/rr_dr60_harness/src/changes_checks.rs   # the reference engine (block-size-1 setter), IRREGULAR (1 … 4096, not cut at the positions), the log expectation builder

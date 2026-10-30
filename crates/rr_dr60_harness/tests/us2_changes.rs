@@ -147,6 +147,16 @@ fn as2_plain_setters_and_lifecycle() {
             info.changes, 0,
             "{rate}: a setter before reset logs nothing"
         );
+        // The value is applied all the same (hardware review B4): the output equals a fresh
+        // engine's at that position.
+        let mut fresh = Pipeline::new(settings(rate)).expect("settings");
+        fresh.set_volume(0.33).expect("valid");
+        let mut yf = vec![0.0f32; n];
+        let _ = fresh.process(&x[..n], &mut yf).expect("call");
+        assert!(
+            same(&y[..info.produced], &yf[..info.produced]),
+            "{rate}: the setter before reset is applied"
+        );
         p.set_route(Route::Earphone);
         p.reconfigure(settings(rate)).expect("reconfigure");
         let info = p
@@ -157,6 +167,14 @@ fn as2_plain_setters_and_lifecycle() {
             "{rate}: a setter before reconfigure logs nothing"
         );
         assert_eq!(p.route(), Route::Earphone);
+        let mut fresh = Pipeline::new(settings(rate)).expect("settings");
+        fresh.set_route(Route::Earphone);
+        fresh.set_volume(0.33).expect("valid");
+        let _ = fresh.process(&x[..n], &mut yf).expect("call");
+        assert!(
+            same(&y[..info.produced], &yf[..info.produced]),
+            "{rate}: the setter before reconfigure is applied"
+        );
     });
 }
 

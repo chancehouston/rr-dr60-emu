@@ -481,11 +481,9 @@ impl Pipeline {
             transport,
             decoder,
             speed,
-            speed_level,
             plan_l_m,
             ..
         } = self;
-        let _ = speed_level; // 015: the level lands through the stream's apply point below
         let (l, m) = *plan_l_m;
         let drain = u64::from(player.drain_len_host_samples());
         let span = transport.cursor.span;

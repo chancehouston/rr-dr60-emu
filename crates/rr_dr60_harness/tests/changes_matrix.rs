@@ -33,39 +33,62 @@ fn partition_identity_per_control_and_stream() {
             } else {
                 Route::Speaker
             };
-            let cases: Vec<(&str, Stream, Change)> = vec![
+            let cases: Vec<(&str, Stream, &str, Change)> = vec![
                 (
                     "volume",
                     Stream::OnePass,
+                    "default_output",
                     Change::volume(Stream::OnePass, p0, 0.7, 1),
                 ),
                 (
                     "route",
                     Stream::OnePass,
+                    "default_output",
                     Change::route(Stream::OnePass, p0, other, 1),
                 ),
                 (
                     "volume",
                     Stream::Playback,
+                    "default_output",
                     Change::volume(Stream::Playback, p0, 0.7, 1),
                 ),
                 (
                     "route",
                     Stream::Playback,
+                    "default_output",
                     Change::route(Stream::Playback, p0, other, 1),
                 ),
-                ("speed", Stream::Playback, Change::speed(p0, 4, 1)),
+                (
+                    "speed",
+                    Stream::Playback,
+                    "default_output",
+                    Change::speed(p0, 4, 1),
+                ),
+                (
+                    "speed codec",
+                    Stream::Playback,
+                    "default_codec",
+                    Change::speed(p0, 4, 1),
+                ),
             ];
-            for (name, stream, change) in cases {
+            for (name, stream, config, change) in cases {
+                let recorded_in = |config: &str| {
+                    let s = configs::settings(config, rate);
+                    let mut p = Pipeline::new(s).expect("settings");
+                    p.start_recording().expect("start");
+                    let _ = p.record(&x, &mut []).expect("record");
+                    let _ = p.stop_recording(&mut []).expect("stop");
+                    (p, 1u32)
+                };
                 let oracle = match stream {
                     Stream::OnePass => {
-                        let mut p = Pipeline::new(configs::settings("default_output", rate))
-                            .expect("settings");
+                        let mut p =
+                            Pipeline::new(configs::settings(config, rate)).expect("settings");
                         p.set_route(route);
                         cc::setter_oracle(&mut p, Source::OnePass(&x), &[change])
                     }
                     _ => {
-                        let (mut p, n) = recorded(rate, 0.6);
+                        let (mut p, n) = recorded_in(config);
                         p.set_route(route);
                         cc::setter_oracle(&mut p, Source::Playback(n), &[change])
                     }
@@ -78,13 +101,13 @@ fn partition_identity_per_control_and_stream() {
                 ] {
                     let out = match stream {
                         Stream::OnePass => {
-                            let mut p = Pipeline::new(configs::settings("default_output", rate))
-                                .expect("settings");
+                            let mut p =
+                                Pipeline::new(configs::settings(config, rate)).expect("settings");
                             p.set_route(route);
                             cc::run_scheduled(&mut p, Source::OnePass(&x), &[change], part).out
                         }
                         _ => {
-                            let (mut p, n) = recorded(rate, 0.6);
+                            let (mut p, n) = recorded_in(config);
                             p.set_route(route);
                             cc::run_scheduled(&mut p, Source::Playback(n), &[change], part).out
                         }
@@ -94,7 +117,7 @@ fn partition_identity_per_control_and_stream() {
                         mismatches += 1;
                     }
                     println!(
-                        "{rate:>5} Hz {route:?} {name:>6} {stream:?} {part:?}: {} ({} samples)",
+                        "{rate:>5} Hz {route:?} {name:>11} {stream:?} {part:?}: {} ({} samples)",
                         if ok { "identical" } else { "DIFFERS" },
                         out.len()
                     );

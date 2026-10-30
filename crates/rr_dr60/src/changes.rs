@@ -380,14 +380,17 @@ pub(crate) const LIVE_SPEED: u32 = 2;
 
 /// A stream's control state (data-model.md › Stream; research R-01): the clock, the schedule,
 /// the last applied values, the pending plain change, the landed readings and the staging log.
-/// Lives in each `PlaybackPath`.
+/// Lives in each `PlaybackPath`. `repr(C)` so that the hot pair `produced` / `next_apply` (the
+/// per-sample compare) and the small fields share the first cache line and the two arrays
+/// (5 KB) sit last (post-implementation hardware review B1).
 #[derive(Clone, Debug)]
+#[repr(C)]
 pub(crate) struct StreamState {
     /// The clock: host output samples produced; the next sample has this index (D2).
     pub(crate) produced: u64,
-    pub(crate) schedule: Schedule,
     /// 0 while a plain change is pending, else the schedule's earliest position (R-09).
     pub(crate) next_apply: u64,
+    log_len: usize,
     last_route: crate::Route,
     last_volume: f32,
     last_level: u8,
@@ -399,10 +402,10 @@ pub(crate) struct StreamState {
     pub(crate) landed_route: Option<crate::Route>,
     pub(crate) landed_volume: Option<f32>,
     pub(crate) landed_level: Option<u8>,
-    log: [ChangeEntry; MAX_CHANGES_PER_CALL],
-    log_len: usize,
     #[cfg(feature = "__test-hooks")]
     pub(crate) mutation: ChangeMutation,
+    pub(crate) schedule: Schedule,
+    log: [ChangeEntry; MAX_CHANGES_PER_CALL],
 }
 
 /// What a scheduled or plain change asks the path to do (the chain pair, or the level).
@@ -545,7 +548,7 @@ impl StreamState {
                     self.last_volume = v;
                     self.landed_volume = Some(v);
                 }
-                _ => {
+                LIVE_SPEED => {
                     let l = e.value as u8;
                     apply(Apply::Level(l));
                     let before = self.before(f64::from(self.last_level), e.value);
@@ -553,6 +556,8 @@ impl StreamState {
                     self.last_level = l;
                     self.landed_level = Some(l);
                 }
+                // Validation at the schedule call admits only the three live controls.
+                _ => debug_assert!(false, "an unknown control in the schedule"),
             }
         }
         self.next_apply = self.arm(self.schedule.earliest());
