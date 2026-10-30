@@ -205,6 +205,7 @@ pub mod speech_codec {
     };
 }
 
+pub mod changes;
 mod codec;
 pub mod controls;
 mod error;
@@ -226,6 +227,7 @@ mod test_util;
 mod transport;
 mod validate;
 
+pub use changes::{ChangeEntry, Stream};
 pub use controls::{
     ControlEntry, ControlKind, ControlOption, ControlPaths, ControlTiming, ControlValue, control,
     controls,
