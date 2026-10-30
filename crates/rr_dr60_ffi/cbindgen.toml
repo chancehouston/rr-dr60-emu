@@ -50,7 +50,7 @@ header = """
  */"""
 
 [export]
-include = ["RrDr60Tap", "RrDr60VasMode", "RrDr60Route", "RrDr60State", "RrDr60StopReason", "RrDr60StageStatus", "RrDr60StagePath", "RrDr60Confidence", "RrDr60Encoding", "RrDr60ControlKind", "RrDr60ControlTiming", "RrDr60ControlValueType"]
+include = ["RrDr60Tap", "RrDr60VasMode", "RrDr60Route", "RrDr60State", "RrDr60StopReason", "RrDr60StageStatus", "RrDr60StagePath", "RrDr60Confidence", "RrDr60Encoding", "RrDr60ControlKind", "RrDr60ControlTiming", "RrDr60ControlValueType", "RrDr60Stream"]
 exclude = ["rr_dr60__test_force_panic"]
 
 [enum]

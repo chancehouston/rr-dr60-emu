@@ -16,6 +16,9 @@
 #   HEAD_TEST = playback: spec 013's playback at the default speed level against the baseline
 #     (013 FR-010: budget 3 %); `tests/playback_timing.rs` is copied into the baseline worktree.
 #
+#   HEAD_TEST = changes: spec 015's sample-timed changes against the baseline (015 FR-010: the
+#     player and the one-pass with the schedule empty, 3 %; RR_DR60_CHANGES_COST_CEILING on the
+#     runner; one change per block reported).
 #   HEAD_TEST = meters: spec 016's per-block meters against the baseline (016 FR-013: the default
 #     front within 5 %, every stage off within the same absolute nanoseconds; the ceiling from
 #     RR_DR60_METERS_COST_CEILING, 0.12 on the CI runner); asserted, exits 1 when over.
@@ -123,6 +126,61 @@ print(f"A/B meters vs {rev}, 48 kHz, 4096 blocks, speaker route, codec bypassed 
 print(f"  default front (stages 1 – 2 on): {rev} {bf:.2f} ns, working tree {hf:.2f} ns per host sample, {hf - bf:+.2f} ns ({100 * (hf / bf - 1):+.2f} %; ceiling {100 * ceiling:.0f} %) {'PASS' if front_ok else 'FAIL'}")
 print(f"  every stage off: {rev} {bo:.2f} ns, working tree {ho:.2f} ns per host sample, {ho - bo:+.2f} ns (budget {budget_ns:.2f} ns, the same absolute nanoseconds) {'PASS' if off_ok else 'FAIL'}")
 sys.exit(0 if front_ok and off_ok else 1)
+PY
+  exit $?
+fi
+
+if [ "$head_test" = "changes" ]; then
+  # Spec 015 FR-010 (research R-09): the sample-timed changes' idle cost. `tests/changes_timing.rs`
+  # is written against 0.15's public API and copied into the baseline worktree; each build prints
+  # the fastest-of-45 figure of the player and of the one-pass (the default front, the codec
+  # bypassed, the schedule empty). Asserted: both within the ceiling (3 % by default,
+  # RR_DR60_CHANGES_COST_CEILING on the CI runner: 0.05); exits 1 when over. Then the head's
+  # `changes_pending_timing` (one change per block) is run alone and reported.
+  cp "$root/crates/rr_dr60_harness/tests/changes_timing.rs" "$work/base/crates/rr_dr60_harness/tests/"
+  cbin_of() {
+    (cd "$1" && cargo test -q -p rr_dr60_harness --release --test "$2" --no-run --message-format=json 2>/dev/null) |
+      python3 -c 'import json,sys
+name = sys.argv[1]
+for l in sys.stdin:
+    try: m = json.loads(l)
+    except ValueError: continue
+    if m.get("reason") == "compiler-artifact" and m.get("target", {}).get("name") == name and m.get("executable"):
+        print(m["executable"])' "$2" | tail -1
+  }
+  echo "building the baseline ($baseline) and the working tree (changes) ..." >&2
+  base_bin="$(cbin_of "$work/base" changes_timing)"
+  head_bin="$(cbin_of "$root" changes_timing)"
+  pending_bin="$(cbin_of "$root" changes_pending_timing)"
+  [ -x "$base_bin" ] && [ -x "$head_bin" ] && [ -x "$pending_bin" ] || { echo "ab-timing: a build failed" >&2; exit 1; }
+  : >"$work/base.txt"
+  : >"$work/head.txt"
+  for i in 1 2 3; do
+    echo "round $i of 3" >&2
+    "$base_bin" --ignored --exact changes_cost --nocapture --test-threads=1 2>/dev/null | grep -oE '(playback_ns|one_pass_ns)=[0-9.]+' >>"$work/base.txt"
+    "$head_bin" --ignored --exact changes_cost --nocapture --test-threads=1 2>/dev/null | grep -oE '(playback_ns|one_pass_ns)=[0-9.]+' >>"$work/head.txt"
+  done
+  pending="$("$pending_bin" --ignored --exact changes_pending_cost --nocapture --test-threads=1 2>/dev/null | grep -oE 'playback_pending_ns=[0-9.]+' | tail -1)"
+  python3 - "$work/base.txt" "$work/head.txt" "$baseline" "${RR_DR60_CHANGES_COST_CEILING:-0.03}" "$pending" <<'PY'
+import re, sys
+def best(path):
+    out = {}
+    for line in open(path):
+        m = re.search(r"(\w+)=([\d.]+)", line.strip())
+        if m:
+            out[m.group(1)] = min(out.get(m.group(1), float("inf")), float(m.group(2)))
+    return out
+b, h, rev, ceiling, pending = best(sys.argv[1]), best(sys.argv[2]), sys.argv[3], float(sys.argv[4]), sys.argv[5]
+bp, hp = b["playback_ns"], h["playback_ns"]
+bo, ho = b["one_pass_ns"], h["one_pass_ns"]
+p_ok = hp / bp - 1 <= ceiling
+o_ok = ho / bo - 1 <= ceiling
+pend = float(re.search(r"=([\d.]+)", pending).group(1)) if pending else float("nan")
+print(f"A/B changes vs {rev}, 48 kHz, 4096 blocks, speaker route, codec bypassed, the schedule empty (015 FR-010; fastest of 45 runs × 3 alternations):")
+print(f"  playback: {rev} {bp:.2f} ns, working tree {hp:.2f} ns per host sample, {hp - bp:+.2f} ns ({100 * (hp / bp - 1):+.2f} %; ceiling {100 * ceiling:.0f} %) {'PASS' if p_ok else 'FAIL'}")
+print(f"  one-pass: {rev} {bo:.2f} ns, working tree {ho:.2f} ns per host sample, {ho - bo:+.2f} ns ({100 * (ho / bo - 1):+.2f} %; ceiling {100 * ceiling:.0f} %) {'PASS' if o_ok else 'FAIL'}")
+print(f"  playback with one change per block (reported): {pend:.2f} ns per host sample, {pend - hp:+.2f} ns ({100 * (pend / hp - 1):+.2f} %) against the empty schedule")
+sys.exit(0 if p_ok and o_ok else 1)
 PY
   exit $?
 fi

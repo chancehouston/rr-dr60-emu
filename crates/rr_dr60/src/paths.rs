@@ -937,7 +937,7 @@ impl PlaybackPath {
     /// Drops every pending change (spec 015 FR-002).
     pub(crate) fn clear_schedule(&mut self) {
         self.ctl.schedule.clear();
-        self.ctl.next_apply = if self.ctl.due() { 0 } else { u64::MAX };
+        self.ctl.rearm();
     }
 
     /// The latency and the drain length from the plan and the half (spec 006 FR-008, FR-016).

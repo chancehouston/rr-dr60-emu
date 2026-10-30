@@ -443,7 +443,7 @@ impl StreamState {
         self.produced = 0;
         self.plain_pending = false;
         self.pending_level = None;
-        self.next_apply = self.schedule.earliest();
+        self.next_apply = self.arm(self.schedule.earliest());
         self.log_len = 0;
         self.landed_route = None;
         self.landed_volume = None;
@@ -472,14 +472,22 @@ impl StreamState {
         self.landed_level = None;
     }
 
-    /// Whether the apply point is due for the sample about to be produced (the hot compare).
+    /// Whether the apply point is due for the sample about to be produced: the hot compare,
+    /// one `u64` comparison (research R-09; the off-by-one mutant is folded into
+    /// `next_apply` when it is cached, never into this compare).
     #[inline]
     pub(crate) fn due(&self) -> bool {
+        self.produced >= self.next_apply
+    }
+
+    /// The cached earliest position (the off-by-one mutant lands one sample late).
+    #[inline]
+    fn arm(&self, earliest: u64) -> u64 {
         #[cfg(feature = "__test-hooks")]
         if self.mutation.off_by_one_position {
-            return self.produced > self.next_apply;
+            return earliest.saturating_add(1);
         }
-        self.produced >= self.next_apply
+        earliest
     }
 
     /// The due changes, in order, for the sample about to be produced (the cold path, R-02):
@@ -547,7 +555,7 @@ impl StreamState {
                 }
             }
         }
-        self.next_apply = self.schedule.earliest();
+        self.next_apply = self.arm(self.schedule.earliest());
     }
 
     /// The entry's `before` (the stream's last applied value; a mutant reads the engine's value).
@@ -575,6 +583,14 @@ impl StreamState {
         let n = self.log_len.min(into.len()).min(MAX_CHANGES_PER_CALL);
         into[..n].copy_from_slice(&self.log[..n]);
         self.log_len
+    }
+
+    /// Re-arms the apply point after a schedule change (the schedule call, a clear): the
+    /// earliest pending position, unless a plain change keeps it at 0.
+    pub(crate) fn rearm(&mut self) {
+        if self.next_apply != 0 {
+            self.next_apply = self.arm(self.schedule.earliest());
+        }
     }
 
     /// The call's applied-change count (every variant reports it).

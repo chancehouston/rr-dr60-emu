@@ -3,7 +3,7 @@
 **A software emulator of the Panasonic RR-DR60 voice recorder's sound, from the microphone to the speaker.** Feed it audio and get back what the recorder would have recorded and played back, as modeled from its service manual and the datasheets of its parts.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Version 0.15.0](https://img.shields.io/badge/version-0.15.0-informational)
+![Version 0.16.0](https://img.shields.io/badge/version-0.16.0-informational)
 ![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)
 ![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-lightgrey)
 
@@ -13,7 +13,7 @@ The RR-DR60 is a pocket digital voice recorder Panasonic sold in the late 1990s.
 
 | | |
 |---|---|
-| **Version** | 0.15.0, pre-alpha. Not yet released or published to crates.io; the API may still change before 1.0. |
+| **Version** | 0.16.0, pre-alpha. Not yet released or published to crates.io; the API may still change before 1.0. |
 | **Signal chain** | 12 of the 15 stages are modeled and on by default. Not modeled: noise reduction (no evidence the device has it), the clock and the power supply. |
 | **Accuracy** | Every modeled stage is built from documents (the service manual, the owner's manual, datasheets) plus recorded assumptions. **No stage has been checked against a real unit**; see [Accuracy](#accuracy). |
 | **Platforms** | Rust library (`no_std`), C API, and a Swift package for iOS and macOS. Bit-identical output on Linux, macOS, Windows, the iOS simulator and an iOS device. |

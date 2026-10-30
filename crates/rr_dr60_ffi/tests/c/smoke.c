@@ -240,6 +240,93 @@ static int print_meters(void) {
   return 0;
 }
 
+/* Spec 015 FR-011, SC-003 (research R-10): a scheduled run through the C API, printed as the Rust
+   example `changes_rows` prints it: a ±0.125 square (24 up, 24 down; exactly representable) at
+   48 kHz through the default engine on the one-pass stream, a volume change at 700 and a route
+   change at 1500 scheduled by the control manifest's indices (resolved by identifier, never
+   assumed), processed in 1024-sample blocks; then the same input recorded and played with a
+   volume change at 500 and a speed change at 900 on the playback stream. Each entry is printed
+   as `position control before_bits after_bits tag`, then the output digest (FNV-1a over the
+   sample bits). `run_smoke.sh` diffs the two. */
+static uint32_t control_index(const char *identifier) {
+  uint32_t n = rr_dr60_control_count();
+  for (uint32_t i = 0; i < n; i++) {
+    RrDr60Control c;
+    if (rr_dr60_control(i, &c) == RR_DR60_STATUS_OK && strcmp(c.identifier, identifier) == 0) return i;
+  }
+  return UINT32_MAX;
+}
+
+static uint64_t digest_add(uint64_t h, const float *v, size_t n) {
+  for (size_t i = 0; i < n; i++) {
+    uint32_t bits;
+    memcpy(&bits, &v[i], 4);
+    for (int b = 0; b < 4; b++) {
+      h ^= (uint64_t)((bits >> (8 * b)) & 0xffu);
+      h *= 0x0100000001b3ULL;
+    }
+  }
+  return h;
+}
+
+static void print_entry(const RrDr60ChangeEntry *e) {
+  uint64_t before, after;
+  memcpy(&before, &e->before, 8);
+  memcpy(&after, &e->after, 8);
+  printf("%llu %u %016llx %016llx %llu\n", (unsigned long long)e->position, (unsigned)e->control,
+         (unsigned long long)before, (unsigned long long)after, (unsigned long long)e->tag);
+}
+
+static int print_changes(void) {
+  enum { CRATE = 48000, CN = CRATE / 2, CBLOCK = 1024 };
+  static float cin[CN], cout[CN];
+  for (size_t i = 0; i < CN; i++) cin[i] = (i % 48 < 24) ? 0.125f : -0.125f;
+  uint32_t route = control_index("route"), volume = control_index("volume"), speed = control_index("playback_speed");
+  if (route == UINT32_MAX || volume == UINT32_MAX || speed == UINT32_MAX) return 1;
+  RrDr60Settings s = rr_dr60_settings_default(CRATE);
+  RrDr60Pipeline *p = NULL;
+  if (rr_dr60_create(&s, &p) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_schedule_change(p, RR_DR60_STREAM_ONE_PASS, 700, volume, 0.3, 1) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_schedule_change(p, RR_DR60_STREAM_ONE_PASS, 1500, route, 1.0, 2) != RR_DR60_STATUS_OK) return 1;
+  RrDr60ChangeEntry entries[RR_DR60_MAX_CHANGES_PER_CALL];
+  uint64_t h = 0xcbf29ce484222325ULL;
+  printf("one-pass\n");
+  for (size_t pos = 0; pos < CN; pos += CBLOCK) {
+    size_t n = CN - pos < CBLOCK ? CN - pos : CBLOCK;
+    RrDr60BlockInfo info;
+    size_t count = 0;
+    if (rr_dr60_process_with_events_and_changes(p, cin + pos, cout + pos, n, &info, NULL, 0, entries,
+                                                RR_DR60_MAX_CHANGES_PER_CALL, &count) != RR_DR60_STATUS_OK)
+      return 1;
+    for (size_t k = 0; k < count; k++) print_entry(&entries[k]);
+    h = digest_add(h, cout + pos, info.produced);
+  }
+  printf("digest %016llx\n", (unsigned long long)h);
+  /* Record the same input, then play it with changes. */
+  if (rr_dr60_start_recording(p) != RR_DR60_STATUS_OK) return 1;
+  RrDr60RecordInfo rinfo;
+  if (rr_dr60_record(p, cin, CN, &rinfo, NULL, 0) != RR_DR60_STATUS_OK) return 1;
+  RrDr60StopOutcome so;
+  if (rr_dr60_stop_recording(p, &so, NULL, 0) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_schedule_change(p, RR_DR60_STREAM_PLAYBACK, 500, volume, 0.8, 3) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_schedule_change(p, RR_DR60_STREAM_PLAYBACK, 900, speed, 5.0, 4) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_start_playback(p, 1) != RR_DR60_STATUS_OK) return 1;
+  printf("playback\n");
+  h = 0xcbf29ce484222325ULL;
+  for (;;) {
+    RrDr60PlayInfo info;
+    size_t count = 0;
+    if (rr_dr60_play_with_changes(p, cout, CBLOCK, &info, entries, RR_DR60_MAX_CHANGES_PER_CALL, &count) != RR_DR60_STATUS_OK)
+      return 1;
+    for (size_t k = 0; k < count; k++) print_entry(&entries[k]);
+    h = digest_add(h, cout, info.produced);
+    if (info.finished) break;
+  }
+  printf("digest %016llx\n", (unsigned long long)h);
+  rr_dr60_destroy(p);
+  return 0;
+}
+
 static void print_controls(void) {
   uint32_t n = rr_dr60_control_count();
   printf("control_count: %u\n", n);
@@ -306,6 +393,9 @@ int main(int argc, char **argv) {
   }
   if (argc > 1 && strcmp(argv[1], "--meters") == 0) {
     return print_meters();
+  }
+  if (argc > 1 && strcmp(argv[1], "--changes") == 0) {
+    return print_changes();
   }
   if (argc > 1 && strcmp(argv[1], "--manifest") == 0) {
     print_manifest();

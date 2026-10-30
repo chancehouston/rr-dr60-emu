@@ -147,12 +147,14 @@ The common pattern is spec 011's: a setter that is validated, real-time safe and
 
 ### 2c. Two engine gaps that matter more than any one control
 
+*Status at engine 0.16.0 (spec 015, 2026-10-30, PR pending): gap 1 is built for the three live controls (the route and the volume on the playback and the one-pass streams, the playback speed on the playback stream), and gap 2's change log is built in the voice-activation events' caller-buffer form: each entry carries the output-sample position the change landed on, the control, the values before and after, and a caller tag (the guide's "Scheduled changes and the change log" section). The record-side values come through the same form in spec 017 (the record stream is reserved for them); the settings snapshot and the session sidecar are spec 020's. Positioning a change on a sample is an emulator convention, not a device behavior: the control manifest's timing classes are unchanged.*
+
 1. **Sample-positioned changes.** Today a change takes effect at the next call boundary: "the controls are read once per call, at the block boundary" (spec 009 FR-009; spec 013 FR-001 is similar for speed). So the same change gives different output under different audio buffer sizes. iOS can change the I/O buffer size under the app, for example on a route change. A control event carrying a sample offset within the block, as audio plug-in hosts do, makes every live change partition-independent. Replays, AI scripts and session logs then reproduce bit for bit. It also removes most of the volume-retarget question (O-13): a scripted fade becomes one event, not a stream.
 2. **A change log and a settings snapshot.** The dossier requires "the active chain and settings are saved, and changes during a session are timestamped". Today:
    - the stored form (version 2) records the encoding, but neither the settings nor the controls;
    - the engine reports VAS splices into caller memory, but reports no control changes.
 
-   An engine-written log in the same caller-buffer form as `VasEvent` (sample position, control id, old and new value), plus a versioned settings serialization, gives the app the session contract. It also makes "changed by the assistant" provable.
+   An engine-written log in the same caller-buffer form as `VasEvent` (sample position, control id, old and new value), plus a versioned settings serialization, gives the app the session contract. It also lets the app show, from the engine's own log, which changes a preset or a script applied and where.
 
 **Threading:** a handle must not be used by two threads at once (C header, rule 4). A slider or an AI runs on another thread than the audio callback, so the app needs a lock-free queue into the callback. Recommend this lives in the Swift package, not in the `no_std` core, and that the core's control event (gap 1) is what the queue carries.
 

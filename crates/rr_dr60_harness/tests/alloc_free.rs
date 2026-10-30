@@ -810,3 +810,97 @@ fn meters_read_allocates_nothing() {
         unsafe { rr_dr60_destroy(handle) };
     }
 }
+
+/// Spec 015 FR-009: the schedule call, a log-taking call with a full-length buffer, the clear and
+/// the readings allocate nothing, in Rust and in C (the counting window holds only those calls;
+/// serialized with the other counting tests).
+#[test]
+fn changes_allocate_nothing() {
+    use rr_dr60::changes::MAX_CHANGES_PER_CALL;
+    use rr_dr60::{ChangeEntry, Stream};
+    use rr_dr60_ffi::{
+        RrDr60ChangeEntry, rr_dr60_clear_schedule, rr_dr60_pending_changes,
+        rr_dr60_process_with_events_and_changes, rr_dr60_schedule_change, rr_dr60_stream_position,
+    };
+    let _turn = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let input = stimulus::noise(0x015, 1024);
+    let mut output = vec![0.0f32; 1024];
+    let mut log = vec![ChangeEntry::default(); MAX_CHANGES_PER_CALL];
+    let mut clog = vec![RrDr60ChangeEntry::default(); MAX_CHANGES_PER_CALL];
+    for &rate in configs::measurement_rates() {
+        let s = rr_dr60::Settings::new(rate);
+        let mut p = Pipeline::new(s).unwrap();
+        let c = configs::c_settings(&s);
+        let mut handle: *mut RrDr60Pipeline = core::ptr::null_mut();
+        // SAFETY: a valid settings struct and an out-pointer.
+        let st = unsafe { rr_dr60_create(&c, &mut handle) };
+        assert_eq!(st, RrDr60Status::Ok);
+        let mut info = RrDr60BlockInfo::default();
+        let mut count = 0usize;
+        let mut pending = 0u32;
+        let mut pos = 0u64;
+        MEASURING.with(|m| m.set(true));
+        let before = counts();
+        for i in 0..64u64 {
+            p.schedule_change(Stream::OnePass, 10 + i, 1, 0.5, i + 1)
+                .unwrap();
+        }
+        let rinfo = p
+            .process_with_events_and_changes(&input, &mut output, &mut [], &mut log)
+            .unwrap();
+        let rp = p.stream_position(Stream::OnePass).unwrap();
+        p.schedule_change(Stream::OnePass, 1 << 40, 1, 0.5, 99)
+            .unwrap();
+        let rn = p.pending_changes(Stream::OnePass).unwrap();
+        p.clear_schedule(Stream::OnePass).unwrap();
+        // SAFETY: the handle is live; the buffers are 1024 samples; the log holds 67 entries.
+        let st1 = unsafe {
+            for i in 0..64u64 {
+                assert_eq!(
+                    rr_dr60_schedule_change(handle, 1, 10 + i, 1, 0.5, i + 1),
+                    RrDr60Status::Ok
+                );
+            }
+            rr_dr60_process_with_events_and_changes(
+                handle,
+                input.as_ptr(),
+                output.as_mut_ptr(),
+                1024,
+                &mut info,
+                core::ptr::null_mut(),
+                0,
+                clog.as_mut_ptr(),
+                MAX_CHANGES_PER_CALL,
+                &mut count,
+            )
+        };
+        // SAFETY: as above.
+        let st2 = unsafe { rr_dr60_stream_position(handle, 1, &mut pos) };
+        // SAFETY: as above.
+        let st3 = unsafe { rr_dr60_pending_changes(handle, 1, &mut pending) };
+        // SAFETY: as above.
+        let st4 = unsafe { rr_dr60_clear_schedule(handle, 1) };
+        let after = counts();
+        MEASURING.with(|m| m.set(false));
+        assert_eq!(
+            (st1, st2, st3, st4),
+            (
+                RrDr60Status::Ok,
+                RrDr60Status::Ok,
+                RrDr60Status::Ok,
+                RrDr60Status::Ok
+            )
+        );
+        assert_eq!(
+            after, before,
+            "{rate} Hz: the schedule and the log allocated"
+        );
+        assert_eq!(rinfo.changes, 64);
+        assert_eq!(count, 64);
+        assert_eq!(rp, pos);
+        assert_eq!(rn, 1);
+        assert_eq!(pending, 0);
+        // SAFETY: destroying the handle once.
+        unsafe { rr_dr60_destroy(handle) };
+    }
+}

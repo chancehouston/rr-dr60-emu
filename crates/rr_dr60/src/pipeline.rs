@@ -571,6 +571,23 @@ impl Pipeline {
         self.run_block(None, buffer, events)
     }
 
+    /// As [`process_in_place_with_events`](Self::process_in_place_with_events), and writes the
+    /// control changes the one-pass stream applied in this call to `changes` (spec 015
+    /// FR-005), as [`process_with_events_and_changes`](Self::process_with_events_and_changes)
+    /// does. Real-time safe.
+    pub fn process_in_place_with_events_and_changes(
+        &mut self,
+        buffer: &mut [f32],
+        events: &mut [VasEvent],
+        changes: &mut [ChangeEntry],
+    ) -> BlockInfo {
+        let info = self.process_in_place_with_events(buffer, events);
+        if info.produced > 0 || !buffer.is_empty() {
+            self.one_pass.play.ctl.drain_log(changes);
+        }
+        info
+    }
+
     /// As [`process_with_events`](Self::process_with_events), and writes the control changes
     /// the one-pass stream applied in this call to `changes` (spec 015 FR-005): scheduled
     /// changes that landed and plain setters that moved the stream, each as a
@@ -701,9 +718,7 @@ impl Pipeline {
         }
         // The apply is armed for the first produced sample at or past the earliest position
         // (research R-09); a pending plain change keeps it at 0.
-        if path.ctl.next_apply != 0 {
-            path.ctl.next_apply = path.ctl.schedule.earliest();
-        }
+        path.ctl.rearm();
         Ok(())
     }
 
