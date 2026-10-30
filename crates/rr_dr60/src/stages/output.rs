@@ -197,6 +197,9 @@ pub(crate) struct OutputChain {
     /// the knob moved linearly in time. Both false in production.
     volume_step: bool,
     shape_linear: bool,
+    /// Test hook (spec 015 research R-13): a route switch runs the full reset, losing the
+    /// call's meter accumulators. False in production.
+    pub(crate) full_reset_on_route: bool,
 }
 
 impl OutputChain {
@@ -260,6 +263,7 @@ impl OutputChain {
             fresh: true, // 011 FR-005: the first block takes the position at once
             volume_step: false,
             shape_linear: false,
+            full_reset_on_route: false,
         };
         // A-045: N = 20 ms of host samples. Unreachable fallback: `Pipeline::new` validated the
         // rate before building the chain; 120 (the 6 kHz figure) only avoids a panic site.
@@ -281,8 +285,14 @@ impl OutputChain {
             // Every section, the shared 32 Hz corner included (a simplification: physically that
             // section, C14 into VR1, is common to both routes and would keep its state; the
             // record band-pass leaves no low-frequency content for it to hold, hardware review
-            // T043 N3). `reset` marks the chain fresh: the new route starts at the new position.
-            self.reset();
+            // T043 N3). The sections-only reset marks the chain fresh: the new route starts at
+            // the new position; the meter accumulators keep the samples before the switch
+            // (spec 015 research R-05).
+            if self.full_reset_on_route {
+                self.reset(); // the mutant (research R-13)
+            } else {
+                self.reset_sections();
+            }
         }
         if self.fresh || !self.active || !self.run_amp || self.volume_step {
             self.take_at_once(volume); // 011 FR-005 (the hook: 0.10's step)
@@ -493,10 +503,20 @@ impl OutputChain {
         }
     }
 
-    /// Zeroes every section's state; the controls are kept. Spec 011 FR-005: a transition in
-    /// progress completes at once (the scalars and the knob at its target) and the chain is
-    /// fresh, so the next `set_controls` takes its position at once.
+    /// Zeroes every section's state and the meter accumulators; the controls are kept. Spec
+    /// 011 FR-005: a transition in progress completes at once (the scalars and the knob at its
+    /// target) and the chain is fresh, so the next `set_controls` takes its position at once.
     pub(crate) fn reset(&mut self) {
+        self.reset_sections();
+        self.route_peak = 0.0;
+        self.clamp_count = 0;
+    }
+
+    /// The sections' part of [`reset`](Self::reset), without the meter accumulators: what a
+    /// route switch needs (spec 015 FR-003, research R-05), so that a switch positioned inside
+    /// a call keeps the call's route peak and output-clamp count (spec 016). At a block boundary
+    /// the two are the same, the accumulators having been zeroed at the previous finalization.
+    pub(crate) fn reset_sections(&mut self) {
         self.fresh = true;
         self.ramp_k = self.ramp_n;
         self.k_spk = self.g_to_spk;
@@ -508,8 +528,6 @@ impl OutputChain {
         self.speaker_shelf.reset();
         self.ear_in.reset();
         self.ear_out.reset();
-        self.route_peak = 0.0;
-        self.clamp_count = 0;
     }
 
     /// Whether any output stage runs (the drain grows by [`OutputChain::n_out`] if so).
@@ -566,6 +584,26 @@ mod tests {
     /// bypassed.
     fn settings(rate: u32) -> Settings {
         crate::test_util::settings_011(rate)
+    }
+
+    /// Spec 015 research R-05: a route switch resets the sections only, so a switch inside a
+    /// call keeps the call's meter accumulators; the full reset zeroes them.
+    #[test]
+    fn reset_sections_keeps_the_accumulators() {
+        let mut ch = OutputChain::new(&settings(48_000), false);
+        ch.route_peak = 1.5;
+        ch.clamp_count = 7;
+        ch.reset_sections();
+        assert_eq!((ch.route_peak, ch.clamp_count), (1.5, 7));
+        assert!(ch.fresh);
+        ch.reset();
+        assert_eq!((ch.route_peak, ch.clamp_count), (0.0, 0));
+        // A route change inside a call goes through reset_sections (the accumulators kept).
+        ch.route_peak = 2.0;
+        ch.clamp_count = 3;
+        ch.set_controls(Route::Earphone, 0.5);
+        assert_eq!((ch.route_peak, ch.clamp_count), (2.0, 3));
+        assert_eq!(ch.route, Route::Earphone);
     }
 
     fn settings_output(rate: u32, o: OutputSettings) -> Settings {

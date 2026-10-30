@@ -945,3 +945,223 @@ mod meters {
         assert!(failed(&mc::host_rate_peaks(RATE)).is_empty());
     }
 }
+
+/// Spec 015 (research R-13; tasks.md T012): six deliberate defects of the sample-timed changes,
+/// each caught by the named oracle and absent from the committed engine.
+mod changes {
+    use rr_dr60::__test_hooks::ChangeMutation;
+    use rr_dr60::changes::speed_landing;
+    use rr_dr60::{Pipeline, Route, Settings, Stream, Tap};
+    use rr_dr60_harness::changes_checks::{self as cc, Change, Partition, Source, same};
+    use rr_dr60_harness::checks::standard;
+    use rr_dr60_harness::{configs, stimulus};
+
+    const RATE: u32 = 48_000;
+
+    fn settings() -> Settings {
+        configs::settings("default_output", RATE)
+    }
+
+    fn mutant(s: Settings, m: ChangeMutation) -> Pipeline {
+        Pipeline::__with_change_mutation(s, &m).unwrap()
+    }
+
+    /// The partition identity (US1 AS1): a change scheduled inside a block at two block sizes.
+    fn partition_identity(make: &dyn Fn(Settings) -> Pipeline) -> bool {
+        let x = stimulus::voiced(f64::from(RATE), 0.4, -20.0, 0x015);
+        let change = [Change::volume(Stream::OnePass, 7001, 0.9, 1)];
+        let mut a = make(settings());
+        let ra = cc::run_scheduled(&mut a, Source::OnePass(&x), &change, Partition::Fixed(64));
+        let mut b = make(settings());
+        let rb = cc::run_scheduled(&mut b, Source::OnePass(&x), &change, Partition::Fixed(4096));
+        same(&ra.out, &rb.out)
+    }
+
+    /// Spec 011's splice identity (US1 AS2): sample P is the first sample differing from the
+    /// old position's run.
+    fn splice_first_diff(make: &dyn Fn(Settings) -> Pipeline) -> Option<usize> {
+        let s = configs::settings("stage11_only_speaker", RATE);
+        let c = 40_123usize;
+        let x = stimulus::tone(
+            1000.0,
+            stimulus::amplitude(-30.0),
+            f64::from(RATE),
+            c + 8192,
+        );
+        let mut p = make(s);
+        p.set_volume(0.1).unwrap();
+        let a = cc::run(&mut p, Source::OnePass(&x), Partition::Fixed(64)).out;
+        let mut q = make(s);
+        q.set_volume(0.1).unwrap();
+        let y = cc::run_scheduled(
+            &mut q,
+            Source::OnePass(&x),
+            &[Change::volume(Stream::OnePass, c as u64, 1.0, 1)],
+            Partition::Fixed(64),
+        )
+        .out;
+        cc::first_diff(&y, &a)
+    }
+
+    #[test]
+    fn apply_at_entry_is_caught() {
+        assert!(partition_identity(&standard));
+        let m = ChangeMutation {
+            apply_at_entry: true,
+            ..ChangeMutation::default()
+        };
+        assert!(
+            !partition_identity(&|s| mutant(s, m)),
+            "the mutant passes the partition identity"
+        );
+    }
+
+    #[test]
+    fn off_by_one_position_is_caught() {
+        assert_eq!(splice_first_diff(&standard), Some(40_123));
+        let m = ChangeMutation {
+            off_by_one_position: true,
+            ..ChangeMutation::default()
+        };
+        assert_ne!(
+            splice_first_diff(&|s| mutant(s, m)),
+            Some(40_123),
+            "the mutant lands at P"
+        );
+    }
+
+    /// US1 AS8: submitted at 1000 then 500, the 500 lands first.
+    #[test]
+    fn submission_order_is_caught() {
+        let x = stimulus::voiced(f64::from(RATE), 0.2, -20.0, 0x015);
+        let changes = [
+            Change::volume(Stream::OnePass, 1000, 0.9, 1),
+            Change::volume(Stream::OnePass, 500, 0.4, 2),
+        ];
+        let order = |make: &dyn Fn(Settings) -> Pipeline| {
+            let mut p = make(settings());
+            let r = cc::run_scheduled(&mut p, Source::OnePass(&x), &changes, Partition::Fixed(64));
+            r.log.iter().map(|e| e.position).collect::<Vec<_>>()
+        };
+        assert_eq!(order(&standard), vec![500, 1000]);
+        let m = ChangeMutation {
+            submission_order: true,
+            ..ChangeMutation::default()
+        };
+        assert_ne!(
+            order(&|s| mutant(s, m)),
+            vec![500, 1000],
+            "the mutant keeps position order"
+        );
+    }
+
+    /// US2 AS6: the cross-stream entry's `before` is the one-pass stream's last applied value,
+    /// not the engine's reading (which already moved during the playback).
+    #[test]
+    fn log_reading_before_is_caught() {
+        let before = |make: &dyn Fn(Settings) -> Pipeline| {
+            let x = stimulus::tone(1000.0, stimulus::amplitude(-20.0), f64::from(RATE), 9600);
+            let v = stimulus::voiced(f64::from(RATE), 0.3, -20.0, 0x015);
+            let mut p = make(settings());
+            p.start_recording().unwrap();
+            let _ = p.record(&v, &mut []).unwrap();
+            let _ = p.stop_recording(&mut []).unwrap();
+            let mut y = vec![0.0f32; 4800];
+            let _ = p.process(&x[..4800], &mut y).unwrap();
+            p.start_playback(1).unwrap();
+            let _ = p.play(&mut y).unwrap();
+            p.set_volume(0.6).unwrap();
+            let _ = p.play(&mut y).unwrap();
+            p.stop_playback().unwrap();
+            let mut log = vec![rr_dr60::ChangeEntry::default(); 4];
+            let info = p
+                .process_with_events_and_changes(&x[4800..], &mut y, &mut [], &mut log)
+                .unwrap();
+            assert_eq!(info.changes, 1);
+            log[0].before
+        };
+        assert_eq!(
+            before(&standard),
+            f64::from(rr_dr60::output::VOLUME_REFERENCE)
+        );
+        let m = ChangeMutation {
+            log_reading_before: true,
+            ..ChangeMutation::default()
+        };
+        assert_eq!(
+            before(&|s| mutant(s, m)),
+            f64::from(0.6f32),
+            "the mutant reads the engine's value"
+        );
+    }
+
+    /// US1 AS9: the route peak across a mid-call switch covers both routes' samples.
+    #[test]
+    fn full_reset_on_route_is_caught() {
+        let peak_ok = |make: &dyn Fn(Settings) -> Pipeline| {
+            let mut s = configs::settings("output_only_speaker", RATE);
+            s.output = rr_dr60::OutputSettings::DEVICE;
+            s.tap = Tap::RouteOutput;
+            let x = stimulus::square(1000.0, 1.0, f64::from(RATE), 2048);
+            let mut p = make(s);
+            p.set_volume(1.0).unwrap();
+            let _ = cc::run(&mut p, Source::OnePass(&x[..1024]), Partition::Fixed(1024));
+            let r = cc::run_scheduled(
+                &mut p,
+                Source::OnePass(&x[1024..]),
+                &[Change::route(
+                    Stream::OnePass,
+                    1024 + 300,
+                    Route::Earphone,
+                    1,
+                )],
+                Partition::Fixed(1024),
+            );
+            let peak = r.out.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+            p.meters().route_peak == peak
+        };
+        assert!(peak_ok(&standard));
+        let m = ChangeMutation {
+            full_reset_on_route: true,
+            ..ChangeMutation::default()
+        };
+        assert!(
+            !peak_ok(&|s| mutant(s, m)),
+            "the mutant keeps the route peak"
+        );
+    }
+
+    /// The place pin of d(P) (research R-08): the published formula against the engine's place
+    /// at 48 kHz; the mutant's ⌊P · 6000 ÷ rate⌋ differs for P with (P − 1) mod 8 == 7.
+    #[test]
+    fn speed_landing_ceiling_is_caught() {
+        let s = configs::settings("speed_only", RATE);
+        let x = stimulus::stored_voiced(0.2);
+        let (mut p, n) = configs::stored_recording(&standard, s, &x);
+        p.start_playback(n).unwrap();
+        let mut buf = [0.0f32; 1];
+        let mutant_formula = |pos: u64| pos * 6000 / u64::from(RATE);
+        let mut caught = 0;
+        for pos in 1..=64u64 {
+            let info = p.play(&mut buf).unwrap();
+            assert_eq!(info.place + 1, speed_landing(pos, RATE).unwrap());
+            if info.place + 1 != mutant_formula(pos) {
+                caught += 1;
+            }
+        }
+        assert!(caught > 0, "the ceiling formula is caught by the place pin");
+        let m = ChangeMutation {
+            speed_landing_ceiling: true,
+            ..ChangeMutation::default()
+        };
+        // The hook form of the published helper (research R-13).
+        assert_ne!(
+            rr_dr60::__test_hooks::speed_landing_mutated(9, RATE, &m),
+            speed_landing(9, RATE).unwrap()
+        );
+        assert_eq!(
+            rr_dr60::__test_hooks::speed_landing_mutated(9, RATE, &ChangeMutation::default()),
+            speed_landing(9, RATE).unwrap()
+        );
+    }
+}

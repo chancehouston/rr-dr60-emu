@@ -48,10 +48,18 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 15
+#define RR_DR60_VERSION_MINOR 16
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
+
+// Pending changes each stream's schedule holds (spec 015 D4). Equal to the Rust
+// `changes::SCHEDULE_CAPACITY`.
+#define RR_DR60_SCHEDULE_CAPACITY 64
+
+// A `changes_capacity` that is always enough for one call (spec 015 FR-005). Equal to the
+// Rust `changes::MAX_CHANGES_PER_CALL`.
+#define RR_DR60_MAX_CHANGES_PER_CALL 67
 
 // The volume control's default position (spec 009 FR-003; A-043): the reference position at
 // which a full-scale codec output just reaches the amplifier's clip ceiling under the loaded
@@ -172,6 +180,13 @@ enum RrDr60Status
   // `rr_dr60_control_count()`, or an option, source or assumption index past the entry's
   // count; nothing is written (spec 014 FR-013).
   RR_DR60_STATUS_NO_SUCH_CONTROL = 26,
+  // `rr_dr60_schedule_change` on a stream whose schedule already holds
+  // `RR_DR60_SCHEDULE_CAPACITY` pending changes; nothing stored (spec 015 FR-002).
+  RR_DR60_STATUS_SCHEDULE_FULL = 27,
+  // `rr_dr60_schedule_change` with a control that is not a live control of the stream (the
+  // route, the volume, or on the playback stream the speed), or any stream call with a
+  // reserved or unknown stream value; nothing changes (spec 015 FR-001).
+  RR_DR60_STATUS_CONTROL_NOT_ON_STREAM = 28,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -524,6 +539,32 @@ typedef uint32_t RrDr60ControlValueType;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
+// The stream a control change is scheduled on (spec 015 D2), passed as `uint32_t`: the
+// playback stream (its clock counts the samples the current playback has produced since
+// `rr_dr60_start_playback`, the drain included) or the one-pass stream (its clock counts the
+// samples produced since construction, `rr_dr60_reset` or `rr_dr60_reconfigure`, the clock the
+// VAS events use). `RR_DR60_STREAM_RECORD` is reserved for the record-side values (spec 017):
+// every call refuses it with `CONTROL_NOT_ON_STREAM`.
+enum RrDr60Stream
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+  // The player.
+  RR_DR60_STREAM_PLAYBACK = 0,
+  // The one-pass processing.
+  RR_DR60_STREAM_ONE_PASS = 1,
+  // Reserved (spec 017).
+  RR_DR60_STREAM_RECORD = 2,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum RrDr60Stream RrDr60Stream;
+#else
+typedef uint32_t RrDr60Stream;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
 // Opaque pipeline handle.
 typedef struct RrDr60Pipeline RrDr60Pipeline;
 
@@ -673,6 +714,31 @@ typedef struct RrDr60VasEvent {
   // Drop mode: host input samples removed at this splice. Mute mode: the region's length.
   uint64_t input_length;
 } RrDr60VasEvent;
+
+// One applied control change (spec 015 FR-005), from `rr_dr60_process_with_events_and_changes`
+// or `rr_dr60_play_with_changes`: the host output index it landed on (the stream's clock), the
+// value the stream last applied for the control (`before`; chained: each entry's `before` is
+// the previous entry's `after` for that control on that stream, or the stream's starting
+// value), the value applied (`after`), the schedule call's `tag` (**0 means a plain setter**:
+// `rr_dr60_set_route`, `rr_dr60_set_volume`, `rr_dr60_set_playback_speed`; tag your own from
+// 1), and the control manifest's index of the control (resolve it by identifier through
+// `rr_dr60_control`, never assume it). Values are the control's own as doubles: a route 0 or 1,
+// a volume position (rounded to single precision), a level 1 … 5. 40 bytes, no size field
+// (the pre-1.0 ABI pass); `reserved` is 0.
+typedef struct RrDr60ChangeEntry {
+  // The host output index the change landed on.
+  uint64_t position;
+  // The stream's last applied value for the control.
+  double before;
+  // The value applied.
+  double after;
+  // The schedule call's tag; 0 for a plain setter.
+  uint64_t tag;
+  // The control manifest's index.
+  uint32_t control;
+  // 0.
+  uint32_t reserved;
+} RrDr60ChangeEntry;
 
 // The report of one `rr_dr60_record` call, and of the stop flush (spec 006 FR-006, FR-012).
 typedef struct RrDr60RecordInfo {
@@ -1025,6 +1091,29 @@ RrDr60Status rr_dr60_process_with_events(struct RrDr60Pipeline *pipeline,
                                          struct RrDr60VasEvent *events,
                                          uintptr_t events_capacity);
 
+// As `rr_dr60_process_with_events`, and writes the control changes the one-pass stream
+// applied in this call to `changes`: the first `changes_capacity` of them, in order, each an
+// `RrDr60ChangeEntry` at the output index it landed on (spec 015 FR-005); `*out_change_count`
+// (NULL allowed) receives how many the call applied, so a count above `changes_capacity` means
+// some were not written; `RR_DR60_MAX_CHANGES_PER_CALL` is always enough. `changes` may be
+// NULL only when `changes_capacity` is 0. Real-time safe.
+//
+// # Safety
+//
+// As `rr_dr60_process_with_events`; additionally, when `changes_capacity > 0`, `changes`
+// must be writable for that many `RrDr60ChangeEntry` values, and `out_change_count` must be
+// NULL or writable.
+RrDr60Status rr_dr60_process_with_events_and_changes(struct RrDr60Pipeline *pipeline,
+                                                     const float *input,
+                                                     float *output,
+                                                     uintptr_t frames,
+                                                     struct RrDr60BlockInfo *out_info,
+                                                     struct RrDr60VasEvent *events,
+                                                     uintptr_t events_capacity,
+                                                     struct RrDr60ChangeEntry *changes,
+                                                     uintptr_t changes_capacity,
+                                                     uintptr_t *out_change_count);
+
 // Writes to `*out_capacity` an `events_capacity` that is always enough for a block of `frames`
 // input samples with the pipeline's current settings (spec 003 research R-07). Never
 // allocates; real-time safe. On a non-OK status `*out_capacity` is untouched (rule 2).
@@ -1179,6 +1268,113 @@ RrDr60Status rr_dr60_play(struct RrDr60Pipeline *pipeline,
 //
 // `pipeline` must be a live handle.
 RrDr60Status rr_dr60_stop_playback(struct RrDr60Pipeline *pipeline);
+
+// As `rr_dr60_play`, and writes the control changes the playback stream applied in this call
+// to `changes`: the first `changes_capacity` of them, in order (spec 015 FR-005);
+// `*out_change_count` (NULL allowed) receives how many the call applied;
+// `RR_DR60_MAX_CHANGES_PER_CALL` is always enough. `changes` may be NULL only when
+// `changes_capacity` is 0. Real-time safe.
+//
+// Statuses: as `rr_dr60_play`.
+//
+// # Safety
+//
+// As `rr_dr60_play`; additionally, when `changes_capacity > 0`, `changes` must be writable
+// for that many `RrDr60ChangeEntry` values, and `out_change_count` must be NULL or writable.
+RrDr60Status rr_dr60_play_with_changes(struct RrDr60Pipeline *pipeline,
+                                       float *output,
+                                       uintptr_t frames,
+                                       struct RrDr60PlayInfo *out_info,
+                                       struct RrDr60ChangeEntry *changes,
+                                       uintptr_t changes_capacity,
+                                       uintptr_t *out_change_count);
+
+// Schedules a change of a live control at `position` of `stream`'s clock (spec 015 FR-001;
+// D2, D3): output sample `position` is the first the change affects (a volume transition
+// starts there, the route switches there with the new branch from rest, a speed level applies
+// from device-rate sample `rr_dr60_speed_landing(position)`); a position at or before the
+// stream's `rr_dr60_stream_position` lands on the next sample produced. `control` is the
+// control manifest's index of `route`, `volume` or `playback_speed` (resolve it by identifier
+// through `rr_dr60_control`); `value` the control's own value (a route 0 or 1, a volume
+// position, rounded to single precision, a level 1 … 5); `tag` is echoed in the change entry
+// (**0 means a plain setter**: tag from 1). Each stream holds up to
+// `RR_DR60_SCHEDULE_CAPACITY` pending changes, applied in position order (ties in submission
+// order); the playback schedule is kept by `rr_dr60_start_playback` and cleared when a playback
+// ends by any path, both by `rr_dr60_reset` and `rr_dr60_reconfigure`. Accepted in every engine
+// state; real-time safe. Positioning a change on a sample is a feature of the emulator's API,
+// not a device behavior (spec 015 D8).
+//
+// Statuses, nothing stored on any: `CONTROL_NOT_ON_STREAM` (a reserved or unknown stream, a
+// control that is not one of the three, the speed on the one-pass stream); `INVALID_VOLUME`,
+// `INVALID_SPEED_LEVEL`, or `INVALID_ARGUMENT` for a route value not 0 or 1; `TAP_NOT_ON_ROUTE`
+// for a route the one-pass's named-route tap cannot read; `SCHEDULE_FULL`.
+//
+// # Safety
+//
+// `pipeline` must be a live handle.
+RrDr60Status rr_dr60_schedule_change(struct RrDr60Pipeline *pipeline,
+                                     uint32_t stream,
+                                     uint64_t position,
+                                     uint32_t control,
+                                     double value,
+                                     uint64_t tag);
+
+// Writes to `*out_count` the pending changes on `stream`'s schedule (spec 015 FR-002).
+// Real-time safe.
+//
+// Statuses: `CONTROL_NOT_ON_STREAM` for a reserved or unknown stream (nothing written).
+//
+// # Safety
+//
+// `pipeline` must be a live handle; `out_count` must be NULL or writable.
+RrDr60Status rr_dr60_pending_changes(const struct RrDr60Pipeline *pipeline,
+                                     uint32_t stream,
+                                     uint32_t *out_count);
+
+// Writes to `*out_position` `stream`'s position (spec 015 D2): the host output samples it has
+// produced; the next sample produced has this index. Real-time safe.
+//
+// Statuses: `CONTROL_NOT_ON_STREAM` for a reserved or unknown stream (nothing written).
+//
+// # Safety
+//
+// `pipeline` must be a live handle; `out_position` must be NULL or writable.
+RrDr60Status rr_dr60_stream_position(const struct RrDr60Pipeline *pipeline,
+                                     uint32_t stream,
+                                     uint64_t *out_position);
+
+// Drops every pending change on `stream`'s schedule (spec 015 FR-002); nothing already applied
+// is affected. Real-time safe.
+//
+// Statuses: `CONTROL_NOT_ON_STREAM` for a reserved or unknown stream.
+//
+// # Safety
+//
+// `pipeline` must be a live handle.
+RrDr60Status rr_dr60_clear_schedule(struct RrDr60Pipeline *pipeline, uint32_t stream);
+
+// Writes to `*out_counter` the recording counter (spec 015 D9; spec 012 FR-009, A-049):
+// successful recording starts since construction, never rewound. A one-pass replay reproduces
+// the microphone hiss only with the same seed and the same counter. Real-time safe.
+//
+// # Safety
+//
+// `pipeline` must be a live handle; `out_counter` must be NULL or writable.
+RrDr60Status rr_dr60_recording_counter(const struct RrDr60Pipeline *pipeline,
+                                       uint64_t *out_counter);
+
+// Writes to `*out_index` the device-rate output index at which a speed change scheduled at
+// host output `position` lands (spec 015 D3): d(0) = 0, d(P) = ⌊(P − 1) · 6000 ÷ rate⌋ + 1 (P at
+// 6 kHz); the audible effect follows after `rr_dr60_playback_latency_samples`. No handle.
+//
+// Statuses: `INVALID_ARGUMENT` for a rate not in the supported list (nothing written).
+//
+// # Safety
+//
+// `out_index` must be NULL or writable.
+RrDr60Status rr_dr60_speed_landing(uint64_t position,
+                                   uint32_t host_rate_hz,
+                                   uint64_t *out_index);
 
 // Selects the output route, an `RrDr60Route` value (spec 006 FR-015): at any time, during
 // playback too; it survives `rr_dr60_reset` and `rr_dr60_reconfigure`. Real-time safe.

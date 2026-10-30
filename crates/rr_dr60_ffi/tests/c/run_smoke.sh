@@ -28,3 +28,9 @@ echo "smoke --controls matches the Rust example"
 cargo run -q -p rr_dr60_harness --example meters_rows -- --stimulus clamp_square --config meters_default_clamp --rate 48000 > target/example-meters.txt
 diff target/smoke-meters.txt target/example-meters.txt
 echo "smoke --meters matches the Rust example"
+# Spec 015 SC-003: the C program's scheduled run (entries and output digests) equals the Rust
+# example's, byte for byte.
+./target/smoke --changes > target/smoke-changes.txt
+cargo run -q -p rr_dr60_harness --example changes_rows > target/example-changes.txt
+diff target/smoke-changes.txt target/example-changes.txt
+echo "smoke --changes matches the Rust example"

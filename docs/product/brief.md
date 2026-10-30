@@ -293,7 +293,7 @@ The limiter's internal state is a test-only hook. Also not built: a scope copy a
 
 **Recordings:** export and import as a versioned, checksummed byte sequence (stored form version 2).
 
-**Settings:** a fixed struct with a version-checked size in C. There is no serialization format for settings or for a chain, and no parameter-change log. A versioned session contract does not exist.
+**Settings:** a fixed struct with a version-checked size in C. There is no serialization format for settings or for a chain, and no versioned session contract (spec 020). Since engine 0.16.0 (spec 015) the three live controls can be scheduled at an output-sample position and every change a stream applies is logged with its position, the values before and after and a caller tag; the record-side values follow in spec 017.
 
 ### 5. Ownership
 

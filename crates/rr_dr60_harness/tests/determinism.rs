@@ -803,3 +803,40 @@ fn meters_partition_identities() {
         );
     }
 }
+
+/// Spec 015 FR-009: two engines fed the same calls, schedules and stimuli give bit-identical
+/// outputs and entries at 6 and 48 kHz, over the irregular partition, on both streams.
+#[test]
+fn changes_same_calls_same_log() {
+    use rr_dr60::{Route, Stream};
+    use rr_dr60_harness::changes_checks::{self as cc, Change, Partition, Source};
+    for rate in [6000u32, 48_000] {
+        let x = rr_dr60_harness::stimulus::voiced(f64::from(rate), 0.5, -20.0, 0x015);
+        let s = configs::settings("default_output", rate);
+        let changes = [
+            Change::volume(Stream::OnePass, 333, 0.4, 1),
+            Change::route(Stream::OnePass, 444, Route::Earphone, 2),
+        ];
+        let run = |changes: &[Change]| {
+            let mut p = Pipeline::new(s).unwrap();
+            cc::run_scheduled(&mut p, Source::OnePass(&x), changes, Partition::Irregular)
+        };
+        let (a, b) = (run(&changes), run(&changes));
+        assert!(cc::same(&a.out, &b.out), "{rate}: the one-pass");
+        assert_eq!(a.log, b.log, "{rate}: the one-pass log");
+        let played = |changes: &[Change]| {
+            let mut p = Pipeline::new(s).unwrap();
+            p.start_recording().unwrap();
+            let _ = p.record(&x, &mut []).unwrap();
+            let _ = p.stop_recording(&mut []).unwrap();
+            cc::run_scheduled(&mut p, Source::Playback(1), changes, Partition::Irregular)
+        };
+        let pchanges = [
+            Change::volume(Stream::Playback, 500, 0.8, 3),
+            Change::speed(900, 5, 4),
+        ];
+        let (a, b) = (played(&pchanges), played(&pchanges));
+        assert!(cc::same(&a.out, &b.out), "{rate}: the playback");
+        assert_eq!(a.log, b.log, "{rate}: the playback log");
+    }
+}

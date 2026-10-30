@@ -121,6 +121,37 @@ pub enum Error {
         /// The selected route.
         route: crate::Route,
     },
+    /// `schedule_change` on a stream whose schedule already holds
+    /// [`SCHEDULE_CAPACITY`](crate::changes::SCHEDULE_CAPACITY) pending changes (spec 015
+    /// FR-002); nothing stored.
+    ScheduleFull {
+        /// The stream.
+        stream: crate::Stream,
+    },
+    /// `schedule_change` with a control that is not a live control of the stream (spec 015
+    /// FR-001): a control manifest index that is not the route, the volume or the playback
+    /// speed, or the playback speed on the one-pass stream; nothing stored.
+    ControlNotOnStream {
+        /// The control manifest index given.
+        control: u32,
+        /// The stream.
+        stream: crate::Stream,
+    },
+    /// A schedule, pending-count, position or clear call on the reserved record stream (spec
+    /// 015 FR-001; the record-side values are spec 017's); nothing changes.
+    ReservedStream {
+        /// The stream.
+        stream: crate::Stream,
+    },
+    /// `schedule_change` with a value the control cannot take (spec 015 FR-001): a route other
+    /// than 0 or 1, or a non-integral level; nothing stored. (A volume outside 0 … 1 is
+    /// [`Error::InvalidVolume`], a level outside 1 … 5 [`Error::InvalidSpeedLevel`].)
+    InvalidControlValue {
+        /// The control manifest index.
+        control: u32,
+        /// The rejected value.
+        value: f64,
+    },
 }
 
 /// Inclusive range of `memory.capacity_s`, in seconds: one second to 24 hours (engineering
@@ -281,6 +312,24 @@ impl fmt::Display for Error {
             Error::InvalidSpeedLevel { level } => {
                 write!(f, "invalid playback speed level {level}: expected 1 to 5")
             }
+            Error::ScheduleFull { stream } => {
+                write!(
+                    f,
+                    "the {stream:?} stream's schedule is full (64 pending changes)"
+                )
+            }
+            Error::ControlNotOnStream { control, stream } => {
+                write!(
+                    f,
+                    "control {control} is not a live control of the {stream:?} stream"
+                )
+            }
+            Error::ReservedStream { stream } => {
+                write!(f, "the {stream:?} stream is reserved")
+            }
+            Error::InvalidControlValue { control, value } => {
+                write!(f, "invalid value {value} for control {control}")
+            }
         }
     }
 }
@@ -406,5 +455,40 @@ mod tests {
             input: 1,
             output: 2,
         });
+        takes_error(&Error::ScheduleFull {
+            stream: crate::Stream::Playback,
+        });
+    }
+
+    #[test]
+    fn schedule_errors_display_the_stream_and_the_control() {
+        let full = Error::ScheduleFull {
+            stream: crate::Stream::OnePass,
+        }
+        .to_string();
+        assert!(full.contains("OnePass") && full.contains("64"), "{full}");
+        let not = Error::ControlNotOnStream {
+            control: 2,
+            stream: crate::Stream::OnePass,
+        }
+        .to_string();
+        assert!(
+            not.contains("control 2") && not.contains("OnePass"),
+            "{not}"
+        );
+        let reserved = Error::ReservedStream {
+            stream: crate::Stream::Record,
+        }
+        .to_string();
+        assert!(reserved.contains("Record"), "{reserved}");
+        let value = Error::InvalidControlValue {
+            control: 0,
+            value: 2.0,
+        }
+        .to_string();
+        assert!(
+            value.contains("2") && value.contains("control 0"),
+            "{value}"
+        );
     }
 }

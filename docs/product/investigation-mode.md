@@ -235,7 +235,7 @@ Feature descriptions (WHAT/WHY), ready for `/speckit-specify`:
 - **020, record side first:** As someone sharing a case file, I want a versioned record of the settings, seed, recording counter, library and per-stage model versions and the event log, plus a digest of the stored form. Re-rendering the original microphone audio from that record must reproduce the recording bit for bit, so a recipient can confirm how it was processed. A model-version mismatch is refused with a clear status. Also wanted:
   - an offline reader for codec frame parameters (pitch lag, gains), with no live cost;
   - optionally, a state checkpoint and restore.
-- **015, additions:** each change records its output index and the host input index it maps to. A public recording-counter getter and a construct-at-counter option, so a replay can name the hiss stream.
+- **015 (built, engine 0.16.0):** each change a stream applies is logged at its output-sample position with the control, the values before and after and a caller tag; the recording counter has a public getter. Moved to 020: the host-input index a change maps to (through the voice-activation events), construct-at-counter, and the map from a playback position to the recording's place under a speed schedule.
 - **014:** unchanged, plus descriptions of the meter fields, so the app labels them from one source.
 - **Chore:** an Android arm64 golden target before case files are shared across platforms.
 

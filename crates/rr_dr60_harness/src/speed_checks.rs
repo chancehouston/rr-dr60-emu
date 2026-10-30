@@ -125,6 +125,28 @@ fn narrow(y: f64) -> f32 {
 /// whose kernel still reaches x[K − 1], then the playback ends (the speed-only drain is 0 at
 /// 6 kHz). A call reports the place of its last output, or K once the place has reached K.
 pub fn reference_output(x: &[f32], call: usize, schedule: &[(usize, u8)]) -> (Vec<f32>, Vec<u64>) {
+    let start = schedule
+        .iter()
+        .find(|(c, _)| *c == 0)
+        .map_or(speed::DEFAULT_LEVEL, |&(_, l)| l);
+    let dev: Vec<(u64, u8)> = schedule
+        .iter()
+        .filter(|(c, _)| *c > 0)
+        .map(|&(c, l)| ((c * call) as u64, l))
+        .collect();
+    reference_output_at(x, call, start, &dev)
+}
+
+/// [`reference_output`] with the level changes keyed by the **device-output index** n at which
+/// the request is made (spec 015 research R-08: a change scheduled at host position P is a
+/// request at n = d(P), `rr_dr60::changes::speed_landing`), `start` the level before output 0.
+/// Several requests at one index apply in order (the last wins).
+pub fn reference_output_at(
+    x: &[f32],
+    call: usize,
+    start: u8,
+    schedule: &[(u64, u8)],
+) -> (Vec<f32>, Vec<u64>) {
     let banks: Vec<(u32, Vec<f64>)> = LEVELS
         .iter()
         .map(|&l| {
@@ -136,18 +158,14 @@ pub fn reference_output(x: &[f32], call: usize, schedule: &[(usize, u8)]) -> (Ve
         .collect();
     let bank = |k: u32| &banks.iter().find(|(kk, _)| *kk == k).expect("k").1;
     let kk = x.len() as u64;
-    let first = schedule
-        .iter()
-        .find(|(c, _)| *c == 0)
-        .map_or(speed::DEFAULT_LEVEL, |&(_, l)| l);
-    let mut active = numerator(first);
+    let mut active = numerator(start);
     let mut requested = active;
     let mut p5: u64 = 0;
     let (mut out, mut place_after) = (Vec::new(), Vec::new());
     loop {
-        let n = out.len();
-        for &(c, l) in schedule {
-            if c > 0 && c * call == n {
+        let n = out.len() as u64;
+        for &(at, l) in schedule {
+            if at == n {
                 requested = numerator(l);
             }
         }

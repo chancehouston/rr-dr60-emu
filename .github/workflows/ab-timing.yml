@@ -1,6 +1,7 @@
 # The cost A/B on the CI runner (spec 011 FR-009, research R-08; spec 012 FR-011, research R-09):
 # the bypassed code against 0.11 (budget 3 %), stages 1 – 2 on against 0.11 (reported), the
-# playback against 0.12 (013) and the meters against 0.14 (016, asserted at a 12 % ceiling).
+# playback against 0.12 (013), the meters against 0.14 (016, asserted at a 12 % ceiling) and the
+# sample-timed changes against 0.15 (015, asserted at a 5 % ceiling).
 # Run once before the merge by adding the `ab-timing` label to the PR (a pull_request workflow
 # runs from the PR's merge commit, so it works before this file is on main); also runnable by
 # hand on main (`gh workflow run ab-timing.yml`). Never on push or on other PR events. The
@@ -41,3 +42,7 @@ jobs:
         run: scripts/ab-timing.sh fe82f46 meters
         env:
           RR_DR60_METERS_COST_CEILING: "0.12"
+      - name: Changes A/B (015 FR-010, ceiling 5 %)
+        run: scripts/ab-timing.sh f1449c2 changes
+        env:
+          RR_DR60_CHANGES_COST_CEILING: "0.05"

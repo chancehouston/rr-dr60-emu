@@ -205,6 +205,7 @@ pub mod speech_codec {
     };
 }
 
+pub mod changes;
 mod codec;
 pub mod controls;
 mod error;
@@ -226,6 +227,7 @@ mod test_util;
 mod transport;
 mod validate;
 
+pub use changes::{ChangeEntry, Stream};
 pub use controls::{
     ControlEntry, ControlKind, ControlOption, ControlPaths, ControlTiming, ControlValue, control,
     controls,
@@ -276,6 +278,17 @@ pub mod __test_hooks {
         pub hang_off_by_one: bool,
         /// The input peak's accumulator not cleared at finalization.
         pub skip_clear: bool,
+    }
+
+    pub use crate::changes::ChangeMutation;
+
+    /// Test-only (spec 015 research R-13): the published `speed_landing` or, with the
+    /// `speed_landing_ceiling` mutant, the defective ⌊P · 6000 ÷ rate⌋.
+    pub fn speed_landing_mutated(position: u64, host_rate_hz: u32, m: &ChangeMutation) -> u64 {
+        if m.speed_landing_ceiling {
+            return position * 6000 / u64::from(host_rate_hz);
+        }
+        crate::changes::speed_landing(position, host_rate_hz).expect("a supported rate")
     }
 
     /// The limiter's hold-capacitor voltage, in volts: 0.0 when discharged (spec 005 R-03;

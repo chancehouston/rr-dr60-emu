@@ -281,6 +281,10 @@ pub struct GoldenEntry {
     /// therefore read unchanged (FR-012).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meters: Option<MetersGolden>,
+    /// Spec 015: the schedule and the change log of a scheduled run. Present in changes-file
+    /// entries only; absent (and not serialized) in the ten earlier files (FR-009).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timed_changes: Option<ChangesGolden>,
 }
 
 /// Spec 016: the read-out rows of one entry (data-model.md › MetersGolden), each row the
@@ -302,6 +306,23 @@ pub struct MetersGolden {
     /// A SHA-256 over the rows in place of the rows (none at v1: every stimulus is 0.5 s).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
+}
+
+/// Spec 015 (research R-10): the schedule and the log of one scheduled run. A schedule row is
+/// `position control value tag` (the plain setters as `plain control value`), a log row
+/// `position control before after tag`, the doubles in the shortest round-trip form.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ChangesGolden {
+    /// `playback` or `one_pass`.
+    pub stream: String,
+    /// The block partition the entry's output was produced at.
+    pub partition: String,
+    /// The changes scheduled or set, in submission order.
+    pub schedule: Vec<String>,
+    /// Every entry the calls reported, in order.
+    pub log: Vec<String>,
+    /// The largest `changes` of one call.
+    pub max_per_call: u32,
 }
 
 /// The VAS part of a golden entry (specs/003-vas/contracts/golden-format.md).
@@ -443,6 +464,7 @@ pub fn entry(stimulus: &str, config: &str, host_rate_hz: u32, output: &[f32]) ->
         place: None,
         own_length: None,
         meters: None,
+        timed_changes: None,
     }
 }
 
@@ -1660,6 +1682,310 @@ pub fn generate_meters(make: Make<'_>, bless: bool) -> GoldenFile {
         library_version: rr_dr60::VERSION.into(),
         entries,
     }
+}
+
+/// Spec 015 (research R-10): the scenarios of `golden-changes-v1.json`, each a name and the
+/// stream it runs on; the changes are built per rate by [`changes_scenario`].
+pub const CHANGES_SCENARIOS: [(&str, &str); 13] = [
+    ("volume_inside", "one_pass"),
+    ("route_inside", "one_pass"),
+    ("two_at_one", "one_pass"),
+    ("passed_position", "one_pass"),
+    ("scheduled_no_op", "one_pass"),
+    ("plain_setters", "one_pass"),
+    ("cross_stream_setter", "one_pass"),
+    ("cross_stream_scheduled", "one_pass"),
+    ("volume_inside", "playback"),
+    ("route_inside", "playback"),
+    ("speed_inside", "playback"),
+    ("drain_and_post_latch", "playback"),
+    ("sixty_four_plus_three", "playback"),
+];
+
+/// The spec 015 golden stimulus: 1 s of the voiced stimulus at `rate` (seed 0x015).
+pub fn changes_stimulus(rate: u32) -> Vec<f32> {
+    stimulus::voiced(f64::from(rate), 1.0, -20.0, 0x015)
+}
+
+/// One scheduled run of a scenario at `partition` (research R-10): the output, the schedule
+/// rows and the log. `make` builds the engine; `config` names the configuration.
+///
+/// # Panics
+///
+/// On an unknown scenario or a refused call.
+pub fn changes_scenario(
+    make: Make<'_>,
+    scenario: &str,
+    stream: &str,
+    config: &str,
+    rate: u32,
+    partition: crate::changes_checks::Partition,
+) -> (Vec<f32>, ChangesGolden) {
+    use crate::changes_checks::{self as cc, Change, Source};
+    use rr_dr60::{Route, Stream};
+    let x = changes_stimulus(rate);
+    let r = u64::from(rate);
+    let settings = configs::settings(config, rate);
+    let mut p = make(settings);
+    let mut rows = Vec::new();
+    let row = |c: &Change| format!("{} {} {:?} {}", c.position, c.control, c.value, c.tag);
+    let (st, source_is_playback) = if stream == "playback" {
+        (Stream::Playback, true)
+    } else {
+        (Stream::OnePass, false)
+    };
+    let number = if source_is_playback {
+        p.start_recording().expect("idle");
+        let _ = p.record(&x, &mut []).expect("record");
+        let _ = p.stop_recording(&mut []).expect("stop");
+        1
+    } else {
+        0
+    };
+    let mut changes: Vec<Change> = Vec::new();
+    match scenario {
+        "volume_inside" => changes.push(Change::volume(st, r / 3 + 7, 0.9, 1)),
+        "route_inside" => changes.push(Change::route(st, r / 3 + 7, Route::Earphone, 1)),
+        "speed_inside" => {
+            changes.push(Change::speed(r / 4 + 7, 5, 1));
+            changes.push(Change::speed(r / 2 + 7, 1, 2));
+            changes.push(Change::speed(r / 2 + 9, 3, 3)); // a deferred switch into 3, kept
+        }
+        "two_at_one" => {
+            changes.push(Change::volume(st, r / 3 + 7, 0.3, 1));
+            changes.push(Change::volume(st, r / 3 + 7, 0.8, 2));
+        }
+        "passed_position" => {
+            // 3000 samples first, then a change at 5 (passed) and one at the position.
+            let _ = cc::run(&mut p, Source::OnePass(&x[..3000]), partition);
+            let pos = p.stream_position(Stream::OnePass).expect("stream");
+            changes.push(Change::volume(st, 5, 0.9, 1));
+            changes.push(Change::route(st, pos, Route::Earphone, 2));
+            let run = cc::run_scheduled(&mut p, Source::OnePass(&x[3000..]), &changes, partition);
+            rows.extend(changes.iter().map(row));
+            return (
+                run.out,
+                ChangesGolden {
+                    stream: stream.into(),
+                    partition: format!("{partition:?}"),
+                    schedule: rows,
+                    log: run.log.iter().map(log_row).collect(),
+                    max_per_call: run.max_per_call as u32,
+                },
+            );
+        }
+        "scheduled_no_op" => {
+            changes.push(Change::volume(
+                st,
+                r / 3,
+                rr_dr60::output::VOLUME_REFERENCE,
+                1,
+            ));
+            changes.push(Change::route(st, r / 3 + 1, Route::Speaker, 2));
+        }
+        "plain_setters" => {
+            p.set_volume(0.7).expect("valid");
+            p.set_route(Route::Earphone);
+            rows.push("plain 1 0.7 0".into());
+            rows.push("plain 0 1 0".into());
+        }
+        "cross_stream_setter" | "cross_stream_scheduled" => {
+            // A playback with a volume moved during it, then the one-pass run.
+            p.start_recording().expect("idle");
+            let _ = p.record(&x[..x.len() / 2], &mut []).expect("record");
+            let _ = p.stop_recording(&mut []).expect("stop");
+            let _ = cc::run(&mut p, Source::OnePass(&x[..1024]), partition);
+            p.start_playback(1).expect("start");
+            let mut buf = vec![0.0f32; 1024];
+            let _ = p.play(&mut buf).expect("play");
+            if scenario == "cross_stream_setter" {
+                p.set_volume(0.6).expect("valid");
+                rows.push("plain 1 0.6 0 (during the playback)".into());
+            } else {
+                let c = Change::volume(Stream::Playback, 1100, 0.6, 21);
+                cc::schedule_all(&mut p, &[c]);
+                rows.push(format!("{} (on the playback stream)", row(&c)));
+            }
+            let _ = p.play(&mut buf).expect("play");
+            p.stop_playback().expect("stop");
+            let run = cc::run(&mut p, Source::OnePass(&x[1024..]), partition);
+            return (
+                run.out,
+                ChangesGolden {
+                    stream: stream.into(),
+                    partition: format!("{partition:?}"),
+                    schedule: rows,
+                    log: run.log.iter().map(log_row).collect(),
+                    max_per_call: run.max_per_call as u32,
+                },
+            );
+        }
+        "drain_and_post_latch" => {
+            let total = p.playback_length_samples(number, 3).expect("length");
+            let drain = u64::from(p.drain_samples());
+            changes.push(Change::speed(10, 5, 1)); // level 5: the own part shortens
+            let own5 = p.playback_length_samples(number, 5).expect("length") - drain;
+            changes.push(Change::speed(own5.saturating_sub(5), 2, 2)); // inside the tail, after the latch
+            changes.push(Change::volume(st, total - drain / 2, 0.9, 3)); // in the drain (level 3's clock is longer; still inside)
+        }
+        "sixty_four_plus_three" => {
+            for i in 0..64u64 {
+                changes.push(Change::volume(
+                    st,
+                    5000 + i * 7,
+                    0.2 + 0.01 * (i % 50) as f32,
+                    i + 1,
+                ));
+            }
+            p.set_route(Route::Earphone);
+            p.set_volume(0.9).expect("valid");
+            p.set_playback_speed(2).expect("valid");
+            rows.push("plain 0 1 0".into());
+            rows.push("plain 1 0.9 0".into());
+            rows.push("plain 2 2 0".into());
+        }
+        other => panic!("unknown changes scenario {other}"),
+    }
+    rows.extend(changes.iter().map(row));
+    let source = if source_is_playback {
+        Source::Playback(number)
+    } else {
+        Source::OnePass(&x)
+    };
+    let run = cc::run_scheduled(&mut p, source, &changes, partition);
+    (
+        run.out,
+        ChangesGolden {
+            stream: stream.into(),
+            partition: format!("{partition:?}"),
+            schedule: rows,
+            log: run.log.iter().map(log_row).collect(),
+            max_per_call: run.max_per_call as u32,
+        },
+    )
+}
+
+fn log_row(e: &rr_dr60::ChangeEntry) -> String {
+    format!(
+        "{} {} {:?} {:?} {}",
+        e.position, e.control, e.before, e.after, e.tag
+    )
+}
+
+/// Spec 015 FR-009 (research R-10): the changes golden: every scenario at the seven rates in
+/// `default_output` (and `speed_inside` also with the speech codec on), each entry the output's
+/// digest and the full log at 64-sample blocks. At bless time the partition identity (the
+/// irregular partition gives the same output and log) and the block-size-1 setter oracle are
+/// asserted on every entry whose schedule the oracle can replay (every scenario but the
+/// cross-stream and passed-position ones, which schedule after a prefix run).
+pub fn generate_changes(make: Make<'_>, bless: bool) -> GoldenFile {
+    use crate::changes_checks::{self as cc, Partition, Source};
+    let mut entries = Vec::new();
+    for &(scenario, stream) in &CHANGES_SCENARIOS {
+        let configs_for: &[&str] = if scenario == "speed_inside" {
+            &["default_output", "default_codec"]
+        } else {
+            &["default_output"]
+        };
+        for &config in configs_for {
+            for rate in configs::all_rates() {
+                let (y, g) =
+                    changes_scenario(make, scenario, stream, config, rate, Partition::Fixed(64));
+                let name = format!("{scenario}/{stream}");
+                let mut e = entry(&name, config, rate, &y);
+                if bless {
+                    let tag = format!("{name}/{config}/{rate} Hz");
+                    let (y2, g2) = changes_scenario(
+                        make,
+                        scenario,
+                        stream,
+                        config,
+                        rate,
+                        Partition::Irregular,
+                    );
+                    assert!(cc::same(&y, &y2), "{tag}: the partition identity (output)");
+                    assert_eq!(g.log, g2.log, "{tag}: the partition identity (log)");
+                    if !scenario.starts_with("cross_stream") && scenario != "passed_position" {
+                        // The setter oracle replays the schedule rows (the plain rows first).
+                        let x = changes_stimulus(rate);
+                        let settings = configs::settings(config, rate);
+                        let mut q = make(settings);
+                        let (source, _) = if stream == "playback" {
+                            q.start_recording().expect("idle");
+                            let _ = q.record(&x, &mut []).expect("record");
+                            let _ = q.stop_recording(&mut []).expect("stop");
+                            (Source::Playback(1), ())
+                        } else {
+                            (Source::OnePass(&x), ())
+                        };
+                        let mut changes = Vec::new();
+                        for row in &g.schedule {
+                            let parts: Vec<&str> = row.split(' ').collect();
+                            if parts[0] == "plain" {
+                                let control: u32 = parts[1].parse().expect("control");
+                                let value: f64 = parts[2].parse().expect("value");
+                                cc::Change {
+                                    stream: if stream == "playback" {
+                                        rr_dr60::Stream::Playback
+                                    } else {
+                                        rr_dr60::Stream::OnePass
+                                    },
+                                    position: 0,
+                                    control,
+                                    value,
+                                    tag: 0,
+                                }
+                                .apply_plain(&mut q);
+                            } else {
+                                changes.push(cc::Change {
+                                    stream: if stream == "playback" {
+                                        rr_dr60::Stream::Playback
+                                    } else {
+                                        rr_dr60::Stream::OnePass
+                                    },
+                                    position: parts[0].parse().expect("position"),
+                                    control: parts[1].parse().expect("control"),
+                                    value: parts[2].parse().expect("value"),
+                                    tag: parts[3].parse().expect("tag"),
+                                });
+                            }
+                        }
+                        let want = cc::setter_oracle(&mut q, source, &changes);
+                        assert!(
+                            cc::same(&y, &want),
+                            "{tag}: the block-size-1 setter oracle at {:?}",
+                            cc::first_diff(&y, &want)
+                        );
+                    }
+                }
+                e.timed_changes = Some(g);
+                entries.push(e);
+            }
+        }
+    }
+    GoldenFile {
+        format: "rr_dr60-golden".into(),
+        version: 1,
+        library_version: rr_dr60::VERSION.into(),
+        entries,
+    }
+}
+
+/// The committed spec 015 changes golden file.
+///
+/// # Panics
+///
+/// If the embedded file is not valid golden JSON.
+pub fn committed_changes() -> GoldenFile {
+    serde_json::from_str(include_str!("../golden/golden-changes-v1.json"))
+        .expect("valid embedded changes golden file")
+}
+
+/// Path of the spec 015 changes golden file. Bless it only with
+/// `RR_DR60_BLESS=changes cargo test -p rr_dr60_harness --test golden_changes`, with a CHANGELOG
+/// entry.
+pub fn path_changes() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-changes-v1.json")
 }
 
 /// The committed spec 016 meters golden file.

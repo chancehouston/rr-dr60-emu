@@ -801,6 +801,7 @@ impl RecordPath {
 /// The playback path: a [`PlaybackHalf`] and the device-to-host conversion (spec 006 FR-002;
 /// research R-01, R-06).
 #[derive(Clone, Debug)]
+#[repr(C)] // the stream state (5 KB) declared last stays last (hardware review B1)
 pub(crate) struct PlaybackPath {
     pub(crate) half: PlaybackHalf,
     /// `None` at the 6 kHz identity rate and at the honoured "after AGC" tap.
@@ -824,6 +825,9 @@ pub(crate) struct PlaybackPath {
     /// at a tap at or after stage 10 (the interpolator also runs at the three taps before it,
     /// where the spec says the group rests).
     meter_playback: bool,
+    /// Spec 015 (research R-01): the stream's clock, schedule, last applied values, pending
+    /// plain change, landed readings and staging log.
+    pub(crate) ctl: crate::changes::StreamState,
 }
 
 impl PlaybackPath {
@@ -851,9 +855,90 @@ impl PlaybackPath {
             drain: 0,
             reconstruction_peak: 0.0,
             meter_playback: !honour_tap || settings.tap.is_after_stage_10(), // 016 research R-03
+            ctl: crate::changes::StreamState::new(
+                Route::default(),
+                crate::output::VOLUME_REFERENCE,
+                crate::speed::DEFAULT_LEVEL,
+            ),
         };
         path.derive_figures(plan);
         path
+    }
+
+    /// Spec 015 research R-02: the apply point for the sample about to be produced, when due:
+    /// the pending plain change, then every scheduled change at or before the position; the
+    /// chain pair goes to the output chain, a level to `speed` (the player's closure; the
+    /// one-pass passes one that ignores it, the speed being playback-only).
+    #[inline]
+    pub(crate) fn apply_if_due(&mut self, speed: &mut dyn FnMut(u8)) {
+        if self.ctl.due() {
+            let chain = &mut self.chain;
+            self.ctl.apply_due(&mut |a| match a {
+                crate::changes::Apply::Chain(r, v) => chain.set_controls(r, v),
+                crate::changes::Apply::Level(l) => speed(l),
+            });
+        }
+    }
+
+    /// The next host sample's 64-bit value, if the device samples it reads have arrived (spec
+    /// 003 research R-05): at the identity rate the pending sample, once.
+    #[inline]
+    pub(crate) fn next_wide(&mut self) -> Option<f64> {
+        match &mut self.up {
+            None => self.pending.take(),
+            Some(up) => up.try_next_host(),
+        }
+    }
+
+    /// Produces host sample `ctl.produced` from `y`, the apply point already run
+    /// (`apply_if_due`): the reconstruction peak, the output chain (spec 009 research R-01: at
+    /// the host rate, on the 64-bit sample), the narrowing, the clock.
+    #[inline]
+    pub(crate) fn emit_applied(&mut self, y: f64) -> f32 {
+        // Spec 016 FR-003 (i): accumulated unconditionally, finalized only when the group is read.
+        let a = y.abs();
+        if a > self.reconstruction_peak {
+            self.reconstruction_peak = a;
+        }
+        let out = narrow_out(self.chain.process(y));
+        self.ctl.produced += 1;
+        out
+    }
+
+    /// The one-pass's front-tap branch (spec 015 research R-02; hardware review P1): no chain
+    /// runs, but the clock counts and the changes land and are logged (the chain, inactive,
+    /// takes the position at once).
+    #[inline]
+    pub(crate) fn tick_front(&mut self) {
+        self.apply_if_due(&mut |_| {});
+        self.ctl.produced += 1;
+    }
+
+    /// A processing call's entry (spec 015 research R-07): the engine's readings become the
+    /// stream's pending plain change, applied at the first produced sample (bit-identical to
+    /// 0.15's entry-time `set_controls`).
+    #[inline]
+    pub(crate) fn begin_call(&mut self, route: Route, volume: f32, level: Option<u8>) {
+        self.ctl.begin_call(route, volume, level);
+        #[cfg(feature = "__test-hooks")]
+        self.ctl.mutant_pop_all_now();
+    }
+
+    /// The lifecycle rule (spec 015 D3): the stream starts with these values, no entry.
+    pub(crate) fn set_start_values(&mut self, route: Route, volume: f32, level: u8) {
+        self.ctl.set_start_values(route, volume, level);
+    }
+
+    /// Test-only (spec 015 research R-13): the route switch runs the chain's full reset.
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn mutate_route_reset(&mut self, full: bool) {
+        self.chain.full_reset_on_route = full;
+    }
+
+    /// Drops every pending change (spec 015 FR-002).
+    pub(crate) fn clear_schedule(&mut self) {
+        self.ctl.schedule.clear();
+        self.ctl.rearm();
     }
 
     /// The latency and the drain length from the plan and the half (spec 006 FR-008, FR-016).
@@ -916,20 +1001,14 @@ impl PlaybackPath {
     }
 
     /// The next host sample, if the device samples it reads have arrived (spec 003 research
-    /// R-05): at the identity rate the pending sample, once; through the output chain (spec
-    /// 009 research R-01: at the host rate, on the 64-bit sample); narrowed for output.
+    /// R-05): the apply point for it (spec 015 research R-02: the chain controls land before
+    /// the chain processes sample P), then [`emit_applied`](Self::emit_applied). The one-pass's
+    /// route (no speed on its stream).
     #[inline]
     pub(crate) fn try_next_host(&mut self) -> Option<f32> {
-        let y = match &mut self.up {
-            None => self.pending.take()?,
-            Some(up) => up.try_next_host()?,
-        };
-        // Spec 016 FR-003 (i): accumulated unconditionally, finalized only when the group is read.
-        let a = y.abs();
-        if a > self.reconstruction_peak {
-            self.reconstruction_peak = a;
-        }
-        Some(narrow_out(self.chain.process(y)))
+        let y = self.next_wide()?;
+        self.apply_if_due(&mut |_| {});
+        Some(self.emit_applied(y))
     }
 
     /// Spec 016 (research R-01, R-03): writes the playback group into `m` when it is read
@@ -958,7 +1037,9 @@ impl PlaybackPath {
         self.drain
     }
 
-    /// Back to the freshly created state. No allocation (spec 006 FR-004).
+    /// Back to the freshly created state. No allocation (spec 006 FR-004). The stream's clock
+    /// restarts; its schedule is kept (spec 015 FR-002: `start_playback` keeps it; the engine's
+    /// `reset` and `reconfigure` clear it explicitly).
     pub(crate) fn reset(&mut self) {
         self.half.reset();
         if let Some(up) = &mut self.up {
@@ -967,6 +1048,7 @@ impl PlaybackPath {
         self.pending = None;
         self.chain.reset();
         self.reconstruction_peak = 0.0;
+        self.ctl.reset();
     }
 
     /// Test-only: stage 10 with other coefficients (the SC-007 mutation tests, spec 004 T024);

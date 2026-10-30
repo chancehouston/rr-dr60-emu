@@ -8,6 +8,7 @@
 pub mod agc_checks;
 pub mod analysis;
 pub mod chain_checks;
+pub mod changes_checks;
 pub mod checks;
 pub mod codec_checks;
 pub mod configs;
