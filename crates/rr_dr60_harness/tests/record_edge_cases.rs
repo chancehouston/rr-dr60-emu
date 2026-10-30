@@ -58,10 +58,9 @@ fn two_clocks_on_the_one_pass() {
     assert_eq!(clock_of(log[0].control).expect("control"), Clock::Input);
     assert_eq!(clock_of(log[1].control).expect("control"), Clock::Output);
     assert_eq!(p.input_position(Stream::OnePass).expect("clock"), 8192);
-    assert_eq!(
-        p.stream_position(Stream::OnePass).expect("clock"),
-        8192 - latency.min(8192) + latency
-    ); // the one-pass produces one per input
+    // The one-pass produces one output per input here (no pause in this stimulus), so the two
+    // clocks coincide; they part once the voice activation drops samples.
+    assert!(latency > 0);
     assert_eq!(
         p.stream_position(Stream::OnePass).expect("clock"),
         p.input_position(Stream::OnePass).expect("clock")
@@ -578,4 +577,52 @@ fn settings_reflect_landed_not_pending() {
     let _ = p.process(&x[..1024], &mut y).expect("call");
     assert_eq!(p.settings().agc.attack_ms, 10.0, "landed");
     assert_eq!(p.settings().agc.knee_dbfs, -1.0, "pending does not show");
+}
+
+/// FR-002: a refused `start_recording` leaves the record schedule; recording and playback calls
+/// leave the one-pass's clocks and schedules untouched.
+#[test]
+fn refused_start_and_untouched_one_pass() {
+    let x = voiced(0.3);
+    let mut p = standard(front(VasMode::Drop));
+    cc::schedule_all(
+        &mut p,
+        &[
+            rc::change(Stream::Record, 1 << 40, Value::Hang(50.0), 1),
+            rc::change(Stream::OnePass, 1 << 40, Value::Hang(60.0), 2),
+            cc::Change::volume(Stream::OnePass, 1 << 40, 0.5, 3),
+        ],
+    );
+    let mut y = vec![0.0f32; 1000];
+    let _ = p.process(&x[..1000], &mut y).expect("call");
+    let snapshot = |p: &rr_dr60::Pipeline| {
+        (
+            p.input_position(Stream::OnePass).expect("clock"),
+            p.stream_position(Stream::OnePass).expect("clock"),
+            p.pending_changes(Stream::OnePass).expect("count"),
+        )
+    };
+    let before = snapshot(&p);
+    assert_eq!(before, (1000, 1000, 2));
+    p.start_recording().expect("start");
+    assert!(matches!(
+        p.start_recording(),
+        Err(Error::RecordingInProgress)
+    ));
+    assert_eq!(
+        p.pending_changes(Stream::Record).expect("count"),
+        1,
+        "a refused start leaves the schedule"
+    );
+    let _ = p.record(&x, &mut []).expect("record");
+    let _ = p.stop_recording(&mut []).expect("stop");
+    p.start_playback(1).expect("play");
+    let mut out = vec![0.0f32; 4096];
+    let _ = p.play(&mut out).expect("play");
+    p.stop_playback().expect("stop");
+    assert_eq!(
+        snapshot(&p),
+        before,
+        "recording and playback leave the one-pass's clocks and schedules"
+    );
 }

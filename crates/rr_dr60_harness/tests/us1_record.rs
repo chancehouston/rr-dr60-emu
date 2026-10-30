@@ -181,6 +181,7 @@ fn as2_pre_landing_and_partitions() {
             );
             let c_old = rc::record_run(&mut standard(codec), &x, Partition::Fixed(1024), &[]);
             let whole = (0..).take_while(|f| 120 * f + 180 <= kept).count();
+            assert!(whole > 0, "{tag}: frames before the landing");
             assert_eq!(
                 &c_new.frames[..whole * 10],
                 &c_old.frames[..whole * 10],
@@ -766,7 +767,10 @@ fn as7_passed_position() {
 fn as8_event_bound() {
     at(|rate| {
         let fs = f64::from(rate);
-        let block = (rate / 4) as usize;
+        // A 1 s block (hardware review B1): with the hang shortened to 50 ms a block holds about
+        // five splices, while a bound computed from the stage's 1 s hang alone would allow two.
+        let block = rate as usize;
+        let stale_bound = (block as u128 * 6000 / u128::from(rate)) / 6002 + 2;
         let segments: Vec<(bool, f64)> = (0..15)
             .flat_map(|_| [(true, 0.06), (false, 0.14)])
             .collect();
@@ -777,7 +781,7 @@ fn as8_event_bound() {
         p.schedule_change(Stream::Record, p0, Value::Hang(50.0).control(), 50.0, 1)
             .expect("schedule");
         p.start_recording().expect("start");
-        let (mut total, mut max_len) = (0usize, 0usize);
+        let (mut total, mut max_len, mut max_events) = (0usize, 0usize, 0usize);
         for chunk in x.chunks(block) {
             let len = p.max_record_events(chunk.len());
             let mut ev = vec![VasEvent::default(); len];
@@ -789,16 +793,21 @@ fn as8_event_bound() {
             );
             total += info.events;
             max_len = max_len.max(len);
+            max_events = max_events.max(info.events);
         }
         let _ = p.stop_recording(&mut []).expect("stop");
         assert!(
             total > 3,
             "{rate} Hz: the shortened hang produced splices ({total})"
         );
+        assert!(
+            max_events as u128 > stale_bound,
+            "{rate} Hz: the check has teeth: {max_events} events in one block against a stale bound of {stale_bound}"
+        );
         // The cross-stream case: the hang landed on the recorder; the one-pass's bound read
         // before its next call holds and its first call logs the landing.
         let mut log = vec![ChangeEntry::default(); MAX_CHANGES_PER_CALL];
-        let (mut total1, mut first) = (0usize, true);
+        let (mut total1, mut first, mut max1) = (0usize, true, 0usize);
         for chunk in x.chunks(block) {
             let len = p.max_events(chunk.len());
             let mut ev = vec![VasEvent::default(); len];
@@ -817,8 +826,13 @@ fn as8_event_bound() {
                 first = false;
             }
             total1 += info.events;
+            max1 = max1.max(info.events);
         }
         assert!(total1 > 3, "{rate} Hz: the one-pass pauses too ({total1})");
+        assert!(
+            max1 as u128 > stale_bound,
+            "{rate} Hz one-pass: teeth ({max1} > {stale_bound})"
+        );
         println!(
             "{rate:>5} Hz: AS8 the event bound (largest {max_len}) held over {total} recorder and {total1} one-pass events through the hang shortening"
         );

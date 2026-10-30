@@ -870,7 +870,9 @@ pub struct RecordMutation {
 }
 
 /// The record side's staging log: the schedule's capacity plus one cross-stream landing per
-/// value (data-model.md › Record control state).
+/// value (data-model.md › Record control state). The recorder itself attains 64 (a one-pass
+/// landing reaches it through `start_recording`'s adopt, with no entry); the eight are the
+/// one-pass's record side's.
 const RECORD_LOG: usize = SCHEDULE_CAPACITY + 8;
 
 /// The record side's control state (spec 017 research R-01; data-model.md › Record control

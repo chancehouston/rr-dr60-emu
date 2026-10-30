@@ -80,7 +80,8 @@ pub struct RecordInfo {
     /// Speech-codec frames in the recording so far, this call's included (spec 008 FR-008).
     pub frames_total: u64,
     /// Record-side changes this call applied (spec 017 FR-005): scheduled changes that landed
-    /// and values landed on the one-pass that reached the recorder;
+    /// (a value landed on the one-pass reaches the recorder through `start_recording`'s adopt,
+    /// with no entry);
     /// [`record_with_changes`](crate::Pipeline::record_with_changes) writes the entries.
     pub changes: usize,
     /// The record stream's input position after the call (spec 017 FR-005): the host samples

@@ -219,7 +219,11 @@ fn the_tight_bounds() {
             .expect("call");
         assert_eq!(info.changes, 138, "{rate} Hz: 8 + 64 + 64 + 2");
         assert!(info.changes < MAX_CHANGES_PER_CALL);
-        assert_eq!(p.pending_changes(Stream::OnePass).expect("count"), 0);
+        assert_eq!(
+            q.pending_changes(Stream::OnePass).expect("count"),
+            0,
+            "both schedules drained"
+        );
         // The record side's entries first (the eight cross-stream landings at input 0, then the
         // 64 scheduled), then the playback side's.
         assert!(
