@@ -673,7 +673,7 @@ impl Pipeline {
             {
                 return Err(Error::ScheduleFull { stream });
             }
-            path.ctl.rearm();
+            path.rearm();
             return Ok(());
         }
         let path = match stream {

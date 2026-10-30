@@ -134,13 +134,18 @@ impl MicCapsule {
         self.ramp_k = self.ramp_n;
     }
 
-    /// One host sample: `x` plus the hiss (the gain along a transition when one is running).
+    /// One host sample: `x` plus the hiss at the current gain. During a transition the record
+    /// path's apply point calls [`ramp_step`](Self::ramp_step) before this (spec 017 research
+    /// R-05's fold: no compare on the hot path).
     #[inline]
     pub(crate) fn process(&mut self, x: f64) -> f64 {
-        if self.ramp_k < self.ramp_n {
-            self.ramp_step(); // 017 FR-003: one transition sample
-        }
         x + self.gain * self.gauss()
+    }
+
+    /// A transition is in progress (spec 017 FR-003).
+    #[inline]
+    pub(crate) fn ramping(&self) -> bool {
+        self.ramp_k < self.ramp_n
     }
 
     /// Spec 017 FR-003 (research R-05): a new hiss offset. At once (`at_once`: the stream's
@@ -163,9 +168,10 @@ impl MicCapsule {
     }
 
     /// One transition sample (spec 011's `ramp_step`, A-045): the gain along the smoothstep
-    /// `u²(3 − 2u)` from the start to the target; at sample N the target exactly.
+    /// `u²(3 − 2u)` from the start to the target; at sample N the target exactly. Called by the
+    /// record path before the sample's draw while [`ramping`](Self::ramping).
     #[inline]
-    fn ramp_step(&mut self) {
+    pub(crate) fn ramp_step(&mut self) {
         self.ramp_k += 1;
         if self.ramp_k >= self.ramp_n {
             self.ramp_k = self.ramp_n;
@@ -470,6 +476,20 @@ impl MicFront {
         }
     }
 
+    /// A hiss transition is in progress (spec 017 FR-003); never with stage 1 off.
+    #[inline]
+    pub(crate) fn ramping(&self) -> bool {
+        self.capsule.as_ref().is_some_and(MicCapsule::ramping)
+    }
+
+    /// One transition sample of the hiss gain (spec 017 research R-05).
+    #[inline]
+    pub(crate) fn ramp_step(&mut self) {
+        if let Some(c) = &mut self.capsule {
+            c.ramp_step();
+        }
+    }
+
     /// Spec 017 FR-003: a new hiss offset ([`MicCapsule::set_offset`]); `false` with stage 1
     /// off (the change is logged by the caller and has no effect).
     pub(crate) fn set_hiss_offset(&mut self, db: f32, at_once: bool) -> bool {
@@ -709,6 +729,9 @@ mod tests {
         a.set_offset(12.0, false);
         let g_to = a.sigma * exp(12.0 * core::f64::consts::LN_10 / 20.0);
         for j in 1..=n + 5 {
+            if a.ramping() {
+                a.ramp_step(); // as the record path's apply point does before the draw
+            }
             let ya = a.process(0.0);
             let yb = b.process(0.0); // the same draw at gain g_from
             let draw = yb / g_from;
@@ -735,11 +758,14 @@ mod tests {
         let mut d = capsule(5, rate);
         d.set_offset(12.0, false);
         for _ in 0..300 {
+            d.ramp_step();
             let _ = d.process(0.0);
         }
         let mid = d.gain();
         d.set_offset(0.0, false);
+        d.ramp_step();
         let _ = d.process(0.0);
+        assert!(d.ramping());
         let u = 1.0 / n as f64;
         let want = mid + (g_from - mid) * (u * u * (3.0 - 2.0 * u));
         assert_eq!(d.gain().to_bits(), want.to_bits());

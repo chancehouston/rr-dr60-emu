@@ -1068,6 +1068,21 @@ impl RecordCtl {
         self.rearm();
     }
 
+    /// Holds the apply point on the next input sample (spec 017 research R-05's fold): while a
+    /// hiss transition runs, the cold path steps the gain once per sample, so the capsule's
+    /// hot path carries no compare.
+    #[inline]
+    pub(crate) fn hold_next_sample(&mut self) {
+        self.next_apply = self.next_apply.min(self.input.saturating_add(1));
+    }
+
+    /// Holds the apply point on the sample about to be processed (between samples: a call's
+    /// entry, a schedule call, a clear), while a hiss transition runs.
+    #[inline]
+    pub(crate) fn hold_now(&mut self) {
+        self.next_apply = self.next_apply.min(self.input);
+    }
+
     /// Re-arms the apply point after a schedule change (the schedule call): the earliest
     /// pending position, unless a cross-stream pending change keeps it at 0.
     pub(crate) fn rearm(&mut self) {

@@ -578,6 +578,7 @@ impl RecordPath {
             ctl,
             ..
         } = self;
+
         let at_once = ctl.input == 0;
         #[cfg(feature = "__test-hooks")]
         let m = ctl.mutation;
@@ -605,6 +606,23 @@ impl RecordPath {
             }
             _ => debug_assert!(false, "a record-side slot"),
         });
+        // Research R-05's fold: the landing sample is transition sample 1; the apply point then
+        // runs on every sample of the transition and steps the gain before the draw.
+        if mic.ramping() {
+            mic.ramp_step();
+            if mic.ramping() {
+                ctl.hold_next_sample();
+            }
+        }
+    }
+
+    /// The apply point re-armed after a schedule change or a clear, a running hiss transition
+    /// kept on the next sample (research R-05's fold).
+    pub(crate) fn rearm(&mut self) {
+        self.ctl.rearm();
+        if self.mic.ramping() {
+            self.ctl.hold_now();
+        }
     }
 
     /// The adopt rule (spec 017 D4, restated at the plan): `settings`' record-side values are
@@ -642,11 +660,17 @@ impl RecordPath {
     #[inline]
     pub(crate) fn begin_call(&mut self, settings: &Settings, tags: &[u64; 8]) {
         self.ctl.begin_call(settings, tags);
+        if self.mic.ramping() {
+            self.ctl.hold_now(); // R-05's fold across a call boundary
+        }
     }
 
     /// Drops every pending record-side change (spec 017 FR-002).
     pub(crate) fn clear_schedule(&mut self) {
         self.ctl.clear_schedule();
+        if self.mic.ramping() {
+            self.ctl.hold_now();
+        }
     }
 
     /// One host sample in. Returns the kept device sample, **narrowed to `f32`** (spec 006

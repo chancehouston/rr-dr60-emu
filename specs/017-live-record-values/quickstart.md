@@ -7,9 +7,9 @@ cargo test -p rr_dr60_harness --test us2_record -- --nocapture     # US2 AS1 –
 cargo test -p rr_dr60_harness --test record_matrix -- --nocapture  # seven rates: the partition identity per value and stream, the k(P) pin (the stored sum), the 138-entry one-pass call and the 72-entry recorder call
 cargo test -p rr_dr60_harness --test record_edge_cases             # front taps, capsule/limiter bypassed, reset/reconfigure, the adopt rule, the skipped-flush stop, same-position pairs, mute mode, refusals, the clocks, the two sides' shared rules
 cargo test -p rr_dr60_harness --test mutation record::             # the six mutants of RecordMutation
-cargo test -p rr_dr60_harness --test golden_record_changes         # golden-record-changes-v1.json on this target
-cargo test -p rr_dr60_harness --test ffi_parity --test alloc_free --test determinism record
-cargo test -p rr_dr60_harness --test us1_controls --test us2_controls   # the control manifest: eight entries live, canonical re-blessed
+cargo test -p rr_dr60_harness --test golden_record_changes         # golden-record-changes-v1.json (714 entries) on this target
+cargo test -p rr_dr60_harness --test ffi_parity record_parity; cargo test -p rr_dr60_harness --test alloc_free record_changes; cargo test -p rr_dr60_harness --test determinism record_same   # one filter per binary (a shared filter matches no test in the others)
+cargo test -p rr_dr60_harness --test us1_controls --test us2_controls   # the control manifest: eleven live entries (the eight through the schedule), canonical re-blessed once
 crates/rr_dr60_ffi/tests/c/run_smoke.sh            # C smoke, incl. --record-changes diffed against examples/record_changes_rows.rs
 cargo test -p rr_dr60_harness --test us1_changes --test us2_changes --test changes_matrix   # spec 015's suite with the 139 bound restated
 ```
