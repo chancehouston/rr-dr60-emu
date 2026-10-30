@@ -31,6 +31,16 @@ The owner reads this section first. Each decision gives the recommendation; the 
 
 - Q: Approve the spec with D1 – D10 as recommended? → A: **Yes**, all ten as recommended. The clarify step is covered by these decisions and the three reviews below.
 
+### Session 2026-10-30 (restated at the plan: coach 1 – 12, hardware B1 – B11, product M1 – M6)
+
+- **The always-enough length is 139** (D2, FR-005, SC-004): the cross-stream landings of D4 are logged, up to eight in one call, so the bound is 2 · 64 + 3 + 8; the one-pass attains 138 (the speed is playback-only), the recorder 72, the player 67. The figure of 131 in D2's cell is superseded by this note.
+- **The hiss transition keeps spec 011's indexing** (D3, FR-003, US1 AS6): the landing sample P is transition sample 1 and the target is assigned exactly at **P + N − 1**; "P + N" in the text below reads P + N − 1.
+- **`start_recording` and `reset` apply the settings to the stages** (D4): `adopt(&settings)` retunes the limiter, sets the gate's values and takes the hiss gain at once when they differ, then records them, no entry, so a value landed on the one-pass is in the recorder's stages when the next recording starts (spec 015's `start_playback` precedent).
+- **The mirror's tag** (D4): a record-side value landed on the other stream carries the landing's tag, the playback side's three carry 0 (spec 015, shipped); the guide says so; the two align at spec 020's ABI pass.
+- **The event bound takes the settings' hang** (D5, FR-002): `max_events` and `max_record_events` use the smallest of the stage's hang, the settings' hang and every pending hang change.
+- **`RecordInfo` gains the final input position** (FR-005, FR-010) for a self-stop; `rest_meters()` follows the settings' hang; `Error::ReservedStream` stays declared but is no longer returned.
+- **The oracles made exact** (FR-006, FR-007): the pre-landing identity is in the kept-sample index (with the codec on, frames f with 120·f + 180 ≤ the kept count before k(P)); the knee pairs are −1 → −5 and −1 → +3 dBFS on a +9 dBFS tone (a knee raised above the tone discharges with a 10 s time constant: reported); the hiss ratio within 1 f32 ULP at the narrowed capsule tap; the whole-engine hiss reading with the VAS and the codec bypassed (the codec-on figure reported); the k(P) pin by the sum of `RecordInfo.stored`.
+
 ### Session 2026-10-30 (speckit-coach review of the draft, findings 1 – 17; hw-emulation-reviewer B1 – B11; product-specialist M1 – M8)
 
 Applied at the recommended defaults, before the owner's sign-off:
