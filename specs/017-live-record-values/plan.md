@@ -100,4 +100,4 @@ docs/guide.md, CHANGELOG.md, docs/product/{controls-discussion,brief,front-and-i
 
 ## Reviews
 
-The coach (1 – 12), the hardware-emulation reviewer (B1 – B11) and the product specialist (M1 – M6) reviewed this plan on 2026-10-30; every finding is applied above and in research.md, data-model.md, contracts/api.md, quickstart.md and records.md. The owner signs off the plan next. Tasks, analyze and implement then proceed to the merge, stopping only on a failed check or a new decision.
+The coach (1 – 12), the hardware-emulation reviewer (B1 – B11) and the product specialist (M1 – M6) reviewed this plan on 2026-10-30; every finding is applied above and in research.md, data-model.md, contracts/api.md, quickstart.md and records.md. The owner signed off the plan on 2026-10-30 with the six defaults; tasks, analyze and implement proceed to the merge, stopping only on a failed check or a new decision. Tasks, analyze and implement then proceed to the merge, stopping only on a failed check or a new decision.

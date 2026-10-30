@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-30
 
-**Status**: Signed off (D1 – D10, 2026-10-30); planning
+**Status**: Spec and plan signed off (2026-10-30); implementing
 
 **Input**: User description: "017 live record-side values. As an app recording a session, I want the record path's values (the microphone sensitivity, the voice activation's threshold, hang and onset, the limiter's knee, attack and release, the capsule's hiss offset) to change during a recording and during the one-pass at a sample position, through the schedule and the change log spec 015 built, so that a user can adjust the recorder while it records and the session reproduces bit for bit. Product request: controls-discussion.md § 2b (the per-control engine work), § 4 item 4; decisions.md 2026-10-29 (record-side values change between recordings first; live record-side changes only through sample-timed events, spec 017; never live: the codec, the memory, the host rate and latency-bearing bypasses); the engine order 014 → 016 → 015 → 017. Spec 015 reserved `Stream::Record` and a change form that carries any control the manifest numbers."
 
@@ -30,6 +30,10 @@ The owner reads this section first. Each decision gives the recommendation; the 
 ### Session 2026-10-30 (owner sign-off)
 
 - Q: Approve the spec with D1 – D10 as recommended? → A: **Yes**, all ten as recommended. The clarify step is covered by these decisions and the three reviews below.
+
+### Session 2026-10-30 (plan sign-off)
+
+- Q: Approve the plan with the six review defaults (139; spec 011's indexing for the hiss; `adopt` at `start_recording` and `reset`; the mirror's tag asymmetry documented, aligned at 020; the event bound with the settings' hang; `RecordInfo`'s final position and `rest_meters` on the settings' hang)? → A: **Yes** (owner plan sign-off, 2026-10-30); tasks, analyze and implement proceed to the merge, stopping only on a failed check or a new decision.
 
 ### Session 2026-10-30 (restated at the plan: coach 1 – 12, hardware B1 – B11, product M1 – M6)
 
