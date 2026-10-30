@@ -78,7 +78,7 @@ No violation. Complexity Tracking (principle V): two control-state types | the s
 
 ```text
 specs/017-live-record-values/  plan.md, research.md, data-model.md, contracts/api.md, quickstart.md, records.md, tasks.md (next)
-crates/rr_dr60/src/changes.rs            # MAX_CHANGES_PER_CALL 131, Clock, clock_of, record_landing, RecordValues, RecordCtl, RecordMutation
+crates/rr_dr60/src/changes.rs            # MAX_CHANGES_PER_CALL 139, Clock, clock_of, record_landing, RecordValues, RecordCtl, RecordMutation
 crates/rr_dr60/src/paths.rs              # RecordPath: ctl, the apply point in step / front_only, begin_call, apply_due, max_events with the pending hang
 crates/rr_dr60/src/stages/limiter.rs     # derive, retune
 crates/rr_dr60/src/stages/vas.rs         # set_values
