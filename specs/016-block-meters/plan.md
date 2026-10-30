@@ -56,7 +56,7 @@ One copyable `Meters` read-out on the engine, filled from accumulators in the pa
 | FR-009 Rust and C forms | R-05; offset assertions; the size check | FFI unit tests (small/large/null sizes, the zero-fill), `ffi_parity meters`, C smoke `--meters` |
 | FR-010 real-time safe, no state change | R-05 (a copy) | `alloc_free meters`; `meters_edge_cases` (read twice, output unchanged) |
 | FR-011 no audio change | the accumulators never feed back | the nine SHA guards; `us2_cross_check canonical` (version line + `Meters` tokens); `us2_controls` (29 entries) |
-| FR-012 deterministic; golden | R-10 | `golden_meters` (six golden targets + iOS sim); `determinism meters` (partition identities, two seeds) |
+| FR-012 deterministic; golden | R-10 | `golden_meters` (six golden targets + iOS sim); `determinism meters` (partition identities, same-seed twins) |
 | FR-013 cost | R-09 | `scripts/ab-timing.sh fe82f46 meters`; `RR_DR60_METERS_COST_CEILING=0.12` in `ab-timing.yml` |
 | FR-014 docs | R-13 | review; the guide's generated regions; `us2_cross_check` |
 | FR-015 not a control | no setting, no entry, no register row | `us2_controls`; `scripts/check-traceability.sh` |
