@@ -1,5 +1,5 @@
 rr_dr60 manifest
-library_version: 0.14.0
+library_version: 0.15.0
 device_rate_hz: 6000
 stage_count: 15
 counts: not_modeled=3 assumed=12 sourced=0 checked=0
