@@ -35,6 +35,18 @@ The owner reads this section first. Each decision gives the recommendation; the 
 
 - Q: Approve the plan with the six review defaults (139; spec 011's indexing for the hiss; `adopt` at `start_recording` and `reset`; the mirror's tag asymmetry documented, aligned at 020; the event bound with the settings' hang; `RecordInfo`'s final position and `rest_meters` on the settings' hang)? → A: **Yes** (owner plan sign-off, 2026-10-30); tasks, analyze and implement proceed to the merge, stopping only on a failed check or a new decision.
 
+### Session 2026-10-30 (restated at implementation)
+
+- **The limiter's oracles (FR-007, US1 AS3).** The gain law depends on the hold voltage alone, so at the landing sample the scheduled run's output **equals the old run's bit for bit** and the runs diverge after it (asserted; the `reset_vc_on_retune` mutant lands on a peak sample, since a zero crossing hides a reset hold); an attack change landing while the limiter is discharged makes the output **bit-identical to the new constant run from P** (the dead times equal by construction); a release change landing at a burst's end gives the new constant run's release time within ±10 % (spec 005 FR-011's setting tolerance) and under half the old run's; the knee's attenuation 2 s after P within 0.1 dB, as written.
+- **`RecordInfo.input_samples_total`** is the record stream's input position after every `record` call (after a self-stop, the final position), not only after a self-stop.
+- **The onset case (US1 AS5)** is asserted through the reference gate; the resume follows k(P) once the run passes the new length (the conversion's delay moves a burst's arrival by a few device samples at the converted rates), so no fixed offset from k(P) is asserted.
+- **`reset`, `reconfigure` and `start_recording` end a hiss transition in progress at once** at its target (the settings' value), so the adopt rule finds nothing to apply for the hiss.
+- **`pending_changes` and `clear_schedule` never fail** (the `Result` stays for the API's shape); `Error::ReservedStream` is declared and never returned; the 015 tests that expected it were restated, and the player's 67-entry call is asserted below the 139 bound.
+- **The control manifest's setters check** (spec 014) requires a plain setter for the three output-clock live entries only; a plain setter for a record-side value is a finding (D4: the schedule only).
+- **The one-pass's log order**: the record side's entries first (the input clock), then the playback side's (the output clock), each control in its own clock.
+- **The speech coder carries a hiss transition for about 0.4 – 1.5 s** (its slow gain adaptation; reported in US1 AS6), so the whole-engine band-level check runs with the codec bypassed and the codec-on figure is printed.
+- `VasStage::set_values` takes the four scalars; `MicFront::set_hiss_offset` returns whether a capsule took it.
+
 ### Session 2026-10-30 (restated at the plan: coach 1 – 12, hardware B1 – B11, product M1 – M6)
 
 - **The always-enough length is 139** (D2, FR-005, SC-004): the cross-stream landings of D4 are logged, up to eight in one call, so the bound is 2 · 64 + 3 + 8; the one-pass attains 138 (the speed is playback-only), the recorder 72, the player 67. The figure of 131 in D2's cell is superseded by this note.

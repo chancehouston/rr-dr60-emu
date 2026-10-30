@@ -854,7 +854,8 @@ impl RecordValues {
 #[cfg(feature = "__test-hooks")]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RecordMutation {
-    /// The apply point after the front, so a host-rate value first affects sample P + 1.
+    /// The apply point one input sample late (as if after the front), so a value first affects
+    /// sample P + 1; folded into the armed position, never into the hot compare.
     pub apply_after_front: bool,
     /// A retune discharges the hold capacitor.
     pub reset_vc_on_retune: bool,
@@ -967,8 +968,13 @@ impl RecordCtl {
         self.input >= self.next_apply
     }
 
+    /// The cached earliest position (the `apply_after_front` mutant lands one sample late).
     #[inline]
     fn arm(&self, earliest: u64) -> u64 {
+        #[cfg(feature = "__test-hooks")]
+        if self.mutation.apply_after_front {
+            return earliest.saturating_add(1);
+        }
         earliest
     }
 
@@ -979,6 +985,12 @@ impl RecordCtl {
     #[inline(never)]
     pub(crate) fn apply_due(&mut self, apply: &mut dyn FnMut(&RecordValues, usize)) {
         let pos = self.input;
+        #[cfg(feature = "__test-hooks")]
+        let pos = if self.mutation.apply_after_front {
+            pos.saturating_sub(1)
+        } else {
+            pos
+        };
         if self.pending_mask != 0 {
             let mask = core::mem::replace(&mut self.pending_mask, 0);
             for slot in 0..8 {

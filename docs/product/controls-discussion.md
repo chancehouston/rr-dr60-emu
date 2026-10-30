@@ -131,6 +131,8 @@ Never live: the speech codec on/off (it fixes the memory's encoding and the late
 
 ### 2b. Engine work, control by control
 
+*Status at engine 0.17.0 (spec 017, 2026-10-30 (PR pending)): the first three rows of the table are built. The sensitivity, threshold, hang and onset, the hiss offset (with the 20 ms glide) and the limiter's knee, attack and release change live on the recorder and the one-pass through spec 015's schedule, positioned in the stream's **input clock** (host input samples since `start_recording`, or since construction, `reset` or `reconfigure`), and are logged as change entries; `settings()` reflects a landed value, so a change at position 0 while stopped is also the between-recordings path (no `reconfigure` needed for these eight). The "between-recordings apply" row is therefore closed for these eight; `reconfigure` stays the path for the switches, the codec, the memory and the host rate (never live, decisions.md 2026-10-29). The control manifest's eight entries read timing "live"; their kinds, and the free/Workbench line, are unchanged. On the device the sensitivity is set while stopped (S-001); a live change is a feature of the emulator's API, not a device behavior.*
+
 The common pattern is spec 011's: a setter that is validated, real-time safe and read at a block boundary; per-sample smoothing where a step would click; the test oracle "a change at sample n equals the old constant run before n and the new constant run's steady state after the transition".
 
 | Control | Path | Per block or per sample | State and reset | Determinism | Size |
@@ -238,6 +240,7 @@ Each item below is small and independently testable, with the WHY and the tier i
    - Sensitivity, threshold, hang, onset, hiss offset (with a ramp), and the limiter's knee, attack and release become live in the recorder and the one-pass, through 015's events.
    - Oracle: a change at sample 0 equals the constant configuration; partition independence; the hiss-offset ramp energy.
    - If Q3 is answered "between recordings only", this shrinks to a real-time-safe idle apply, or to a measurement of `reconfigure` on an iPhone.
+   - *Built as spec 017 (engine 0.17.0, 2026-10-30 (PR pending)) at the recommended scope; the oracle "a change at sample 0 equals the constant configuration" held for every value at seven rates. Open: if a capture shows the sensitivity is a digital gain (A-033 H4/H5), its landing rule gains the hiss's 20 ms glide.*
 5. **018: Battery state, static law (A-056)** (S – M; a unit condition, free).
    - *As a user, I want to set the unit's battery voltage and hear the speaker route's clip ceiling follow it, so that the recorder can be played as a unit with fresh or tired cells.*
    - Off (nominal 2.8 V V+) by default, bit-identical to 0.13. Live, ramped. The engine only; the app must never drive it from the phone's battery.

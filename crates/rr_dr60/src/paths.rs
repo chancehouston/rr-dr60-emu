@@ -553,23 +553,10 @@ impl RecordPath {
         }
     }
 
-    /// Whether the apply point runs after the front (the `apply_after_front` mutant; always
-    /// false in the shipped build).
-    #[inline(always)]
-    fn apply_after_front(&self) -> bool {
-        #[cfg(feature = "__test-hooks")]
-        {
-            self.ctl.mutation.apply_after_front
-        }
-        #[cfg(not(feature = "__test-hooks"))]
-        {
-            false
-        }
-    }
-
     /// Spec 017 research R-02: the apply point at the top of input sample `ctl.input`, one
-    /// `u64` compare on the hot path.
-    #[inline]
+    /// `u64` compare on the hot path (the `apply_after_front` mutant is folded into the armed
+    /// position, never into this path: spec 015's lesson).
+    #[inline(always)]
     fn apply_if_due(&mut self) {
         if self.ctl.due() {
             self.apply_due_cold();
@@ -682,14 +669,8 @@ impl RecordPath {
     /// The 64-bit post-VAS sample this host sample produced, if any (+0.0 for a muted one).
     #[inline]
     fn step(&mut self, x: f32) -> Option<f64> {
-        let after = self.apply_after_front();
-        if !after {
-            self.apply_if_due(); // 017 R-02: the top of input sample P
-        }
+        self.apply_if_due(); // 017 R-02: the top of input sample P
         let x = self.front(x);
-        if after {
-            self.apply_if_due();
-        }
         self.ctl.input += 1;
         let d = match &mut self.down {
             None => x,
@@ -709,10 +690,7 @@ impl RecordPath {
     /// No conversion, no chain, no events.
     #[inline]
     pub(crate) fn front_only(&mut self, x: f32) -> f32 {
-        let after = self.apply_after_front();
-        if !after {
-            self.apply_if_due(); // 017 R-02: the clock and the changes run at a front tap too
-        }
+        self.apply_if_due(); // 017 R-02: the clock and the changes run at a front tap too
         let s = sanitize_in(x);
         self.peak_input(s);
         let y = narrow_out(match self.front_stop {
@@ -724,9 +702,6 @@ impl RecordPath {
             }
             FrontStop::Limiter => self.front_from(s),
         });
-        if after {
-            self.apply_if_due();
-        }
         self.ctl.input += 1;
         y
     }
