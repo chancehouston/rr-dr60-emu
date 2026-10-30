@@ -2576,3 +2576,107 @@ fn control_manifest_c_edges() {
         rr_dr60_destroy(p);
     }
 }
+
+/// Spec 016 FR-009, SC-004 (tasks.md T019): the C read-out equals the Rust read-out field for
+/// field after every one-pass, record and play call (floats by bit pattern), at the
+/// measurement rates.
+#[test]
+fn meters_parity() {
+    use rr_dr60_ffi::{RrDr60Meters, rr_dr60_meters};
+    let read = |h: *mut RrDr60Pipeline| -> RrDr60Meters {
+        let mut m = RrDr60Meters {
+            struct_size: size_of::<RrDr60Meters>() as u32,
+            ..Default::default()
+        };
+        // SAFETY: a live handle and a valid out struct.
+        assert_eq!(unsafe { rr_dr60_meters(h, &mut m) }, RrDr60Status::Ok);
+        m
+    };
+    let same = |c: &RrDr60Meters, r: &rr_dr60::Meters| {
+        c.input_peak.to_bits() == r.input_peak.to_bits()
+            && c.limiter_input_peak.to_bits() == r.limiter_input_peak.to_bits()
+            && c.gain_reduction_db.to_bits() == r.gain_reduction_db.to_bits()
+            && c.hold_charge.to_bits() == r.hold_charge.to_bits()
+            && c.record_filter_peak.to_bits() == r.record_filter_peak.to_bits()
+            && c.adc_clamp_count == r.adc_clamp_count
+            && c.vas_paused == u32::from(r.vas_paused)
+            && c.hang_remaining_samples == r.hang_remaining_samples
+            && c.reconstruction_peak.to_bits() == r.reconstruction_peak.to_bits()
+            && c.route_peak.to_bits() == r.route_peak.to_bits()
+            && c.output_clamp_count == r.output_clamp_count
+            && c.reserved_016 == 0
+    };
+    for &rate in configs::measurement_rates() {
+        let x = rr_dr60_harness::stimulus::voiced(f64::from(rate), 0.5, -20.0, 0x0D60);
+        let mut s = rr_dr60::Settings::new(rate);
+        s.output.clamp_enabled = true;
+        let cs = configs::c_settings(&s);
+        let mut p = Pipeline::new(s).unwrap();
+        let h = create(&cs);
+        assert!(same(&read(h), &p.rest_meters()), "{rate}: the rest");
+        let mut y = vec![0.0f32; 1024];
+        for chunk in x.chunks(1024) {
+            let _ = p.process(chunk, &mut y[..chunk.len()]).unwrap();
+            let mut info = RrDr60BlockInfo::default();
+            // SAFETY: a live handle and buffers of the chunk's length.
+            assert_eq!(
+                unsafe {
+                    rr_dr60_process(h, chunk.as_ptr(), y.as_mut_ptr(), chunk.len(), &mut info)
+                },
+                RrDr60Status::Ok
+            );
+            assert!(same(&read(h), &p.meters()), "{rate}: a one-pass block");
+        }
+        // Record, stop, play.
+        p.start_recording().unwrap();
+        // SAFETY: a live handle.
+        assert_eq!(unsafe { rr_dr60_start_recording(h) }, RrDr60Status::Ok);
+        for chunk in x.chunks(4801) {
+            let _ = p.record(chunk, &mut []).unwrap();
+            let mut info = RrDr60RecordInfo::default();
+            // SAFETY: a live handle, a valid buffer, no events wanted.
+            assert_eq!(
+                unsafe {
+                    rr_dr60_record(
+                        h,
+                        chunk.as_ptr(),
+                        chunk.len(),
+                        &mut info,
+                        core::ptr::null_mut(),
+                        0,
+                    )
+                },
+                RrDr60Status::Ok
+            );
+            assert!(same(&read(h), &p.meters()), "{rate}: a record block");
+        }
+        let _ = p.stop_recording(&mut []).unwrap();
+        let mut out = RrDr60StopOutcome::default();
+        // SAFETY: a live handle, no events wanted.
+        assert_eq!(
+            unsafe { rr_dr60_stop_recording(h, &mut out, core::ptr::null_mut(), 0) },
+            RrDr60Status::Ok
+        );
+        assert!(same(&read(h), &p.meters()), "{rate}: the flush");
+        p.start_playback(1).unwrap();
+        // SAFETY: a live handle.
+        assert_eq!(unsafe { rr_dr60_start_playback(h, 1) }, RrDr60Status::Ok);
+        loop {
+            let mut a = vec![0.0f32; 997];
+            let info = p.play(&mut a).unwrap();
+            let mut ci = RrDr60PlayInfo::default();
+            // SAFETY: a live handle and a 997-sample buffer.
+            assert_eq!(
+                unsafe { rr_dr60_play(h, a.as_mut_ptr(), 997, &mut ci) },
+                RrDr60Status::Ok
+            );
+            assert!(same(&read(h), &p.meters()), "{rate}: a play block");
+            if info.finished {
+                assert!(ci.finished);
+                break;
+            }
+        }
+        // SAFETY: destroying once.
+        unsafe { rr_dr60_destroy(h) };
+    }
+}

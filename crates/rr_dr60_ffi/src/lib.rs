@@ -4393,3 +4393,148 @@ mod tests {
         }
     }
 }
+
+/// Spec 016 FR-009 (tasks.md T019): the C read-out's size rules and refusals.
+#[cfg(test)]
+mod meters_tests {
+    use super::*;
+
+    fn handle() -> *mut RrDr60Pipeline {
+        let s = rr_dr60_settings_default(48_000);
+        let mut h: *mut RrDr60Pipeline = core::ptr::null_mut();
+        // SAFETY: valid pointers.
+        assert_eq!(unsafe { rr_dr60_create(&s, &mut h) }, RrDr60Status::Ok);
+        h
+    }
+
+    fn process_some(h: *mut RrDr60Pipeline) {
+        let x = [0.5f32; 1024];
+        let mut y = [0.0f32; 1024];
+        let mut info = RrDr60BlockInfo::default();
+        // SAFETY: a live handle and 1024-sample buffers.
+        assert_eq!(
+            unsafe { rr_dr60_process(h, x.as_ptr(), y.as_mut_ptr(), 1024, &mut info) },
+            RrDr60Status::Ok
+        );
+    }
+
+    #[test]
+    fn exact_size_is_filled_and_equals_rust() {
+        let h = handle();
+        process_some(h);
+        let mut m = RrDr60Meters {
+            struct_size: 56,
+            ..Default::default()
+        };
+        // SAFETY: a live handle and a valid out struct.
+        assert_eq!(unsafe { rr_dr60_meters(h, &mut m) }, RrDr60Status::Ok);
+        // SAFETY: a live handle.
+        let r = unsafe { &*h }.inner.meters();
+        assert_eq!(m.input_peak.to_bits(), r.input_peak.to_bits());
+        assert_eq!(m.input_peak, 0.5);
+        assert_eq!(m.hang_remaining_samples, r.hang_remaining_samples);
+        assert_eq!(m.vas_paused, u32::from(r.vas_paused));
+        assert_eq!(m.reserved_016, 0);
+        assert_eq!(m.struct_size, 56);
+        // SAFETY: destroying once.
+        unsafe { rr_dr60_destroy(h) };
+    }
+
+    #[test]
+    fn smaller_size_is_refused_and_untouched() {
+        let h = handle();
+        process_some(h);
+        let mut m = RrDr60Meters {
+            struct_size: 55,
+            input_peak: 7.0,
+            ..Default::default()
+        };
+        // SAFETY: as above.
+        assert_eq!(
+            unsafe { rr_dr60_meters(h, &mut m) },
+            RrDr60Status::InvalidArgument
+        );
+        assert_eq!(m.input_peak, 7.0, "nothing written");
+        assert_eq!(m.struct_size, 55);
+        // SAFETY: destroying once.
+        unsafe { rr_dr60_destroy(h) };
+    }
+
+    #[test]
+    fn larger_size_is_filled_and_tail_zeroed() {
+        let h = handle();
+        process_some(h);
+        // A 64-byte, 8-aligned buffer with a sentinel-filled tail.
+        #[repr(C, align(8))]
+        struct Big([u8; 64]);
+        let mut big = Big([0xA5; 64]);
+        big.0[..4].copy_from_slice(&64u32.to_ne_bytes());
+        let out = big.0.as_mut_ptr().cast::<RrDr60Meters>();
+        // SAFETY: 64 writable, 8-aligned bytes whose first field says 64.
+        assert_eq!(unsafe { rr_dr60_meters(h, out) }, RrDr60Status::Ok);
+        // SAFETY: the first 56 bytes are a filled struct.
+        let m = unsafe { out.read() };
+        assert_eq!(m.struct_size, 64);
+        assert_eq!(m.input_peak, 0.5);
+        assert!(big.0[56..].iter().all(|&b| b == 0), "the tail is zeroed");
+        // SAFETY: destroying once.
+        unsafe { rr_dr60_destroy(h) };
+    }
+
+    #[test]
+    fn null_handle_and_null_out_are_refused() {
+        let mut m = RrDr60Meters {
+            struct_size: 56,
+            ..Default::default()
+        };
+        // SAFETY: a NULL handle is allowed by contract.
+        assert_eq!(
+            unsafe { rr_dr60_meters(core::ptr::null_mut(), &mut m) },
+            RrDr60Status::NullPointer
+        );
+        let h = handle();
+        // SAFETY: a NULL out is allowed by contract.
+        assert_eq!(
+            unsafe { rr_dr60_meters(h, core::ptr::null_mut()) },
+            RrDr60Status::NullPointer
+        );
+        // SAFETY: destroying once.
+        unsafe { rr_dr60_destroy(h) };
+    }
+
+    #[test]
+    fn poisoned_handle_is_refused() {
+        let h = handle();
+        // SAFETY: a live handle.
+        unsafe { &mut *h }.poisoned = true;
+        let mut m = RrDr60Meters {
+            struct_size: 56,
+            ..Default::default()
+        };
+        // SAFETY: as above.
+        assert_eq!(
+            unsafe { rr_dr60_meters(h, &mut m) },
+            RrDr60Status::InternalError
+        );
+        // SAFETY: destroying once.
+        unsafe { rr_dr60_destroy(h) };
+    }
+
+    #[test]
+    fn rest_before_any_call() {
+        let h = handle();
+        let mut m = RrDr60Meters {
+            struct_size: 56,
+            ..Default::default()
+        };
+        // SAFETY: as above.
+        assert_eq!(unsafe { rr_dr60_meters(h, &mut m) }, RrDr60Status::Ok);
+        assert_eq!(m.input_peak, 0.0);
+        assert_eq!(
+            m.hang_remaining_samples, 6000,
+            "the configured 1 s hang at 6 kHz"
+        );
+        // SAFETY: destroying once.
+        unsafe { rr_dr60_destroy(h) };
+    }
+}

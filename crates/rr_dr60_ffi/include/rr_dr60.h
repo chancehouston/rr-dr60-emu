@@ -737,6 +737,54 @@ typedef struct RrDr60PlayInfo {
   uint64_t place;
 } RrDr60PlayInfo;
 
+// The meter read-out of the last non-empty processing call (spec 016 FR-001 – FR-003;
+// contracts/api.md): the figures `rr_dr60_meters` fills. 56 bytes, 8-aligned; the caller sets
+// `struct_size` to `sizeof(RrDr60Meters)`. Every peak is linear full-scale (20·log10 for
+// dBFS), the largest absolute sample at its point, and may exceed 1.0. A figure whose point
+// the call did not reach keeps its rest value: 0 (`vas_paused` 0), except
+// `hang_remaining_samples`, whose rest is the configured hang length.
+typedef struct RrDr60Meters {
+  // Set by the caller to `sizeof(RrDr60Meters)` (56 in this version). Smaller is refused
+  // (`RR_DR60_STATUS_INVALID_ARGUMENT`); larger is accepted and the tail zero-filled.
+  uint32_t struct_size;
+  // The largest absolute input sample after the engine's sanitizing of non-finite samples.
+  float input_peak;
+  // The largest absolute sample entering the limiter (stage 2's output; the input with
+  // stages 1 – 2 bypassed; A-046, A-051). May exceed 1.0.
+  float limiter_input_peak;
+  // The deepest attenuation the limiter applied in the call, dB ≥ 0 (A-028, A-034, A-035;
+  // modeled on the circuit, not measured).
+  float gain_reduction_db;
+  // The limiter's hold capacitor at the end of the call, 0 – 1 of the model's deepest
+  // attenuation (40 dB, an engineering target): about 0.13 the unity floor, 0.73 one decibel
+  // of attenuation, 0.84 ten, 0.90 twenty. A state: a silent call reads the decaying hold.
+  float hold_charge;
+  // The largest absolute device sample after stage 4's record band-limit (A-027), before the
+  // converter's full-scale clamp (A-030): above 1.0 whenever the clamp bounded samples.
+  float record_filter_peak;
+  // The device samples of the call the converter's full-scale clamp changed
+  // (`adc_clamp_enabled`).
+  uint32_t adc_clamp_count;
+  // 1 when the voice activation's own state is paused at the end of the call, else 0.
+  uint32_t vas_paused;
+  // The further non-sound device samples the gate keeps before pausing (A-023; ÷ 6000 for
+  // seconds); the full hang length when the last sample was sound or the gate is bypassed;
+  // 0 while paused.
+  uint64_t hang_remaining_samples;
+  // The largest absolute host sample after stage 10 and the conversion, before the output
+  // chain.
+  float reconstruction_peak;
+  // The largest absolute sample at the selected route's output before the optional output
+  // clamp (1.0 is the amplifier's clip ceiling on the speaker route, the earphone scale on
+  // the earphone route; A-042). The speaker route reads up to about 2.3.
+  float route_peak;
+  // The host samples of the call the optional output clamp bounded (0 with the option off;
+  // an emulator option, spec 010).
+  uint32_t output_clamp_count;
+  // Explicit tail padding, written 0.
+  uint32_t reserved_016;
+} RrDr60Meters;
+
 // The engine's readable state, from `rr_dr60_get_state` (spec 006 FR-003, FR-015).
 typedef struct RrDr60EngineState {
   // An `RrDr60State` value.
@@ -1180,6 +1228,20 @@ RrDr60Status rr_dr60_set_volume(struct RrDr60Pipeline *pipeline, float position)
 //
 // `pipeline` must be a live handle. `out_position` must be NULL or writable.
 RrDr60Status rr_dr60_get_volume(struct RrDr60Pipeline *pipeline, float *out_position);
+
+// Copies the meter read-out of the last non-empty processing call into `*out` (spec 016
+// FR-001, FR-009): the figures of the last `rr_dr60_process*`, `rr_dr60_record`,
+// `rr_dr60_play` or `rr_dr60_stop_recording` call that processed samples; the rest state
+// before any, after `rr_dr60_reset` and after `rr_dr60_reconfigure`. Real-time safe; never
+// changes the engine. `out->struct_size` is read first: smaller than this version's 56 →
+// `RR_DR60_STATUS_INVALID_ARGUMENT` and nothing written; larger → the 56 bytes filled and the
+// bytes `[56, struct_size)` zeroed (no upper cap).
+//
+// # Safety
+//
+// `pipeline` must be NULL or a live handle. `out` must be NULL or 8-aligned with
+// `out->struct_size` bytes writable.
+RrDr60Status rr_dr60_meters(struct RrDr60Pipeline *pipeline, struct RrDr60Meters *out);
 
 // Sets the playback speed level (spec 013 FR-001; A-054): 1 (slowest) … 5 (fastest), 3 normal,
 // the default, at 3/5, 4/5, 1, 6/5 and 7/5 of normal speed with the pitch moving with the speed

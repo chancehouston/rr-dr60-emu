@@ -352,7 +352,7 @@ stage_table! {
         status: Assumed, path: Record, confidence: Low,
         sources: ["S-002"], assumptions: ["A-005", "A-048", "A-049", "A-050", "A-052"],
         coverage: "directivity; handling noise and wind; acoustic overload; the case's acoustics; the capsule's own response; unit spread",
-        controls: "mic.capsule_enabled, mic.hiss_offset_db; Tap::AfterMicCapsule",
+        controls: "mic.capsule_enabled, mic.hiss_offset_db; Tap::AfterMicCapsule; Meters",
         model_version: "0.12.0",
     },
     {
@@ -361,7 +361,7 @@ stage_table! {
         status: Assumed, path: Record, confidence: Low,
         sources: ["S-002"], assumptions: ["A-006", "A-029", "A-046", "A-047", "A-051", "A-053"],
         coverage: "the output coupling's 159 Hz shift under limiting; below-clip distortion; part and transistor spread",
-        controls: "mic.amp_enabled; Tap::AfterMicAmp",
+        controls: "mic.amp_enabled; Tap::AfterMicAmp; Meters",
         model_version: "0.12.0",
     },
     {
@@ -371,7 +371,7 @@ stage_table! {
         sources: ["S-001", "S-002"],
         assumptions: ["A-007", "A-019", "A-020", "A-028", "A-030", "A-034", "A-035", "A-036", "A-037"],
         coverage: "a soft knee, if the circuit has one",
-        controls: "agc.enabled, agc.knee_dbfs, agc.attack_ms, agc.release_ms; Tap::AfterAgc",
+        controls: "agc.enabled, agc.knee_dbfs, agc.attack_ms, agc.release_ms; Tap::AfterAgc; Meters",
         model_version: "0.5.0",
     },
     {
@@ -381,7 +381,7 @@ stage_table! {
         sources: ["S-002", "S-003", "S-005", "S-007"],
         assumptions: ["A-003", "A-015", "A-016", "A-026", "A-027", "A-030"],
         coverage: "µ-law quantization, idle noise, the input amp's clipping ahead of the filter, and aliasing of input above 3 kHz",
-        controls: "record_stage_enabled; adc_clamp_enabled; Tap::AfterRecord",
+        controls: "record_stage_enabled; adc_clamp_enabled; Tap::AfterRecord; Meters",
         model_version: "0.5.0",
     },
     {
@@ -391,7 +391,7 @@ stage_table! {
         sources: ["S-001", "S-002"],
         assumptions: ["A-008", "A-021", "A-022", "A-023", "A-024", "A-025", "A-033", "A-037"],
         coverage: "a digital gain from the sensitivity setting, if the device applies one",
-        controls: "vas.enabled, mode, sensitivity, threshold_dbfs, hang_ms, onset_ms; Tap::AfterVas; splices (VasEvent); BlockInfo.paused",
+        controls: "vas.enabled, mode, sensitivity, threshold_dbfs, hang_ms, onset_ms; Tap::AfterVas; VasEvent; BlockInfo.paused; Meters",
         model_version: "0.5.0",
     },
     {
@@ -437,7 +437,7 @@ stage_table! {
         sources: ["S-002", "S-003", "S-005", "S-007"],
         assumptions: ["A-015", "A-016", "A-026", "A-027", "A-030"],
         coverage: "µ-law expansion, idle noise on the playback side, DAC imaging residue above 3 kHz",
-        controls: "playback_stage_enabled; Tap::AfterPlayback",
+        controls: "playback_stage_enabled; Tap::AfterPlayback; Meters",
         model_version: "0.4.0",
     },
     {
@@ -446,7 +446,7 @@ stage_table! {
         status: Assumed, path: Playback, confidence: Medium,
         sources: ["S-001", "S-002", "S-006"], assumptions: ["A-031", "A-043", "A-044", "A-045"],
         coverage: "the 159 Hz corner's knob shift; the clip level's battery and transistor spread; wiper noise; knob speed; the beeps",
-        controls: "output.volume_amp_enabled; set_volume, volume; set_route, route; Tap::AfterVolumeAmp; EngineState.speaker_muted",
+        controls: "output.volume_amp_enabled; set_volume, volume; set_route, route; Tap::AfterVolumeAmp; EngineState.speaker_muted; Meters",
         model_version: "0.11.0",
     },
     {
@@ -455,7 +455,7 @@ stage_table! {
         status: Assumed, path: Playback, confidence: Low,
         sources: ["S-001", "S-002"], assumptions: ["A-010", "A-042"],
         coverage: "this driver's own response (the model is a generic small-speaker template, not a capture); nonlinearity, enclosure, room",
-        controls: "output.speaker_enabled; Route::Speaker; Tap::AfterSpeaker, Tap::RouteOutput",
+        controls: "output.speaker_enabled; Route::Speaker; Tap::AfterSpeaker, Tap::RouteOutput; Meters",
         model_version: "0.9.0",
     },
     {
@@ -464,7 +464,7 @@ stage_table! {
         status: Assumed, path: Playback, confidence: Low,
         sources: ["S-001", "S-002"], assumptions: ["A-012", "A-032", "A-042"],
         coverage: "the follower's clipping cut-off on loud material; its corners' spread with the transistor's gain; loads other than 16 Ω",
-        controls: "output.earphone_enabled; Route::Earphone; Tap::AfterEarphone, Tap::RouteOutput",
+        controls: "output.earphone_enabled; Route::Earphone; Tap::AfterEarphone, Tap::RouteOutput; Meters",
         model_version: "0.9.0",
     },
     {
