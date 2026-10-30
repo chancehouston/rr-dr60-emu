@@ -34,6 +34,9 @@ fn on_measuring_thread() -> bool {
     MEASURING.with(Cell::get)
 }
 
+/// The counters are global: the two tests of this file take turns (spec 016 T014).
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 static ALLOCS: AtomicUsize = AtomicUsize::new(0);
 static DEALLOCS: AtomicUsize = AtomicUsize::new(0);
 static REALLOCS: AtomicUsize = AtomicUsize::new(0);
@@ -77,6 +80,7 @@ fn counts() -> [usize; 3] {
 /// Everything happens in one test, so no other test thread allocates concurrently.
 #[test]
 fn processing_never_touches_the_heap() {
+    let _turn = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     MEASURING.with(|m| m.set(true));
     let input = stimulus::noise(0x0D60, 1024);
     let mut output = vec![0.0f32; 1024];
@@ -759,5 +763,50 @@ fn speed_cases(rate: u32, sizes: &[usize]) {
             after, before,
             "{rate} Hz {config}: the playback speed control, heap activity [allocs, deallocs, reallocs]"
         );
+    }
+}
+
+/// Spec 016 FR-010: reading the meters in Rust and in C allocates nothing: the counting window
+/// holds only the processing calls and the reads (the counters are global and the other test
+/// runs concurrently, so this thread counts only inside that window, which constructs nothing).
+#[test]
+fn meters_read_allocates_nothing() {
+    use rr_dr60_ffi::{RrDr60Meters, rr_dr60_meters};
+    let _turn = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let input = stimulus::noise(0x016, 1024);
+    let mut output = vec![0.0f32; 1024];
+    for &rate in configs::measurement_rates() {
+        let s = rr_dr60::Settings::new(rate);
+        let mut p = Pipeline::new(s).unwrap();
+        let c = configs::c_settings(&s);
+        let mut handle: *mut RrDr60Pipeline = core::ptr::null_mut();
+        // SAFETY: a valid settings struct and an out-pointer.
+        let st = unsafe { rr_dr60_create(&c, &mut handle) };
+        assert_eq!(st, RrDr60Status::Ok);
+        let mut cm = RrDr60Meters {
+            struct_size: size_of::<RrDr60Meters>() as u32,
+            ..Default::default()
+        };
+        let mut info = RrDr60BlockInfo::default();
+        MEASURING.with(|m| m.set(true));
+        let before = counts();
+        let _ = p.process(&input, &mut output).unwrap();
+        let m1 = p.meters();
+        let m2 = p.rest_meters();
+        // SAFETY: the handle is live; the buffers are 1024 samples; the struct carries its size.
+        let st1 = unsafe {
+            rr_dr60_process(handle, input.as_ptr(), output.as_mut_ptr(), 1024, &mut info)
+        };
+        // SAFETY: as above.
+        let st2 = unsafe { rr_dr60_meters(handle, &mut cm) };
+        let after = counts();
+        MEASURING.with(|m| m.set(false));
+        assert_eq!(st1, RrDr60Status::Ok);
+        assert_eq!(st2, RrDr60Status::Ok);
+        assert_eq!(after, before, "{rate} Hz: the reads allocated");
+        assert_eq!(m1.input_peak, cm.input_peak);
+        assert_ne!(m1, m2);
+        // SAFETY: destroying the handle once.
+        unsafe { rr_dr60_destroy(handle) };
     }
 }

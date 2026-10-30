@@ -234,6 +234,32 @@ def release_s(gains, fs, t0, to_db=-1.0):
 V_FLOOR = v_floor()
 
 
+def charge_section(t_ref_ms=2.167):
+    """Spec 016 (the per-block meters): the hold-charge scale and the steady figures the harness pins.
+
+    The charge meter is Vc / v_limit, with v_limit the Vc of the model's 40 dB cap (MAX_ATTEN_DB,
+    an engineering target, 005 R-03), so the scale is settings-independent. The landmarks are the
+    ratios at the unity floor and at 1, 10, 20 and 40 dB of attenuation; the steady figures are
+    the last 0.1 s of a 1 s tone 10 dB over the knee at each host rate (the harness's AS2)."""
+    v_limit = vc_of_gain(10 ** (-MAX_ATTEN_DB / 20.0))
+    print("## Charge (spec 016): Vc / v_limit, v_limit the Vc of the 40 dB cap (an engineering target, 005 R-03)")
+    print(f"  v_limit {v_limit:.5f} V, v_floor {V_FLOOR:.5f} V")
+    print("  landmarks:" + "".join(
+        f" {label} {vc_of_gain(a) / v_limit:.4f}"
+        for label, a in (("floor", 1.0 - 2.0 ** -24), ("1 dB", 10 ** (-1 / 20)), ("10 dB", 10 ** (-10 / 20)),
+                         ("20 dB", 10 ** (-20 / 20)), ("40 dB", 10 ** (-40 / 20)))))
+    K = KNEE_DBFS
+    b6_default = beta6_of_settings(K, ATTACK_MS, t_ref_ms)  # the static section's reference dead time
+    for fs in HOST_RATES:
+        g, vc = emulate([K - 21.0, K + 10.0], [0.05, 1.0], fs, beta6=b6_default)
+        lo, hi = int(0.95 * fs), int(1.05 * fs)
+        st = steady_db(g, fs, 0.95, 1.05)
+        deepest = min(g[lo:hi])
+        ratio = mean(vc[lo:hi]) / v_limit
+        print(f"  {fs:6d} Hz: steady gain {st:+.4f} dB (deepest in the window {deepest:+.4f}), steady charge ratio {ratio:.5f}")
+    print()
+
+
 def main():
     print("# RR-DR60 limiter reference model (spec 005). S-002 values; transistor parameters estimated.")
     print(f"# conventions: sensed polarity +1 (A-036), phase 0; knee {KNEE_DBFS:+.1f} dBFS -> VBE6 {vbe6_of_knee(KNEE_DBFS):.3f} V\n")
@@ -399,6 +425,9 @@ def main():
     print(f"  first 2 ms: {100 * sum(abs(y) >= 1.0 for y in first) / len(first):.0f} % (unity gain: a {10 ** ((K + 10) / 20):.2f} FS sine has "
           f"{100 * (1 - 2 / math.pi * math.asin(1 / 10 ** ((K + 10) / 20))):.0f} % of its samples beyond 1.0); after 20 ms: "
           f"{100 * sum(abs(y) >= 1.0 for y in later) / len(later):.0f} %")
+
+
+    charge_section(t_ref)
 
 
 if __name__ == "__main__":

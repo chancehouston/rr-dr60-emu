@@ -105,6 +105,17 @@ impl VasStage {
         self.state == State::Paused
     }
 
+    /// Spec 016 FR-002 (h): the further non-sound device samples the gate will still keep
+    /// before pausing: `H − silent` while recording (0 exactly at the last kept non-sound
+    /// sample, since the gate keeps while `silent ≤ H`; the next non-sound sample pauses it),
+    /// and 0 while paused (the counter is frozen then).
+    pub(crate) fn hang_remaining(&self) -> u64 {
+        match self.state {
+            State::Recording => self.hang.saturating_sub(self.silent),
+            State::Paused => 0,
+        }
+    }
+
     /// Decides one device-rate sample (data-model.md › Per-sample processing).
     #[inline]
     pub(crate) fn process(&mut self, x: f64) -> VasDecision {
@@ -395,5 +406,53 @@ mod tests {
         assert!(stage.is_paused());
         assert_eq!(stage.since_sound, W + 1);
         assert_eq!(stage.hang_samples(), H as u64);
+    }
+}
+
+/// Spec 016 FR-002 (h): the hang countdown.
+#[cfg(test)]
+mod meters_tests {
+    use super::*;
+    use crate::settings::VasSettings;
+
+    /// H non-sound samples read H … 0 while every one is kept; the next pauses the gate and
+    /// reads 0; a sound sample restores H.
+    #[test]
+    fn hang_remaining_counts_down_and_is_zero_while_paused() {
+        let mut s = VasSettings::DEVICE;
+        s.hang_ms = 10.0; // H = 60 device samples
+        let mut stage = VasStage::new(&s);
+        let h = stage.hang_samples();
+        assert_eq!(h, 60);
+        assert_eq!(stage.hang_remaining(), h, "rest: the full hang");
+        assert_eq!(stage.process(0.5), VasDecision::Keep);
+        assert_eq!(stage.hang_remaining(), h, "a sound sample: the full hang");
+        for k in 1..=h {
+            assert_eq!(stage.process(0.0), VasDecision::Keep, "sample {k} is kept");
+            assert_eq!(stage.hang_remaining(), h - k);
+        }
+        assert_eq!(
+            stage.hang_remaining(),
+            0,
+            "0 at the last kept non-sound sample"
+        );
+        assert!(!stage.is_paused());
+        assert_eq!(
+            stage.process(0.0),
+            VasDecision::Drop,
+            "the next non-sound sample pauses"
+        );
+        assert!(stage.is_paused());
+        assert_eq!(stage.hang_remaining(), 0, "0 while paused");
+        // A sound run longer than the onset resumes; the countdown is the full hang again.
+        let onset = s.onset_ms as u64 * 6;
+        let mut resumed = false;
+        for _ in 0..=onset + 1 {
+            if stage.process(0.5) == VasDecision::Resume {
+                resumed = true;
+            }
+        }
+        assert!(resumed);
+        assert_eq!(stage.hang_remaining(), h);
     }
 }

@@ -16,6 +16,10 @@
 #   HEAD_TEST = playback: spec 013's playback at the default speed level against the baseline
 #     (013 FR-010: budget 3 %); `tests/playback_timing.rs` is copied into the baseline worktree.
 #
+#   HEAD_TEST = meters: spec 016's per-block meters against the baseline (016 FR-013: the default
+#     front within 5 %, every stage off within the same absolute nanoseconds; the ceiling from
+#     RR_DR60_METERS_COST_CEILING, 0.12 on the CI runner); asserted, exits 1 when over.
+#
 # Usage: scripts/ab-timing.sh [baseline-rev [head-test]]
 #   (default baseline c9f9994, version 0.11, the spec 012 branch point; default head test
 #   output_cost)
@@ -68,6 +72,59 @@ print(f"A/B playback at the default speed level vs {rev}, Speaker route, 48 kHz,
       f"(013 FR-010: budget 3 %, CI ceiling 5 %; fastest of 45 alternating runs each)")
 PY
   exit 0
+fi
+
+if [ "$head_test" = "meters" ]; then
+  # Spec 016 FR-013 (research R-09): the meters' cost. `tests/meters_timing.rs` is written
+  # against 0.14's public API and copied into the baseline worktree; each build prints the
+  # fastest-of-45 figure of the default front (stages 1 – 2 on, the codec bypassed) and of every
+  # stage off. Asserted: the front within the ceiling (5 % by default, RR_DR60_METERS_COST_CEILING
+  # on the CI runner: 0.12) and every stage off within the same absolute nanoseconds; exits 1
+  # when over.
+  cp "$root/crates/rr_dr60_harness/tests/meters_timing.rs" "$work/base/crates/rr_dr60_harness/tests/"
+  mbin_of() {
+    (cd "$1" && cargo test -q -p rr_dr60_harness --release --test meters_timing --no-run --message-format=json 2>/dev/null) |
+      python3 -c 'import json,sys
+for l in sys.stdin:
+    try: m = json.loads(l)
+    except ValueError: continue
+    if m.get("reason") == "compiler-artifact" and m.get("target", {}).get("name") == "meters_timing" and m.get("executable"):
+        print(m["executable"])' | tail -1
+  }
+  echo "building the baseline ($baseline) and the working tree (meters) ..." >&2
+  base_bin="$(mbin_of "$work/base")"
+  head_bin="$(mbin_of "$root")"
+  [ -x "$base_bin" ] && [ -x "$head_bin" ] || { echo "ab-timing: a build failed" >&2; exit 1; }
+  : >"$work/base.txt"
+  : >"$work/head.txt"
+  # Each binary already takes the fastest of 45 runs per figure; the two builds alternate three
+  # times and the fastest of those is compared (run-order sensitivity, 012 R-09).
+  for i in 1 2 3; do
+    echo "round $i of 3" >&2
+    "$base_bin" --ignored --exact meters_cost --nocapture --test-threads=1 2>/dev/null | grep -oE '(default_front_ns|every_stage_off_ns)=[0-9.]+' >>"$work/base.txt"
+    "$head_bin" --ignored --exact meters_cost --nocapture --test-threads=1 2>/dev/null | grep -oE '(default_front_ns|every_stage_off_ns)=[0-9.]+' >>"$work/head.txt"
+  done
+  python3 - "$work/base.txt" "$work/head.txt" "$baseline" "${RR_DR60_METERS_COST_CEILING:-0.05}" <<'PY'
+import re, sys
+def best(path):
+    out = {}
+    for line in open(path):
+        m = re.search(r"(\w+)=([\d.]+)", line.strip())
+        if m:
+            out[m.group(1)] = min(out.get(m.group(1), float("inf")), float(m.group(2)))
+    return out
+b, h, rev, ceiling = best(sys.argv[1]), best(sys.argv[2]), sys.argv[3], float(sys.argv[4])
+bf, hf = b["default_front_ns"], h["default_front_ns"]
+bo, ho = b["every_stage_off_ns"], h["every_stage_off_ns"]
+budget_ns = ceiling * bf
+front_ok = hf / bf - 1 <= ceiling
+off_ok = ho - bo <= budget_ns
+print(f"A/B meters vs {rev}, 48 kHz, 4096 blocks, speaker route, codec bypassed (016 FR-013; fastest of 45 runs × 3 alternations):")
+print(f"  default front (stages 1 – 2 on): {rev} {bf:.2f} ns, working tree {hf:.2f} ns per host sample, {hf - bf:+.2f} ns ({100 * (hf / bf - 1):+.2f} %; ceiling {100 * ceiling:.0f} %) {'PASS' if front_ok else 'FAIL'}")
+print(f"  every stage off: {rev} {bo:.2f} ns, working tree {ho:.2f} ns per host sample, {ho - bo:+.2f} ns (budget {budget_ns:.2f} ns, the same absolute nanoseconds) {'PASS' if off_ok else 'FAIL'}")
+sys.exit(0 if front_ok and off_ok else 1)
+PY
+  exit $?
 fi
 
 bin_of() { # the release timing test binary of the tree at $1

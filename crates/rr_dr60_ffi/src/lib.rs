@@ -29,7 +29,7 @@
 //! `rr_dr60_stop_recording`, `rr_dr60_start_playback`, `rr_dr60_play`,
 //! `rr_dr60_stop_playback`, `rr_dr60_set_route`, `rr_dr60_get_route`, `rr_dr60_set_volume`,
 //! `rr_dr60_get_volume`, `rr_dr60_set_playback_speed`, `rr_dr60_get_playback_speed`,
-//! `rr_dr60_playback_length_samples`, `rr_dr60_get_state`,
+//! `rr_dr60_playback_length_samples`, `rr_dr60_meters` (spec 016), `rr_dr60_get_state`,
 //! `rr_dr60_memory_status`, `rr_dr60_recording_length`, `rr_dr60_export_len`, the three
 //! latency and drain reads and `rr_dr60_footprint_bytes`. Not real-time safe:
 //! `rr_dr60_create`, `rr_dr60_destroy`, `rr_dr60_reconfigure` (allocate), `rr_dr60_erase`,
@@ -47,7 +47,7 @@ use rr_dr60::{
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 14;
+pub const RR_DR60_VERSION_MINOR: u32 = 15;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -1733,6 +1733,138 @@ pub unsafe extern "C" fn rr_dr60_get_volume(
     RrDr60Status::Ok
 }
 
+/// The meter read-out of the last non-empty processing call (spec 016 FR-001 – FR-003;
+/// contracts/api.md): the figures `rr_dr60_meters` fills. 56 bytes, 8-aligned; the caller sets
+/// `struct_size` to `sizeof(RrDr60Meters)`. Every peak is linear full-scale (20·log10 for
+/// dBFS), the largest absolute sample at its point, and may exceed 1.0. A figure whose point
+/// the call did not reach keeps its rest value: 0 (`vas_paused` 0), except
+/// `hang_remaining_samples`, whose rest is the configured hang length.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RrDr60Meters {
+    /// Set by the caller to `sizeof(RrDr60Meters)` (56 in this version). Smaller is refused
+    /// (`RR_DR60_STATUS_INVALID_ARGUMENT`); larger is accepted and the tail zero-filled.
+    pub struct_size: u32,
+    /// The largest absolute input sample after the engine's sanitizing of non-finite samples.
+    pub input_peak: f32,
+    /// The largest absolute sample entering the limiter (stage 2's output; the input with
+    /// stages 1 – 2 bypassed; A-046, A-051). May exceed 1.0.
+    pub limiter_input_peak: f32,
+    /// The deepest attenuation the limiter applied in the call, dB ≥ 0 (A-028, A-034, A-035;
+    /// modeled on the circuit, not measured).
+    pub gain_reduction_db: f32,
+    /// The limiter's hold capacitor at the end of the call, 0 – 1 of the model's deepest
+    /// attenuation (40 dB, an engineering target): about 0.13 the unity floor, 0.73 one decibel
+    /// of attenuation, 0.84 ten, 0.90 twenty. A state: a silent call reads the decaying hold.
+    pub hold_charge: f32,
+    /// The largest absolute device sample after stage 4's record band-limit (A-027), before the
+    /// converter's full-scale clamp (A-030): above 1.0 whenever the clamp bounded samples.
+    pub record_filter_peak: f32,
+    /// The device samples of the call the converter's full-scale clamp changed
+    /// (`adc_clamp_enabled`).
+    pub adc_clamp_count: u32,
+    /// 1 when the voice activation's own state is paused at the end of the call, else 0.
+    pub vas_paused: u32,
+    /// The further non-sound device samples the gate keeps before pausing (A-023; ÷ 6000 for
+    /// seconds); the full hang length when the last sample was sound or the gate is bypassed;
+    /// 0 while paused.
+    pub hang_remaining_samples: u64,
+    /// The largest absolute host sample after stage 10 and the conversion, before the output
+    /// chain.
+    pub reconstruction_peak: f32,
+    /// The largest absolute sample at the selected route's output before the optional output
+    /// clamp (1.0 is the amplifier's clip ceiling on the speaker route, the earphone scale on
+    /// the earphone route; A-042). The speaker route reads up to about 2.3.
+    pub route_peak: f32,
+    /// The host samples of the call the optional output clamp bounded (0 with the option off;
+    /// an emulator option, spec 010).
+    pub output_clamp_count: u32,
+    /// Explicit tail padding, written 0.
+    pub reserved_016: u32,
+}
+
+const METERS_SIZE: u32 = size_of::<RrDr60Meters>() as u32;
+const _: () = assert!(size_of::<RrDr60Meters>() == 56);
+const _: () = assert!(align_of::<RrDr60Meters>() == 8);
+const _: () = assert!(core::mem::offset_of!(RrDr60Meters, struct_size) == 0);
+const _: () = assert!(core::mem::offset_of!(RrDr60Meters, input_peak) == 4);
+const _: () = assert!(core::mem::offset_of!(RrDr60Meters, limiter_input_peak) == 8);
+const _: () = assert!(core::mem::offset_of!(RrDr60Meters, gain_reduction_db) == 12);
+const _: () = assert!(core::mem::offset_of!(RrDr60Meters, hold_charge) == 16);
+const _: () = assert!(core::mem::offset_of!(RrDr60Meters, record_filter_peak) == 20);
+const _: () = assert!(core::mem::offset_of!(RrDr60Meters, adc_clamp_count) == 24);
+const _: () = assert!(core::mem::offset_of!(RrDr60Meters, vas_paused) == 28);
+const _: () = assert!(core::mem::offset_of!(RrDr60Meters, hang_remaining_samples) == 32);
+const _: () = assert!(core::mem::offset_of!(RrDr60Meters, reconstruction_peak) == 40);
+const _: () = assert!(core::mem::offset_of!(RrDr60Meters, route_peak) == 44);
+const _: () = assert!(core::mem::offset_of!(RrDr60Meters, output_clamp_count) == 48);
+const _: () = assert!(core::mem::offset_of!(RrDr60Meters, reserved_016) == 52);
+
+impl RrDr60Meters {
+    fn from_core(m: rr_dr60::Meters, struct_size: u32) -> Self {
+        Self {
+            struct_size,
+            input_peak: m.input_peak,
+            limiter_input_peak: m.limiter_input_peak,
+            gain_reduction_db: m.gain_reduction_db,
+            hold_charge: m.hold_charge,
+            record_filter_peak: m.record_filter_peak,
+            adc_clamp_count: m.adc_clamp_count,
+            vas_paused: u32::from(m.vas_paused),
+            hang_remaining_samples: m.hang_remaining_samples,
+            reconstruction_peak: m.reconstruction_peak,
+            route_peak: m.route_peak,
+            output_clamp_count: m.output_clamp_count,
+            reserved_016: 0,
+        }
+    }
+}
+
+/// Copies the meter read-out of the last non-empty processing call into `*out` (spec 016
+/// FR-001, FR-009): the figures of the last `rr_dr60_process*`, `rr_dr60_record`,
+/// `rr_dr60_play` or `rr_dr60_stop_recording` call that processed samples; the rest state
+/// before any, after `rr_dr60_reset` and after `rr_dr60_reconfigure`. Real-time safe; never
+/// changes the engine. `out->struct_size` is read first: smaller than this version's 56 →
+/// `RR_DR60_STATUS_INVALID_ARGUMENT` and nothing written; larger → the 56 bytes filled and the
+/// bytes `[56, struct_size)` zeroed (no upper cap).
+///
+/// # Safety
+///
+/// `pipeline` must be NULL or a live handle. `out` must be NULL or 8-aligned with
+/// `out->struct_size` bytes writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_meters(
+    pipeline: *mut RrDr60Pipeline,
+    out: *mut RrDr60Meters,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: `struct_size` is the first field of a `repr(C)` struct, at offset 0; the caller
+    // guarantees that much is readable. `read_unaligned` assumes nothing about alignment.
+    let size = unsafe { out.cast::<u32>().read_unaligned() };
+    if size < METERS_SIZE {
+        return RrDr60Status::InvalidArgument;
+    }
+    let m = RrDr60Meters::from_core(p.inner.meters(), size);
+    // SAFETY: `out` is non-null, 8-aligned and at least `size` ≥ 56 bytes writable (caller
+    // contract); the tail `[56, size)` is zero-filled byte by byte.
+    unsafe {
+        out.write(m);
+        core::ptr::write_bytes(
+            out.cast::<u8>().add(METERS_SIZE as usize),
+            0,
+            (size - METERS_SIZE) as usize,
+        );
+    }
+    RrDr60Status::Ok
+}
+
 /// The number of playback speed levels (spec 013 FR-001; S-001). Equal to the Rust
 /// `speed::LEVEL_COUNT`.
 pub const RR_DR60_SPEED_LEVEL_COUNT: u32 = 5; // 013 FR-001: equal to `rr_dr60::speed::LEVEL_COUNT` (a literal so cbindgen emits the define; the unit test pins it)
@@ -3113,7 +3245,7 @@ mod tests {
         assert_eq!(d.reserved_010_tail, [0; 7]);
         assert_eq!(d.reserved_012, [0; 2]);
         assert_eq!(d.mic_hiss_offset_db, 0.0); // 012 FR-003
-        assert_eq!(RR_DR60_VERSION_MINOR, 14);
+        assert_eq!(RR_DR60_VERSION_MINOR, 15);
         let mut stale = rr_dr60_settings_default(48_000);
         stale.struct_size = 112; // a 0.10 or 0.11 caller (spec 012 FR-012)
         assert_eq!(
@@ -4259,5 +4391,150 @@ mod tests {
             rr_dr60_destroy(on);
             rr_dr60_destroy(off);
         }
+    }
+}
+
+/// Spec 016 FR-009 (tasks.md T019): the C read-out's size rules and refusals.
+#[cfg(test)]
+mod meters_tests {
+    use super::*;
+
+    fn handle() -> *mut RrDr60Pipeline {
+        let s = rr_dr60_settings_default(48_000);
+        let mut h: *mut RrDr60Pipeline = core::ptr::null_mut();
+        // SAFETY: valid pointers.
+        assert_eq!(unsafe { rr_dr60_create(&s, &mut h) }, RrDr60Status::Ok);
+        h
+    }
+
+    fn process_some(h: *mut RrDr60Pipeline) {
+        let x = [0.5f32; 1024];
+        let mut y = [0.0f32; 1024];
+        let mut info = RrDr60BlockInfo::default();
+        // SAFETY: a live handle and 1024-sample buffers.
+        assert_eq!(
+            unsafe { rr_dr60_process(h, x.as_ptr(), y.as_mut_ptr(), 1024, &mut info) },
+            RrDr60Status::Ok
+        );
+    }
+
+    #[test]
+    fn exact_size_is_filled_and_equals_rust() {
+        let h = handle();
+        process_some(h);
+        let mut m = RrDr60Meters {
+            struct_size: 56,
+            ..Default::default()
+        };
+        // SAFETY: a live handle and a valid out struct.
+        assert_eq!(unsafe { rr_dr60_meters(h, &mut m) }, RrDr60Status::Ok);
+        // SAFETY: a live handle.
+        let r = unsafe { &*h }.inner.meters();
+        assert_eq!(m.input_peak.to_bits(), r.input_peak.to_bits());
+        assert_eq!(m.input_peak, 0.5);
+        assert_eq!(m.hang_remaining_samples, r.hang_remaining_samples);
+        assert_eq!(m.vas_paused, u32::from(r.vas_paused));
+        assert_eq!(m.reserved_016, 0);
+        assert_eq!(m.struct_size, 56);
+        // SAFETY: destroying once.
+        unsafe { rr_dr60_destroy(h) };
+    }
+
+    #[test]
+    fn smaller_size_is_refused_and_untouched() {
+        let h = handle();
+        process_some(h);
+        let mut m = RrDr60Meters {
+            struct_size: 55,
+            input_peak: 7.0,
+            ..Default::default()
+        };
+        // SAFETY: as above.
+        assert_eq!(
+            unsafe { rr_dr60_meters(h, &mut m) },
+            RrDr60Status::InvalidArgument
+        );
+        assert_eq!(m.input_peak, 7.0, "nothing written");
+        assert_eq!(m.struct_size, 55);
+        // SAFETY: destroying once.
+        unsafe { rr_dr60_destroy(h) };
+    }
+
+    #[test]
+    fn larger_size_is_filled_and_tail_zeroed() {
+        let h = handle();
+        process_some(h);
+        // A 64-byte, 8-aligned buffer with a sentinel-filled tail.
+        #[repr(C, align(8))]
+        struct Big([u8; 64]);
+        let mut big = Big([0xA5; 64]);
+        big.0[..4].copy_from_slice(&64u32.to_ne_bytes());
+        let out = big.0.as_mut_ptr().cast::<RrDr60Meters>();
+        // SAFETY: 64 writable, 8-aligned bytes whose first field says 64.
+        assert_eq!(unsafe { rr_dr60_meters(h, out) }, RrDr60Status::Ok);
+        // SAFETY: the first 56 bytes are a filled struct.
+        let m = unsafe { out.read() };
+        assert_eq!(m.struct_size, 64);
+        assert_eq!(m.input_peak, 0.5);
+        assert!(big.0[56..].iter().all(|&b| b == 0), "the tail is zeroed");
+        // SAFETY: destroying once.
+        unsafe { rr_dr60_destroy(h) };
+    }
+
+    #[test]
+    fn null_handle_and_null_out_are_refused() {
+        let mut m = RrDr60Meters {
+            struct_size: 56,
+            ..Default::default()
+        };
+        // SAFETY: a NULL handle is allowed by contract.
+        assert_eq!(
+            unsafe { rr_dr60_meters(core::ptr::null_mut(), &mut m) },
+            RrDr60Status::NullPointer
+        );
+        let h = handle();
+        // SAFETY: a NULL out is allowed by contract.
+        assert_eq!(
+            unsafe { rr_dr60_meters(h, core::ptr::null_mut()) },
+            RrDr60Status::NullPointer
+        );
+        // SAFETY: destroying once.
+        unsafe { rr_dr60_destroy(h) };
+    }
+
+    #[test]
+    fn poisoned_handle_is_refused() {
+        let h = handle();
+        // SAFETY: a live handle.
+        unsafe { &mut *h }.poisoned = true;
+        let mut m = RrDr60Meters {
+            struct_size: 56,
+            ..Default::default()
+        };
+        // SAFETY: as above.
+        assert_eq!(
+            unsafe { rr_dr60_meters(h, &mut m) },
+            RrDr60Status::InternalError
+        );
+        // SAFETY: destroying once.
+        unsafe { rr_dr60_destroy(h) };
+    }
+
+    #[test]
+    fn rest_before_any_call() {
+        let h = handle();
+        let mut m = RrDr60Meters {
+            struct_size: 56,
+            ..Default::default()
+        };
+        // SAFETY: as above.
+        assert_eq!(unsafe { rr_dr60_meters(h, &mut m) }, RrDr60Status::Ok);
+        assert_eq!(m.input_peak, 0.0);
+        assert_eq!(
+            m.hang_remaining_samples, 6000,
+            "the configured 1 s hang at 6 kHz"
+        );
+        // SAFETY: destroying once.
+        unsafe { rr_dr60_destroy(h) };
     }
 }

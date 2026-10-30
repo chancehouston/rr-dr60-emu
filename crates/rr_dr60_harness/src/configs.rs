@@ -284,6 +284,30 @@ pub fn settings(name: &str, host_rate_hz: u32) -> Settings {
         }
         // The 0.13 default (= 0.12's), and with the codec bypassed.
         "speed_default" => s = Settings::new(host_rate_hz),
+        // Spec 016 (data-model.md › MetersGolden): the 0.14 default and with the output clamp
+        // on; `settings_011` with the limiter and the ADC clamp on; the gate at a 50 ms hang and
+        // a 20 ms onset (drop or mute) so a 0.5 s stimulus pauses and resumes within the rows.
+        "meters_default" => s = Settings::new(host_rate_hz),
+        "meters_default_clamp" => {
+            s = Settings::new(host_rate_hz);
+            s.output.clamp_enabled = true; // 010 FR-001
+        }
+        "limiter_clamp_011" => {
+            s = settings_011(host_rate_hz);
+            s.vas.enabled = false;
+            s.speech_codec_enabled = false;
+        }
+        "meters_short_hang" | "meters_short_hang_mute" => {
+            s = settings_011(host_rate_hz);
+            s.vas.enabled = true;
+            s.vas.mode = if name == "meters_short_hang_mute" {
+                VasMode::Mute
+            } else {
+                VasMode::Drop
+            };
+            s.vas.hang_ms = 50.0; // 016 research R-10: pauses within 0.5 s
+            s.vas.onset_ms = 20.0;
+        }
         "speed_default_no_codec" => {
             s = Settings::new(host_rate_hz);
             s.speech_codec_enabled = false;

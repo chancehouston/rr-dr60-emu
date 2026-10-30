@@ -204,6 +204,42 @@ static const char *control_timing_word(uint32_t t) {
   }
 }
 
+/* Spec 016 FR-012, SC-004 (research R-10): the meter read-out of every 1024-sample block of
+   the ±1.0 square (24 up, 24 down; 0.5 s at 48 kHz) through the default engine with the output
+   clamp on, printed as the Rust example `meters_rows` prints it: the floats as 8-digit hex bit
+   patterns, the integers decimal, the state 0/1. `run_smoke.sh` diffs the two. */
+static int print_meters(void) {
+  enum { MRATE = 48000, MN = MRATE / 2, MBLOCK = 1024 };
+  static float min_[MN], mout[MN];
+  for (size_t i = 0; i < MN; i++) min_[i] = (i % 48 < 24) ? 1.0f : -1.0f;
+  RrDr60Settings s = rr_dr60_settings_default(MRATE);
+  s.output_clamp_enabled = true;
+  RrDr60Pipeline *p = NULL;
+  if (rr_dr60_create(&s, &p) != RR_DR60_STATUS_OK) return 1;
+  for (size_t pos = 0; pos < MN; pos += MBLOCK) {
+    size_t n = MN - pos < MBLOCK ? MN - pos : MBLOCK;
+    RrDr60BlockInfo info;
+    if (rr_dr60_process(p, min_ + pos, mout + pos, n, &info) != RR_DR60_STATUS_OK) return 1;
+    RrDr60Meters m;
+    memset(&m, 0, sizeof m);
+    m.struct_size = (uint32_t)sizeof m;
+    if (rr_dr60_meters(p, &m) != RR_DR60_STATUS_OK) return 1;
+    uint32_t b[7];
+    memcpy(&b[0], &m.input_peak, 4);
+    memcpy(&b[1], &m.limiter_input_peak, 4);
+    memcpy(&b[2], &m.gain_reduction_db, 4);
+    memcpy(&b[3], &m.hold_charge, 4);
+    memcpy(&b[4], &m.record_filter_peak, 4);
+    memcpy(&b[5], &m.reconstruction_peak, 4);
+    memcpy(&b[6], &m.route_peak, 4);
+    printf("%08x %08x %08x %08x %08x %u %u %llu %08x %08x %u\n", b[0], b[1], b[2], b[3], b[4],
+           (unsigned)m.adc_clamp_count, (unsigned)m.vas_paused, (unsigned long long)m.hang_remaining_samples,
+           b[5], b[6], (unsigned)m.output_clamp_count);
+  }
+  rr_dr60_destroy(p);
+  return 0;
+}
+
 static void print_controls(void) {
   uint32_t n = rr_dr60_control_count();
   printf("control_count: %u\n", n);
@@ -267,6 +303,9 @@ int main(int argc, char **argv) {
   if (argc > 1 && strcmp(argv[1], "--controls") == 0) {
     print_controls();
     return 0;
+  }
+  if (argc > 1 && strcmp(argv[1], "--meters") == 0) {
+    return print_meters();
   }
   if (argc > 1 && strcmp(argv[1], "--manifest") == 0) {
     print_manifest();

@@ -713,3 +713,93 @@ fn speed_partitions() {
         }
     }
 }
+
+/// Spec 016 FR-012 (research R-10): partition identities of the read-out. Over any partition
+/// of a stimulus into blocks, the maximum of each peak's rows equals the one-block row's, the
+/// counts sum to it, and the final state, hang and charge equal it; two engines with the same
+/// seed give identical rows.
+#[test]
+fn meters_partition_identities() {
+    use rr_dr60::Meters;
+    use rr_dr60_harness::meters_checks as mc;
+    for &rate in configs::measurement_rates() {
+        let x = golden::meters_stimulus("vas_burst", rate);
+        let mut s = configs::settings("meters_short_hang", rate);
+        s.output.clamp_enabled = true;
+        s.agc.enabled = true;
+        let one: Meters = {
+            let mut p = Pipeline::new(s).unwrap();
+            mc::one_pass_blocks(&mut p, &x, x.len())[0].meters
+        };
+        let mut rng = Pcg32::new(0x016, 7);
+        for _ in 0..20 {
+            let mut p = Pipeline::new(s).unwrap();
+            let mut pos = 0;
+            let mut acc = Meters::default();
+            let mut last = p.rest_meters();
+            while pos < x.len() {
+                let n = (rng.below(2049) as usize).max(1).min(x.len() - pos);
+                let b = &mc::one_pass_blocks(&mut p, &x[pos..pos + n], n)[0];
+                let m = b.meters;
+                acc.input_peak = acc.input_peak.max(m.input_peak);
+                acc.limiter_input_peak = acc.limiter_input_peak.max(m.limiter_input_peak);
+                acc.gain_reduction_db = acc.gain_reduction_db.max(m.gain_reduction_db);
+                acc.record_filter_peak = acc.record_filter_peak.max(m.record_filter_peak);
+                acc.adc_clamp_count += m.adc_clamp_count;
+                acc.reconstruction_peak = acc.reconstruction_peak.max(m.reconstruction_peak);
+                acc.route_peak = acc.route_peak.max(m.route_peak);
+                acc.output_clamp_count += m.output_clamp_count;
+                last = m;
+                pos += n;
+            }
+            assert_eq!(acc.input_peak.to_bits(), one.input_peak.to_bits(), "{rate}");
+            assert_eq!(
+                acc.limiter_input_peak.to_bits(),
+                one.limiter_input_peak.to_bits(),
+                "{rate}"
+            );
+            assert_eq!(
+                acc.gain_reduction_db.to_bits(),
+                one.gain_reduction_db.to_bits(),
+                "{rate}"
+            );
+            assert_eq!(
+                acc.record_filter_peak.to_bits(),
+                one.record_filter_peak.to_bits(),
+                "{rate}"
+            );
+            assert_eq!(acc.adc_clamp_count, one.adc_clamp_count, "{rate}");
+            assert_eq!(
+                acc.reconstruction_peak.to_bits(),
+                one.reconstruction_peak.to_bits(),
+                "{rate}"
+            );
+            assert_eq!(acc.route_peak.to_bits(), one.route_peak.to_bits(), "{rate}");
+            assert_eq!(acc.output_clamp_count, one.output_clamp_count, "{rate}");
+            assert_eq!(last.vas_paused, one.vas_paused, "{rate}");
+            assert_eq!(
+                last.hang_remaining_samples, one.hang_remaining_samples,
+                "{rate}"
+            );
+            assert_eq!(
+                last.hold_charge.to_bits(),
+                one.hold_charge.to_bits(),
+                "{rate}"
+            );
+        }
+        // Two engines with the same seed: identical rows (the hiss stream is keyed by the seed).
+        let s2 = configs::settings("meters_default", rate);
+        let a = {
+            let mut p = Pipeline::new(s2).unwrap();
+            mc::one_pass_blocks(&mut p, &x, 512)
+        };
+        let b = {
+            let mut p = Pipeline::new(s2).unwrap();
+            mc::one_pass_blocks(&mut p, &x, 512)
+        };
+        assert!(
+            a.iter().zip(&b).all(|(u, v)| u.meters == v.meters),
+            "{rate}"
+        );
+    }
+}

@@ -146,6 +146,14 @@ pub(crate) struct RecordHalf {
     forced: bool,
     /// The previous device sample was dropped (so a forced keep is a resume).
     after_drop: bool,
+    /// Spec 016 FR-002 (e): the largest absolute device sample of the current call after
+    /// stage 4, before the clamp; cleared at finalization (research R-02).
+    filter_peak: f64,
+    /// Spec 016 FR-002 (f): the device samples of the current call the clamp bounded.
+    clamp_count: u32,
+    /// Test-only: the spec 016 mutants (research R-12).
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) mutation: crate::__test_hooks::MeterMutation,
 }
 
 impl RecordHalf {
@@ -165,6 +173,10 @@ impl RecordHalf {
             mute: settings.vas.mode == VasMode::Mute,
             forced: false,
             after_drop: false,
+            filter_peak: 0.0,
+            clamp_count: 0,
+            #[cfg(feature = "__test-hooks")]
+            mutation: Default::default(),
         }
     }
 
@@ -180,7 +192,26 @@ impl RecordHalf {
         if self.run_record {
             d = self.record.process(d);
         }
-        d = self.clamp.process(d);
+        // Spec 016 FR-002 (e), (f): the peak before the clamp; the count of bounded samples
+        // (a bypassed clamp returns `d` bit-exact, so the test needs no branch on it).
+        #[cfg(feature = "__test-hooks")]
+        let before = d;
+        let a = d.abs();
+        if a > self.filter_peak {
+            self.filter_peak = a;
+        }
+        let c = self.clamp.process(d);
+        if c != d {
+            self.clamp_count += 1;
+        }
+        d = c;
+        #[cfg(feature = "__test-hooks")]
+        if self.mutation.filter_peak_after_clamp {
+            // The mutant: the peak after the clamp (undo the pre-clamp reading).
+            if before.abs() > c.abs() && self.filter_peak == before.abs() {
+                self.filter_peak = c.abs();
+            }
+        }
         let decision = if self.run_vas {
             self.vas.process(d)
         } else {
@@ -226,6 +257,39 @@ impl RecordHalf {
         self.vas.reset();
         self.forced = false;
         self.after_drop = false;
+        self.filter_peak = 0.0;
+        self.clamp_count = 0;
+    }
+
+    /// The gate's hang length H in device samples (the read-out's rest value, spec 016).
+    pub(crate) fn hang_samples(&self) -> u64 {
+        self.vas.hang_samples()
+    }
+
+    /// Spec 016 (research R-01): writes the stage 4 figures, and the stage 5 figures when the
+    /// gate runs (otherwise `m` keeps its rest values), and clears the accumulators.
+    pub(crate) fn finalize_into(&mut self, m: &mut crate::pipeline::Meters) {
+        m.record_filter_peak = narrow_out(core::mem::replace(&mut self.filter_peak, 0.0));
+        m.adc_clamp_count = core::mem::replace(&mut self.clamp_count, 0);
+        if self.run_vas {
+            m.vas_paused = self.vas.is_paused();
+            m.hang_remaining_samples = self.vas.hang_remaining();
+            #[cfg(feature = "__test-hooks")]
+            if self.mutation.hang_off_by_one {
+                m.hang_remaining_samples = m.hang_remaining_samples.saturating_sub(1);
+            }
+        }
+    }
+
+    /// Test-only: stage 4 alone on one device sample, nothing after it (the `stage4_trace`
+    /// hook, spec 016 research R-06).
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn stage4_only(&mut self, d: f64) -> f64 {
+        if self.run_record {
+            self.record.process(d)
+        } else {
+            d
+        }
     }
 }
 
@@ -413,6 +477,10 @@ pub(crate) struct RecordPath {
     /// The speech codec's delay in host samples when it runs after this path (spec 008 FR-004:
     /// 180 device samples, a whole number of host samples at every rate); 0 when it does not.
     codec_delay: u32,
+    /// Spec 016 FR-002 (a), (b): the largest absolute sanitized input and limiter-input sample
+    /// of the current call; cleared at finalization (research R-02).
+    input_peak: f64,
+    limiter_input_peak: f64,
 }
 
 impl RecordPath {
@@ -474,6 +542,8 @@ impl RecordPath {
             latency,
             codec_runs,
             codec_delay,
+            input_peak: 0.0,
+            limiter_input_peak: 0.0,
         }
     }
 
@@ -516,11 +586,35 @@ impl RecordPath {
     /// No conversion, no chain, no events.
     #[inline]
     pub(crate) fn front_only(&mut self, x: f32) -> f32 {
+        let s = sanitize_in(x);
+        self.peak_input(s);
         narrow_out(match self.front_stop {
-            FrontStop::Capsule => self.mic.process_upto(sanitize_in(x), MicStop::Capsule),
-            FrontStop::Amp => self.mic.process_upto(sanitize_in(x), MicStop::Amp),
-            FrontStop::Limiter => self.front(x),
+            FrontStop::Capsule => self.mic.process_upto(s, MicStop::Capsule),
+            FrontStop::Amp => {
+                let v = self.mic.process_upto(s, MicStop::Amp);
+                self.peak_limiter_input(v);
+                v
+            }
+            FrontStop::Limiter => self.front_from(s),
         })
+    }
+
+    /// Spec 016 FR-002 (a): one compare-select on the sanitized input.
+    #[inline]
+    fn peak_input(&mut self, s: f64) {
+        let a = s.abs();
+        if a > self.input_peak {
+            self.input_peak = a;
+        }
+    }
+
+    /// Spec 016 FR-002 (b): one compare-select on the sample entering stage 3.
+    #[inline]
+    fn peak_limiter_input(&mut self, v: f64) {
+        let a = v.abs();
+        if a > self.limiter_input_peak {
+            self.limiter_input_peak = a;
+        }
     }
 
     /// The front at the host rate: the input sanitized, stages 1 – 2 (spec 012 FR-001), then
@@ -528,12 +622,75 @@ impl RecordPath {
     /// FR-010).
     #[inline]
     fn front(&mut self, x: f32) -> f64 {
-        let x = self.mic.process(sanitize_in(x));
+        let s = sanitize_in(x);
+        self.peak_input(s);
+        self.front_from(s)
+    }
+
+    /// The front from the sanitized sample: stages 1 – 2, then stage 3.
+    #[inline]
+    fn front_from(&mut self, s: f64) -> f64 {
+        let x = self.mic.process(s);
+        self.peak_limiter_input(x);
         if self.run_limiter {
             self.limiter.process(x)
         } else {
             x
         }
+    }
+
+    /// The gate's hang length H in device samples (the read-out's rest value, spec 016).
+    pub(crate) fn hang_samples(&self) -> u64 {
+        self.half.hang_samples()
+    }
+
+    /// Spec 016 (research R-01, R-04): writes the record group into `m` (meters whose stage
+    /// did not run keep their rest values) and clears the accumulators.
+    pub(crate) fn finalize_into(&mut self, m: &mut crate::pipeline::Meters) {
+        #[cfg(feature = "__test-hooks")]
+        let mutation = self.half.mutation;
+        m.input_peak = narrow_out(core::mem::replace(&mut self.input_peak, 0.0));
+        #[cfg(feature = "__test-hooks")]
+        if mutation.skip_clear {
+            self.input_peak = f64::from(m.input_peak);
+        }
+        m.limiter_input_peak = narrow_out(core::mem::replace(&mut self.limiter_input_peak, 0.0));
+        if self.run_limiter {
+            let vc_max = self.limiter.take_vc_max();
+            #[cfg(feature = "__test-hooks")]
+            let vc_max = if mutation.gain_from_state_after_update {
+                self.limiter.state()
+            } else {
+                vc_max
+            };
+            m.gain_reduction_db = self.limiter.reduction_db_at(vc_max) as f32;
+            m.hold_charge = self.limiter.charge() as f32;
+        }
+        self.half.finalize_into(m);
+    }
+
+    /// Test-only: stage 4's output before the clamp for host sample `x`, when a device sample
+    /// is due; nothing after it runs (spec 016 research R-06).
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn stage4_trace(&mut self, x: f32) -> Option<f64> {
+        let x = self.front(x);
+        let d = match &mut self.down {
+            None => x,
+            Some(down) => down.push(x)?,
+        };
+        Some(self.half.stage4_only(d))
+    }
+
+    /// Test-only: the spec 016 mutants (research R-12).
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn mutate_meters(&mut self, m: &crate::__test_hooks::MeterMutation) {
+        self.half.mutation = *m;
+    }
+
+    /// Test-only: the limiter's `v_limit`, V (spec 016 research R-07).
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn limiter_v_limit(&self) -> f64 {
+        self.limiter.v_limit()
     }
 
     /// The event the last `push` generated, if any, handed out once (plan review P10).
@@ -612,6 +769,8 @@ impl RecordPath {
         }
         self.half.reset();
         self.counters.reset();
+        self.input_peak = 0.0;
+        self.limiter_input_peak = 0.0;
     }
 
     /// Test-only: stages 1 – 2 altered by `m` (spec 012 T033).
@@ -658,6 +817,13 @@ pub(crate) struct PlaybackPath {
     front_tap: bool,
     latency: u32,
     drain: u32,
+    /// Spec 016 FR-003 (i): the largest absolute host sample of the current call after stage
+    /// 10 and the conversion, before the chain; cleared at finalization (research R-02).
+    reconstruction_peak: f64,
+    /// Spec 016 (research R-03): the playback group is read by the player, and by the one-pass
+    /// at a tap at or after stage 10 (the interpolator also runs at the three taps before it,
+    /// where the spec says the group rests).
+    meter_playback: bool,
 }
 
 impl PlaybackPath {
@@ -683,6 +849,8 @@ impl PlaybackPath {
             front_tap,
             latency: 0,
             drain: 0,
+            reconstruction_peak: 0.0,
+            meter_playback: !honour_tap || settings.tap.is_after_stage_10(), // 016 research R-03
         };
         path.derive_figures(plan);
         path
@@ -756,7 +924,25 @@ impl PlaybackPath {
             None => self.pending.take()?,
             Some(up) => up.try_next_host()?,
         };
+        // Spec 016 FR-003 (i): accumulated unconditionally, finalized only when the group is read.
+        let a = y.abs();
+        if a > self.reconstruction_peak {
+            self.reconstruction_peak = a;
+        }
         Some(narrow_out(self.chain.process(y)))
+    }
+
+    /// Spec 016 (research R-01, R-03): writes the playback group into `m` when it is read
+    /// (otherwise `m` keeps its rest values) and clears the accumulators.
+    pub(crate) fn finalize_into(&mut self, m: &mut crate::pipeline::Meters) {
+        let peak = core::mem::replace(&mut self.reconstruction_peak, 0.0);
+        if self.meter_playback {
+            m.reconstruction_peak = narrow_out(peak);
+            self.chain.finalize_into(m);
+        } else {
+            let mut unused = crate::pipeline::Meters::default();
+            self.chain.finalize_into(&mut unused);
+        }
     }
 
     /// The path's latency in host samples: round(D + τ_play · host / 6000) (spec 006 FR-016).
@@ -780,6 +966,7 @@ impl PlaybackPath {
         }
         self.pending = None;
         self.chain.reset();
+        self.reconstruction_peak = 0.0;
     }
 
     /// Test-only: stage 10 with other coefficients (the SC-007 mutation tests, spec 004 T024);

@@ -22,3 +22,9 @@ echo "smoke --manifest matches the Rust example"
 cargo run -q -p rr_dr60_harness --example control_manifest > target/example-controls.txt
 diff target/smoke-controls.txt target/example-controls.txt
 echo "smoke --controls matches the Rust example"
+# Spec 016 SC-004: the C program's meter rows equal the Rust example's, byte for byte (floats as
+# bit patterns on both sides).
+./target/smoke --meters > target/smoke-meters.txt
+cargo run -q -p rr_dr60_harness --example meters_rows -- --stimulus clamp_square --config meters_default_clamp --rate 48000 > target/example-meters.txt
+diff target/smoke-meters.txt target/example-meters.txt
+echo "smoke --meters matches the Rust example"

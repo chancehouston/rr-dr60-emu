@@ -276,6 +276,32 @@ pub struct GoldenEntry {
     /// control's tail).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub own_length: Option<u64>,
+    /// Spec 016 (contracts/api.md › Golden format): the meter read-out per block. Present in
+    /// meters-file entries only; absent (and not serialized) in the nine earlier files, which
+    /// therefore read unchanged (FR-012).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meters: Option<MetersGolden>,
+}
+
+/// Spec 016: the read-out rows of one entry (data-model.md › MetersGolden), each row the
+/// eleven figures as `meters_checks::row` prints them (f32s as hex bit patterns).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MetersGolden {
+    /// The one-pass block length (host samples).
+    pub block_len: u32,
+    /// The one-pass read-out after each block.
+    pub blocks: Vec<String>,
+    /// The read-out after each `record` call (`RECORD_BLOCK` samples).
+    pub record_blocks: Vec<String>,
+    /// The read-out after the stop (the flush's).
+    pub flush: Option<String>,
+    /// The read-out after each `play` call before the drain (`PLAY_BLOCK` samples).
+    pub play_blocks: Vec<String>,
+    /// The read-out after each `play` call of the drain.
+    pub drain_blocks: Vec<String>,
+    /// A SHA-256 over the rows in place of the rows (none at v1: every stimulus is 0.5 s).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
 }
 
 /// The VAS part of a golden entry (specs/003-vas/contracts/golden-format.md).
@@ -416,6 +442,7 @@ pub fn entry(stimulus: &str, config: &str, host_rate_hz: u32, output: &[f32]) ->
         speed_changes: None,
         place: None,
         own_length: None,
+        meters: None,
     }
 }
 
@@ -1466,6 +1493,190 @@ pub fn committed_mic() -> GoldenFile {
 /// (012 FR-014).
 pub fn path_mic() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-mic-v1.json")
+}
+
+/// Spec 016 meters golden stimuli (data-model.md › MetersGolden), 0.5 s each, sorted.
+pub const METERS_STIMULI: [&str; 4] = [
+    "clamp_square",
+    "limiter_step",
+    "vas_burst",
+    "voiced_m20_half",
+];
+
+/// Spec 016 meters golden configurations, sorted.
+pub const GOLDEN_METERS_CONFIGS: [&str; 6] = [
+    "limiter_clamp_011",
+    "meters_default",
+    "meters_default_clamp",
+    "meters_short_hang",
+    "meters_short_hang_mute",
+    "output_only_amp",
+];
+
+/// A spec 016 stimulus at `rate` (research R-10).
+///
+/// # Panics
+///
+/// On an unknown name.
+pub fn meters_stimulus(name: &str, rate: u32) -> Vec<f32> {
+    use crate::meters_checks as mc;
+    let f = f64::from(rate);
+    match name {
+        "voiced_m20_half" => stimulus::voiced(f, 0.5, -20.0, 0x0D60),
+        "vas_burst" => mc::vas_burst(rate),
+        "limiter_step" => stimulus::tone_at_phase(
+            1000.0,
+            9.0, // 10 dB over the −1 dBFS knee (A-028)
+            stimulus::peak_phase(1000.0, rate),
+            f,
+            (0.5 * f) as usize,
+        ),
+        "clamp_square" => mc::clamp_square(rate, 0.5),
+        other => panic!("unknown stimulus {other:?}"),
+    }
+}
+
+/// Spec 016 FR-012 (contracts/api.md › Golden format): 4 stimuli × 6 configurations × 7 rates,
+/// each entry with the one-pass output's digest (the audio) and the read-out rows of the
+/// one-pass, the record calls, the flush, the play calls and the drain. With `bless` the tap
+/// and count identities are asserted on every route-output entry (the limiter-input,
+/// reconstruction and route peaks against clamp-off twins at the taps; the output-clamp count
+/// against the clamp-off twin), and each short-hang entry must hold a paused row and an event.
+pub fn generate_meters(make: Make<'_>, bless: bool) -> GoldenFile {
+    use crate::meters_checks::{self as mc, ONE_PASS_BLOCK, peak_of, row};
+    use crate::split_checks::{self, PLAY_BLOCK, RECORD_BLOCK};
+    use rr_dr60::{Tap, VasEvent};
+    let mut entries = Vec::new();
+    for &s in &METERS_STIMULI {
+        for &c in &GOLDEN_METERS_CONFIGS {
+            for rate in configs::all_rates() {
+                let settings = configs::settings(c, rate);
+                let x = meters_stimulus(s, rate);
+                let mut p = make(settings);
+                let blocks = mc::one_pass_blocks(&mut p, &x, ONE_PASS_BLOCK);
+                let y: Vec<f32> = blocks
+                    .iter()
+                    .flat_map(|b| b.output.iter().copied())
+                    .collect();
+                let mut e = entry(s, c, rate, &y);
+                e.seed = Some(settings.seed);
+                e.counter = Some(0);
+                if bless {
+                    let tag = format!("{s}/{c}/{rate} Hz");
+                    let twin = |tap: Tap, clamp: bool| {
+                        let mut t = settings;
+                        t.tap = tap;
+                        t.output.clamp_enabled = clamp;
+                        let mut q = make(t);
+                        mc::one_pass_blocks(&mut q, &x, ONE_PASS_BLOCK)
+                    };
+                    if settings.tap == Tap::RouteOutput {
+                        let amp = twin(Tap::AfterMicAmp, false);
+                        let play = twin(Tap::AfterPlayback, false);
+                        let route = twin(Tap::RouteOutput, false);
+                        for (i, b) in blocks.iter().enumerate() {
+                            assert_eq!(
+                                b.meters.limiter_input_peak.to_bits(),
+                                peak_of(&amp[i].output).to_bits(),
+                                "{tag} block {i}: the limiter-input peak vs the AfterMicAmp tap"
+                            );
+                            assert_eq!(
+                                b.meters.reconstruction_peak.to_bits(),
+                                peak_of(&play[i].output).to_bits(),
+                                "{tag} block {i}: the reconstruction peak vs the AfterPlayback tap"
+                            );
+                            assert_eq!(
+                                b.meters.route_peak.to_bits(),
+                                peak_of(&route[i].output).to_bits(),
+                                "{tag} block {i}: the route peak vs the clamp-off RouteOutput tap"
+                            );
+                            let want = mc::clamp_diff_count(&b.output, &route[i].output);
+                            assert_eq!(
+                                b.meters.output_clamp_count, want,
+                                "{tag} block {i}: the output-clamp count vs the clamp-off twin"
+                            );
+                        }
+                    }
+                    if c.starts_with("meters_short_hang") && s == "vas_burst" {
+                        assert!(
+                            blocks.iter().any(|b| b.meters.vas_paused),
+                            "{tag}: no paused row (016 research R-10)"
+                        );
+                        assert!(
+                            blocks.iter().any(|b| !b.events.is_empty()),
+                            "{tag}: no event (016 research R-10)"
+                        );
+                    }
+                }
+                // Record-then-play in the harness's block sizes.
+                let mut q = make(settings);
+                q.start_recording().expect("idle");
+                let mut ev = vec![VasEvent::default(); q.max_record_events(RECORD_BLOCK)];
+                let mut record_blocks = Vec::new();
+                for chunk in x.chunks(RECORD_BLOCK) {
+                    let info = q.record(chunk, &mut ev).expect("recording");
+                    assert!(info.stopped.is_none(), "memory full");
+                    record_blocks.push(row(&q.meters()));
+                }
+                let before_stop = q.meters();
+                let _ = q.stop_recording(&mut ev).expect("recording");
+                // The flush's row exactly when the engine finalized one (FR-001): the read-out moved.
+                let flush = (q.meters() != before_stop).then(|| row(&q.meters()));
+                let number = q.memory_status().count;
+                let own =
+                    split_checks::playback_len(q.recording_length(number).expect("kept"), rate);
+                q.start_playback(number).expect("a recording");
+                let (mut play_blocks, mut drain_blocks) = (Vec::new(), Vec::new());
+                let mut produced = 0u64;
+                loop {
+                    let mut buf = vec![0.0f32; PLAY_BLOCK];
+                    let info = q.play(&mut buf).expect("playing");
+                    produced += info.produced as u64;
+                    if produced > own {
+                        drain_blocks.push(row(&q.meters()));
+                    } else {
+                        play_blocks.push(row(&q.meters()));
+                    }
+                    if info.finished {
+                        break;
+                    }
+                }
+                e.meters = Some(MetersGolden {
+                    block_len: ONE_PASS_BLOCK as u32,
+                    blocks: blocks.iter().map(|b| row(&b.meters)).collect(),
+                    record_blocks,
+                    flush,
+                    play_blocks,
+                    drain_blocks,
+                    digest: None,
+                });
+                entries.push(e);
+            }
+        }
+    }
+    GoldenFile {
+        format: "rr_dr60-golden".into(),
+        version: 1,
+        library_version: rr_dr60::VERSION.into(),
+        entries,
+    }
+}
+
+/// The committed spec 016 meters golden file.
+///
+/// # Panics
+///
+/// If the embedded file is not valid golden JSON.
+pub fn committed_meters() -> GoldenFile {
+    serde_json::from_str(include_str!("../golden/golden-meters-v1.json"))
+        .expect("valid embedded meters golden file")
+}
+
+/// Path of the spec 016 meters golden file. Bless it only with
+/// `RR_DR60_BLESS=meters cargo test -p rr_dr60_harness --test golden_meters`, with a CHANGELOG
+/// entry.
+pub fn path_meters() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-meters-v1.json")
 }
 
 /// The committed spec 011 volume-ramp golden file.

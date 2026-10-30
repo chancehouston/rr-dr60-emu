@@ -151,6 +151,14 @@ pub(crate) struct OutputChain {
     /// point is the route output. The player's return point is always the route output; the
     /// one-pass's is the configured tap, so the per-stage taps are never bounded.
     clamp: bool,
+    /// Spec 016 (research R-03): the route peak and the output-clamp count are read only when
+    /// the return point is the route output (the player always; the one-pass at that tap).
+    meter_route: bool,
+    /// Spec 016 FR-003 (j): the largest absolute sample of the current call at the route
+    /// output before the bound; cleared at finalization.
+    route_peak: f64,
+    /// Spec 016 FR-003 (k): the host samples of the current call the bound changed.
+    clamp_count: u32,
     /// The bound's two ends: in production always −1.0 and +1.0 (A-042: the route's full
     /// scale); fields only so the mutation tests can move them (`clamp_bound`,
     /// `clamp_positive_only`).
@@ -227,6 +235,9 @@ impl OutputChain {
             // 010 FR-003: only the route-output tap is bounded; the gate is decided here, never
             // read from the settings per sample.
             clamp: clamp_enabled && tap == Tap::RouteOutput,
+            meter_route: tap == Tap::RouteOutput, // 016 research R-03
+            route_peak: 0.0,
+            clamp_count: 0,
             bound_lo: -1.0, // A-042: the route's full scale (spec 010 FR-001)
             bound_hi: 1.0,
             vol_hpf: FirstOrder::new(c::VOL_HPF[i]), // A-031: 32 Hz, both routes
@@ -395,10 +406,33 @@ impl OutputChain {
     #[inline(always)]
     pub(crate) fn process(&mut self, y: f64) -> f64 {
         let r = self.inner(y);
+        // Spec 016 FR-003 (j), (k): the peak before the bound; the count of bounded samples
+        // (`bound` returns `r` bit-exact inside the bound, so the test is exact).
+        if self.meter_route {
+            let a = r.abs();
+            if a > self.route_peak {
+                self.route_peak = a;
+            }
+        }
         if self.clamp {
-            bound(r, self.bound_lo, self.bound_hi)
+            let b = bound(r, self.bound_lo, self.bound_hi);
+            if b != r {
+                self.clamp_count += 1;
+            }
+            b
         } else {
             r
+        }
+    }
+
+    /// Spec 016 (research R-01): writes the route figures into `m` when the return point is
+    /// the route output (otherwise `m` keeps its rest values) and clears the accumulators.
+    pub(crate) fn finalize_into(&mut self, m: &mut crate::pipeline::Meters) {
+        let peak = core::mem::replace(&mut self.route_peak, 0.0);
+        let count = core::mem::replace(&mut self.clamp_count, 0);
+        if self.meter_route {
+            m.route_peak = crate::sanitize::narrow_out(peak);
+            m.output_clamp_count = count;
         }
     }
 
@@ -474,6 +508,8 @@ impl OutputChain {
         self.speaker_shelf.reset();
         self.ear_in.reset();
         self.ear_out.reset();
+        self.route_peak = 0.0;
+        self.clamp_count = 0;
     }
 
     /// Whether any output stage runs (the drain grows by [`OutputChain::n_out`] if so).

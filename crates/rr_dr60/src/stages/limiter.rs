@@ -142,6 +142,11 @@ pub(crate) struct Limiter {
     ceiling_fs: f64,
     /// `ln(K1)`, for the closed-form inverse of the gain law.
     ln_k1: f64,
+    /// Spec 016 (the per-block meters, research R-02): the largest entry voltage of the
+    /// current call among the samples that went through the gain law (above the floor), so the
+    /// call's deepest applied gain is `a(vc_max)`; 0.0 when none did. Taken and cleared at
+    /// each call's finalization.
+    vc_max: f64,
     /// Basic operations and transcendental calls so far (bounded-work tests).
     #[cfg(feature = "op-count")]
     pub(crate) ops: u64,
@@ -200,6 +205,7 @@ impl Limiter {
             dis_b5: k_dis / BETA5,
             ceiling_fs: vbe6 / (KDIV * V_FS),
             ln_k1,
+            vc_max: 0.0,
             #[cfg(feature = "op-count")]
             ops: 0,
             #[cfg(feature = "op-count")]
@@ -242,6 +248,10 @@ impl Limiter {
         } else {
             let e = exp(vc * INV_2VT);
             let a = 1.0 / (1.0 + e * INV_K1);
+            // Spec 016 (research R-02): one compare, only above the floor.
+            if vc > self.vc_max {
+                self.vc_max = vc;
+            }
             #[cfg(feature = "op-count")]
             {
                 self.ops += 6;
@@ -301,6 +311,38 @@ impl Limiter {
     /// Returns to the freshly created state: capacitor discharged (FR-014).
     pub(crate) fn reset(&mut self) {
         self.vc = 0.0;
+        self.vc_max = 0.0;
+    }
+
+    /// Spec 016 (research R-02, R-07): the largest entry voltage of the call so far, cleared for
+    /// the next call.
+    pub(crate) fn take_vc_max(&mut self) -> f64 {
+        core::mem::replace(&mut self.vc_max, 0.0)
+    }
+
+    /// Spec 016 FR-002 (c): the attenuation the gain law applies at entry voltage `vc`, in
+    /// non-negative dB; exactly 0 below the floor, where the gain is exactly 1.0 (R-03).
+    pub(crate) fn reduction_db_at(&self, vc: f64) -> f64 {
+        if vc < self.v_floor {
+            0.0
+        } else {
+            let a = 1.0 / (1.0 + exp(vc * INV_2VT) * INV_K1);
+            -20.0 * ln(a) / LN_10
+        }
+    }
+
+    /// Spec 016 FR-002 (d): the hold as a fraction of the hold at the model's deepest
+    /// attenuation (`MAX_ATTEN_DB`, an engineering target, 005 R-03): `vc / v_limit`, at most
+    /// 1 (`process` caps `vc` at `v_limit`); settings-independent, since `v_limit` depends on
+    /// `K1` alone.
+    pub(crate) fn charge(&self) -> f64 {
+        (self.vc / self.v_limit).min(1.0)
+    }
+
+    /// `v_limit` in volts (the charge's denominator; the `limiter_v_limit` test hook).
+    #[cfg(any(test, feature = "__test-hooks"))]
+    pub(crate) fn v_limit(&self) -> f64 {
+        self.v_limit
     }
 
     /// The capacitor voltage, V (tests and the harness's `limiter_state` hook).
@@ -882,5 +924,96 @@ mod tests {
             "{worst_trans} transcendental calls in one sample"
         );
         assert!(worst_trans == 2, "the charging path was not exercised");
+    }
+}
+
+/// Spec 016 (the per-block meters): the charge scale and the gain-from-voltage helper, pinned
+/// to `tools/agc-model/limiter_model.py`'s "## Charge (spec 016)" print (T003, 2026-10-30).
+#[cfg(test)]
+mod meters_tests {
+    use super::*;
+    use crate::settings::AgcSettings;
+
+    fn default_limiter() -> Limiter {
+        Limiter::new(&AgcSettings::DEVICE, 48_000)
+    }
+
+    /// `v_limit` equals the script's 1.27538 V (research R-07: the harness divides by the
+    /// script's literal, so the engine's value must agree with it closely).
+    #[test]
+    fn v_limit_matches_the_script() {
+        let l = default_limiter();
+        assert!((l.v_limit() - 1.27538).abs() < 1e-4, "{}", l.v_limit());
+    }
+
+    /// The landmarks of the hold law (FR-006), from the closed-form inverse: floor 0.1344,
+    /// 1 dB 0.7269, 10 dB 0.8441, 20 dB 0.9022, 40 dB 1.0000.
+    #[test]
+    fn charge_landmarks() {
+        let l = default_limiter();
+        let ln_k1 = ln(K1);
+        let vc_of_gain = |a: f64| TWO_VT * (ln_k1 + ln((1.0 - a) / a));
+        let ratio = |a: f64| vc_of_gain(a) / l.v_limit();
+        for (label, a, want) in [
+            ("floor", 1.0 - UNITY_DEVIATION, 0.1344),
+            ("1 dB", db_to_amplitude(-1.0), 0.7269),
+            ("10 dB", db_to_amplitude(-10.0), 0.8441),
+            ("20 dB", db_to_amplitude(-20.0), 0.9022),
+            ("40 dB", db_to_amplitude(-40.0), 1.0),
+        ] {
+            let r = ratio(a);
+            assert!((r - want).abs() < 1e-3, "{label}: {r} vs {want}");
+        }
+        // The engine's charge at those voltages (clamped to 1 at the cap).
+        let mut l2 = default_limiter();
+        l2.vc = vc_of_gain(db_to_amplitude(-10.0));
+        assert!((l2.charge() - 0.8441).abs() < 1e-3);
+        l2.vc = l2.v_limit;
+        assert_eq!(l2.charge(), 1.0);
+    }
+
+    /// The reduction at an entry voltage: exactly 0 below the floor, 1 dB at the 1 dB landmark,
+    /// 40 dB at the cap; monotone in `vc` (research R-02).
+    #[test]
+    fn reduction_db_at_voltage() {
+        let l = default_limiter();
+        let ln_k1 = ln(K1);
+        let vc_of_gain = |a: f64| TWO_VT * (ln_k1 + ln((1.0 - a) / a));
+        assert_eq!(l.reduction_db_at(0.0), 0.0);
+        assert_eq!(l.reduction_db_at(l.v_floor * 0.999), 0.0);
+        assert!((l.reduction_db_at(vc_of_gain(db_to_amplitude(-1.0))) - 1.0).abs() < 1e-9);
+        assert!((l.reduction_db_at(vc_of_gain(db_to_amplitude(-10.0))) - 10.0).abs() < 1e-9);
+        assert!((l.reduction_db_at(l.v_limit) - 40.0).abs() < 1e-6);
+        let mut last = 0.0;
+        for k in 0..100 {
+            let r = l.reduction_db_at(l.v_limit * f64::from(k) / 99.0);
+            assert!(r >= last);
+            last = r;
+        }
+    }
+
+    /// `vc_max` is the largest entry voltage among the samples that went through the gain law,
+    /// taken once; a sub-floor run leaves it 0 (the gain is exactly 1.0 there).
+    #[test]
+    fn vc_max_is_the_largest_entry_voltage_and_is_taken_once() {
+        let mut l = default_limiter();
+        for _ in 0..200 {
+            l.process(0.01);
+        }
+        assert_eq!(l.take_vc_max(), 0.0, "a sub-knee run never charges");
+        // A loud run: the entry voltage rises monotonically, so vc_max is the entry voltage of
+        // the last sample that went through the law.
+        let mut entry_last = 0.0;
+        for i in 0..2000 {
+            let x = if i % 2 == 0 { 2.5 } else { -2.5 };
+            if l.vc >= l.v_floor {
+                entry_last = l.vc;
+            }
+            l.process(x);
+        }
+        let taken = l.take_vc_max();
+        assert_eq!(taken, entry_last);
+        assert_eq!(l.take_vc_max(), 0.0, "cleared by the take");
+        assert!(l.charge() > 0.7, "{}", l.charge());
     }
 }

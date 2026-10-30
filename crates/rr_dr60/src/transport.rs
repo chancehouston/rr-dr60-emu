@@ -294,6 +294,9 @@ impl Pipeline {
         }
         let mut info = RecordInfo::default();
         let _ = self.feed(input, events, &mut info);
+        if !input.is_empty() {
+            self.finalize_record(); // 016 FR-001: a non-empty call
+        }
         Ok(info)
     }
 
@@ -350,6 +353,9 @@ impl Pipeline {
                 Some(result) => result,
                 None => self.close_recording(events, &mut flush),
             };
+            if pre_encoder > 0 {
+                self.finalize_record(); // 016 FR-001: the flush's figures
+            }
             return Ok(StopOutcome {
                 flush,
                 result,
@@ -392,6 +398,9 @@ impl Pipeline {
             Some(result) => result,
             None => self.close_recording(events, &mut flush),
         };
+        if pre_encoder > 0 || fed > 0 {
+            self.finalize_record(); // 016 FR-001: the flush's figures
+        }
         Ok(StopOutcome {
             flush,
             result,
@@ -545,13 +554,17 @@ impl Pipeline {
         if finished {
             transport.state = State::Idle;
         }
-        Ok(PlayInfo {
+        let info = PlayInfo {
             produced,
             finished,
             frames,
             frame_index: transport.frame_index,
             place,
-        })
+        };
+        if produced > 0 {
+            self.finalize_play(); // 016 FR-001: a non-empty call
+        }
+        Ok(info)
     }
 
     /// Stops the playback at once, without the drain (spec 006 FR-008). Real-time safe.
