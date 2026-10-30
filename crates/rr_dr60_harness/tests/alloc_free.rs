@@ -904,3 +904,117 @@ fn changes_allocate_nothing() {
         unsafe { rr_dr60_destroy(handle) };
     }
 }
+
+/// Spec 017 FR-008: the record-side schedule call, `record_with_changes` with a full buffer,
+/// `stop_recording_with_changes`, `input_position`, `clock_of` and `record_landing` allocate
+/// nothing, in Rust and through the C API.
+#[test]
+fn record_changes_allocate_nothing() {
+    use rr_dr60::changes::{MAX_CHANGES_PER_CALL, clock_of, record_landing};
+    use rr_dr60::{ChangeEntry, Stream};
+    use rr_dr60_ffi::{
+        RrDr60ChangeEntry, RrDr60RecordInfo, RrDr60StopOutcome, rr_dr60_clock_of,
+        rr_dr60_input_position, rr_dr60_record_landing, rr_dr60_record_with_changes,
+        rr_dr60_schedule_change, rr_dr60_start_recording, rr_dr60_stop_recording_with_changes,
+    };
+    let _turn = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let input = stimulus::noise(0x017, 1024);
+    let mut log = vec![ChangeEntry::default(); MAX_CHANGES_PER_CALL];
+    let mut clog = vec![RrDr60ChangeEntry::default(); MAX_CHANGES_PER_CALL];
+    let hang = rr_dr60::controls()
+        .iter()
+        .position(|e| e.identifier == "vas.hang_ms")
+        .unwrap() as u32;
+    for &rate in configs::measurement_rates() {
+        let mut s = rr_dr60::Settings::new(rate);
+        s.speech_codec_enabled = false;
+        let mut p = Pipeline::new(s).unwrap();
+        let c = configs::c_settings(&s);
+        let mut handle: *mut RrDr60Pipeline = core::ptr::null_mut();
+        // SAFETY: a valid settings struct and an out-pointer.
+        let st = unsafe { rr_dr60_create(&c, &mut handle) };
+        assert_eq!(st, RrDr60Status::Ok);
+        let mut info = RrDr60RecordInfo::default();
+        let mut outcome = RrDr60StopOutcome::default();
+        let (mut count, mut total, mut pos, mut clock, mut k) = (0usize, 0u64, 0u64, 0u32, 0u64);
+        MEASURING.with(|m| m.set(true));
+        let before = counts();
+        for i in 0..64u64 {
+            p.schedule_change(Stream::Record, 10 + i, hang, 50.0 + i as f64, i + 1)
+                .unwrap();
+        }
+        p.start_recording().unwrap();
+        let rinfo = p.record_with_changes(&input, &mut [], &mut log).unwrap();
+        let rp = p.input_position(Stream::Record).unwrap();
+        let rstop = p.stop_recording_with_changes(&mut [], &mut log).unwrap();
+        let rc = clock_of(hang).unwrap();
+        let rk = record_landing(1000, rate).unwrap();
+        // SAFETY: the handle is live; the buffers are 1024 samples; the log holds 139 entries.
+        let st1 = unsafe {
+            for i in 0..64u64 {
+                assert_eq!(
+                    rr_dr60_schedule_change(handle, 2, 10 + i, hang, 50.0 + i as f64, i + 1),
+                    RrDr60Status::Ok
+                );
+            }
+            assert_eq!(rr_dr60_start_recording(handle), RrDr60Status::Ok);
+            rr_dr60_record_with_changes(
+                handle,
+                input.as_ptr(),
+                1024,
+                &mut info,
+                core::ptr::null_mut(),
+                0,
+                clog.as_mut_ptr(),
+                MAX_CHANGES_PER_CALL,
+                &mut count,
+                &mut total,
+            )
+        };
+        // SAFETY: as above.
+        let st2 = unsafe { rr_dr60_input_position(handle, 2, &mut pos) };
+        // SAFETY: as above.
+        let st3 = unsafe {
+            rr_dr60_stop_recording_with_changes(
+                handle,
+                &mut outcome,
+                core::ptr::null_mut(),
+                0,
+                clog.as_mut_ptr(),
+                MAX_CHANGES_PER_CALL,
+                &mut count,
+                &mut total,
+            )
+        };
+        // SAFETY: valid out-pointers.
+        let st4 = unsafe { rr_dr60_clock_of(hang, &mut clock) };
+        // SAFETY: valid out-pointers.
+        let st5 = unsafe { rr_dr60_record_landing(1000, rate, &mut k) };
+        let after = counts();
+        MEASURING.with(|m| m.set(false));
+        assert_eq!(
+            (st1, st2, st3, st4, st5),
+            (
+                RrDr60Status::Ok,
+                RrDr60Status::Ok,
+                RrDr60Status::Ok,
+                RrDr60Status::Ok,
+                RrDr60Status::Ok
+            )
+        );
+        assert_eq!(rinfo.changes, 64);
+        assert_eq!(rp, 1024);
+        assert_eq!(rstop.changes, 0);
+        assert_eq!(rc, rr_dr60::Clock::Input);
+        assert_eq!(rk, record_landing(1000, rate).unwrap());
+        assert_eq!(pos, 1024);
+        assert_eq!(clock, 0);
+        assert_eq!(k, rk);
+        assert_eq!(
+            before, after,
+            "{rate} Hz: allocations in the record-side calls"
+        );
+        // SAFETY: a live handle.
+        unsafe { rr_dr60_destroy(handle) };
+    }
+}

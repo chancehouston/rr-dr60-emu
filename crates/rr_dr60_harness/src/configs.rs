@@ -287,6 +287,16 @@ pub fn settings(name: &str, host_rate_hz: u32) -> Settings {
         // Spec 016 (data-model.md › MetersGolden): the 0.14 default and with the output clamp
         // on; `settings_011` with the limiter and the ADC clamp on; the gate at a 50 ms hang and
         // a 20 ms onset (drop or mute) so a 0.5 s stimulus pauses and resumes within the rows.
+        // Spec 017 (research R-12): the 0.16 default front with the capsule on and the speech
+        // codec bypassed, drop or mute mode, and with the codec on (the frame identity).
+        "record_default" | "record_default_mute" | "record_default_codec" => {
+            s = settings("default_output", host_rate_hz);
+            s.mic = MicSettings::DEVICE;
+            s.speech_codec_enabled = name == "record_default_codec";
+            if name == "record_default_mute" {
+                s.vas.mode = VasMode::Mute;
+            }
+        }
         "meters_default" => s = Settings::new(host_rate_hz),
         "meters_default_clamp" => {
             s = Settings::new(host_rate_hz);
