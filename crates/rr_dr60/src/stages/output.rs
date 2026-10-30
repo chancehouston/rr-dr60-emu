@@ -465,7 +465,10 @@ impl OutputChain {
         self.recompute_knee();
     }
 
-    /// The battery's ceiling factor in force (the meters and the test hook).
+    /// The battery's ceiling factor in force (the unit tests and the test hook; the meters read
+    /// the field directly). Gated like its only callers, or the feature-less builds see dead
+    /// code under `-D warnings` (spec 016's lesson).
+    #[cfg(any(test, feature = "__test-hooks"))]
     pub(crate) fn battery_factor(&self) -> f64 {
         self.batt
     }
@@ -1593,7 +1596,7 @@ mod battery_tests {
         let mut s = Settings::new(rate);
         s.tap = Tap::AfterVolumeAmp;
         let mut c = OutputChain::new(&s, false);
-        c.set_controls(Route::Speaker, crate::output::VOLUME_6DB_OVER as f32);
+        c.set_controls(Route::Speaker, crate::output::VOLUME_6DB_OVER);
         c
     }
 

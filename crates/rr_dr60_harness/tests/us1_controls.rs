@@ -8,7 +8,7 @@ use rr_dr60_harness::controls_checks::{
 };
 
 #[test]
-fn twenty_nine_entries_in_order() {
+fn thirty_entries_in_order() {
     // 014 FR-001: live controls first, then the `pub <field>:` order of `Settings` and its
     // sub-structures as declared in settings.rs (the compiler does not check pattern order).
     let text = std::fs::read_to_string(
@@ -44,12 +44,14 @@ fn twenty_nine_entries_in_order() {
             None => want.push(field),
         }
     }
+    // Spec 018: a control added after 0.14 is appended, so no stored index moves.
+    want.push("battery_volts".into());
     let got: Vec<String> = controls()
         .iter()
         .map(|e| e.identifier.to_string())
         .collect();
     assert_eq!(got, want);
-    assert_eq!(got.len(), 29);
+    assert_eq!(got.len(), 30); // 014: 29; spec 018 appends `battery_volts` at index 29
 }
 
 #[test]
@@ -122,10 +124,11 @@ fn literal_kinds_and_timing() {
             "vas.hang_ms",
             "vas.onset_ms",
             "mic.hiss_offset_db",
+            "battery_volts", // spec 018: the twelfth, appended
         ]
     );
-    // Spec 017 FR-010: the eleven live entries are the three output-clock controls and the
-    // eight input-clock values (`clock_of` over all 29).
+    // Spec 017 FR-010: the live entries are the output-clock controls (three, four since spec
+    // 018) and the eight input-clock values (`clock_of` over all 30).
     for (i, e) in controls().iter().enumerate() {
         let clock = rr_dr60::changes::clock_of(i as u32).expect("control");
         let want = if e.paths.contains(rr_dr60::ControlPaths::RECORD) {

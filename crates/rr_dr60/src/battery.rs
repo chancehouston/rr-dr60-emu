@@ -24,7 +24,7 @@ pub const BATTERY_VOLTS_RANGE: (f32, f32) = (c::BATTERY_VOLTS_MIN, c::BATTERY_VO
 /// The default, the nominal mark (V+ 2.8 V, S-002): the ceiling factor is exactly 1, so every
 /// output is bit-identical to the model before spec 018. An app's "fresh" is this value, not the
 /// trajectory's first row.
-pub const DEFAULT_BATTERY_VOLTS: f32 = c::BATTERY_VOLTS_DEFAULT;
+pub const DEFAULT_BATTERY_VOLTS: f32 = c::BATTERY_VOLTS_DEFAULT; // S-002, S-006, S-017; A-056
 
 /// A NiMH pair's steady voltage as A-056 describes it (2.4 – 2.5 V), for an app's preset.
 pub const NIMH_PAIR_VOLTS: f32 = c::BATTERY_NIMH_PAIR_VOLTS;

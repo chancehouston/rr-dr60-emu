@@ -1002,6 +1002,7 @@ impl PlaybackPath {
                 Route::default(),
                 crate::output::VOLUME_REFERENCE,
                 crate::speed::DEFAULT_LEVEL,
+                crate::battery::DEFAULT_BATTERY_VOLTS,
             ),
         };
         path.derive_figures(plan);
@@ -1019,6 +1020,7 @@ impl PlaybackPath {
             self.ctl.apply_due(&mut |a| match a {
                 crate::changes::Apply::Chain(r, v) => chain.set_controls(r, v),
                 crate::changes::Apply::Level(l) => speed(l),
+                crate::changes::Apply::Battery(b) => chain.set_battery(b), // 018
             });
         }
     }
@@ -1061,15 +1063,27 @@ impl PlaybackPath {
     /// stream's pending plain change, applied at the first produced sample (bit-identical to
     /// 0.15's entry-time `set_controls`).
     #[inline]
-    pub(crate) fn begin_call(&mut self, route: Route, volume: f32, level: Option<u8>) {
-        self.ctl.begin_call(route, volume, level);
+    pub(crate) fn begin_call(
+        &mut self,
+        route: Route,
+        volume: f32,
+        level: Option<u8>,
+        battery: f32,
+    ) {
+        self.ctl.begin_call(route, volume, level, battery);
         #[cfg(feature = "__test-hooks")]
         self.ctl.mutant_pop_all_now();
     }
 
     /// The lifecycle rule (spec 015 D3): the stream starts with these values, no entry.
-    pub(crate) fn set_start_values(&mut self, route: Route, volume: f32, level: u8) {
-        self.ctl.set_start_values(route, volume, level);
+    pub(crate) fn set_start_values(&mut self, route: Route, volume: f32, level: u8, battery: f32) {
+        self.ctl.set_start_values(route, volume, level, battery);
+    }
+
+    /// Spec 018: the chain's battery factor in force (the test hook).
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn battery_factor(&self) -> f64 {
+        self.chain.battery_factor()
     }
 
     /// Test-only (spec 015 research R-13): the route switch runs the chain's full reset.

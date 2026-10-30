@@ -108,11 +108,11 @@ The table below is the engine's own **stage manifest**, generated from the libra
 | 8 | Flash memory | assumed | low | S-001, S-002; A-037, A-038, A-039 | item locking (F.LOCK) | 0.8.0 |
 | 9 | Speech decoder (CELP) | assumed | low | S-001, S-002, S-003, S-008, S-009, S-010, S-011, S-012, S-018; A-004, A-040, A-041, A-054 | the device's own decoder (frame length, look-ahead, codebooks, postfilter); its speed method (A-054); pitch-kept speeds | 0.13.0 |
 | 10 | Codec output: DAC and reconstruction filter | assumed | medium | S-002, S-003, S-005, S-007; A-015, A-016, A-026, A-027, A-030 | µ-law expansion, idle noise on the playback side, DAC imaging residue above 3 kHz | 0.4.0 |
-| 11 | Volume control and power amplifier | assumed | medium | S-001, S-002, S-006; A-031, A-043, A-044, A-045 | the 159 Hz corner's knob shift; the clip level's battery and transistor spread; wiper noise; knob speed; the beeps | 0.11.0 |
+| 11 | Volume control and power amplifier | assumed | medium | S-001, S-002, S-006; A-031, A-043, A-044, A-045 | the 159 Hz corner's knob shift; the clip level's spread; the battery's sag; wiper noise; knob speed; the beeps | 0.11.0 |
 | 12 | Speaker | assumed | low | S-001, S-002; A-010, A-042 | this driver's own response (the model is a generic small-speaker template, not a capture); nonlinearity, enclosure, room | 0.9.0 |
 | 13 | Earphone output | assumed | low | S-001, S-002; A-012, A-032, A-042 | the follower's clipping cut-off on loud material; its corners' spread with the transistor's gain; loads other than 16 Ω | 0.9.0 |
 | 14 | Clock | not modeled | — | S-002, S-003, S-016; A-011 |  |  |
-| 15 | Power supply | not modeled | — | S-001, S-002, S-006, S-014, S-015, S-017; A-013, A-056, A-057, A-058 |  |  |
+| 15 | Power supply | assumed | low | S-001, S-002, S-006, S-014, S-015, S-017; A-013, A-056, A-057, A-058 | the 3.3 V converter and its rails; the cells' sag under load; supply noise; the low-battery indicator and cut-off | 0.18.0 |
 <!-- manifest-table:end -->
 
 Nothing in this table claims the emulator sounds like a real RR-DR60. It claims that each stage is built to a stated, traceable description, and that the harness checks the build against that description.

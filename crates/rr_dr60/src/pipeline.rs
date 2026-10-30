@@ -159,6 +159,9 @@ pub struct Pipeline {
     /// Spec 017 D4: the tag of the last landed change per record-side value (by slot), carried
     /// to the other stream's cross-stream landing.
     pub(crate) record_tags: [u64; 8],
+    /// The battery value (spec 018 FR-001): volts of the cell pair, a unit condition; not a
+    /// setting; kept through reset and reconfigure; lands on each stream at its next call.
+    pub(crate) battery_volts: f32,
 }
 
 // Contract (contracts/rust-api.md): `Pipeline` is Send + Sync. Fails to compile if a future
@@ -422,6 +425,22 @@ impl OnePass {
     }
 }
 
+/// Spec 018 FR-001: within `BATTERY_VOLTS_RANGE`, inclusive.
+/// The live controls' values a pipeline starts with (`new`: the defaults; `reconfigure`: the
+/// values kept, spec 013 FR-001 and spec 018 FR-001).
+struct LiveStart {
+    route: Route,
+    volume: f32,
+    speed_level: u8,
+    battery_volts: f32,
+}
+
+#[inline]
+fn battery_in_range(volts: f32) -> bool {
+    let (lo, hi) = crate::battery::BATTERY_VOLTS_RANGE;
+    volts >= lo && volts <= hi
+}
+
 impl Pipeline {
     /// Validates `settings` and allocates every buffer.
     ///
@@ -443,10 +462,13 @@ impl Pipeline {
             settings,
             &plan,
             memory,
-            Route::default(),
-            crate::output::VOLUME_REFERENCE, // A-043
-            0,                               // 012 FR-009: the recording counter starts at 0
-            crate::speed::DEFAULT_LEVEL,     // 013 FR-001 (S-001: level 3)
+            0, // 012 FR-009: the recording counter starts at 0
+            LiveStart {
+                route: Route::default(),
+                volume: crate::output::VOLUME_REFERENCE, // A-043
+                speed_level: crate::speed::DEFAULT_LEVEL, // 013 FR-001 (S-001: level 3)
+                battery_volts: crate::battery::DEFAULT_BATTERY_VOLTS, // 018 FR-001 (A-056: nominal)
+            },
         ))
     }
 
@@ -458,14 +480,20 @@ impl Pipeline {
         settings: Settings,
         plan: &RatePlan,
         memory: Memory,
-        route: Route,
-        volume: f32,
         counter: u64,
-        speed_level: u8,
+        live: LiveStart,
     ) -> Self {
+        let LiveStart {
+            route,
+            volume,
+            speed_level,
+            battery_volts,
+        } = live;
         let mut one_pass = OnePass::new(&settings, plan);
         one_pass.rec.rekey(counter); // 012 FR-009: the next recording's stream
-        one_pass.play.set_start_values(route, volume, speed_level); // 015 D3
+        one_pass
+            .play
+            .set_start_values(route, volume, speed_level, battery_volts); // 015 D3, 018
         let latency = latency_samples(plan, &settings, &one_pass);
         let recorder = RecordPath::new(&settings, plan, false, true);
         Self {
@@ -474,13 +502,15 @@ impl Pipeline {
             latency,
             meters: Meters {
                 hang_remaining_samples: recorder.hang_samples(),
+                battery_ceiling: crate::battery::ceiling_factor(battery_volts), // 018
                 ..Meters::default()
             },
             recorder,
             record_tags: [0; 8],
+            battery_volts,
             player: {
                 let mut p = PlaybackPath::new(&settings, plan, false);
-                p.set_start_values(route, volume, speed_level); // 015 D3
+                p.set_start_values(route, volume, speed_level, battery_volts); // 015 D3, 018
                 p
             },
             memory,
@@ -664,7 +694,9 @@ impl Pipeline {
         value: f64,
         tag: u64,
     ) -> Result<(), Error> {
-        use crate::changes::{LIVE_ROUTE, LIVE_SPEED, LIVE_VOLUME, record_value, slot_of};
+        use crate::changes::{
+            LIVE_BATTERY, LIVE_ROUTE, LIVE_SPEED, LIVE_VOLUME, record_value, slot_of,
+        };
         // Spec 017 FR-001: a record-side value, on the record stream or the one-pass, in the
         // input clock; validated as the setting.
         if let Some(slot) = slot_of(control) {
@@ -691,7 +723,7 @@ impl Pipeline {
             Stream::Record => return Err(Error::ControlNotOnStream { control, stream }),
         };
         let on_stream = match control {
-            LIVE_ROUTE | LIVE_VOLUME => true,
+            LIVE_ROUTE | LIVE_VOLUME | LIVE_BATTERY => true,
             LIVE_SPEED => stream == Stream::Playback,
             _ => false,
         };
@@ -708,6 +740,14 @@ impl Pipeline {
                 let v = (value as f32) + 0.0; // single precision; −0.0 normalized (R-04)
                 if !(0.0..=1.0).contains(&v) {
                     return Err(Error::InvalidVolume { position: v });
+                }
+                f64::from(v)
+            }
+            LIVE_BATTERY => {
+                // Spec 018 FR-001: single precision, the setter's range.
+                let v = (value as f32) + 0.0;
+                if !value.is_finite() || !battery_in_range(v) {
+                    return Err(Error::InvalidBatteryVolts { volts: v });
                 }
                 f64::from(v)
             }
@@ -907,6 +947,34 @@ impl Pipeline {
         self.volume
     }
 
+    /// Sets the battery value, volts of the modeled unit's cell pair (spec 018 FR-001; A-056):
+    /// a live unit condition like the hiss level. The speaker amplifier's clip ceiling follows
+    /// it by the static law [`battery::ceiling_factor`](crate::battery::ceiling_factor) (the
+    /// nominal 1.15 V at the default 3.0 V, about 9.5 dB lower at 2.2 V), moving over a 20 ms
+    /// transition from the first sample of each stream's next producing call; quiet playback
+    /// below the knee is unchanged, the earphone route and recording are unaffected. Kept
+    /// through [`reset`](Self::reset) and [`reconfigure`](Self::reconfigure). The value
+    /// describes the played unit and is set by the user: an app never drives it from the host
+    /// device's battery, a sensor or a timer. Real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidBatteryVolts`] for a value outside
+    /// [`BATTERY_VOLTS_RANGE`](crate::battery::BATTERY_VOLTS_RANGE) (2.2 … 3.0) or not finite;
+    /// the value is unchanged.
+    pub fn set_battery_volts(&mut self, volts: f32) -> Result<(), Error> {
+        if !(volts.is_finite() && battery_in_range(volts)) {
+            return Err(Error::InvalidBatteryVolts { volts });
+        }
+        self.battery_volts = volts;
+        Ok(())
+    }
+
+    /// The battery value (spec 018 FR-001): the most recently set or landed value, in volts.
+    pub fn battery_volts(&self) -> f32 {
+        self.battery_volts
+    }
+
     /// Sets the playback speed level (spec 013 FR-001; A-054): 1 (slowest) … 5 (fastest), 3
     /// normal, the default. The levels play at 3/5, 4/5, 1, 6/5 and 7/5 of normal speed
     /// ([`speed::RATIO_NUMERATORS`](crate::speed::RATIO_NUMERATORS) over
@@ -973,7 +1041,9 @@ impl Pipeline {
     ) -> BlockInfo {
         // Spec 009 FR-009: the controls are read once per call; since 0.16 they land at the
         // call's first produced sample, with the scheduled changes (spec 015 research R-07).
-        self.one_pass.play.begin_call(self.route, self.volume, None);
+        self.one_pass
+            .play
+            .begin_call(self.route, self.volume, None, self.battery_volts);
         // Spec 017 research R-02: the record side's cross-stream pending changes.
         self.one_pass
             .rec
@@ -1038,6 +1108,9 @@ impl Pipeline {
         if let Some(v) = ctl.landed_volume.take() {
             self.volume = v;
         }
+        if let Some(b) = ctl.landed_battery.take() {
+            self.battery_volts = b; // 018
+        }
     }
 
     /// The meter read-out of the last non-empty processing call (spec 016 FR-001): a copy;
@@ -1054,6 +1127,9 @@ impl Pipeline {
         Meters {
             // Spec 017 (restated at the plan): the settings' hang, which a landing moves at once.
             hang_remaining_samples: crate::stages::vas::device_samples(self.settings.vas.hang_ms),
+            // Spec 018: the engine's current factor (1.0 at the default; `Meters::default()`
+            // carries 0.0).
+            battery_ceiling: crate::battery::ceiling_factor(self.battery_volts),
             ..Meters::default()
         }
     }
@@ -1127,11 +1203,18 @@ impl Pipeline {
         self.recorder.clear_schedule();
         self.one_pass.rec.adopt(&self.settings);
         self.recorder.adopt(&self.settings);
-        self.one_pass
-            .play
-            .set_start_values(self.route, self.volume, self.speed_level);
-        self.player
-            .set_start_values(self.route, self.volume, self.speed_level);
+        self.one_pass.play.set_start_values(
+            self.route,
+            self.volume,
+            self.speed_level,
+            self.battery_volts,
+        );
+        self.player.set_start_values(
+            self.route,
+            self.volume,
+            self.speed_level,
+            self.battery_volts,
+        );
     }
 
     /// Applies new settings and resets all path state, as if the pipeline had been created
@@ -1175,10 +1258,13 @@ impl Pipeline {
             settings,
             &plan,
             memory,
-            self.route,
-            self.volume,
             self.transport.counter, // 012 FR-009: the counter never rewinds
-            self.speed_level,       // 013 FR-001: kept by reconfigure
+            LiveStart {
+                route: self.route,
+                volume: self.volume,
+                speed_level: self.speed_level, // 013 FR-001: kept by reconfigure
+                battery_volts: self.battery_volts, // 018 FR-001: kept by reconfigure
+            },
         );
         Ok(())
     }
@@ -2804,6 +2890,7 @@ mod meters_tests {
             rest,
             Meters {
                 hang_remaining_samples: 1500,
+                battery_ceiling: 1.0, // 018: the default's factor
                 ..Meters::default()
             }
         );

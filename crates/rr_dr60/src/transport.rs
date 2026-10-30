@@ -510,8 +510,12 @@ impl Pipeline {
         self.player.reset();
         self.player.set_controls(self.route, self.volume); // spec 009 FR-009
         // Spec 015 D3: the stream starts with the readings, no entry; the schedule is kept.
-        self.player
-            .set_start_values(self.route, self.volume, self.speed_level);
+        self.player.set_start_values(
+            self.route,
+            self.volume,
+            self.speed_level,
+            self.battery_volts,
+        );
         if let Some(dec) = &mut self.decoder {
             dec.reset();
         }
@@ -552,8 +556,12 @@ impl Pipeline {
         }
         // Spec 009 FR-009: the route, the volume and the level land at this call's first
         // produced sample, with the scheduled changes (spec 015 research R-02, R-07).
-        self.player
-            .begin_call(self.route, self.volume, Some(self.speed_level));
+        self.player.begin_call(
+            self.route,
+            self.volume,
+            Some(self.speed_level),
+            self.battery_volts,
+        );
         let mut produced = 0;
         let mut frames = 0;
         let Pipeline {
@@ -692,6 +700,9 @@ impl Pipeline {
         }
         if let Some(l) = ctl.landed_level.take() {
             self.speed_level = l;
+        }
+        if let Some(b) = ctl.landed_battery.take() {
+            self.battery_volts = b; // 018
         }
     }
 

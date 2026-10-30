@@ -21,6 +21,9 @@
  *   rr_dr60_start_recording, rr_dr60_record, rr_dr60_max_record_events,
  *   rr_dr60_stop_recording, rr_dr60_start_playback, rr_dr60_play, rr_dr60_stop_playback,
  *   rr_dr60_set_route, rr_dr60_get_route, rr_dr60_set_volume, rr_dr60_get_volume,
+ *   rr_dr60_set_battery_volts, rr_dr60_get_battery_volts, rr_dr60_battery_ceiling_factor,
+ *   rr_dr60_battery_ceiling_db, rr_dr60_battery_trajectory_row (spec 018; the last three
+ *   need no handle),
  *   rr_dr60_speaker_gain_db, rr_dr60_earphone_gain_db (no handle; spec 009),
  *   rr_dr60_meters (spec 016), rr_dr60_get_state, rr_dr60_memory_status,
  *   rr_dr60_recording_length, rr_dr60_export_len, rr_dr60_record_latency_samples,
@@ -72,6 +75,28 @@
 // `rr_dr60_set_volume` change moves the knob to the new position over this time at every host
 // rate. Equal to the Rust `output::VOLUME_TRANSITION_MS`. A read-only constant, not a setting.
 #define RR_DR60_VOLUME_TRANSITION_MS 20
+
+// The lowest battery value `rr_dr60_set_battery_volts` accepts, volts of the cell pair (spec
+// 018 FR-001; A-056): where the device would show its low-battery indicator and stop. Equal to
+// the Rust `battery::BATTERY_VOLTS_RANGE.0`. A double literal: cast to `float`.
+#define RR_DR60_BATTERY_VOLTS_MIN 2.2
+
+// The highest battery value accepted: fresh cells (spec 018 FR-001; A-056). Equal to the Rust
+// `battery::BATTERY_VOLTS_RANGE.1`.
+#define RR_DR60_BATTERY_VOLTS_MAX 3.0
+
+// The default battery value, the nominal mark (V+ 2.8 V of S-002; spec 018 FR-001): the
+// ceiling factor is exactly 1 and every output equals 0.17's. An app's "fresh" is this value,
+// not the trajectory's first row. Equal to the Rust `battery::DEFAULT_BATTERY_VOLTS`.
+#define RR_DR60_BATTERY_VOLTS_DEFAULT 3.0
+
+// A steady NiMH pair's voltage, a preset value (A-056; spec 018 FR-006). Equal to the Rust
+// `battery::NIMH_PAIR_VOLTS`.
+#define RR_DR60_BATTERY_NIMH_PAIR_VOLTS 2.45
+
+// The rows of the alkaline reference trajectory `rr_dr60_battery_trajectory_row` reads (spec
+// 018 FR-006; A-056, S-017). Equal to the Rust `battery::ALKALINE_TRAJECTORY.len()`.
+#define RR_DR60_BATTERY_TRAJECTORY_ROWS 7
 
 // The number of playback speed levels (spec 013 FR-001; S-001). Equal to the Rust
 // `speed::LEVEL_COUNT`.
@@ -193,6 +218,10 @@ enum RrDr60Status
   // `rr_dr60_input_position` on the playback stream (it has only the output clock); nothing
   // is written.
   RR_DR60_STATUS_NO_SUCH_CLOCK = 29,
+  // `rr_dr60_set_battery_volts`, or `rr_dr60_schedule_change` of the battery value, with a
+  // voltage outside `RR_DR60_BATTERY_VOLTS_MIN` … `RR_DR60_BATTERY_VOLTS_MAX` or not finite;
+  // the value is unchanged and nothing is stored (spec 018 FR-001).
+  RR_DR60_STATUS_INVALID_BATTERY_VOLTS = 30,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -834,14 +863,18 @@ typedef struct RrDr60PlayInfo {
 } RrDr60PlayInfo;
 
 // The meter read-out of the last non-empty processing call (spec 016 FR-001 – FR-003;
-// contracts/api.md): the figures `rr_dr60_meters` fills. 56 bytes, 8-aligned; the caller sets
+// contracts/api.md): the figures `rr_dr60_meters` fills. 64 bytes since 0.18 (56 in 0.16 and
+// 0.17: spec 018 appended `amp_clip_count` and `battery_ceiling`), 8-aligned; the caller sets
 // `struct_size` to `sizeof(RrDr60Meters)`. Every peak is linear full-scale (20·log10 for
 // dBFS), the largest absolute sample at its point, and may exceed 1.0. A figure whose point
 // the call did not reach keeps its rest value: 0 (`vas_paused` 0), except
-// `hang_remaining_samples`, whose rest is the configured hang length.
+// `hang_remaining_samples`, whose rest is the configured hang length, and `battery_ceiling`,
+// whose rest is the factor of the battery value in force.
 typedef struct RrDr60Meters {
-  // Set by the caller to `sizeof(RrDr60Meters)` (56 in this version). Smaller is refused
-  // (`RR_DR60_STATUS_INVALID_ARGUMENT`); larger is accepted and the tail zero-filled.
+  // Set by the caller to `sizeof(RrDr60Meters)` (64 in this version; 56 in 0.16 and 0.17).
+  // Below 56 is refused (`RR_DR60_STATUS_INVALID_ARGUMENT`); 56 … 63 fills the first
+  // `struct_size` bytes, the fields of 0.16, and touches nothing else (a 0.17 binary keeps
+  // working); 64 and above fills every field and zeroes the bytes past 64.
   uint32_t struct_size;
   // The largest absolute input sample after the engine's sanitizing of non-finite samples.
   float input_peak;
@@ -879,6 +912,15 @@ typedef struct RrDr60Meters {
   uint32_t output_clamp_count;
   // Explicit tail padding, written 0.
   uint32_t reserved_016;
+  // The host samples of the call in the speaker amplifier's clip region, above the clipper's
+  // start (0.85 of the ceiling at the battery value in force; A-031, A-056), on the speaker
+  // route with stage 11 on; 0 on the earphone route, with stage 11 bypassed and at a tap
+  // before stage 11 (spec 018 FR-010).
+  uint32_t amp_clip_count;
+  // The battery's ceiling factor in force at the end of the call (spec 018 FR-010; A-056):
+  // `rr_dr60_battery_ceiling_factor` of the value, 1.0 at the default 3.0 V, moving over the
+  // 20 ms transition after a change; 20·log10 for dB. Reported on both routes.
+  float battery_ceiling;
 } RrDr60Meters;
 
 // The engine's readable state, from `rr_dr60_get_state` (spec 006 FR-003, FR-015).
@@ -1547,13 +1589,85 @@ RrDr60Status rr_dr60_set_volume(struct RrDr60Pipeline *pipeline, float position)
 // `pipeline` must be a live handle. `out_position` must be NULL or writable.
 RrDr60Status rr_dr60_get_volume(struct RrDr60Pipeline *pipeline, float *out_position);
 
+// Sets the battery value, volts of the played unit's cell pair (spec 018 FR-001; A-056), at
+// any time including during playback: the speaker amplifier runs on the raw battery, so its
+// clip ceiling scales by the static law `rr_dr60_battery_ceiling_factor` (exactly 1 at the
+// default `RR_DR60_BATTERY_VOLTS_DEFAULT`, where every output equals 0.17's); below the clip
+// knee the output is unchanged; the earphone route and the record path do not move. A change
+// takes effect at the next processing call or `rr_dr60_play` block and moves the factor over a
+// 20 ms transition (`RR_DR60_VOLUME_TRANSITION_MS`; A-045), at once on a stream's first sample,
+// with stage 11 bypassed, on the earphone route and at a route change; it survives
+// `rr_dr60_reset` and `rr_dr60_reconfigure`. The value describes the played unit's cells and
+// is set by the user: never drive it from the host device's battery, a sensor or a timer. Modeled
+// on the circuit (S-002) and the amplifier's datasheet (S-006), not measured. Real-time safe.
+//
+// Returns `RR_DR60_STATUS_INVALID_BATTERY_VOLTS` for a value outside
+// `RR_DR60_BATTERY_VOLTS_MIN` … `RR_DR60_BATTERY_VOLTS_MAX` or not finite; the value is then
+// unchanged.
+//
+// # Safety
+//
+// `pipeline` must be NULL or a live handle.
+RrDr60Status rr_dr60_set_battery_volts(struct RrDr60Pipeline *pipeline, float volts);
+
+// Writes the battery value to `*out_volts` (spec 018 FR-001): the last valid setting or the last
+// landed scheduled change, not the factor during a transition (`rr_dr60_meters` reads that).
+// Real-time safe.
+//
+// # Safety
+//
+// `pipeline` must be NULL or a live handle. `out_volts` must be NULL or writable.
+RrDr60Status rr_dr60_get_battery_volts(struct RrDr60Pipeline *pipeline, float *out_volts);
+
+// Writes the static law's ceiling factor for a battery value to `*out_factor` (spec 018 FR-006;
+// A-056): `(volts − 1.8) / 1.2`, the speaker amplifier's clip ceiling relative to the model's
+// 1.15 V at the nominal 3.0 V (V+ = volts − 0.2 V through Q9; the swing limits V+ − 1.6 V of
+// S-006). Total: any finite value is accepted, also outside the setter's range (the register's
+// own figures at 2.96 … 2.22 V, or a 1.8 V pair reading 0). No handle; real-time safe.
+//
+// Returns `RR_DR60_STATUS_INVALID_ARGUMENT` for a non-finite value; nothing is written.
+//
+// # Safety
+//
+// `out_factor` must be NULL or writable.
+RrDr60Status rr_dr60_battery_ceiling_factor(float volts, float *out_factor);
+
+// Writes the static law's ceiling change in decibels to `*out_db` (spec 018 FR-006):
+// `20·log10` of `rr_dr60_battery_ceiling_factor`, the level by which a clipped tone comes out
+// lower than at the nominal value (−1.6 dB at 2.8 V, −6.0 dB at 2.4 V, −9.5 dB at 2.2 V;
+// `-INFINITY` at or below 1.8 V). No handle; real-time safe.
+//
+// Returns `RR_DR60_STATUS_INVALID_ARGUMENT` for a non-finite value; nothing is written.
+//
+// # Safety
+//
+// `out_db` must be NULL or writable.
+RrDr60Status rr_dr60_battery_ceiling_db(float volts, float *out_db);
+
+// Writes row `i` of the alkaline reference trajectory (spec 018 FR-006; A-056, S-017 with
+// S-001's battery life) to `*out_hours` and `*out_volts`: the cell pair's voltage under the
+// device's load after that many hours of **recording**, `RR_DR60_BATTERY_TRAJECTORY_ROWS` rows
+// from 0 h at 2.96 V to 10 h at 2.22 V (row 0 is a loaded-cell reading, not a fresher state
+// than the default 3.0 V). Preset values for an app, never a drain: the engine never moves the
+// battery value on its own. No handle; real-time safe.
+//
+// Returns `RR_DR60_STATUS_INVALID_ARGUMENT` for `i` at or past the row count; nothing is
+// written.
+//
+// # Safety
+//
+// `out_hours` and `out_volts` must each be NULL or writable.
+RrDr60Status rr_dr60_battery_trajectory_row(uint32_t i, float *out_hours, float *out_volts);
+
 // Copies the meter read-out of the last non-empty processing call into `*out` (spec 016
 // FR-001, FR-009): the figures of the last `rr_dr60_process*`, `rr_dr60_record`,
 // `rr_dr60_play` or `rr_dr60_stop_recording` call that processed samples; the rest state
 // before any, after `rr_dr60_reset` and after `rr_dr60_reconfigure`. Real-time safe; never
-// changes the engine. `out->struct_size` is read first: smaller than this version's 56 →
-// `RR_DR60_STATUS_INVALID_ARGUMENT` and nothing written; larger → the 56 bytes filled and the
-// bytes `[56, struct_size)` zeroed (no upper cap).
+// changes the engine. `out->struct_size` is read first (the compatible prefix-fill rule, spec
+// 018 FR-010): below 56 (the size of 0.16 and 0.17) → `RR_DR60_STATUS_INVALID_ARGUMENT` and
+// nothing written; 56 … 63 → the first `struct_size` bytes filled (the fields of 0.16) and
+// nothing else touched; 64 and above → the 64 bytes filled and the bytes `[64, struct_size)`
+// zeroed (no upper cap).
 //
 // # Safety
 //

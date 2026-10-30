@@ -445,7 +445,7 @@ stage_table! {
         description: "Sets the playback level with the volume control and drives the speaker through a power amplifier that clips near its battery rail; muted while recording.",
         status: Assumed, path: Playback, confidence: Medium,
         sources: ["S-001", "S-002", "S-006"], assumptions: ["A-031", "A-043", "A-044", "A-045"],
-        coverage: "the 159 Hz corner's knob shift; the clip level's battery and transistor spread; wiper noise; knob speed; the beeps",
+        coverage: "the 159 Hz corner's knob shift; the clip level's spread; the battery's sag; wiper noise; knob speed; the beeps",
         controls: "output.volume_amp_enabled; set_volume, volume; set_route, route; Tap::AfterVolumeAmp; EngineState.speaker_muted; Meters",
         model_version: "0.11.0",
     },
@@ -477,10 +477,10 @@ stage_table! {
     {
         number: 15, identifier: "power", name: "Power supply",
         description: "Two AAA cells feed a 3.3 V converter whose switched rails supply the analog section and the flash; the speaker amplifier runs directly from the cells.",
-        status: NotModeled, path: Both, confidence: NotApplicable,
+        status: Assumed, path: Both, confidence: Low,
         sources: ["S-001", "S-002", "S-006", "S-014", "S-015", "S-017"],
         assumptions: ["A-013", "A-056", "A-057", "A-058"],
-        coverage: "", controls: "", model_version: "",
+        coverage: "the 3.3 V converter and its rails; the cells' sag under load; supply noise; the low-battery indicator and cut-off", controls: "set_battery_volts, battery_volts; Meters", model_version: "0.18.0",
     },
 }
 
@@ -994,7 +994,7 @@ mod tests {
         let c = count_statuses(&s);
         assert_eq!(
             (c.not_modeled, c.assumed, c.sourced, c.checked),
-            (3, 10, 1, 1) // 5 / 10 / 0 / 0 today (spec 009), two not-modeled stages flipped here
+            (2, 11, 1, 1) // 2 / 13 / 0 / 0 today (spec 018), two assumed stages flipped here
         );
     }
 

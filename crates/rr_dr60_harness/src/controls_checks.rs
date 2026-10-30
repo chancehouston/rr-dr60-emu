@@ -14,7 +14,7 @@ use rr_dr60::{
 use crate::manifest_checks::denylist_hit;
 
 /// The three live controls (014 FR-001), in order.
-pub const LIVE: [&str; 3] = ["route", "volume", "playback_speed"];
+pub const LIVE: [&str; 4] = ["route", "volume", "playback_speed", "battery_volts"]; // 018: a fourth
 
 // ---- Canonical text (014 FR-012; research R-07) ----------------------------------------------
 
@@ -143,6 +143,7 @@ pub fn engine_default(id: &str, s: &Settings) -> Option<Val> {
         "route" => Val::C(Some(route(Route::default()))),
         "volume" => Val::F(rr_dr60::output::VOLUME_REFERENCE),
         "playback_speed" => Val::I(u64::from(rr_dr60::speed::DEFAULT_LEVEL)),
+        "battery_volts" => Val::F(rr_dr60::battery::DEFAULT_BATTERY_VOLTS), // spec 018
         "host_rate_hz" => Val::C(None),
         "record_stage_enabled" => Val::B(s.record_stage_enabled),
         "playback_stage_enabled" => Val::B(s.playback_stage_enabled),
@@ -280,6 +281,8 @@ fn live_accepts(p: &mut Pipeline, id: &str, v: Val) -> Option<bool> {
     match (id, v) {
         ("volume", Val::F(x)) => Some(p.set_volume(x).is_ok()),
         ("playback_speed", Val::I(x)) => Some(p.set_playback_speed(x.min(255) as u8).is_ok()),
+        // Spec 018: the battery value, a plain setter like the volume (output clock).
+        ("battery_volts", Val::F(x)) => Some(p.set_battery_volts(x).is_ok()),
         // Spec 017: the eight record-side values change live through the schedule only, on the
         // record stream while recording and on the one-pass otherwise (there is no plain
         // setter); the value is validated as the setting.
@@ -943,6 +946,10 @@ fn default_line<'a>(id: &str, sources: &'a [(String, String)]) -> Option<&'a str
         "playback_speed" => file("speed.rs")?
             .lines()
             .find(|l| l.contains("pub const DEFAULT_LEVEL")),
+        // Spec 018: the battery default's line carries the control's tags.
+        "battery_volts" => file("battery.rs")?
+            .lines()
+            .find(|l| l.contains("pub const DEFAULT_BATTERY_VOLTS")),
         "host_rate_hz" => settings
             .lines()
             .find(|l| l.contains("pub const SUPPORTED_HOST_RATES")),

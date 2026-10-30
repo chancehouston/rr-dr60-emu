@@ -65,8 +65,8 @@ fn header_figures() {
     assert_eq!(h.stage_count, 15);
     assert_eq!(h.device_rate_hz, 6000); // A-026
     assert_eq!(h.library_version, rr_dr60::VERSION);
-    assert_eq!(h.counts.not_modeled, 3); // spec 012 US4 AS1: stages 1 – 2 modeled
-    assert_eq!(h.counts.assumed, 12);
+    assert_eq!(h.counts.not_modeled, 2); // spec 012 US4 AS1: stages 1 – 2 modeled; 018: 15
+    assert_eq!(h.counts.assumed, 13);
     assert_eq!(h.counts.sourced, 0);
     assert_eq!(h.counts.checked, 0);
     assert_eq!(
@@ -84,12 +84,12 @@ fn header_figures() {
 
 #[test]
 fn literal_statuses() {
-    // The register-free reading of US1 scenario 5 (007 FR-004): stages 1 – 5 and 7 – 13 are
-    // modeled on open assumptions (7 and 9 since spec 008; 11 – 13 since spec 009; 1 and 2
-    // since spec 012), every other stage (6, 14, 15) is not modeled.
+    // The register-free reading of US1 scenario 5 (007 FR-004): stages 1 – 5, 7 – 13 and 15
+    // are modeled on open assumptions (7 and 9 since spec 008; 11 – 13 since spec 009; 1 and 2
+    // since spec 012; 15 since spec 018), every other stage (6, 14) is not modeled.
     for e in manifest().stages() {
         let want = match e.number {
-            1..=5 | 7..=13 => StageStatus::Assumed,
+            1..=5 | 7..=13 | 15 => StageStatus::Assumed,
             _ => StageStatus::NotModeled,
         };
         assert_eq!(e.status, want, "stage {} status", e.number);
@@ -167,7 +167,7 @@ fn codec_stages_us3_scenario_1() {
     let c = m.header().counts;
     assert_eq!(
         (c.not_modeled, c.assumed, c.sourced, c.checked),
-        (3, 12, 0, 0) // spec 012 US4 AS1: stages 1 – 2 modeled too
+        (2, 13, 0, 0) // spec 012 US4 AS1: stages 1 – 2 modeled too; spec 018: stage 15
     );
 }
 
@@ -398,7 +398,7 @@ fn output_stages_us3_scenario_1() {
     let c = m.header().counts;
     assert_eq!(
         (c.not_modeled, c.assumed, c.sourced, c.checked),
-        (3, 12, 0, 0) // spec 012 US4 AS1
+        (2, 13, 0, 0) // spec 012 US4 AS1; spec 018 US4: stage 15 assumed
     );
 }
 

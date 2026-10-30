@@ -301,6 +301,16 @@ pub mod __test_hooks {
         crate::changes::record_landing(position, host_rate_hz).expect("a supported rate")
     }
 
+    /// Spec 018 (research R-07): the battery's ceiling factor in force in the one-pass's chain
+    /// (`Stream::OnePass`) or the player's (`Stream::Playback`); `None` for the record stream.
+    pub fn battery_factor(pipeline: &crate::Pipeline, stream: crate::Stream) -> Option<f64> {
+        match stream {
+            crate::Stream::OnePass => Some(pipeline.one_pass.play.battery_factor()),
+            crate::Stream::Playback => Some(pipeline.player.battery_factor()),
+            crate::Stream::Record => None,
+        }
+    }
+
     /// The limiter's hold-capacitor voltage, in volts: 0.0 when discharged (spec 005 R-03;
     /// contracts/rust-api.md › Test hooks).
     pub fn limiter_state(pipeline: &crate::Pipeline) -> f64 {

@@ -389,6 +389,9 @@ pub(crate) const LIVE_ROUTE: u32 = 0;
 pub(crate) const LIVE_VOLUME: u32 = 1;
 /// The control manifest's index of `playback_speed`.
 pub(crate) const LIVE_SPEED: u32 = 2;
+/// The control manifest's index of `battery_volts` (spec 018: appended after the 0.14 entries,
+/// so no earlier index moves; pinned by a test against the manifest).
+pub(crate) const LIVE_BATTERY: u32 = 29;
 
 /// A stream's control state (data-model.md › Stream; research R-01): the clock, the schedule,
 /// the last applied values, the pending plain change, the landed readings and the staging log.
@@ -414,6 +417,10 @@ pub(crate) struct StreamState {
     pub(crate) landed_route: Option<crate::Route>,
     pub(crate) landed_volume: Option<f32>,
     pub(crate) landed_level: Option<u8>,
+    /// Spec 018: the battery value (volts), as the volume: last applied, pending plain, landed.
+    last_battery: f32,
+    pending_battery: f32,
+    pub(crate) landed_battery: Option<f32>,
     #[cfg(feature = "__test-hooks")]
     pub(crate) mutation: ChangeMutation,
     pub(crate) schedule: Schedule,
@@ -427,10 +434,12 @@ pub(crate) enum Apply {
     Chain(crate::Route, f32),
     /// `speed.request(level)`.
     Level(u8),
+    /// `chain.set_battery(volts)` (spec 018).
+    Battery(f32),
 }
 
 impl StreamState {
-    pub(crate) fn new(route: crate::Route, volume: f32, level: u8) -> Self {
+    pub(crate) fn new(route: crate::Route, volume: f32, level: u8, battery: f32) -> Self {
         Self {
             produced: 0,
             schedule: Schedule::new(),
@@ -445,6 +454,9 @@ impl StreamState {
             landed_route: None,
             landed_volume: None,
             landed_level: None,
+            last_battery: battery,
+            pending_battery: battery,
+            landed_battery: None,
             log: [ChangeEntry::default(); MAX_CHANGES_PER_CALL],
             log_len: 0,
             #[cfg(feature = "__test-hooks")]
@@ -463,28 +475,44 @@ impl StreamState {
         self.landed_route = None;
         self.landed_volume = None;
         self.landed_level = None;
+        self.landed_battery = None;
     }
 
     /// The lifecycle rule (R-07): the stream starts with the engine's values, no entry.
-    pub(crate) fn set_start_values(&mut self, route: crate::Route, volume: f32, level: u8) {
+    pub(crate) fn set_start_values(
+        &mut self,
+        route: crate::Route,
+        volume: f32,
+        level: u8,
+        battery: f32,
+    ) {
         self.last_route = route;
         self.last_volume = volume;
         self.last_level = level;
+        self.last_battery = battery;
     }
 
     /// A processing call's entry: the plain change pending (today's entry-time controls), the
     /// log and the landed readings cleared, the apply armed for the first produced sample.
     #[inline]
-    pub(crate) fn begin_call(&mut self, route: crate::Route, volume: f32, level: Option<u8>) {
+    pub(crate) fn begin_call(
+        &mut self,
+        route: crate::Route,
+        volume: f32,
+        level: Option<u8>,
+        battery: f32,
+    ) {
         self.pending_route = route;
         self.pending_volume = volume;
         self.pending_level = level;
+        self.pending_battery = battery;
         self.plain_pending = true;
         self.next_apply = 0;
         self.log_len = 0;
         self.landed_route = None;
         self.landed_volume = None;
         self.landed_level = None;
+        self.landed_battery = None;
     }
 
     /// Whether the apply point is due for the sample about to be produced: the hot compare,
@@ -528,6 +556,15 @@ impl StreamState {
                 self.last_volume = v;
                 self.landed_volume = Some(v);
             }
+            // Spec 018: the battery value, as the volume (the chain's setter is idempotent).
+            let b = self.pending_battery;
+            apply(Apply::Battery(b));
+            if b != self.last_battery {
+                let before = self.before(f64::from(self.last_battery), f64::from(b));
+                self.push(pos, LIVE_BATTERY, before, f64::from(b), 0);
+                self.last_battery = b;
+                self.landed_battery = Some(b);
+            }
             if let Some(l) = self.pending_level.take() {
                 apply(Apply::Level(l));
                 if l != self.last_level {
@@ -567,6 +604,14 @@ impl StreamState {
                     self.push(pos, LIVE_SPEED, before, f64::from(l), e.tag);
                     self.last_level = l;
                     self.landed_level = Some(l);
+                }
+                LIVE_BATTERY => {
+                    let b = e.value as f32;
+                    apply(Apply::Battery(b));
+                    let before = self.before(f64::from(self.last_battery), e.value);
+                    self.push(pos, LIVE_BATTERY, before, f64::from(b), e.tag);
+                    self.last_battery = b;
+                    self.landed_battery = Some(b);
                 }
                 // Validation at the schedule call admits only the three live controls.
                 _ => debug_assert!(false, "an unknown control in the schedule"),
@@ -655,6 +700,7 @@ mod index_tests {
         assert_eq!(c[LIVE_ROUTE as usize].identifier, "route");
         assert_eq!(c[LIVE_VOLUME as usize].identifier, "volume");
         assert_eq!(c[LIVE_SPEED as usize].identifier, "playback_speed");
+        assert_eq!(c[LIVE_BATTERY as usize].identifier, "battery_volts"); // 018: appended
     }
 }
 
@@ -1151,12 +1197,12 @@ mod record_tests {
         for c in LIVE_RECORD {
             assert_eq!(clock_of(c).unwrap(), Clock::Input);
         }
-        for c in [LIVE_ROUTE, LIVE_VOLUME, LIVE_SPEED] {
+        for c in [LIVE_ROUTE, LIVE_VOLUME, LIVE_SPEED, LIVE_BATTERY] {
             assert_eq!(clock_of(c).unwrap(), Clock::Output);
         }
         assert!(matches!(
             clock_of(crate::controls::CONTROL_COUNT as u32),
-            Err(Error::NoSuchControl { control: 29 })
+            Err(Error::NoSuchControl { control: 30 }) // 29 before spec 018
         ));
         assert_eq!(Clock::Input as u32, 0);
         assert_eq!(Clock::Output as u32, 1);

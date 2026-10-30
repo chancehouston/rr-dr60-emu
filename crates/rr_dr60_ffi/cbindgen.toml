@@ -33,6 +33,9 @@ header = """
  *   rr_dr60_start_recording, rr_dr60_record, rr_dr60_max_record_events,
  *   rr_dr60_stop_recording, rr_dr60_start_playback, rr_dr60_play, rr_dr60_stop_playback,
  *   rr_dr60_set_route, rr_dr60_get_route, rr_dr60_set_volume, rr_dr60_get_volume,
+ *   rr_dr60_set_battery_volts, rr_dr60_get_battery_volts, rr_dr60_battery_ceiling_factor,
+ *   rr_dr60_battery_ceiling_db, rr_dr60_battery_trajectory_row (spec 018; the last three
+ *   need no handle),
  *   rr_dr60_speaker_gain_db, rr_dr60_earphone_gain_db (no handle; spec 009),
  *   rr_dr60_meters (spec 016), rr_dr60_get_state, rr_dr60_memory_status,
  *   rr_dr60_recording_length, rr_dr60_export_len, rr_dr60_record_latency_samples,
