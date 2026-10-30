@@ -282,6 +282,15 @@ pub mod __test_hooks {
 
     pub use crate::changes::ChangeMutation;
 
+    /// Test-only (spec 015 research R-13): the published `speed_landing` or, with the
+    /// `speed_landing_ceiling` mutant, the defective ⌊P · 6000 ÷ rate⌋.
+    pub fn speed_landing_mutated(position: u64, host_rate_hz: u32, m: &ChangeMutation) -> u64 {
+        if m.speed_landing_ceiling {
+            return position * 6000 / u64::from(host_rate_hz);
+        }
+        crate::changes::speed_landing(position, host_rate_hz).expect("a supported rate")
+    }
+
     /// The limiter's hold-capacitor voltage, in volts: 0.0 when discharged (spec 005 R-03;
     /// contracts/rust-api.md › Test hooks).
     pub fn limiter_state(pipeline: &crate::Pipeline) -> f64 {

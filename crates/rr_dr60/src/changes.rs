@@ -494,31 +494,22 @@ impl StreamState {
             let (r, v) = (self.pending_route, self.pending_volume);
             apply(Apply::Chain(r, v));
             if r != self.last_route {
-                self.push(
-                    pos,
-                    LIVE_ROUTE,
-                    route_value(self.last_route),
-                    route_value(r),
-                    0,
-                );
+                let before = self.before(route_value(self.last_route), route_value(r));
+                self.push(pos, LIVE_ROUTE, before, route_value(r), 0);
                 self.last_route = r;
                 self.landed_route = Some(r);
             }
             if v != self.last_volume {
-                self.push(
-                    pos,
-                    LIVE_VOLUME,
-                    f64::from(self.last_volume),
-                    f64::from(v),
-                    0,
-                );
+                let before = self.before(f64::from(self.last_volume), f64::from(v));
+                self.push(pos, LIVE_VOLUME, before, f64::from(v), 0);
                 self.last_volume = v;
                 self.landed_volume = Some(v);
             }
             if let Some(l) = self.pending_level.take() {
                 apply(Apply::Level(l));
                 if l != self.last_level {
-                    self.push(pos, LIVE_SPEED, f64::from(self.last_level), f64::from(l), 0);
+                    let before = self.before(f64::from(self.last_level), f64::from(l));
+                    self.push(pos, LIVE_SPEED, before, f64::from(l), 0);
                     self.last_level = l;
                     self.landed_level = Some(l);
                 }
@@ -591,14 +582,20 @@ impl StreamState {
         self.log_len
     }
 
-    /// Test-only (research R-13): 0.15's entry-time apply of every scheduled entry, whatever
-    /// its position: caught by the partition identity.
+    /// Test-only (research R-13): an entry-time apply, as if every call were a 4096-sample
+    /// block: every entry within the next 4096 positions lands at the call's first sample.
+    /// Caught by the partition identity (64-sample blocks land it early).
     #[cfg(feature = "__test-hooks")]
     pub(crate) fn mutant_pop_all_now(&mut self) {
         if self.mutation.apply_at_entry {
-            self.schedule.earliest = 0;
+            let now = self.produced;
             for i in 0..self.schedule.len {
-                self.schedule.entries[i].position = 0;
+                if self.schedule.entries[i].position <= now + 4096 {
+                    self.schedule.entries[i].position = now;
+                }
+            }
+            if self.schedule.len > 0 {
+                self.schedule.earliest = self.schedule.entries[0].position;
             }
         }
     }
