@@ -153,6 +153,8 @@ pub struct Pipeline {
     /// The player's speed control (spec 013; A-054), between the decoder and stage 10; reset at
     /// every `start_playback`.
     pub(crate) speed: SpeedStage,
+    /// Spec 016: the meter read-out of the last non-empty processing call (research R-01).
+    pub(crate) meters: Meters,
 }
 
 // Contract (contracts/rust-api.md): `Pipeline` is Send + Sync. Fails to compile if a future
@@ -180,6 +182,69 @@ pub struct BlockInfo {
     /// Speech-codec frames encoded in this block (spec 008 FR-008); 0 with the codec bypassed
     /// or at a tap before it.
     pub frames: usize,
+}
+
+
+/// The meter read-out of the last non-empty processing call (spec 016 FR-001 – FR-003): a
+/// figure per stage point, computed from the same values the output is computed from, never
+/// changing the output. Read it with [`Pipeline::meters`] after a one-pass, record, play or
+/// stop call. Figures of a call describe the samples that call **processed**; the stage 4 and
+/// 5 figures and the recorder's group describe device samples that leave the output up to the
+/// path's latency later. A figure whose point the call did not reach keeps its rest value
+/// (research R-03): [`Pipeline::rest_meters`].
+///
+/// Every peak is **linear full-scale** (20·log₁₀ for dBFS), the largest absolute sample at its
+/// point; a peak may exceed 1.0. `Default` is the all-zero value (the C zero-struct's twin);
+/// the engine's rest carries the configured hang length instead.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+#[non_exhaustive]
+pub struct Meters {
+    /// The largest absolute input sample, after the engine's sanitizing of non-finite samples;
+    /// at most the sanitizer's bound. Rest 0.
+    pub input_peak: f32,
+    /// The largest absolute sample entering stage 3: stage 2's output (stage 1's with stage 2
+    /// bypassed; the sanitized input with both bypassed; A-046, A-051). May exceed 1.0 (stage 2
+    /// limits softly near +9 and +17 dBFS). Rest 0; also rest at [`Tap::AfterMicCapsule`].
+    pub limiter_input_peak: f32,
+    /// The deepest attenuation the limiter applied to any sample of the call, in non-negative
+    /// dB (0 = unity gain; exactly 0 below the hold's unity floor; A-028, A-034, A-035,
+    /// modeled on the circuit). Rest 0, also with the limiter bypassed.
+    pub gain_reduction_db: f32,
+    /// The limiter's hold capacitor at the end of the call, as a fraction 0 – 1 of the hold at
+    /// the model's deepest attenuation (40 dB, an engineering target of spec 005, not a device
+    /// figure). A state, not a per-call figure: a silent call reads the decaying hold.
+    /// Landmarks of the model's hold law: about 0.13 is the unity floor, 0.73 one decibel of
+    /// attenuation, 0.84 ten, 0.90 twenty, 1.0 forty. Rest 0, also with the limiter bypassed.
+    pub hold_charge: f32,
+    /// The largest absolute device sample after stage 4's record band-limit (A-027), **before**
+    /// the converter's full-scale clamp (A-030): above 1.0 whenever the clamp bounded samples.
+    /// Rest 0.
+    pub record_filter_peak: f32,
+    /// The device samples of the call the converter's full-scale clamp changed (a sample
+    /// exactly at full scale is not counted; `adc_clamp_enabled`). Rest 0.
+    pub adc_clamp_count: u32,
+    /// The voice activation's own state at the end of the call: paused (`true`) or recording;
+    /// also during the stop flush, which keeps every sample while the gate's state machine
+    /// runs. Rest `false`, also with the gate bypassed.
+    pub vas_paused: bool,
+    /// The further non-sound device samples the gate keeps before pausing (the hang length,
+    /// A-023, minus the non-sound samples since the last sound; 0 means the next non-sound
+    /// device sample pauses the gate); the full hang length when the last sample was sound or
+    /// the gate is bypassed; 0 while paused. Rest: the configured hang length.
+    pub hang_remaining_samples: u64,
+    /// The largest absolute host sample after stage 10 and the conversion to the host rate,
+    /// before the output chain (the chain's input). Rest 0; read by the player and by the
+    /// one-pass at a tap at or after stage 10.
+    pub reconstruction_peak: f32,
+    /// The largest absolute sample at the selected route's output **before** the optional
+    /// output clamp, also with the output chain bypassed: 1.0 is the amplifier's clip ceiling
+    /// on the speaker route and the earphone scale on the earphone route (A-042); the speaker
+    /// route reads up to about 2.3 on clipped or transient material. Rest 0; read at
+    /// [`Tap::RouteOutput`] only.
+    pub route_peak: f32,
+    /// The host samples of the call the optional output clamp bounded (0 with the option off;
+    /// an emulator option, spec 010, not a device behavior). Rest 0.
+    pub output_clamp_count: u32,
 }
 
 /// A VAS splice (drop mode) or muted region (mute mode) (spec 003 FR-005).
@@ -383,11 +448,16 @@ impl Pipeline {
         let mut one_pass = OnePass::new(&settings, plan);
         one_pass.rec.rekey(counter); // 012 FR-009: the next recording's stream
         let latency = latency_samples(plan, &settings, &one_pass);
+        let recorder = RecordPath::new(&settings, plan, false, true);
         Self {
             settings,
             one_pass,
             latency,
-            recorder: RecordPath::new(&settings, plan, false, true),
+            meters: Meters {
+                hang_remaining_samples: recorder.hang_samples(),
+                ..Meters::default()
+            },
+            recorder,
             player: PlaybackPath::new(&settings, plan, false),
             memory,
             transport: Transport::with_counter(counter),
@@ -629,12 +699,54 @@ impl Pipeline {
                 count += 1;
             }
         }
+        if !out.is_empty() {
+            self.finalize_one_pass(); // 016 FR-001: a non-empty call
+        }
         BlockInfo {
             produced,
             events: count,
             paused: self.one_pass.rec.paused(),
             frames,
         }
+    }
+
+    /// The meter read-out of the last non-empty processing call (spec 016 FR-001): a copy;
+    /// real-time safe; never changes the engine. The rest state before any call, after
+    /// [`reset`](Self::reset) and after [`reconfigure`](Self::reconfigure); unchanged by a
+    /// zero-length call, a skipped flush, and the start, stop-playback and erase calls.
+    pub fn meters(&self) -> Meters {
+        self.meters
+    }
+
+    /// This engine's rest read-out (spec 016 FR-001): [`Meters::default`] with the configured
+    /// hang length in `hang_remaining_samples`.
+    pub fn rest_meters(&self) -> Meters {
+        Meters {
+            hang_remaining_samples: self.recorder.hang_samples(),
+            ..Meters::default()
+        }
+    }
+
+    /// Spec 016 (research R-04): both groups from the one-pass's paths.
+    fn finalize_one_pass(&mut self) {
+        let mut m = self.rest_meters();
+        self.one_pass.rec.finalize_into(&mut m);
+        self.one_pass.play.finalize_into(&mut m);
+        self.meters = m;
+    }
+
+    /// Spec 016 (research R-04): the record group from the recorder; the playback group rest.
+    pub(crate) fn finalize_record(&mut self) {
+        let mut m = self.rest_meters();
+        self.recorder.finalize_into(&mut m);
+        self.meters = m;
+    }
+
+    /// Spec 016 (research R-04): the playback group from the player; the record group rest.
+    pub(crate) fn finalize_play(&mut self) {
+        let mut m = self.rest_meters();
+        self.player.finalize_into(&mut m);
+        self.meters = m;
     }
 
     /// Fixed latency of the current configuration, in host-rate samples (FR-012).
@@ -674,6 +786,7 @@ impl Pipeline {
         self.memory.discard_in_progress();
         self.transport.reset();
         self.one_pass.rec.rekey(self.transport.counter); // 012 FR-009
+        self.meters = self.rest_meters(); // 016 FR-001
     }
 
     /// Applies new settings and resets all path state, as if the pipeline had been created
@@ -2258,5 +2371,82 @@ mod output_chain_tests {
             assert!(info.finished);
             assert_eq!(played[..x.len()], y[..], "{route:?}");
         }
+    }
+}
+
+/// Spec 016 FR-001: the read-out's rest and the finalize rule.
+#[cfg(test)]
+mod meters_tests {
+    extern crate std;
+    use super::*;
+    use std::vec;
+
+    /// The engine's rest is the all-zero read-out with the configured hang length.
+    #[test]
+    fn rest_carries_the_hang() {
+        let mut s = Settings::new(48_000);
+        s.vas.hang_ms = 250.0;
+        let p = Pipeline::new(s).unwrap();
+        let rest = p.rest_meters();
+        assert_eq!(
+            rest,
+            Meters {
+                hang_remaining_samples: 1500,
+                ..Meters::default()
+            }
+        );
+        assert_eq!(p.meters(), rest, "before any call");
+    }
+
+    /// A zero-length call leaves the read-out; a non-empty one fills it; `reset` and
+    /// `reconfigure` restore the rest.
+    #[test]
+    fn zero_length_call_leaves_meters_and_reset_restores_rest() {
+        let mut p = Pipeline::new(Settings::new(48_000)).unwrap();
+        let x = vec![0.5f32; 2048];
+        let mut y = vec![0.0f32; 2048];
+        let _ = p.process(&x, &mut y).unwrap();
+        let after = p.meters();
+        assert!(after.input_peak == 0.5 && after != p.rest_meters());
+        let _ = p.process(&[], &mut []).unwrap();
+        assert_eq!(p.meters(), after, "a zero-length call leaves the read-out");
+        p.reset();
+        assert_eq!(p.meters(), p.rest_meters());
+        let _ = p.process(&x, &mut y).unwrap();
+        assert_ne!(p.meters(), p.rest_meters());
+        p.reconfigure(Settings::new(44_100)).unwrap();
+        assert_eq!(p.meters(), p.rest_meters());
+    }
+
+    /// The transport's start, stop-playback and erase calls leave the read-out; a record call
+    /// fills the record group and leaves the playback group at rest, a play call the reverse.
+    #[test]
+    fn transport_calls_and_groups() {
+        let mut s = Settings::new(6_000);
+        s.speech_codec_enabled = false;
+        let mut p = Pipeline::new(s).unwrap();
+        let x = vec![0.25f32; 600];
+        p.start_recording().unwrap();
+        assert_eq!(p.meters(), p.rest_meters(), "start_recording leaves the rest");
+        let _ = p.record(&x, &mut []).unwrap();
+        let rec = p.meters();
+        assert_eq!(rec.input_peak, 0.25);
+        assert_eq!(rec.reconstruction_peak, 0.0);
+        assert_eq!(rec.route_peak, 0.0);
+        let _ = p.record(&[], &mut []).unwrap();
+        assert_eq!(p.meters(), rec, "an empty record call leaves it");
+        let out = p.stop_recording(&mut []).unwrap();
+        assert!(out.flush.stored > 0);
+        assert_ne!(p.meters(), rec, "the flush's figures");
+        p.start_playback(1).unwrap();
+        let mut y = vec![0.0f32; 600];
+        let _ = p.play(&mut y).unwrap();
+        let play = p.meters();
+        assert_eq!(play.input_peak, 0.0, "the record group rests after a play call");
+        assert!(play.reconstruction_peak > 0.0 && play.route_peak > 0.0);
+        p.stop_playback().unwrap();
+        assert_eq!(p.meters(), play, "stop_playback leaves it");
+        p.erase(1).unwrap();
+        assert_eq!(p.meters(), play, "erase leaves it");
     }
 }

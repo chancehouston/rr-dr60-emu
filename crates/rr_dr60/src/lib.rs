@@ -235,7 +235,7 @@ pub use manifest::{
     Confidence, Header, Manifest, StageEntry, StagePath, StageStatus, StatusCounts, manifest,
 };
 pub use memory::{Encoding, MemoryStatus};
-pub use pipeline::{BlockInfo, Pipeline, VasEvent};
+pub use pipeline::{BlockInfo, Pipeline, VasEvent, Meters};
 pub use settings::{
     AgcSettings, DEVICE_RATE_HZ, MemorySettings, MicSettings, OutputSettings, Route,
     SUPPORTED_HOST_RATES, Settings, Tap, VasMode, VasSettings,
@@ -264,6 +264,19 @@ pub mod __test_hooks {
     /// contracts/rust-api.md › Test hooks).
     pub fn limiter_state(pipeline: &crate::Pipeline) -> f64 {
         pipeline.limiter_state()
+    }
+
+    /// Stage 4's output before the converter clamp for host sample `x` through the one-pass's
+    /// record path (the front, the conversion, the band-limit), when a device sample is due;
+    /// nothing after it runs (spec 016 research R-06).
+    pub fn stage4_trace(pipeline: &mut crate::Pipeline, x: f32) -> Option<f64> {
+        pipeline.one_pass.rec.stage4_trace(x)
+    }
+
+    /// The limiter's capacitor-voltage limit in volts, the charge meter's denominator (spec
+    /// 016 research R-07).
+    pub fn limiter_v_limit(pipeline: &crate::Pipeline) -> f64 {
+        pipeline.one_pass.rec.limiter_v_limit()
     }
 
     /// The actual `Vec` capacities of the recording store and the span table, so the SC-007
