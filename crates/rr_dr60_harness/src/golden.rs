@@ -1618,9 +1618,10 @@ pub fn generate_meters(make: Make<'_>, bless: bool) -> GoldenFile {
                     assert!(info.stopped.is_none(), "memory full");
                     record_blocks.push(row(&q.meters()));
                 }
-                let out = q.stop_recording(&mut ev).expect("recording");
-                let flush =
-                    (out.flush.stored > 0 || out.silence_fed_samples > 0).then(|| row(&q.meters()));
+                let before_stop = q.meters();
+                let _ = q.stop_recording(&mut ev).expect("recording");
+                // The flush's row exactly when the engine finalized one (FR-001): the read-out moved.
+                let flush = (q.meters() != before_stop).then(|| row(&q.meters()));
                 let number = q.memory_status().count;
                 let own =
                     split_checks::playback_len(q.recording_length(number).expect("kept"), rate);

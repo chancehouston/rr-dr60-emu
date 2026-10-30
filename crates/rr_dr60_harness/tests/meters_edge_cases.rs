@@ -140,10 +140,13 @@ fn mute_mode_playback_peaks() {
         s.speech_codec_enabled = false;
         let mut p = Pipeline::new(s).unwrap();
         let blocks = mc::one_pass_blocks(&mut p, &mc::vas_burst(rate), 121);
+        // Mute mode never shortens a block: every call produces its chunk's length (B1).
+        let x_len = mc::vas_burst(rate).len();
         assert!(
             blocks
                 .iter()
-                .all(|b| b.output.len() == 121 || b.output.len() < 121)
+                .zip((0..x_len).step_by(121))
+                .all(|(b, pos)| b.output.len() == (x_len - pos).min(121))
         );
         let paused: Vec<&mc::Block> = blocks.iter().filter(|b| b.meters.vas_paused).collect();
         assert!(!paused.is_empty(), "{rate}: never paused");

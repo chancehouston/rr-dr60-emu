@@ -198,8 +198,8 @@ pub struct BlockInfo {
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 #[non_exhaustive]
 pub struct Meters {
-    /// The largest absolute input sample, after the engine's sanitizing of non-finite samples;
-    /// at most the sanitizer's bound. Rest 0.
+    /// The largest absolute input sample, after the engine's sanitizing of non-finite samples:
+    /// always finite, with no magnitude bound. Rest 0.
     pub input_peak: f32,
     /// The largest absolute sample entering stage 3: stage 2's output (stage 1's with stage 2
     /// bypassed; the sanitized input with both bypassed; A-046, A-051). May exceed 1.0 (stage 2

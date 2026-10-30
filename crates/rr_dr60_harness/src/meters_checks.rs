@@ -31,7 +31,10 @@ pub fn peak_of(samples: &[f32]) -> f32 {
     samples.iter().fold(0.0f32, |p, &v| p.max(v.abs()))
 }
 
-/// The number of samples at which `a` and `b` differ (a clamp count's oracle, FR-007).
+/// The number of samples at which `a` and `b` differ (a clamp count's oracle, FR-007). The
+/// engine counts on the 64-bit sample the clamp acts on; the twins compare narrowed outputs, so
+/// a sample within 2⁻²⁴ above full scale would be counted and not seen here (about 1e-4
+/// expected hits per test; B2).
 pub fn clamp_diff_count(a: &[f32], b: &[f32]) -> u32 {
     assert_eq!(a.len(), b.len(), "the twins produced different lengths");
     a.iter()
@@ -752,8 +755,14 @@ pub fn vas_figures(rate: u32, mute: bool) -> Vec<MeasurementResult> {
     let mut first_paused_block_output: Option<(u64, u64)> = None;
     let mut resumes = 0;
     for (b, d) in blocks.iter().zip(&stream) {
+        // D at the resume (the event's reference), not at the block's end (B7).
+        let mut d_at_resume = None;
         for &v in d {
-            gate.push(v.clamp(-1.0, 1.0));
+            let was_paused = gate.paused();
+            let kept = gate.push(v.clamp(-1.0, 1.0));
+            if was_paused && kept {
+                d_at_resume = Some(gate.dropped());
+            }
         }
         if b.meters.vas_paused != gate.paused() {
             state_mismatch += 1;
@@ -780,7 +789,7 @@ pub fn vas_figures(rate: u32, mute: bool) -> Vec<MeasurementResult> {
                 }
             } else {
                 resumes += 1;
-                let dropped = gate.dropped();
+                let dropped = d_at_resume.unwrap_or_else(|| gate.dropped());
                 let want = dropped * m / l - d_prev * m / l;
                 if e.input_length != want {
                     event_mismatch += 1;
@@ -902,8 +911,13 @@ pub fn vas_figures(rate: u32, mute: bool) -> Vec<MeasurementResult> {
     let mut first_paused_kept: Option<(u64, u64)> = None;
     for (chunk, d) in x.chunks(block).zip(&stream) {
         let info = p.record(chunk, &mut ev).unwrap();
+        let mut d_at_resume = None;
         for &v in d {
-            gate.push(v.clamp(-1.0, 1.0));
+            let was_paused = gate.paused();
+            let kept = gate.push(v.clamp(-1.0, 1.0));
+            if was_paused && kept {
+                d_at_resume = Some(gate.dropped());
+            }
         }
         let mm = p.meters();
         if mm.vas_paused != info.paused
@@ -922,7 +936,7 @@ pub fn vas_figures(rate: u32, mute: bool) -> Vec<MeasurementResult> {
                     rec_event_mismatch += 1;
                 }
             } else {
-                let dropped = gate.dropped();
+                let dropped = d_at_resume.unwrap_or_else(|| gate.dropped());
                 if e.input_length != dropped - d_prev {
                     rec_event_mismatch += 1;
                 }
