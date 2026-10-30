@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-30
 
-**Status**: Implemented; in PR (2026-10-30); the owner's next stop is the merge
+**Status**: Complete on `main` (PR #47 merged 2026-10-30, 24ffab9)
 
 **Input**: User description: "017 live record-side values. As an app recording a session, I want the record path's values (the microphone sensitivity, the voice activation's threshold, hang and onset, the limiter's knee, attack and release, the capsule's hiss offset) to change during a recording and during the one-pass at a sample position, through the schedule and the change log spec 015 built, so that a user can adjust the recorder while it records and the session reproduces bit for bit. Product request: controls-discussion.md § 2b (the per-control engine work), § 4 item 4; decisions.md 2026-10-29 (record-side values change between recordings first; live record-side changes only through sample-timed events, spec 017; never live: the codec, the memory, the host rate and latency-bearing bypasses); the engine order 014 → 016 → 015 → 017. Spec 015 reserved `Stream::Record` and a change form that carries any control the manifest numbers."
 
