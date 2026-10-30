@@ -22,7 +22,7 @@
  *   rr_dr60_stop_recording, rr_dr60_start_playback, rr_dr60_play, rr_dr60_stop_playback,
  *   rr_dr60_set_route, rr_dr60_get_route, rr_dr60_set_volume, rr_dr60_get_volume,
  *   rr_dr60_speaker_gain_db, rr_dr60_earphone_gain_db (no handle; spec 009),
- *   rr_dr60_get_state, rr_dr60_memory_status,
+ *   rr_dr60_meters (spec 016), rr_dr60_get_state, rr_dr60_memory_status,
  *   rr_dr60_recording_length, rr_dr60_export_len, rr_dr60_record_latency_samples,
  *   rr_dr60_playback_latency_samples, rr_dr60_drain_samples, rr_dr60_footprint_bytes,
  *   rr_dr60_get_encoding, rr_dr60_speech_codec_info (constants; no handle; spec 008),
