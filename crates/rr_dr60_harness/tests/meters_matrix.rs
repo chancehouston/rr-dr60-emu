@@ -27,8 +27,8 @@ fn peaks_at_seven_rates() {
     finish(rates().into_iter().flat_map(mc::host_rate_peaks).collect());
 }
 
-/// The limiter figures with 1 s tones in 120-sample blocks (a second block length that obeys
-/// the block-length rule); the steady pins per rate.
+/// The limiter figures with 5 s tones (the spec 005 coverage lesson) in 120-sample blocks (a
+/// second block length that obeys the block-length rule); the steady pins per rate.
 #[test]
 fn limiter_at_seven_rates() {
     finish(
