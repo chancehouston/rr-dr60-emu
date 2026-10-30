@@ -14,6 +14,7 @@ pub mod configs;
 pub mod controls_checks;
 pub mod golden;
 pub mod manifest_checks;
+pub mod meters_checks;
 pub mod mic_checks;
 pub mod output_checks;
 pub mod output_clamp_checks;

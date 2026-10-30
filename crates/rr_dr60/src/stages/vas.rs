@@ -431,9 +431,17 @@ mod meters_tests {
             assert_eq!(stage.process(0.0), VasDecision::Keep, "sample {k} is kept");
             assert_eq!(stage.hang_remaining(), h - k);
         }
-        assert_eq!(stage.hang_remaining(), 0, "0 at the last kept non-sound sample");
+        assert_eq!(
+            stage.hang_remaining(),
+            0,
+            "0 at the last kept non-sound sample"
+        );
         assert!(!stage.is_paused());
-        assert_eq!(stage.process(0.0), VasDecision::Drop, "the next non-sound sample pauses");
+        assert_eq!(
+            stage.process(0.0),
+            VasDecision::Drop,
+            "the next non-sound sample pauses"
+        );
         assert!(stage.is_paused());
         assert_eq!(stage.hang_remaining(), 0, "0 while paused");
         // A sound run longer than the onset resumes; the countdown is the full hang again.

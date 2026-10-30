@@ -235,7 +235,7 @@ pub use manifest::{
     Confidence, Header, Manifest, StageEntry, StagePath, StageStatus, StatusCounts, manifest,
 };
 pub use memory::{Encoding, MemoryStatus};
-pub use pipeline::{BlockInfo, Pipeline, VasEvent, Meters};
+pub use pipeline::{BlockInfo, Meters, Pipeline, VasEvent};
 pub use settings::{
     AgcSettings, DEVICE_RATE_HZ, MemorySettings, MicSettings, OutputSettings, Route,
     SUPPORTED_HOST_RATES, Settings, Tap, VasMode, VasSettings,

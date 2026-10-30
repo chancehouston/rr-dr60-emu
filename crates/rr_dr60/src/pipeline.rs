@@ -184,7 +184,6 @@ pub struct BlockInfo {
     pub frames: usize,
 }
 
-
 /// The meter read-out of the last non-empty processing call (spec 016 FR-001 – FR-003): a
 /// figure per stage point, computed from the same values the output is computed from, never
 /// changing the output. Read it with [`Pipeline::meters`] after a one-pass, record, play or
@@ -2427,7 +2426,11 @@ mod meters_tests {
         let mut p = Pipeline::new(s).unwrap();
         let x = vec![0.25f32; 600];
         p.start_recording().unwrap();
-        assert_eq!(p.meters(), p.rest_meters(), "start_recording leaves the rest");
+        assert_eq!(
+            p.meters(),
+            p.rest_meters(),
+            "start_recording leaves the rest"
+        );
         let _ = p.record(&x, &mut []).unwrap();
         let rec = p.meters();
         assert_eq!(rec.input_peak, 0.25);
@@ -2442,7 +2445,10 @@ mod meters_tests {
         let mut y = vec![0.0f32; 600];
         let _ = p.play(&mut y).unwrap();
         let play = p.meters();
-        assert_eq!(play.input_peak, 0.0, "the record group rests after a play call");
+        assert_eq!(
+            play.input_peak, 0.0,
+            "the record group rests after a play call"
+        );
         assert!(play.reconstruction_peak > 0.0 && play.route_peak > 0.0);
         p.stop_playback().unwrap();
         assert_eq!(p.meters(), play, "stop_playback leaves it");
