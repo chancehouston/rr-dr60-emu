@@ -101,15 +101,15 @@ for l in sys.stdin:
   # times and the fastest of those is compared (run-order sensitivity, 012 R-09).
   for i in 1 2 3; do
     echo "round $i of 3" >&2
-    "$base_bin" --ignored --exact meters_cost --nocapture --test-threads=1 2>/dev/null | grep -E '^(default_front_ns|every_stage_off_ns)=' >>"$work/base.txt"
-    "$head_bin" --ignored --exact meters_cost --nocapture --test-threads=1 2>/dev/null | grep -E '^(default_front_ns|every_stage_off_ns)=' >>"$work/head.txt"
+    "$base_bin" --ignored --exact meters_cost --nocapture --test-threads=1 2>/dev/null | grep -oE '(default_front_ns|every_stage_off_ns)=[0-9.]+' >>"$work/base.txt"
+    "$head_bin" --ignored --exact meters_cost --nocapture --test-threads=1 2>/dev/null | grep -oE '(default_front_ns|every_stage_off_ns)=[0-9.]+' >>"$work/head.txt"
   done
   python3 - "$work/base.txt" "$work/head.txt" "$baseline" "${RR_DR60_METERS_COST_CEILING:-0.05}" <<'PY'
 import re, sys
 def best(path):
     out = {}
     for line in open(path):
-        m = re.match(r"(\w+)=([\d.]+)", line.strip())
+        m = re.search(r"(\w+)=([\d.]+)", line.strip())
         if m:
             out[m.group(1)] = min(out.get(m.group(1), float("inf")), float(m.group(2)))
     return out
