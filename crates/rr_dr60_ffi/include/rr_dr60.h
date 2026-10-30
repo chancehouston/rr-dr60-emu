@@ -59,7 +59,7 @@
 
 // A `changes_capacity` that is always enough for one call (spec 015 FR-005). Equal to the
 // Rust `changes::MAX_CHANGES_PER_CALL`.
-#define RR_DR60_MAX_CHANGES_PER_CALL 67
+#define RR_DR60_MAX_CHANGES_PER_CALL 139
 
 // The volume control's default position (spec 009 FR-003; A-043): the reference position at
 // which a full-scale codec output just reaches the amplifier's clip ceiling under the loaded

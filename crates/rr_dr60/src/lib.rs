@@ -291,6 +291,15 @@ pub mod __test_hooks {
         crate::changes::speed_landing(position, host_rate_hz).expect("a supported rate")
     }
 
+    /// Test-only (spec 017 research R-14): the published `record_landing` or, with the
+    /// `landing_floor` mutant, the defective ⌊P · 6000 ÷ rate⌋.
+    pub fn record_landing_mutated(position: u64, host_rate_hz: u32, m: &RecordMutation) -> u64 {
+        if m.landing_floor {
+            return position * 6000 / u64::from(host_rate_hz);
+        }
+        crate::changes::record_landing(position, host_rate_hz).expect("a supported rate")
+    }
+
     /// The limiter's hold-capacitor voltage, in volts: 0.0 when discharged (spec 005 R-03;
     /// contracts/rust-api.md › Test hooks).
     pub fn limiter_state(pipeline: &crate::Pipeline) -> f64 {
@@ -335,6 +344,12 @@ pub mod __test_hooks {
     /// exists); empty for a samples memory or a bad number.
     pub fn stored_frames(pipeline: &crate::Pipeline, number: u32) -> &[u8] {
         pipeline.stored_frames(number)
+    }
+
+    /// The stored device samples of recording `number` (spec 017 research R-10: the
+    /// pre-landing identity in the kept-sample index); empty for a frames memory.
+    pub fn stored_samples(pipeline: &crate::Pipeline, number: u32) -> &[f32] {
+        pipeline.stored_samples(number)
     }
 
     /// Flips one bit of recording `number`'s stored frames (spec 008 SC-008: a one-bit change

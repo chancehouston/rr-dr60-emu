@@ -120,6 +120,16 @@ impl ReferenceGate {
         }
     }
 
+    /// Spec 017 (research R-10): the threshold and the two lengths from `s`, the state and the
+    /// counts kept (the data model's rule for a value landing at device sample k(P)).
+    pub fn set_values(&mut self, s: &Settings) {
+        let level_db = f64::from(s.vas.threshold_dbfs) + 3.0 * (3.0 - f64::from(s.vas.sensitivity));
+        let samples = |ms: f32| (f64::from(ms) * 6.0 + 0.5) as u64;
+        self.threshold = analysis::from_db(level_db);
+        self.hang = samples(s.vas.hang_ms);
+        self.onset = samples(s.vas.onset_ms);
+    }
+
     /// One device sample; returns whether it is kept.
     pub fn push(&mut self, x: f64) -> bool {
         let sound = x.abs() >= self.threshold;

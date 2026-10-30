@@ -224,7 +224,10 @@ fn sixty_four_plus_three_in_one_call() {
         p.set_playback_speed(2).expect("valid");
         let mut log = vec![ChangeEntry::default(); MAX_CHANGES_PER_CALL];
         let info = p.play_with_changes(&mut buf, &mut log).expect("play");
-        assert_eq!(info.changes, MAX_CHANGES_PER_CALL, "{rate} Hz");
+        // The player's largest call: 64 + 3 = 67, below the bound (139 since spec 017: the
+        // one-pass carries two schedules and the eight cross-stream landings).
+        assert_eq!(info.changes, SCHEDULE_CAPACITY + 3, "{rate} Hz");
+        assert!(info.changes < MAX_CHANGES_PER_CALL);
         assert_eq!(p.pending_changes(Stream::Playback).expect("stream"), 0);
         assert_eq!(log[0].tag, 0);
         assert_eq!(log[1].tag, 0);

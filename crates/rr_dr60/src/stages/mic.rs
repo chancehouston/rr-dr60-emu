@@ -124,9 +124,14 @@ impl MicCapsule {
         self.state = key(self.seed, counter);
     }
 
-    /// Back to the beginning of the current counter's stream.
+    /// Back to the beginning of the current counter's stream; a transition in progress ends at
+    /// once at its target (spec 017: `reset`, `reconfigure` and `start_recording` take the
+    /// settings' value).
     pub(crate) fn reset(&mut self) {
         self.rekey(self.counter);
+        self.gain = self.gain_to;
+        self.gain_from = self.gain_to;
+        self.ramp_k = self.ramp_n;
     }
 
     /// One host sample: `x` plus the hiss (the gain along a transition when one is running).

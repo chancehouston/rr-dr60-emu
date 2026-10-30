@@ -157,22 +157,19 @@ fn refusals_store_nothing() {
         cc::volume_control(),
         cc::speed_control(),
     );
+    // Restated by spec 017 (FR-001, FR-002): the record stream carries the record-side values,
+    // so a playback control on it is `ControlNotOnStream`, its schedule reads and clears, and
+    // only its output position is missing (`NoSuchClock`).
     assert!(matches!(
         p.schedule_change(Stream::Record, 0, v, 0.5, 1),
-        Err(Error::ReservedStream { .. })
+        Err(Error::ControlNotOnStream { .. })
     ));
-    assert!(matches!(
-        p.pending_changes(Stream::Record),
-        Err(Error::ReservedStream { .. })
-    ));
+    assert_eq!(p.pending_changes(Stream::Record), Ok(0));
     assert!(matches!(
         p.stream_position(Stream::Record),
-        Err(Error::ReservedStream { .. })
+        Err(Error::NoSuchClock { .. })
     ));
-    assert!(matches!(
-        p.clear_schedule(Stream::Record),
-        Err(Error::ReservedStream { .. })
-    ));
+    assert_eq!(p.clear_schedule(Stream::Record), Ok(()));
     assert!(matches!(
         p.schedule_change(Stream::OnePass, 0, s, 3.0, 1),
         Err(Error::ControlNotOnStream { .. })

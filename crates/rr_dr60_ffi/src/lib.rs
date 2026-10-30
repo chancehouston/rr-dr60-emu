@@ -323,7 +323,7 @@ pub const RR_DR60_SCHEDULE_CAPACITY: usize = 64; // 015 D4: equal to `rr_dr60::c
 
 /// A `changes_capacity` that is always enough for one call (spec 015 FR-005). Equal to the
 /// Rust `changes::MAX_CHANGES_PER_CALL`.
-pub const RR_DR60_MAX_CHANGES_PER_CALL: usize = 67; // 015 FR-005: equal to `rr_dr60::changes::MAX_CHANGES_PER_CALL` (a literal so cbindgen emits the define; the unit test pins it)
+pub const RR_DR60_MAX_CHANGES_PER_CALL: usize = 139; // 015 FR-005; 017 FR-005: equal to `rr_dr60::changes::MAX_CHANGES_PER_CALL` (a literal so cbindgen emits the define; the unit test pins it)
 
 /// The engine's state (spec 006 FR-003), in `RrDr60EngineState.state`.
 #[repr(u32)]
@@ -5048,9 +5048,15 @@ mod changes_tests {
         // SAFETY: a live handle and a valid out pointer.
         assert_eq!(
             unsafe { rr_dr60_pending_changes(h, 2, &mut n) },
+            RrDr60Status::Ok // 017: the record stream has a schedule
+        );
+        assert_eq!(n, 0);
+        // SAFETY: a live handle and a valid out pointer.
+        assert_eq!(
+            unsafe { rr_dr60_pending_changes(h, 3, &mut n) },
             RrDr60Status::ControlNotOnStream
         );
-        assert_eq!(n, 7, "nothing written");
+        assert_eq!(n, 0, "nothing written");
         let mut pos = 7u64;
         // SAFETY: a live handle and a valid out pointer.
         assert_eq!(
@@ -5061,6 +5067,11 @@ mod changes_tests {
         // SAFETY: a live handle.
         assert_eq!(
             unsafe { rr_dr60_clear_schedule(h, 2) },
+            RrDr60Status::Ok // 017: the record stream has a schedule
+        );
+        // SAFETY: a live handle.
+        assert_eq!(
+            unsafe { rr_dr60_clear_schedule(h, 3) },
             RrDr60Status::ControlNotOnStream
         );
         // SAFETY: a live handle.

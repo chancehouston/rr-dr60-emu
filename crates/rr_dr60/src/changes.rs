@@ -727,6 +727,34 @@ pub(crate) const SLOT_HISS: usize = 7;
 /// manifest).
 pub(crate) const LIVE_RECORD: [u32; 8] = [15, 16, 17, 18, 10, 11, 12, 28];
 
+/// The setting each slot validates as (spec 017 FR-001: exactly as `validate` does).
+pub(crate) const SETTING_OF_SLOT: [crate::error::Setting; 8] = [
+    crate::error::Setting::VasSensitivity,
+    crate::error::Setting::VasThresholdDbfs,
+    crate::error::Setting::VasHangMs,
+    crate::error::Setting::VasOnsetMs,
+    crate::error::Setting::AgcKneeDbfs,
+    crate::error::Setting::AgcAttackMs,
+    crate::error::Setting::AgcReleaseMs,
+    crate::error::Setting::MicHissOffsetDb,
+];
+
+/// A record-side value as the schedule stores it (spec 017 FR-001; research R-06): within the
+/// setting's inclusive range after narrowing to single precision (NaN and ±Inf refused), the
+/// sensitivity integral; −0.0 normalized.
+pub(crate) fn record_value(slot: usize, value: f64) -> Result<f64, Error> {
+    let setting = SETTING_OF_SLOT[slot];
+    let (lo, hi) = setting.range();
+    let v = value as f32;
+    if !value.is_finite() || !(v >= lo && v <= hi) {
+        return Err(Error::InvalidSetting { setting });
+    }
+    if slot == SLOT_SENSITIVITY && f64::from(value as u8) != value {
+        return Err(Error::InvalidSetting { setting });
+    }
+    Ok(f64::from(v) + 0.0)
+}
+
 /// The slot of a record-side control, or `None` for any other control.
 #[inline]
 pub(crate) fn slot_of(control: u32) -> Option<usize> {
@@ -1144,6 +1172,52 @@ mod record_tests {
             record_landing(5, 22_050),
             Err(Error::UnsupportedHostRate { requested: 22_050 })
         ));
+    }
+
+    #[test]
+    fn record_ctl_record_value_validates_as_the_setting() {
+        use crate::error::Setting;
+        assert_eq!(record_value(SLOT_SENSITIVITY, 5.0), Ok(5.0));
+        assert!(matches!(
+            record_value(SLOT_SENSITIVITY, 6.0),
+            Err(Error::InvalidSetting {
+                setting: Setting::VasSensitivity
+            })
+        ));
+        assert!(matches!(
+            record_value(SLOT_SENSITIVITY, 2.5),
+            Err(Error::InvalidSetting {
+                setting: Setting::VasSensitivity
+            })
+        ));
+        assert_eq!(record_value(SLOT_HANG, 50.0), Ok(50.0));
+        assert!(matches!(
+            record_value(SLOT_HANG, 20.0),
+            Err(Error::InvalidSetting {
+                setting: Setting::VasHangMs
+            })
+        ));
+        assert!(matches!(
+            record_value(SLOT_KNEE, f64::NAN),
+            Err(Error::InvalidSetting {
+                setting: Setting::AgcKneeDbfs
+            })
+        ));
+        assert!(matches!(
+            record_value(SLOT_HISS, f64::INFINITY),
+            Err(Error::InvalidSetting {
+                setting: Setting::MicHissOffsetDb
+            })
+        ));
+        assert_eq!(
+            record_value(SLOT_THRESHOLD, -0.0).unwrap().to_bits(),
+            0.0f64.to_bits()
+        );
+        // Narrowed to single precision before the range check and the store.
+        let v = record_value(SLOT_ATTACK, 3.000_000_000_1).unwrap();
+        assert_eq!(v, f64::from(3.000_000_000_1f64 as f32));
+        assert_eq!(record_value(SLOT_RELEASE, 10_000.0), Ok(10_000.0));
+        assert_eq!(record_value(SLOT_ONSET, 0.0), Ok(0.0));
     }
 
     #[test]

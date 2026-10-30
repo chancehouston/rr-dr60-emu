@@ -282,7 +282,9 @@ impl Limiter {
     /// The knee-aware attack mapping (R-05): the detector current gain that realizes
     /// `attack_ms` of dead time at 10 dB over `knee_dbfs`,
     /// `BETA6_REF · (T_REF_MS / attack_ms) · I(KNEE_REF_DBFS) / I(knee_dbfs)`, guarded to
-    /// `[BETA6_MIN, BETA6_MAX]`. About 217 at the defaults.
+    /// `[BETA6_MIN, BETA6_MAX]`. About 217 at the defaults. Construction and the retune go
+    /// through `derive`; this form is the unit tests' reference.
+    #[cfg(test)]
     pub(crate) fn beta6_for(knee_dbfs: f64, attack_ms: f64) -> f64 {
         beta6_from(
             attack_ms,
