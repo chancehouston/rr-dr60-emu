@@ -946,10 +946,10 @@ impl RecordCtl {
         };
         self.pending_mask = mask;
         if mask != 0 {
-            for slot in 0..8 {
+            for (slot, &tag) in tags.iter().enumerate() {
                 if mask & (1 << slot) != 0 {
                     self.pending_value[slot] = values.get(slot);
-                    self.pending_tag[slot] = tags[slot];
+                    self.pending_tag[slot] = tag;
                 }
             }
             self.next_apply = 0;

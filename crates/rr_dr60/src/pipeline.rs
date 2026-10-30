@@ -1012,10 +1012,10 @@ impl Pipeline {
         if mask == 0 {
             return;
         }
-        for slot in 0..8 {
+        for (slot, &tag) in tags.iter().enumerate() {
             if mask & (1 << slot) != 0 {
                 values.write_slot(slot, &mut self.settings);
-                self.record_tags[slot] = tags[slot];
+                self.record_tags[slot] = tag;
             }
         }
     }
