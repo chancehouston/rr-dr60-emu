@@ -4,7 +4,7 @@
 cargo test -p rr_dr60 -- record_ctl retune set_values hiss_transition   # core: the record control state, clock_of, record_landing at seven rates, the retune's field list and vc continuity, the gate's set_values with counts kept, the hiss transition's end sample (P + N − 1) and at-once rule
 cargo test -p rr_dr60_harness --test us1_record -- --nocapture     # US1 AS1 – AS8 at the measurement rates: the input-0 identity, the pre-landing identity (codec off per sample, on per frame), the limiter, the reference gate, the hang shortening, the hiss ratio, the passed position, the event bound
 cargo test -p rr_dr60_harness --test us2_record -- --nocapture     # US2 AS1 – AS4: two engines, record-then-play with changes, the stop (fed silence, final position, self-stop), the cross-stream landing and settings()
-cargo test -p rr_dr60_harness --test record_matrix -- --nocapture  # seven rates: the partition identity per value and stream, the k(P) pin (the stored sum), the 138-entry one-pass call and the 72-entry recorder call
+cargo test -p rr_dr60_harness --test record_matrix -- --nocapture  # seven rates: the partition identity per value and stream, the k(P) pin (the stored sum), the 138-entry one-pass call and the 64-entry recorder call (the start adopts with no entry)
 cargo test -p rr_dr60_harness --test record_edge_cases             # front taps, capsule/limiter bypassed, reset/reconfigure, the adopt rule, the skipped-flush stop, same-position pairs, mute mode, refusals, the clocks, the two sides' shared rules
 cargo test -p rr_dr60_harness --test mutation record::             # the six mutants of RecordMutation
 cargo test -p rr_dr60_harness --test golden_record_changes         # golden-record-changes-v1.json (714 entries) on this target
