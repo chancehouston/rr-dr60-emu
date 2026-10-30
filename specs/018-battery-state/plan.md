@@ -104,4 +104,4 @@ docs/hardware/assumptions.md (A-056, A-031), docs/hardware/signal-chain.md (rows
 
 ## Reviews
 
-The coach (1 – 14), the hardware-emulation reviewer (B1 – B15) and the product specialist (M1 – M9) reviewed this plan on 2026-10-30; every finding is applied above and in research.md, data-model.md, contracts/api.md, quickstart.md and records.md, and the spec's restatements are dated in its Clarifications. The owner signs off the plan next.
+The coach (1 – 14), the hardware-emulation reviewer (B1 – B15) and the product specialist (M1 – M9) reviewed this plan on 2026-10-30; every finding is applied above and in research.md, data-model.md, contracts/api.md, quickstart.md and records.md, and the spec's restatements are dated in its Clarifications. The owner signed off the plan on 2026-10-30 with the twelve restatements; tasks, analyze and implement proceed to the merge, stopping only on a failed check or a new decision.
