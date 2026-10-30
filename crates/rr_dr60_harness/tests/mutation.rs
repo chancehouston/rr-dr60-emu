@@ -1398,3 +1398,169 @@ mod record {
         );
     }
 }
+
+mod battery {
+    use rr_dr60::__test_hooks::OutputMutation;
+    use rr_dr60::{Pipeline, Route, Settings};
+    use rr_dr60_harness::battery_checks as bat;
+    use rr_dr60_harness::checks::{MeasurementResult, assert_all, standard};
+    use rr_dr60_harness::configs;
+
+    const RATE: u32 = 48_000;
+
+    fn failed(results: &[MeasurementResult]) -> Vec<&'static str> {
+        results
+            .iter()
+            .filter(|r| !r.passed)
+            .map(|r| r.property)
+            .collect()
+    }
+
+    fn mutant(m: OutputMutation) -> impl Fn(Settings) -> Pipeline {
+        move |s| Pipeline::__with_output_mutation(s, &m).unwrap()
+    }
+
+    /// Spec 018 SC-006 (research R-07): a linear transition shape fails the factor trace's
+    /// smoothstep row at ⌊N/4⌋; the committed shape passes.
+    #[test]
+    fn linear_shape_is_caught_by_the_trace() {
+        let m = mutant(OutputMutation {
+            battery_shape_linear: true,
+            ..OutputMutation::default()
+        });
+        let failed = failed(&bat::trace_rows(&m, RATE, 2.4));
+        assert!(
+            failed.contains(&"factor at transition sample N/4 against the smoothstep"),
+            "the linear shape was not caught: {failed:?}"
+        );
+        assert_all(&bat::trace_rows(&standard, RATE, 2.4));
+    }
+
+    /// A transition one sample too long is not at the target on sample N; one sample too
+    /// short fails the smoothstep row at ⌊N/4⌋ (its u is q ÷ (N − 1)).
+    #[test]
+    fn ramp_length_mutants_are_caught_by_the_trace() {
+        let long = mutant(OutputMutation {
+            battery_ramp_delta: 1,
+            ..OutputMutation::default()
+        });
+        let failed_long = failed(&bat::trace_rows(&long, RATE, 2.4));
+        assert!(
+            failed_long.contains(&"factor exactly b1 at transition sample N (bit for bit)"),
+            "the +1 length was not caught: {failed_long:?}"
+        );
+        let short = mutant(OutputMutation {
+            battery_ramp_delta: -1,
+            ..OutputMutation::default()
+        });
+        let failed_short = failed(&bat::trace_rows(&short, RATE, 2.4));
+        assert!(
+            failed_short.contains(&"factor at transition sample N/4 against the smoothstep"),
+            "the −1 length was not caught: {failed_short:?}"
+        );
+    }
+
+    /// The output scale following the ceiling (D3's rejected alternative) breaks the
+    /// below-knee identity (FR-002) at every value but the default; the committed clipper,
+    /// which scales the thresholds, keeps it.
+    #[test]
+    fn scaled_sample_is_caught_by_the_below_knee_identity() {
+        let m = mutant(OutputMutation {
+            battery_scale_sample: true,
+            ..OutputMutation::default()
+        });
+        let failed = failed(&bat::below_knee_identity(&m, RATE));
+        assert!(
+            failed.contains(&"bit-identical to the default below the knee"),
+            "the scaled sample was not caught: {failed:?}"
+        );
+        assert_all(&bat::below_knee_identity(&standard, RATE));
+    }
+
+    /// A route change that leaves a transition running is caught by the route-change row;
+    /// the committed chain ends the transition at the switch.
+    #[test]
+    fn transition_across_a_route_change_is_caught() {
+        let m = mutant(OutputMutation {
+            battery_no_at_once_on_route: true,
+            ..OutputMutation::default()
+        });
+        let failed = failed(&bat::route_change_ends_transition(&m, RATE));
+        assert!(
+            failed.contains(
+                &"a route change ends the transition: the target exactly on the first speaker sample"
+            ),
+            "the running transition was not caught: {failed:?}"
+        );
+        assert_all(&bat::route_change_ends_transition(&standard, RATE));
+    }
+
+    /// The clip count counts the samples the knee changed (research R-05, hardware B12): a
+    /// sample exactly on the knee's start is unchanged and not counted. At the 6 kHz identity
+    /// rate the fresh stage-11-only chain maps the first input sample to the knee's input
+    /// through a few multiplies, monotonic in `OutputMutation::gain_scale`, so for each of a
+    /// few input levels a bisection on the gain's bits finds the smallest gain at which the
+    /// "at or above" mutant counts the sample (its knee input at or above the start); where the
+    /// committed count reads 0 there, the sample sits exactly on the start.
+    #[test]
+    fn count_at_or_above_is_caught_at_an_exact_equality_sample() {
+        let rate = 6000;
+        let settings = configs::memory_capacity(bat::stage11_only(rate), 1, 1);
+        let count_of = |p: &mut Pipeline, x: f32| {
+            p.set_route(Route::Speaker);
+            p.set_volume(rr_dr60::output::VOLUME_REFERENCE).unwrap();
+            let mut y = [0.0f32; 1];
+            let _ = p.process(&[x], &mut y).unwrap();
+            (p.meters().amp_clip_count, y[0])
+        };
+        let with = |gain_scale: f64, at_or_above: bool| {
+            Pipeline::__with_output_mutation(
+                settings,
+                &OutputMutation {
+                    gain_scale,
+                    battery_count_at_or_above: at_or_above,
+                    ..OutputMutation::default()
+                },
+            )
+            .unwrap()
+        };
+        let mut found = None;
+        'levels: for k in 0..64u32 {
+            let x = 0.5f32 + k as f32 * 0.003_173;
+            let (n0, y0) = count_of(&mut standard(settings), x);
+            assert_eq!(n0, 0, "{x} at the reference position stays below the knee");
+            // The map is linear in the gain: y0 = C·x at gain 1, so the start sits near 0.85/y0.
+            let ideal = 0.85 / f64::from(y0);
+            let (mut lo, mut hi) = ((ideal * 0.999).to_bits(), (ideal * 1.001).to_bits());
+            assert_eq!(count_of(&mut with(f64::from_bits(lo), true), x).0, 0);
+            assert_eq!(count_of(&mut with(f64::from_bits(hi), true), x).0, 1);
+            while hi - lo > 1 {
+                let mid = lo + (hi - lo) / 2;
+                if count_of(&mut with(f64::from_bits(mid), true), x).0 == 1 {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+            // `hi` is the smallest gain at which the mutant counts the sample.
+            let g = f64::from_bits(hi);
+            let committed = count_of(&mut with(g, false), x).0;
+            if committed == 0 {
+                found = Some((x, g));
+                break 'levels;
+            }
+        }
+        let (x, g) = found
+            .expect("an input level and gain at which the sample sits exactly on the knee's start");
+        println!(
+            "exact-equality sample: x = {x}, gain_scale = {g:e} ({:#018x})",
+            g.to_bits()
+        );
+        assert_eq!(
+            count_of(&mut with(g, false), x).0,
+            0,
+            "the committed count leaves the unchanged sample out"
+        );
+        assert_eq!(count_of(&mut with(g, true), x).0, 1, "the mutant counts it");
+    }
+}

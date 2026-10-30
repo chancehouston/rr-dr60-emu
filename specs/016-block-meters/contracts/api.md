@@ -78,6 +78,10 @@ typedef struct RrDr60Meters {
  * The caller sets out->struct_size; `out` must be 8-aligned and struct_size bytes writable.
  * struct_size < 56 -> RR_DR60_STATUS_INVALID_ARGUMENT, nothing written;
  * larger -> the 56 bytes filled and the bytes [56, struct_size) zeroed (no upper cap).
+ * Amended 2026-10-30 by spec 018 (the compatible prefix-fill rule): the struct is 64 bytes
+ * since 0.18 (amp_clip_count at 56, battery_ceiling at 60); struct_size below 56 is refused,
+ * 56 ... 63 fills the first struct_size bytes (the 0.16 layout) and touches nothing else, 64
+ * and above fills the 64 bytes and zeroes the tail. A 0.17 binary keeps working.
  * NULL handle or out -> RR_DR60_STATUS_NULL_POINTER, nothing written; a poisoned handle ->
  * RR_DR60_STATUS_INTERNAL_ERROR as for every call. */
 int32_t rr_dr60_meters(RrDr60Pipeline *pipeline, RrDr60Meters *out);

@@ -1018,3 +1018,103 @@ fn record_changes_allocate_nothing() {
         unsafe { rr_dr60_destroy(handle) };
     }
 }
+
+/// Spec 018 FR-007: the battery setter and getter, a scheduled battery change, a producing
+/// call, the meters read and the three battery functions allocate nothing, in Rust and through
+/// the C API.
+#[test]
+fn battery_allocate_nothing() {
+    use rr_dr60::changes::MAX_CHANGES_PER_CALL;
+    use rr_dr60::{ChangeEntry, Stream};
+    use rr_dr60_ffi::{
+        RrDr60ChangeEntry, RrDr60Meters, rr_dr60_battery_ceiling_db,
+        rr_dr60_battery_ceiling_factor, rr_dr60_battery_trajectory_row, rr_dr60_get_battery_volts,
+        rr_dr60_meters, rr_dr60_process_with_events_and_changes, rr_dr60_schedule_change,
+        rr_dr60_set_battery_volts,
+    };
+    let _turn = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let input = stimulus::noise(0x018, 1024);
+    let mut output = vec![0.0f32; 1024];
+    let mut log = vec![ChangeEntry::default(); MAX_CHANGES_PER_CALL];
+    let mut clog = vec![RrDr60ChangeEntry::default(); MAX_CHANGES_PER_CALL];
+    let control = rr_dr60::controls()
+        .iter()
+        .position(|e| e.identifier == "battery_volts")
+        .unwrap() as u32;
+    for &rate in configs::measurement_rates() {
+        let mut s = rr_dr60::Settings::new(rate);
+        s.speech_codec_enabled = false;
+        let mut p = Pipeline::new(s).unwrap();
+        let c = configs::c_settings(&s);
+        let mut handle: *mut RrDr60Pipeline = core::ptr::null_mut();
+        // SAFETY: a valid settings struct and an out-pointer.
+        let st = unsafe { rr_dr60_create(&c, &mut handle) };
+        assert_eq!(st, RrDr60Status::Ok);
+        let mut info = RrDr60BlockInfo::default();
+        let mut count = 0usize;
+        let mut m = RrDr60Meters {
+            struct_size: size_of::<RrDr60Meters>() as u32,
+            ..Default::default()
+        };
+        let (mut volts, mut factor, mut db, mut hours, mut row_volts) =
+            (0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        MEASURING.with(|m| m.set(true));
+        let before = counts();
+        p.set_battery_volts(2.4).unwrap();
+        let rv = p.battery_volts();
+        p.schedule_change(Stream::OnePass, 500, control, 2.2, 1)
+            .unwrap();
+        let rinfo = p
+            .process_with_events_and_changes(&input, &mut output, &mut [], &mut log)
+            .unwrap();
+        let rm = p.meters();
+        let rf = rr_dr60::battery::ceiling_factor(2.4);
+        let rd = rr_dr60::battery::ceiling_db(2.4);
+        let rt = rr_dr60::battery::ALKALINE_TRAJECTORY[3];
+        // SAFETY: the handle is live; the buffers are 1024 samples; the outs are writable.
+        let statuses = unsafe {
+            [
+                rr_dr60_set_battery_volts(handle, 2.4),
+                rr_dr60_get_battery_volts(handle, &mut volts),
+                rr_dr60_schedule_change(handle, 1, 500, control, 2.2, 1),
+                rr_dr60_process_with_events_and_changes(
+                    handle,
+                    input.as_ptr(),
+                    output.as_mut_ptr(),
+                    1024,
+                    &mut info,
+                    core::ptr::null_mut(),
+                    0,
+                    clog.as_mut_ptr(),
+                    MAX_CHANGES_PER_CALL,
+                    &mut count,
+                ),
+                rr_dr60_meters(handle, &mut m),
+                rr_dr60_battery_ceiling_factor(2.4, &mut factor),
+                rr_dr60_battery_ceiling_db(2.4, &mut db),
+                rr_dr60_battery_trajectory_row(3, &mut hours, &mut row_volts),
+            ]
+        };
+        let after = counts();
+        MEASURING.with(|m| m.set(false));
+        assert!(
+            statuses.iter().all(|&s| s == RrDr60Status::Ok),
+            "{statuses:?}"
+        );
+        assert_eq!(after, before, "{rate} Hz: the battery calls allocated");
+        assert_eq!(rv, 2.4);
+        assert_eq!(volts, 2.4);
+        assert_eq!(rinfo.changes, count);
+        assert_eq!(
+            rinfo.changes, 2,
+            "the plain setter's entry and the scheduled one"
+        );
+        assert_eq!(m.battery_ceiling.to_bits(), rm.battery_ceiling.to_bits());
+        assert_eq!(m.amp_clip_count, rm.amp_clip_count);
+        assert_eq!(factor.to_bits(), rf.to_bits());
+        assert_eq!(db.to_bits(), rd.to_bits());
+        assert_eq!((hours, row_volts), rt);
+        // SAFETY: destroying the handle once.
+        unsafe { rr_dr60_destroy(handle) };
+    }
+}

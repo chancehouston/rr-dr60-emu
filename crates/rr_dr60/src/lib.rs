@@ -417,8 +417,10 @@ pub mod __test_hooks {
         pub battery_shape_linear: bool,
         /// Spec 018: added to the battery transition's length N (0: as committed).
         pub battery_ramp_delta: i64,
-        /// Spec 018: the knee's input and output scaled by the factor instead of its thresholds
-        /// (false: as committed; true breaks the below-knee identity).
+        /// Spec 018: the knee's output scaled by the factor with its thresholds fixed, the
+        /// rejected alternative of D3 (false: as committed; true breaks the below-knee
+        /// identity). Scaling the input and the output both is bit-identical to the committed
+        /// form after the f32 narrowing, so that is no mutant (restated at implementation).
         pub battery_scale_sample: bool,
         /// Spec 018: a route change does not take the battery factor at once (false: as
         /// committed; true leaves a transition running across the switch).

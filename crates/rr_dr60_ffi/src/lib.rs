@@ -2602,14 +2602,15 @@ pub unsafe extern "C" fn rr_dr60_battery_trajectory_row(
 /// dBFS), the largest absolute sample at its point, and may exceed 1.0. A figure whose point
 /// the call did not reach keeps its rest value: 0 (`vas_paused` 0), except
 /// `hang_remaining_samples`, whose rest is the configured hang length, and `battery_ceiling`,
-/// whose rest is the factor of the battery value in force.
+/// whose rest is the factor of the battery value in force at the last non-empty call (a value
+/// set since shows in the next call's read-out; the Rust `rest_meters()` follows it at once).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RrDr60Meters {
     /// Set by the caller to `sizeof(RrDr60Meters)` (64 in this version; 56 in 0.16 and 0.17).
-    /// Below 56 is refused (`RR_DR60_STATUS_INVALID_ARGUMENT`); 56 … 63 fills the first
-    /// `struct_size` bytes, the fields of 0.16, and touches nothing else (a 0.17 binary keeps
-    /// working); 64 and above fills every field and zeroes the bytes past 64.
+    /// Below 56 is refused (`RR_DR60_STATUS_INVALID_ARGUMENT`); 56 … 63 fills the 56 bytes of
+    /// the 0.16 fields and touches nothing else (a 0.17 binary keeps working); 64 and above
+    /// fills every field and zeroes the bytes past 64.
     pub struct_size: u32,
     /// The largest absolute input sample after the engine's sanitizing of non-finite samples.
     pub input_peak: f32,
@@ -2709,9 +2710,8 @@ impl RrDr60Meters {
 /// before any, after `rr_dr60_reset` and after `rr_dr60_reconfigure`. Real-time safe; never
 /// changes the engine. `out->struct_size` is read first (the compatible prefix-fill rule, spec
 /// 018 FR-010): below 56 (the size of 0.16 and 0.17) → `RR_DR60_STATUS_INVALID_ARGUMENT` and
-/// nothing written; 56 … 63 → the first `struct_size` bytes filled (the fields of 0.16) and
-/// nothing else touched; 64 and above → the 64 bytes filled and the bytes `[64, struct_size)`
-/// zeroed (no upper cap).
+/// nothing written; 56 … 63 → the 56 bytes of the 0.16 fields filled and nothing else touched;
+/// 64 and above → the 64 bytes filled and the bytes `[64, struct_size)` zeroed (no upper cap).
 ///
 /// # Safety
 ///
@@ -2737,11 +2737,17 @@ pub unsafe extern "C" fn rr_dr60_meters(
         return RrDr60Status::InvalidArgument;
     }
     let m = RrDr60Meters::from_core(p.inner.meters(), size);
-    let filled = size.min(METERS_SIZE) as usize;
+    // Hardware review B5: a 0.17-sized request (56 … 63) receives exactly the 0.16 fields, never
+    // a partial appended field.
+    let filled = if size < METERS_SIZE {
+        METERS_SIZE_016 as usize
+    } else {
+        METERS_SIZE as usize
+    };
     // SAFETY: `out` is non-null and at least `size` ≥ 56 bytes writable (caller contract); the
-    // first `min(size, 64)` bytes of the filled struct are copied byte by byte (a `repr(C)`
-    // struct with no uninitialized padding: `reserved_016` is explicit), so a 0.17-sized
-    // buffer receives exactly its 56 bytes; the tail `[64, size)` is zero-filled.
+    // first 56 or 64 bytes of the filled struct are copied byte by byte (a `repr(C)` struct
+    // with no uninitialized padding: `reserved_016` is explicit), so a 0.17-sized buffer
+    // receives exactly its 56 bytes; the tail `[64, size)` is zero-filled.
     unsafe {
         core::ptr::copy_nonoverlapping(
             (&m as *const RrDr60Meters).cast::<u8>(),
@@ -6262,15 +6268,12 @@ mod battery_tests {
         assert_eq!(s, RrDr60Status::Ok);
         assert_eq!(f32_at(&b, 4), 0.5, "input_peak");
         assert!(b[56..].iter().all(|&x| x == 0xA5), "nothing past 56");
-        // 60: the clip count filled, the factor and beyond untouched.
+        // 60: the 0.16 fields filled, nothing past 56 (hardware review B5: never a partial
+        // appended field).
         let (s, b) = fill(60);
         assert_eq!(s, RrDr60Status::Ok);
-        assert_eq!(
-            u32::from_ne_bytes(b[56..60].try_into().unwrap()),
-            0,
-            "amp_clip_count"
-        );
-        assert!(b[60..].iter().all(|&x| x == 0xA5), "nothing past 60");
+        assert_eq!(f32_at(&b, 4), 0.5, "input_peak");
+        assert!(b[56..].iter().all(|&x| x == 0xA5), "nothing past 56");
         // 64: everything filled, nothing past.
         let (s, b) = fill(64);
         assert_eq!(s, RrDr60Status::Ok);

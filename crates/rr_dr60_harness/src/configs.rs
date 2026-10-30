@@ -298,6 +298,11 @@ pub fn settings(name: &str, host_rate_hz: u32) -> Settings {
             }
         }
         "meters_default" => s = Settings::new(host_rate_hz),
+        // Spec 018 (research R-09): the default output (0.17's default with the codec on) on the
+        // speaker or the earphone route; the battery value is set by the generator.
+        "battery_default" | "battery_default_earphone" => {
+            s = settings("default_output", host_rate_hz);
+        }
         "meters_default_clamp" => {
             s = Settings::new(host_rate_hz);
             s.output.clamp_enabled = true; // 010 FR-001

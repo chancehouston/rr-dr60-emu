@@ -410,6 +410,7 @@ impl OutputChain {
         self.batt_inv_n = 1.0 / f64::from(self.batt_n);
         self.batt_k = self.batt_n;
         self.batt = self.batt_to;
+        self.recompute_knee(); // hardware review B4: the thresholds follow the factor here too
     }
 
     /// Spec 018 (research R-03): the clipper's thresholds for the factor in force: `k·b`,
@@ -634,8 +635,11 @@ impl OutputChain {
                         self.amp_clip_count += 1;
                     }
                     if self.batt_scale_sample {
-                        // The mutant (research R-07): the sample scaled instead of the knee.
-                        knee(xin / self.batt, self.knee_start) * self.batt
+                        // The mutant (research R-07, restated at implementation): the knee's
+                        // output scaled by the factor with the thresholds fixed, D3's rejected
+                        // "output scale follows the ceiling" (scaling the input and the output
+                        // both is bit-identical after the f32 narrowing, so it is no mutant).
+                        knee(xin, self.knee_start) * self.batt
                     } else {
                         knee_b(xin, self.batt, self.knee_lo, self.knee_hi, self.knee_den)
                     }
@@ -1620,21 +1624,34 @@ mod battery_tests {
     /// 0.575, the parabola is C¹ at both joints.
     #[test]
     fn knee_b_scales_the_thresholds() {
-        let b = 0.5;
-        for x in [0.0, 0.1, 0.3, 0.424, -0.4] {
-            assert_eq!(knee_b_at(x, b).to_bits(), x.to_bits(), "{x}");
+        // Hardware review B7 (post-implementation): the joints at every law point, not at 0.5
+        // alone (finite differences; T004's wording restated).
+        for volts in [3.0f32, 2.8, 2.6, 2.4, 2.2] {
+            let b = f64::from(ceiling_factor(volts));
+            let (lo, hi) = (c::KNEE_START * b, (2.0 - c::KNEE_START) * b); // the chain's own products
+            for x in [0.0, 0.1 * b, 0.5 * b, 0.999 * lo, -0.8 * b] {
+                assert_eq!(knee_b_at(x, b).to_bits(), x.to_bits(), "{volts} V {x}");
+            }
+            for x in [hi, 1.2 * b, 1.5 * b, 2.0] {
+                assert_eq!(knee_b_at(x, b), b, "{volts} V {x}");
+                assert_eq!(knee_b_at(-x, b), -b, "{volts} V {x}");
+            }
+            let h = 1e-6;
+            // Continuity and matching slopes at the joints (1 at the start, 0 at the ceiling).
+            assert!(
+                (knee_b_at(lo + h, b) - knee_b_at(lo - h, b)).abs() < 1e-5,
+                "{volts} V"
+            );
+            assert!(
+                ((knee_b_at(lo + h, b) - knee_b_at(lo, b)) / h - 1.0).abs() < 1e-3,
+                "{volts} V"
+            );
+            assert!((knee_b_at(hi - h, b) - b).abs() < 1e-9, "{volts} V");
+            assert!(
+                ((knee_b_at(hi, b) - knee_b_at(hi - h, b)) / h).abs() < 1e-3,
+                "{volts} V"
+            );
         }
-        for x in [0.575, 0.6, 1.0, 2.0] {
-            assert_eq!(knee_b_at(x, b), 0.5, "{x}");
-            assert_eq!(knee_b_at(-x, b), -0.5, "{x}");
-        }
-        let (lo, hi) = (0.425, 0.575);
-        let h = 1e-6;
-        // Continuity and matching slopes at the joints (1 at the start, 0 at the ceiling).
-        assert!((knee_b_at(lo + h, b) - knee_b_at(lo - h, b)).abs() < 1e-5);
-        assert!(((knee_b_at(lo + h, b) - knee_b_at(lo, b)) / h - 1.0).abs() < 1e-3);
-        assert!((knee_b_at(hi - h, b) - 0.5).abs() < 1e-9);
-        assert!(((knee_b_at(hi, b) - knee_b_at(hi - h, b)) / h).abs() < 1e-3);
     }
 
     /// FR-003: the factor follows spec 011's smoothstep from the factor in force to the target,

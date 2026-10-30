@@ -118,6 +118,7 @@ What to do about it:
 - **Limiter:** "The limiter held the peaks at −1 dBFS for 0.6 s, beginning 3 ms after the level crossed it. Gain was reduced by up to 9 dB and returned to unity about 1.4 s later, so quieter sounds in that interval play back lower. Modeled on the circuit (A-028)."
 - **Codec on hiss:** "Input this second: −51 dBFS, of which the microphone hiss was −62 dBFS. The speech codec codes every 20 ms frame with the same speech model (a pitch period plus pulses), whatever the input, so noise is given a periodic, buzzy texture. Same class as the device's coder, not its actual coder (A-004, A-040)."
 - **Speed:** "Played at level 1 (0.6×). This 5.0 s passage lasted 8.3 s, and every frequency is 0.6× lower: 1 kHz plays as 600 Hz. Modeled on the device's Slow Play (A-054)."
+- **Amplifier:** "The speaker amplifier ran into its clip knee for 0.6 s at 2.4 V cells, a ceiling 6 dB below nominal. Quiet passages are unchanged. Modeled on the circuit and the amplifier's datasheet, not measured (A-056, A-031)."
 
 The figures in these cards are illustrations. A shipped card prints the engine's numbers for that moment.
 
@@ -237,6 +238,7 @@ Feature descriptions (WHAT/WHY), ready for `/speckit-specify`:
   - optionally, a state checkpoint and restore.
 - **015 (built, engine 0.16.0):** each change a stream applies is logged at its output-sample position with the control, the values before and after and a caller tag; the recording counter has a public getter. Moved to 020: the host-input index a change maps to (through the voice-activation events), construct-at-counter, and the map from a playback position to the recording's place under a speed schedule.
 - **017 (built, engine 0.17.0):** the sensitivity, the voice activation's threshold, hang and onset, the hiss level and the limiter's knee, attack and release change during a recording through the schedule, positioned in the input clock and logged; a change scheduled while stopped lands on the recording's first sample. The session's setting changes therefore come from the engine's log in microphone time. Still 020's: the entry's stream word, the flush boundary in the stop's report, the host-input index of a voice-activation event.
+- **018 (built, engine 0.18.0):** the battery voltage is a live unit condition on the playback side (a plain setter and a scheduled change in the output clock; kept through `reset` and `reconfigure`); the meters carry the amplifier's clip count and the ceiling factor, so the amplifier card prints the engine's numbers; the law and the trajectory are engine data. For 020: the session snapshot carries the starting values of the four live controls.
 - **014:** unchanged, plus descriptions of the meter fields, so the app labels them from one source.
 - **Chore:** an Android arm64 golden target before case files are shared across platforms.
 

@@ -3,7 +3,7 @@
 **A software emulator of the Panasonic RR-DR60 voice recorder's sound, from the microphone to the speaker.** Feed it audio and get back what the recorder would have recorded and played back, as modeled from its service manual and the datasheets of its parts.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Version 0.17.0](https://img.shields.io/badge/version-0.17.0-informational)
+![Version 0.18.0](https://img.shields.io/badge/version-0.18.0-informational)
 ![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)
 ![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-lightgrey)
 
@@ -13,8 +13,8 @@ The RR-DR60 is a pocket digital voice recorder Panasonic sold in the late 1990s.
 
 | | |
 |---|---|
-| **Version** | 0.17.0, pre-alpha. Not yet released or published to crates.io; the API may still change before 1.0. |
-| **Signal chain** | 12 of the 15 stages are modeled and on by default. Not modeled: noise reduction (no evidence the device has it), the clock and the power supply. |
+| **Version** | 0.18.0, pre-alpha. Not yet released or published to crates.io; the API may still change before 1.0. |
+| **Signal chain** | 13 of the 15 stages are modeled and on by default (the power supply as the battery's effect on the speaker amplifier's clip ceiling, a user-set value). Not modeled: noise reduction (no evidence the device has it) and the clock. |
 | **Accuracy** | Every modeled stage is built from documents (the service manual, the owner's manual, datasheets) plus recorded assumptions. **No stage has been checked against a real unit**; see [Accuracy](#accuracy). |
 | **Platforms** | Rust library (`no_std`), C API, and a Swift package for iOS and macOS. Bit-identical output on Linux, macOS, Windows, the iOS simulator and an iOS device. |
 | **Not yet** | A published release, a Swift-native API, an app (planned as a separate project). |
@@ -38,7 +38,7 @@ What you hear, in the model's default configuration:
 - **Loud sounds are clipped, then held.** Very loud input clips in the microphone amplifier; the limiter lets an onset through for a few milliseconds, then holds the level just below full scale and recovers over about 1.4 s. Below its threshold the limiter leaves the signal untouched.
 - **Pauses are cut out.** The voice-activated system stops recording while the sound stays below a threshold, so the output can be shorter than the input, with clipped onsets and abrupt joins.
 - **Low-rate speech coding.** A 4 kbit/s CELP-class coder gives speech a slightly watery, buzzy texture and renders everything else (music, noise, tones) through a speech model. It models the *class* of coder the device used, not the device's own coder, which is undocumented.
-- **A small speaker.** Playback goes through the volume control and power amplifier (which clips above its ceiling) to a small-speaker resonance, or to the earphone output. Playback can run at the device's five speeds, 0.6× to 1.4×, with the pitch following.
+- **A small speaker.** Playback goes through the volume control and power amplifier (which clips above its ceiling) to a small-speaker resonance, or to the earphone output. The amplifier runs from the two cells, so its clip ceiling follows a **battery voltage** value: fresh cells by default, lower cells clip loud playback sooner and lower, quiet playback is unchanged. Playback can run at the device's five speeds, 0.6× to 1.4×, with the pitch following.
 
 Each stage can be switched off or tapped on its own, for example to hear the codec alone.
 
@@ -68,7 +68,7 @@ Four things to know before you ship:
 3. **There is latency.** 1923 samples (about 40 ms) at 48 kHz by default; `latency_samples()` reports it for any configuration.
 4. **The hiss is seeded.** Output is deterministic; set a different `seed` per session if recordings must not share the same hiss.
 
-The engine also models the device's recording memory (60 minutes, 99 recordings, with export and import), its volume control, speaker/earphone routing and playback speed as live controls, it describes its own stages and its controls through a built-in stage manifest and control manifest, and it offers a per-call **meter read-out** of what each stage did (peaks, the limiter's gain reduction and hold, the clamp counts, the voice activation's state and hang) for apps that draw the chain live. The [user guide](docs/guide.md) covers all of it.
+The engine also models the device's recording memory (60 minutes, 99 recordings, with export and import), its volume control, speaker/earphone routing, playback speed and battery voltage (a unit condition, set by the user, never read from the host device) as live controls, it describes its own stages and its controls through a built-in stage manifest and control manifest, and it offers a per-call **meter read-out** of what each stage did (peaks, the limiter's gain reduction and hold, the clamp counts, the voice activation's state and hang, the amplifier's clip count and the battery's ceiling factor) for apps that draw the chain live. The [user guide](docs/guide.md) covers all of it.
 
 ## Documentation
 

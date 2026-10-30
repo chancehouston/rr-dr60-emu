@@ -94,7 +94,7 @@ For "Kind", see the table in the summary. "Perceived" is what a listener notices
 | Mic amp corners (818 / 77 Hz / 12.9 kHz) and clip limits | A-046, A-047, A-051, A-053 | No. Only as a future "unit condition" if captures show spread. |
 | VAS step of 3 dB per sensitivity level | A-022 | No |
 | Speaker template (750 Hz, Q 1.8, +4.5 dB shelf); earphone corners | A-010, A-032 | No |
-| Amplifier clip ceiling 1.15 V; gain law | A-031, A-044 | **Yes, candidate**: battery state scales the ceiling (A-056). |
+| Amplifier clip ceiling 1.15 V; gain law | A-031, A-044 | **Yes, candidate**: battery state scales the ceiling (A-056). *Modeled by spec 018 (engine 0.18.0, 2026-10-30): the static law as a live unit condition, `battery_volts`, 2.2 – 3.0 V, default 3.0 V (factor 1); the sag stays not modeled.* |
 | Volume transition 20 ms, smoothstep | A-045 (an engine convention) | No. A programmed fade is a separate candidate (section 4). |
 | Speed ratios and mechanism (b) | A-054 | **Yes, candidate**: a pitch-kept mode (c1). |
 | Recording counter (hiss stream key) | A-049 | State, not a control |
@@ -103,7 +103,7 @@ For "Kind", see the table in the summary. "Perceived" is what a listener notices
 
 | Candidate | Basis | Status |
 |---|---|---|
-| Battery state on the speaker route | A-056 (static law: ceiling ∝ V+ − 1.6 V; −0.3 dB fresh to −9.1 dB at 10 h; plus 0.9 – 2.5 dB sag on loud passages) | The owner put it into this discussion on 2026-10-17. Audible only on material that reaches the ceiling: at the reference volume, −20 dBFS speech keeps about 11 dB of headroom even at 10 h. |
+| Battery state on the speaker route | A-056 (static law: ceiling ∝ V+ − 1.6 V; −0.3 dB fresh to −9.1 dB at 10 h; plus 0.9 – 2.5 dB sag on loud passages) | The owner put it into this discussion on 2026-10-17. Audible only on material that reaches the ceiling: at the reference volume, −20 dBFS speech keeps about 11 dB of headroom even at 10 h. *Modeled by spec 018 (engine 0.18.0, 2026-10-30): the static law as a live unit condition, `battery_volts`, 2.2 – 3.0 V, default 3.0 V (factor 1); the sag stays not modeled.* |
 | Pitch-kept slow/fast (mechanism c1) | A-054 (the research leans weakly toward it), S-018 | Follow-up to spec 013. |
 | Crossfade on a speed-level change | spec 013 B2 (the step at 2 kHz to or from level 5 is −0.7 … −1.9 dB re the tone) | "Revisit after capture P1 or an app request." |
 | 10 SEC REVIEW and seek | S-002 control S11 | Not modeled. `play` has no seek. |
@@ -131,6 +131,8 @@ Never live: the speech codec on/off (it fixes the memory's encoding and the late
 
 ### 2b. Engine work, control by control
 
+*Status at engine 0.18.0 (spec 018, 2026-10-30): the battery row is built: the battery value `battery_volts` (a unit condition, 2.2 – 3.0 V, default 3.0 V where the ceiling factor is exactly 1) is the fourth live control, a plain setter and a scheduled change in the output clock on the playback and one-pass streams, moving the speaker amplifier's clip knee and ceiling by the static law b = (V − 1.8) ÷ 1.2 over the volume's 20 ms transition; the earphone route and the record path do not move; the meters gain the amplifier's clip count and the ceiling factor; the law, the alkaline trajectory and the NiMH figure are public engine data for an app's presets. The value is set by the user, never driven from the phone's battery, a sensor or a timer; the sag under load stays not modeled.*
+
 *Status at engine 0.17.0 (spec 017, 2026-10-30): the first three rows of the table are built. The sensitivity, threshold, hang and onset, the hiss offset (with the 20 ms glide) and the limiter's knee, attack and release change live on the recorder and the one-pass through spec 015's schedule, positioned in the stream's **input clock** (host input samples since `start_recording`, or since construction, `reset` or `reconfigure`), and are logged as change entries; `settings()` reflects a landed value, so a change at position 0 while stopped is also the between-recordings path (no `reconfigure` needed for these eight). The "between-recordings apply" row is therefore closed for these eight; `reconfigure` stays the path for the switches, the codec, the memory and the host rate (never live, decisions.md 2026-10-29). The control manifest's eight entries read timing "live"; their kinds, and the free/Workbench line, are unchanged. On the device the sensitivity is set while stopped (S-001); a live change is a feature of the emulator's API, not a device behavior.*
 
 The common pattern is spec 011's: a setter that is validated, real-time safe and read at a block boundary; per-sample smoothing where a step would click; the test oracle "a change at sample n equals the old constant run before n and the new constant run's steady state after the transition".
@@ -140,7 +142,7 @@ The common pattern is spec 011's: a setter that is validated, real-time safe and
 | Sensitivity, threshold, hang, onset, live | Record path and one-pass | The threshold is compared per device sample, so a step is click-free (it moves a decision, not a gain). The hang and onset counters take the new value at the next decision. | Kept across the change. Does `reset` keep or restore the setting? Recommend: a live value lives in `Settings`, and `settings()` reflects it. | Needs sample-positioned changes (2c) | S |
 | Hiss offset, live | Record path and one-pass, host rate | A per-sample gain with a 20 ms ramp (a stepped noise level is audible) | The hiss stream is unchanged; only its gain moves | Same | S |
 | Limiter knee, attack, release, live | Record path and one-pass, host rate | The derived coefficients are scalars recomputed at the block boundary. The capacitor's state carries over, which is physical: a resistor changed while the circuit runs. | Carried | Same | S – M |
-| Battery state (A-056, static law), live | Playback and one-pass, stage 11 | The ceiling scales per block with a 20 ms ramp. At the nominal value it is bit-identical to 0.13. | None | Same | S – M (design script, harness rows) |
+| Battery state (A-056, static law), live | Playback and one-pass, stage 11 | (As proposed 2026-10-18:) the ceiling scales per block with a 20 ms ramp; at the nominal value it is bit-identical to 0.13. *Modeled by spec 018 (engine 0.18.0, 2026-10-30): the static law as a live unit condition, `battery_volts`, 2.2 – 3.0 V, default 3.0 V (factor 1); the sag stays not modeled.* | None | Same | S – M (design script, harness rows) |
 | Speed crossfade | `play` | Both levels run for the fade, which doubles the speed stage's work for that time | None | Constant level unchanged; a change has a new oracle (step energy) | S |
 | Playback-stage bypass, live (10, 11, 12, 13) | Playback | Both branches computed for a 20 ms crossfade. The filters are minimum-phase with no reported latency, so the branches align. | Each bypassed branch keeps running to stay warm, or restarts from rest under the crossfade | Same | M |
 | Record-side "with / without" | Offline | A second pipeline renders the raw capture again with one setting changed. The engine already guarantees this is deterministic. | None | Given | None in the engine. App work, plus O-3 (the raw capture must be kept). Derived cost: about 0.5 min per hour of audio on the development machine (from 1.23 µs per device sample at 48 kHz, spec 008). **Not measured on a phone.** |
@@ -220,7 +222,7 @@ These words apply to control names, preset names, AI prompts, AI tool descriptio
 | Preset names | "Device as modeled", "Tired batteries (2.4 V)", "Noisy capsule (+6 dB hiss)", "Codec only", "No voice activation (emulator)" | "EVP mode", "Spirit", "Ghost", "Paranormal", "Investigation boost", "Clear voices", "Enhanced", "Sensitive to activity" |
 | Control descriptions | "Moves the voice-activation threshold 3 dB per level" | "Picks up more", "listens for", "detects" |
 | AI tool description | "Sets the recorder's controls within their ranges" | "Finds the best settings for capturing…" |
-| The battery control | "Battery voltage (V) / hours of use; lowers the speaker's clip ceiling" | Any link between battery level and events, presence or "drain". Battery drain is a well-known trope in this category. The control is set by the user only, never by a sensor, a timer or the phone's own battery. |
+| The battery control | "Battery voltage (V) / hours of use; lowers the speaker's clip ceiling". The engine's own instance of the rule is the control manifest's sentence (spec 018): "Sets the played unit's cell voltage: the lower the cells, the lower the speaker amplifier's clip ceiling; set by the user, never read from the host device." Preset names, in the app and never the engine, every value an engine constant: "Fresh (as modeled)" (`DEFAULT_BATTERY_VOLTS`), "Half used (4 h of recording, 2.52 V)" (trajectory row 3), "Nearly flat (10 h, 2.22 V)" (row 6), "NiMH pair (2.45 V)" (`NIMH_PAIR_VOLTS`); no dB in the label, the detail view prints `ceiling_db`. | Any link between battery level and events, presence or "drain". Battery drain is a well-known trope in this category. The control is set by the user only, never by a sensor, a timer or the phone's own battery. Never "dying", "drained", "draining" or anything tying the value to activity. |
 | Speed | "Plays at 0.6× with the pitch lowered" / "kept" | "Slow down to reveal hidden voices" |
 
 ## 4. Recommended sequence of engine specs
@@ -243,8 +245,9 @@ Each item below is small and independently testable, with the WHY and the tier i
    - *Built as spec 017 (engine 0.17.0, 2026-10-30) at the recommended scope; the oracle "a change at sample 0 equals the constant configuration" held for every value at seven rates. Open: if a capture shows the sensitivity is a digital gain (A-033 H4/H5), its landing rule gains the hiss's 20 ms glide.*
 5. **018: Battery state, static law (A-056)** (S – M; a unit condition, free).
    - *As a user, I want to set the unit's battery voltage and hear the speaker route's clip ceiling follow it, so that the recorder can be played as a unit with fresh or tired cells.*
-   - Off (nominal 2.8 V V+) by default, bit-identical to 0.13. Live, ramped. The engine only; the app must never drive it from the phone's battery.
+   - (As proposed 2026-10-18:) off (nominal 2.8 V V+) by default, bit-identical to 0.13. Live, ramped. The engine only; the app must never drive it from the phone's battery.
    - Envelope sag: a later spec, only if wanted.
+   - *Built as spec 018 (engine 0.18.0, 2026-10-30) at the recommended scope, the clip meter and the public law (the factor, the dB, the alkaline trajectory, the NiMH figure) added at the product review; at the default every output is bit-identical to 0.17 (the twelve earlier golden files unmoved); the hard-clipped tone's peak equals the factor to the bit at seven rates and the register's seven trajectory rows within 0.05 dB.*
 6. **019: Speed-change crossfade** (S; free polish).
    - Removes the tick on a level change to or from levels 4 – 5. A constant level stays bit-identical.
    - It could ride with 018 if each keeps its own oracle.

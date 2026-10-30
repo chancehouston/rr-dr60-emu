@@ -869,12 +869,13 @@ typedef struct RrDr60PlayInfo {
 // dBFS), the largest absolute sample at its point, and may exceed 1.0. A figure whose point
 // the call did not reach keeps its rest value: 0 (`vas_paused` 0), except
 // `hang_remaining_samples`, whose rest is the configured hang length, and `battery_ceiling`,
-// whose rest is the factor of the battery value in force.
+// whose rest is the factor of the battery value in force at the last non-empty call (a value
+// set since shows in the next call's read-out; the Rust `rest_meters()` follows it at once).
 typedef struct RrDr60Meters {
   // Set by the caller to `sizeof(RrDr60Meters)` (64 in this version; 56 in 0.16 and 0.17).
-  // Below 56 is refused (`RR_DR60_STATUS_INVALID_ARGUMENT`); 56 … 63 fills the first
-  // `struct_size` bytes, the fields of 0.16, and touches nothing else (a 0.17 binary keeps
-  // working); 64 and above fills every field and zeroes the bytes past 64.
+  // Below 56 is refused (`RR_DR60_STATUS_INVALID_ARGUMENT`); 56 … 63 fills the 56 bytes of
+  // the 0.16 fields and touches nothing else (a 0.17 binary keeps working); 64 and above
+  // fills every field and zeroes the bytes past 64.
   uint32_t struct_size;
   // The largest absolute input sample after the engine's sanitizing of non-finite samples.
   float input_peak;
@@ -1665,9 +1666,8 @@ RrDr60Status rr_dr60_battery_trajectory_row(uint32_t i, float *out_hours, float 
 // before any, after `rr_dr60_reset` and after `rr_dr60_reconfigure`. Real-time safe; never
 // changes the engine. `out->struct_size` is read first (the compatible prefix-fill rule, spec
 // 018 FR-010): below 56 (the size of 0.16 and 0.17) → `RR_DR60_STATUS_INVALID_ARGUMENT` and
-// nothing written; 56 … 63 → the first `struct_size` bytes filled (the fields of 0.16) and
-// nothing else touched; 64 and above → the 64 bytes filled and the bytes `[64, struct_size)`
-// zeroed (no upper cap).
+// nothing written; 56 … 63 → the 56 bytes of the 0.16 fields filled and nothing else touched;
+// 64 and above → the 64 bytes filled and the bytes `[64, struct_size)` zeroed (no upper cap).
 //
 // # Safety
 //

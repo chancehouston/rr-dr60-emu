@@ -5,7 +5,7 @@
 //! so its clip ceiling follows the cells while the record path and the earphone route run on
 //! regulated rails. The model's ceiling, 1.15 V peak differential at the service manual's
 //! 2.8 V mark (A-031), scales in proportion to V+ − 1.6 V (the output pins' swing limits,
-//! S-006) with V+ the cell pair's voltage less Q9's 0.2 V drop (A-056): the **ceiling factor**
+//! S-006) with V+ the cell pair's voltage less Q9's drop, about 0.2 V at idle (the sheet's mark; larger under load, not modeled; A-056): the **ceiling factor**
 //! is `b = (volts − 1.8) ÷ 1.2`, exactly 1 at the default of 3.0 V. The dynamic sag under load,
 //! any drain over time and supply-noise coupling are not modeled. **Modeled on the circuit and
 //! the amplifier's datasheet, not measured** (low to medium confidence). The value describes

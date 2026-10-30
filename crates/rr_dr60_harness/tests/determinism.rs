@@ -886,3 +886,51 @@ fn record_same_calls_same_log() {
         assert_eq!(a.log, b.log, "{rate}: the one-pass log");
     }
 }
+
+/// Spec 018 FR-007: the same calls give the same output and the same log, at two rates: two
+/// engines at 2.4 V with a scheduled change to 2.2 V on the one-pass and on a playback.
+#[test]
+fn battery_same_calls_same_output() {
+    use rr_dr60::{Route, Stream};
+    use rr_dr60_harness::battery_checks as bat;
+    use rr_dr60_harness::changes_checks::{self as cc, Change, Partition, Source};
+    for rate in [6000u32, 48_000] {
+        let x = bat::clipped_tone(rate);
+        let s = bat::stage11_only(rate);
+        let changes = [Change::battery(Stream::OnePass, 1500, 2.2, 1)];
+        let run = |changes: &[Change]| {
+            let mut p = Pipeline::new(s).unwrap();
+            p.set_route(Route::Speaker);
+            p.set_volume(rr_dr60::output::VOLUME_6DB_OVER).unwrap();
+            p.set_battery_volts(2.4).unwrap();
+            cc::run_scheduled(&mut p, Source::OnePass(&x), changes, Partition::Irregular)
+        };
+        let (a, b) = (run(&changes), run(&changes));
+        assert!(cc::same(&a.out, &b.out), "{rate}: the one-pass");
+        assert_eq!(a.log, b.log, "{rate}: the one-pass log");
+        assert!(
+            !bat::battery_entries(&a.log).is_empty(),
+            "{rate}: the change landed"
+        );
+        let mut s = configs::settings("default_output", rate);
+        s.speech_codec_enabled = false;
+        let played = |changes: &[Change]| {
+            let mut p = Pipeline::new(s).unwrap();
+            p.set_route(Route::Speaker);
+            p.set_volume(rr_dr60::output::VOLUME_6DB_OVER).unwrap();
+            p.set_battery_volts(2.4).unwrap();
+            p.start_recording().unwrap();
+            let _ = p.record(&x, &mut []).unwrap();
+            let _ = p.stop_recording(&mut []).unwrap();
+            cc::run_scheduled(&mut p, Source::Playback(1), changes, Partition::Irregular)
+        };
+        let pchanges = [Change::battery(Stream::Playback, 900, 2.2, 3)];
+        let (a, b) = (played(&pchanges), played(&pchanges));
+        assert!(cc::same(&a.out, &b.out), "{rate}: the playback");
+        assert_eq!(a.log, b.log, "{rate}: the playback log");
+        assert!(
+            !bat::battery_entries(&a.log).is_empty(),
+            "{rate}: the change landed"
+        );
+    }
+}
