@@ -252,6 +252,15 @@ pub struct Meters {
     /// The host samples of the call the optional output clamp bounded (0 with the option off;
     /// an emulator option, spec 010, not a device behavior). Rest 0.
     pub output_clamp_count: u32,
+    /// Spec 018 FR-010 (l): the host samples of the call the speaker amplifier's knee or
+    /// ceiling changed (the knee's input above the knee's start, 0.85 of the ceiling in force);
+    /// the amplifier's clip region, not only its hard ceiling. Speaker route with stage 11 on,
+    /// at the taps that run the knee; 0 otherwise and at rest.
+    pub amp_clip_count: u32,
+    /// Spec 018 FR-010 (m): the battery's ceiling factor in force at the call's end (the
+    /// modeled law, `battery::ceiling_factor`; 1.0 at the default; 20·log10 for dB). At rest
+    /// the engine's current factor; `Meters::default()` carries 0.0.
+    pub battery_ceiling: f32,
 }
 
 /// A VAS splice (drop mode) or muted region (mute mode) (spec 003 FR-005).

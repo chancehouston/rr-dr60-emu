@@ -205,6 +205,7 @@ pub mod speech_codec {
     };
 }
 
+pub mod battery;
 pub mod changes;
 mod codec;
 pub mod controls;
@@ -401,6 +402,20 @@ pub mod __test_hooks {
         /// Added to the transition's length N in host samples (0: as committed; ±1 are the
         /// length mutants that fail the splice identity at sample N or N − 1).
         pub volume_ramp_delta: i64,
+        /// Spec 018 (research R-07): the battery factor's transition moved linearly in time
+        /// instead of along the smoothstep (false: as committed).
+        pub battery_shape_linear: bool,
+        /// Spec 018: added to the battery transition's length N (0: as committed).
+        pub battery_ramp_delta: i64,
+        /// Spec 018: the knee's input and output scaled by the factor instead of its thresholds
+        /// (false: as committed; true breaks the below-knee identity).
+        pub battery_scale_sample: bool,
+        /// Spec 018: a route change does not take the battery factor at once (false: as
+        /// committed; true leaves a transition running across the switch).
+        pub battery_no_at_once_on_route: bool,
+        /// Spec 018: the amplifier-clip count counts samples at or above the knee's start
+        /// instead of the samples the knee changed (false: as committed).
+        pub battery_count_at_or_above: bool,
     }
 
     /// A deliberate alteration of the microphone path (stages 1 – 2) for the spec 012 mutation
@@ -440,6 +455,11 @@ pub mod __test_hooks {
                 volume_step: false,
                 volume_shape_linear: false,
                 volume_ramp_delta: 0,
+                battery_shape_linear: false,
+                battery_ramp_delta: 0,
+                battery_scale_sample: false,
+                battery_no_at_once_on_route: false,
+                battery_count_at_or_above: false,
             }
         }
     }
