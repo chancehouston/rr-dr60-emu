@@ -42,6 +42,15 @@ Applied at the recommended defaults, before the owner's sign-off:
 - **Records** (coach 9, 10, 14, 15, 16; B10, B12, B13, B14): the stage manifest's API-item strings change (FR-011, FR-014); count units stated; a larger C size zero-filled; the tap list completed; the golden holds short stimuli in full and digests otherwise; C field types stated in FR-009; the scenario stimuli bypass the stages that would confound them (AS2, AS3).
 - **Gain-reduction oracle** (coach 11, B8): compared on samples whose reference magnitude is at least −60 dBFS, onset blocks included; the model's steady figure is a mean and the meter the deepest, the in-cycle ripple inside the 0.1 dB tolerance.
 
+### Session 2026-10-30 (plan reviews: coach 1 – 13, hardware P1 – P12, product M1 – M7; applied at the defaults)
+
+- **Field names** (M3): the stage 4 figures are `record_filter_peak` and `adc_clamp_count` (the setting they report is `adc_clamp_enabled`); the prose keeps "record-filter peak" and "converter-clamp count".
+- **FR-008's event corroboration, by path** (P4): the recorder's splice `input_length` equals the reference gate's dropped device samples D since the flip; the one-pass places events in host output samples with the cumulative-floor rule, so there it equals ⌊D·m/l⌋ − ⌊D_prev·m/l⌋. The per-block state and hang are checked against the reference gate, not against a count the read-out does not carry.
+- **SC-002's "exactly 0 after the flush length"** (coach 9) runs release-only (`--ignored`) at 6 kHz, as spec 005's state-equality tests do; the steady figures are pinned per host rate from the model's print (P6).
+- **Edge case narrowed** (coach 11): "a block the voice activation drops entirely leaves the one-pass's playback group at 0" holds with the speech codec bypassed (with it on, earlier frames still leave the decoder's delay line); the test uses the codec bypassed.
+- **Out of scope, added** (M2 b): a timeline map of each figure to input and recording sample positions (investigation-mode.md § 5), which belongs with the sample-positioned changes (spec 015) or the session contract (spec 020).
+- **The cost protocol** (coach 1 – 2, P1, P10): "the default engine" is the codec-bypassed default front, as specs 009 – 013 measure; the bypassed chain is every stage off; both figures come from one timing test built against the 0.14 API and run in both builds by the A/B script, which asserts the budgets and fails the CI job when over.
+
 ## Overview
 
 An app that shows the signal chain while it runs ("the inside", [front-and-inside.md](../../docs/product/front-and-inside.md)) needs to animate what each stage is doing: how hard the limiter is holding, whether the converter clipped, whether the voice activation is about to pause, how loud the speaker is being driven. Today the engine reports only lengths, counts of events and frames, and the voice activation's paused flag. Everything else an app would have to guess from the audio, and it cannot guess the limiter's charge or a clamp count at all.
@@ -107,7 +116,7 @@ The iOS app reads the meters through the C API after each call, into a structure
 - **Before any call, after `reset` and after `reconfigure`**: the rest state (the table in Key Entities). **A zero-length call**, a `stop_recording` whose flush is skipped (nothing was fed), `start_recording`, `start_playback`, `stop_playback` and `erase` leave the read-out unchanged: it is always the last non-empty processing call's.
 - **Rest values per meter**: peaks 0; gain reduction 0 and charge 0 with the limiter bypassed or not reached; counts 0 with the clamp bypassed or not reached; state recording and hang remaining the full hang length with the voice activation bypassed or not reached.
 - **The charge is state**: after any non-empty call that ran the limiter it is the hold at the end of that call, whatever the call contained (a silent block reads the decaying charge, not 0).
-- **A block the voice activation drops entirely** (drop mode, paused throughout): the stage 4 meters are still read (the filter and clamp run before the gate); the playback-side meters of the one-pass read 0 because no sample reached stage 10.
+- **A block the voice activation drops entirely** (drop mode, paused throughout): the stage 4 meters are still read (the filter and clamp run before the gate); the playback-side meters of the one-pass read 0 because no sample reached stage 10 (with the speech codec bypassed; with it on, earlier frames still leave the decoder's delay line).
 - **Mute mode**: muted samples are zeros past the gate; the playback-side peaks read what the zeros produce (the reconstruction's ringing, then 0).
 - **The stop flush**: `stop_recording` feeds silence through the record path; the read-out after it holds the flush's figures (hiss-level peaks with the capsule on, the limiter releasing). In drop mode the stop holds the gate open; the state and hang still report the gate's own state machine, as `RecordInfo.paused` does, so the state can read paused while every flush sample is kept.
 - **The drain**: play calls past the recording's end process the output chain's settle; the playback peaks fall toward 0 and the counts are 0 unless the settle itself is bounded.
@@ -148,7 +157,7 @@ The iOS app reads the meters through the C API after each call, into a structure
 
 ### Out of Scope
 
-- A scope copy of a stage's samples (E-B); limiter ceiling events with positions (E-E); per-sample meter streams; callbacks; spectra, RMS, loudness or any averaged figure (the app averages the peaks it reads); a switch to turn the meters off (D6); a count of hiss-only blocks; meters for stages 7 – 9 beyond what the play report already gives (frames, place); the volume knob's current position (a control's read-back, spec 015's domain).
+- A scope copy of a stage's samples (E-B); limiter ceiling events with positions (E-E); per-sample meter streams; callbacks; spectra, RMS, loudness or any averaged figure (the app averages the peaks it reads); a switch to turn the meters off (D6); a count of hiss-only blocks; meters for stages 7 – 9 beyond what the play report already gives (frames, place); the volume knob's current position (a control's read-back, spec 015's domain); a timeline map of each figure to input and recording sample positions (with spec 015 or 020).
 - Sample-positioned control changes and the change log (spec 015).
 
 ### Key Entities
