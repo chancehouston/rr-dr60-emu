@@ -227,7 +227,7 @@ mod test_util;
 mod transport;
 mod validate;
 
-pub use changes::{ChangeEntry, Stream};
+pub use changes::{ChangeEntry, Clock, Stream};
 pub use controls::{
     ControlEntry, ControlKind, ControlOption, ControlPaths, ControlTiming, ControlValue, control,
     controls,
@@ -280,7 +280,7 @@ pub mod __test_hooks {
         pub skip_clear: bool,
     }
 
-    pub use crate::changes::ChangeMutation;
+    pub use crate::changes::{ChangeMutation, RecordMutation};
 
     /// Test-only (spec 015 research R-13): the published `speed_landing` or, with the
     /// `speed_landing_ceiling` mutant, the defective ⌊P · 6000 ÷ rate⌋.

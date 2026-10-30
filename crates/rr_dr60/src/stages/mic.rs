@@ -67,8 +67,18 @@ pub(crate) struct MicCapsule {
     seed: u64,
     /// The recording counter this stream is keyed to (FR-009).
     counter: u64,
-    /// σ_rate · 10^(offset / 20), computed at construction.
+    /// σ_rate · 10^(offset / 20), computed at construction; during a transition (spec 017
+    /// FR-003) the gain at the current sample.
     gain: f64,
+    /// σ_rate (A-048), for the target gain of an offset change.
+    sigma: f64,
+    /// Spec 017 (research R-05): the transition's start and target gains, its sample counter
+    /// (0 … N) and N with 1 / N; `ramp_k == ramp_n` outside a transition (spec 011's form).
+    gain_from: f64,
+    gain_to: f64,
+    ramp_k: u32,
+    ramp_n: u32,
+    inv_n: f64,
     /// Test-only: every rejection loop runs to its cap (A-049's cap path, spec 012 T023;
     /// `MicMutation::force_retry_cap`).
     #[cfg(any(test, feature = "__test-hooks"))]
@@ -86,11 +96,19 @@ impl MicCapsule {
         let sigma = HISS_SIGMA[rate_index(host_rate_hz)?]; // A-048
         // exp(0.0) is exactly 1.0, so offset 0 multiplies by σ exactly (research R-04).
         let gain = sigma * exp(f64::from(mic.hiss_offset_db) * core::f64::consts::LN_10 / 20.0);
+        // Spec 017: the transition length is spec 011's 20 ms (A-045 as an engine convention).
+        let n = crate::output::volume_transition_samples(host_rate_hz).unwrap_or(120);
         Some(Self {
             state: key(seed, 0),
             seed,
             counter: 0,
             gain,
+            sigma,
+            gain_from: gain,
+            gain_to: gain,
+            ramp_k: n,
+            ramp_n: n,
+            inv_n: 1.0 / f64::from(n),
             #[cfg(any(test, feature = "__test-hooks"))]
             force_cap: false,
             #[cfg(any(test, feature = "__test-hooks"))]
@@ -111,10 +129,53 @@ impl MicCapsule {
         self.rekey(self.counter);
     }
 
-    /// One host sample: `x` plus the hiss.
+    /// One host sample: `x` plus the hiss (the gain along a transition when one is running).
     #[inline]
     pub(crate) fn process(&mut self, x: f64) -> f64 {
+        if self.ramp_k < self.ramp_n {
+            self.ramp_step(); // 017 FR-003: one transition sample
+        }
         x + self.gain * self.gauss()
+    }
+
+    /// Spec 017 FR-003 (research R-05): a new hiss offset. At once (`at_once`: the stream's
+    /// first input sample, or the adopt rule) the gain is the target; otherwise a **20 ms
+    /// transition** starts from the gain at this sample: with spec 011's indexing the landing
+    /// sample is transition sample 1 and sample N carries exactly the target
+    /// (`σ · 10^(db / 20)`, construction's arithmetic). A change during a transition starts a
+    /// new one from the current gain. The noise draws are unchanged.
+    pub(crate) fn set_offset(&mut self, db: f32, at_once: bool) {
+        let target = self.sigma * exp(f64::from(db) * core::f64::consts::LN_10 / 20.0);
+        self.gain_to = target;
+        if at_once {
+            self.gain = target;
+            self.gain_from = target;
+            self.ramp_k = self.ramp_n;
+        } else {
+            self.gain_from = self.gain;
+            self.ramp_k = 0;
+        }
+    }
+
+    /// One transition sample (spec 011's `ramp_step`, A-045): the gain along the smoothstep
+    /// `u²(3 − 2u)` from the start to the target; at sample N the target exactly.
+    #[inline]
+    fn ramp_step(&mut self) {
+        self.ramp_k += 1;
+        if self.ramp_k >= self.ramp_n {
+            self.ramp_k = self.ramp_n;
+            self.gain = self.gain_to;
+            return;
+        }
+        let u = f64::from(self.ramp_k) * self.inv_n;
+        let s = u * u * (3.0 - 2.0 * u);
+        self.gain = self.gain_from + (self.gain_to - self.gain_from) * s;
+    }
+
+    /// The current gain, σ · 10^(offset / 20) outside a transition (unit tests).
+    #[cfg(test)]
+    fn gain(&self) -> f64 {
+        self.gain
     }
 
     /// xoshiro256++ (Blackman & Vigna 2019; A-049).
@@ -201,6 +262,8 @@ impl MicCapsule {
         self.force_cap = m.force_retry_cap;
         self.shared = m.shared_stream;
         self.gain *= exp(f64::from(m.hiss_db_delta) * core::f64::consts::LN_10 / 20.0);
+        self.gain_to = self.gain;
+        self.gain_from = self.gain;
         self.reset();
     }
 }
@@ -399,6 +462,18 @@ impl MicFront {
     pub(crate) fn rekey(&mut self, counter: u64) {
         if let Some(c) = &mut self.capsule {
             c.rekey(counter);
+        }
+    }
+
+    /// Spec 017 FR-003: a new hiss offset ([`MicCapsule::set_offset`]); `false` with stage 1
+    /// off (the change is logged by the caller and has no effect).
+    pub(crate) fn set_hiss_offset(&mut self, db: f32, at_once: bool) -> bool {
+        match &mut self.capsule {
+            Some(c) => {
+                c.set_offset(db, at_once);
+                true
+            }
+            None => false,
         }
     }
 
@@ -611,6 +686,65 @@ mod tests {
     }
 
     /// 012 T023 (A-048): the gain is σ_rate at offset 0 exactly and moves by the offset.
+    /// Spec 017 (research R-05): the transition's indexing (011's: the landing sample is
+    /// transition sample 1, sample N the target), the unchanged draws, the at-once rule and
+    /// the retarget.
+    #[test]
+    fn hiss_transition_indexing() {
+        let rate = 48_000u32;
+        let n = crate::output::volume_transition_samples(rate).unwrap() as usize;
+        assert_eq!(n, 960);
+        let mut a = capsule(5, rate);
+        let mut b = capsule(5, rate);
+        let g_from = a.gain();
+        // Draws before the change equal.
+        for _ in 0..100 {
+            assert_eq!(a.process(0.0).to_bits(), b.process(0.0).to_bits());
+        }
+        a.set_offset(12.0, false);
+        let g_to = a.sigma * exp(12.0 * core::f64::consts::LN_10 / 20.0);
+        for j in 1..=n + 5 {
+            let ya = a.process(0.0);
+            let yb = b.process(0.0); // the same draw at gain g_from
+            let draw = yb / g_from;
+            let want = if j < n {
+                let u = j as f64 * (1.0 / n as f64); // 011's form: k · (1 / N)
+                g_from + (g_to - g_from) * (u * u * (3.0 - 2.0 * u))
+            } else {
+                g_to
+            };
+            assert_eq!(a.gain().to_bits(), want.to_bits(), "sample {j}");
+            // The draw is recovered by a division, so the product can differ by rounding: the
+            // gain itself is bit-exact above; the sample within 2 ULP (017 FR-007's figure).
+            let ulp = (want * draw).abs() * f64::EPSILON;
+            assert!((ya - want * draw).abs() <= 2.0 * ulp, "sample {j}");
+        }
+        // At once.
+        let mut c = capsule(5, rate);
+        c.set_offset(-6.0, true);
+        let g6 = c.sigma * exp(-6.0 * core::f64::consts::LN_10 / 20.0);
+        assert_eq!(c.gain().to_bits(), g6.to_bits());
+        let _ = c.process(0.0);
+        assert_eq!(c.gain().to_bits(), g6.to_bits());
+        // A retarget restarts from the gain at that sample.
+        let mut d = capsule(5, rate);
+        d.set_offset(12.0, false);
+        for _ in 0..300 {
+            let _ = d.process(0.0);
+        }
+        let mid = d.gain();
+        d.set_offset(0.0, false);
+        let _ = d.process(0.0);
+        let u = 1.0 / n as f64;
+        let want = mid + (g_from - mid) * (u * u * (3.0 - 2.0 * u));
+        assert_eq!(d.gain().to_bits(), want.to_bits());
+        // A front without a capsule reports false.
+        let mut f = MicFront::new(&MicSettings::BYPASSED, 1, rate);
+        assert!(!f.set_hiss_offset(3.0, false));
+        let mut g = MicFront::new(&MicSettings::DEVICE, 1, rate);
+        assert!(g.set_hiss_offset(3.0, false));
+    }
+
     #[test]
     fn gain_is_sigma_times_the_offset() {
         for (i, &rate) in SUPPORTED_HOST_RATES.iter().enumerate() {

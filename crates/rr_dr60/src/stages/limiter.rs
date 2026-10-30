@@ -147,6 +147,11 @@ pub(crate) struct Limiter {
     /// call's deepest applied gain is `a(vc_max)`; 0.0 when none did. Taken and cleared at
     /// each call's finalization.
     vc_max: f64,
+    /// Spec 017 (research R-03): the two overdrive indices of the attack mapping, `I(KNEE_REF)`
+    /// (a constant of the model) and `I(knee)` (the configured knee's), stored so a retune
+    /// recomputes one index and the unit tests can read both.
+    i_ref: f64,
+    i_knee: f64,
     /// Basic operations and transcendental calls so far (bounded-work tests).
     #[cfg(feature = "op-count")]
     pub(crate) ops: u64,
@@ -183,29 +188,69 @@ fn overdrive_index(knee_dbfs: f64) -> f64 {
     sum / n
 }
 
+/// The parameters the settings derive (spec 017 research R-03): computed by `derive` at
+/// construction and at a retune, the same arithmetic in both, so a retuned limiter equals one
+/// built at the new values in these fields bit for bit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Derived {
+    vbe6: f64,
+    charge_gain: f64,
+    dis_r11: f64,
+    dis_b5: f64,
+    ceiling_fs: f64,
+    i_knee: f64,
+}
+
+/// The settings' derivation (R-05 mapping) given `I(KNEE_REF_DBFS)`.
+fn derive(knee_dbfs: f64, attack_ms: f64, release_ms: f64, i_ref: f64) -> Derived {
+    let vbe6 = vbe6_of_knee(knee_dbfs);
+    let i_knee = overdrive_index(knee_dbfs);
+    let beta6 = beta6_from(attack_ms, i_ref, i_knee);
+    let k_dis = RELEASE_REF_MS / release_ms;
+    Derived {
+        vbe6,
+        charge_gain: beta6 / RTH,
+        dis_r11: k_dis / R11,
+        dis_b5: k_dis / BETA5,
+        ceiling_fs: vbe6 / (KDIV * V_FS),
+        i_knee,
+    }
+}
+
+/// The attack mapping from the two overdrive indices (see [`Limiter::beta6_for`]).
+fn beta6_from(attack_ms: f64, i_ref: f64, i_knee: f64) -> f64 {
+    let raw = BETA6_REF * (T_REF_MS / attack_ms) * i_ref / i_knee;
+    raw.clamp(BETA6_MIN, BETA6_MAX)
+}
+
 impl Limiter {
     /// A discharged limiter for validated `settings` at `host_rate_hz` (R-05 mapping).
     pub(crate) fn new(settings: &AgcSettings, host_rate_hz: u32) -> Self {
-        let knee = f64::from(settings.knee_dbfs);
-        let vbe6 = vbe6_of_knee(knee);
-        let beta6 = Self::beta6_for(knee, f64::from(settings.attack_ms));
-        let k_dis = RELEASE_REF_MS / f64::from(settings.release_ms);
+        let i_ref = overdrive_index(KNEE_REF_DBFS);
+        let d = derive(
+            f64::from(settings.knee_dbfs),
+            f64::from(settings.attack_ms),
+            f64::from(settings.release_ms),
+            i_ref,
+        );
         let ln_k1 = ln(K1);
         let vc_of_gain = |a: f64| TWO_VT * (ln_k1 + ln((1.0 - a) / a));
         Self {
             vc: 0.0,
-            vbe6,
+            vbe6: d.vbe6,
             // R-03: the floor is where the shunt's deviation from unity reaches 2⁻²⁴; the limit
             // where the attenuation reaches MAX_ATTEN_DB. Both from the closed-form inverse.
             v_floor: vc_of_gain(1.0 - UNITY_DEVIATION),
             v_limit: vc_of_gain(db_to_amplitude(-MAX_ATTEN_DB)),
             dt_over_c6: 1.0 / (f64::from(host_rate_hz) * C6),
-            charge_gain: beta6 / RTH,
-            dis_r11: k_dis / R11,
-            dis_b5: k_dis / BETA5,
-            ceiling_fs: vbe6 / (KDIV * V_FS),
+            charge_gain: d.charge_gain,
+            dis_r11: d.dis_r11,
+            dis_b5: d.dis_b5,
+            ceiling_fs: d.ceiling_fs,
             ln_k1,
             vc_max: 0.0,
+            i_ref,
+            i_knee: d.i_knee,
             #[cfg(feature = "op-count")]
             ops: 0,
             #[cfg(feature = "op-count")]
@@ -213,14 +258,43 @@ impl Limiter {
         }
     }
 
+    /// Spec 017 FR-003 (research R-03): the settings-derived parameters recomputed for the
+    /// new values by construction's arithmetic and applied from the next sample: the knee's
+    /// detector threshold, ceiling and charge gain, the attack's charge gain, the release's two
+    /// discharge coefficients. The hold capacitor's voltage, the call's peak voltage, the floor
+    /// and the limit are carried (they do not depend on the settings). Bounded work: one
+    /// `OVERDRIVE_POINTS` sum (about 5 µs), no allocation.
+    pub(crate) fn retune(&mut self, knee_dbfs: f32, attack_ms: f32, release_ms: f32) {
+        let d = derive(
+            f64::from(knee_dbfs),
+            f64::from(attack_ms),
+            f64::from(release_ms),
+            self.i_ref,
+        );
+        self.vbe6 = d.vbe6;
+        self.charge_gain = d.charge_gain;
+        self.dis_r11 = d.dis_r11;
+        self.dis_b5 = d.dis_b5;
+        self.ceiling_fs = d.ceiling_fs;
+        self.i_knee = d.i_knee;
+    }
+
     /// The knee-aware attack mapping (R-05): the detector current gain that realizes
     /// `attack_ms` of dead time at 10 dB over `knee_dbfs`,
     /// `BETA6_REF · (T_REF_MS / attack_ms) · I(KNEE_REF_DBFS) / I(knee_dbfs)`, guarded to
     /// `[BETA6_MIN, BETA6_MAX]`. About 217 at the defaults.
     pub(crate) fn beta6_for(knee_dbfs: f64, attack_ms: f64) -> f64 {
-        let raw = BETA6_REF * (T_REF_MS / attack_ms) * overdrive_index(KNEE_REF_DBFS)
-            / overdrive_index(knee_dbfs);
-        raw.clamp(BETA6_MIN, BETA6_MAX)
+        beta6_from(
+            attack_ms,
+            overdrive_index(KNEE_REF_DBFS),
+            overdrive_index(knee_dbfs),
+        )
+    }
+
+    /// The two overdrive indices, `(I(KNEE_REF), I(knee))` (unit tests).
+    #[cfg(test)]
+    fn overdrive_indices(&self) -> (f64, f64) {
+        (self.i_ref, self.i_knee)
     }
 
     /// The capacitor voltage at which a sample of amplitude `ax` (full-scale units) no longer
@@ -1015,5 +1089,94 @@ mod meters_tests {
         assert_eq!(taken, entry_last);
         assert_eq!(l.take_vc_max(), 0.0, "cleared by the take");
         assert!(l.charge() > 0.7, "{}", l.charge());
+    }
+}
+
+/// Spec 017 (research R-03): the retune shares construction's derivation and carries the state.
+#[cfg(test)]
+mod retune_tests {
+    extern crate std;
+    use super::*;
+    use crate::settings::AgcSettings;
+    use rr_dr60_detmath::{TAU, sin};
+    use std::vec::Vec;
+
+    fn with(knee: f32, attack: f32, release: f32) -> AgcSettings {
+        AgcSettings {
+            knee_dbfs: knee,
+            attack_ms: attack,
+            release_ms: release,
+            ..AgcSettings::DEVICE
+        }
+    }
+
+    fn tone(dbfs: f64, n: usize, fs: f64) -> Vec<f64> {
+        let a = db_to_amplitude(dbfs);
+        (0..n)
+            .map(|k| a * sin(TAU * ((1000.0 * (k as f64 + 0.25 * fs / 1000.0) / fs) % 1.0)))
+            .collect()
+    }
+
+    #[test]
+    fn retune_shares_the_derivation() {
+        for rate in [6000u32, 48_000] {
+            let mut a = Limiter::new(&AgcSettings::DEVICE, rate);
+            let b = Limiter::new(&with(-5.0, 10.0, 500.0), rate);
+            // Charge the hold first: the retune must carry it.
+            for x in tone(9.0, (rate / 2) as usize, f64::from(rate)) {
+                let _ = a.process(x);
+            }
+            assert!(a.state() > 0.0);
+            let (vc, vc_max, floor, limit) = (a.vc, a.vc_max, a.v_floor, a.v_limit);
+            a.retune(-5.0, 10.0, 500.0);
+            assert_eq!(a.params(), {
+                let mut p = b.params();
+                // dt_over_c6, the floor and the limit are rate and model constants: equal anyway.
+                p[4] = a.v_floor;
+                p[5] = a.v_limit;
+                p
+            });
+            assert_eq!(a.vbe6.to_bits(), b.vbe6.to_bits(), "{rate}");
+            assert_eq!(a.charge_gain.to_bits(), b.charge_gain.to_bits());
+            assert_eq!(a.dis_r11.to_bits(), b.dis_r11.to_bits());
+            assert_eq!(a.dis_b5.to_bits(), b.dis_b5.to_bits());
+            assert_eq!(a.ceiling_fs.to_bits(), b.ceiling_fs.to_bits());
+            assert_eq!(
+                (a.vc, a.vc_max, a.v_floor, a.v_limit),
+                (vc, vc_max, floor, limit)
+            );
+            let (i_ref, i_knee) = a.overdrive_indices();
+            assert_eq!(i_ref, overdrive_index(KNEE_REF_DBFS));
+            assert_eq!(i_knee, overdrive_index(-5.0));
+            assert_eq!(b.overdrive_indices(), (i_ref, i_knee));
+            // A retune back equals a fresh default in the derived fields.
+            a.retune(-1.0, 3.0, 1370.0);
+            let d = Limiter::new(&AgcSettings::DEVICE, rate);
+            assert_eq!(a.vbe6.to_bits(), d.vbe6.to_bits());
+            assert_eq!(a.charge_gain.to_bits(), d.charge_gain.to_bits());
+            assert_eq!(a.dis_r11.to_bits(), d.dis_r11.to_bits());
+            assert_eq!(a.dis_b5.to_bits(), d.dis_b5.to_bits());
+        }
+    }
+
+    #[test]
+    fn retune_keeps_the_gain_law() {
+        let mut a = Limiter::new(&AgcSettings::DEVICE, 48_000);
+        for x in tone(9.0, 24_000, 48_000.0) {
+            let _ = a.process(x);
+        }
+        let vc = a.state();
+        let (r, c) = (a.reduction_db_at(vc), a.charge());
+        a.retune(2.0, 1.0, 200.0);
+        assert_eq!(a.reduction_db_at(vc), r);
+        assert_eq!(a.charge(), c);
+        assert_eq!(a.state(), vc);
+        // And the next sample continues from the carried hold with the new coefficients: the
+        // output equals a limiter built at the new values whose hold is set to vc.
+        let mut b = Limiter::new(&with(2.0, 1.0, 200.0), 48_000);
+        b.vc = vc;
+        for x in tone(9.0, 480, 48_000.0) {
+            assert_eq!(a.process(x).to_bits(), b.process(x).to_bits());
+        }
     }
 }
