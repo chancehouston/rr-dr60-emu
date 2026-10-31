@@ -3,7 +3,7 @@
 //! samples, and its inverse for the app's capture.
 
 /// One 24-bit full scale: 2²³.
-const FULL_SCALE: f32 = 8_388_608.0;
+const FULL_SCALE: f32 = 8_388_608.0; // engineering target (020 D12): the 24-bit full scale, 2²³
 
 /// Converts 24-bit integer samples (−2²³ … 2²³ − 1 in an `i32`) to the engine's input:
 /// x ÷ 2²³, exact for every 24-bit value (the integer is exact in an `f32` below 2²⁴ and the

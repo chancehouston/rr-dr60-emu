@@ -21,7 +21,7 @@ use crate::transport::{RecordInfo, StopOutcome, StopResult};
 pub const FORM_VERSION: u32 = 1; // engineering target (020 D2): the form's first version
 
 /// The first line of every record.
-pub const VERSION_LINE_NAME: &str = "rr_dr60_processing_record_version";
+pub const VERSION_LINE_NAME: &str = "rr_dr60_processing_record_version"; // engineering target (020 D2)
 
 /// The number of modeled stages the record names (the stage manifest's count).
 pub const STAGE_COUNT: usize = crate::manifest::STAGE_COUNT;
