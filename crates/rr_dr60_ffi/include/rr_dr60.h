@@ -2269,7 +2269,7 @@ RrDr60Status rr_dr60_manifest_stage_assumption(uint32_t number,
                                                uint32_t index,
                                                const char **out_id);
 
-// The number of controls in the control manifest, 29 (spec 014 FR-013). Real-time safe.
+// The number of controls in the control manifest, 30 since 0.18 (spec 014 FR-013; spec 018 appended the battery value). Real-time safe.
 uint32_t rr_dr60_control_count(void);
 
 // Copies control `index` (0-based, in the manifest's order) into `*out` (spec 014 FR-013).

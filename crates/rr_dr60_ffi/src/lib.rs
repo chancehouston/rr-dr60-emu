@@ -4084,7 +4084,7 @@ fn fill_control(index: usize, out: &mut RrDr60Control) {
     }
 }
 
-/// The number of controls in the control manifest, 29 (spec 014 FR-013). Real-time safe.
+/// The number of controls in the control manifest, 30 since 0.18 (spec 014 FR-013; spec 018 appended the battery value). Real-time safe.
 #[unsafe(no_mangle)]
 pub extern "C" fn rr_dr60_control_count() -> u32 {
     rr_dr60::controls::CONTROL_COUNT as u32
