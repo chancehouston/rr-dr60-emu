@@ -31,4 +31,4 @@
 
 ## Notes
 
-- Validated 2026-10-31 at the draft; the three draft reviews follow, then the owner's sign-off on D1 – D10.
+- Validated 2026-10-31 at the draft and again after the three draft reviews (coach 1 – 14, hardware B1 – B12, product M1 – M7) were applied; the owner signs off D1 – D11 next.
