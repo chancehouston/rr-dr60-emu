@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-30
 
-**Status**: Implemented on `019-speed-crossfade` (2026-10-30); PR pending
+**Status**: Complete on `main` (PR #49 merged 2026-10-31, merge commit 01a61ca)
 
 **Input**: User description: "019 speed-change crossfade (spec 013's follow-up B2; the owner's engine order 018 → 019, decisions.md 2026-10-29; controls-discussion.md § 4 item 6 "removes the tick on a level change to or from levels 4 – 5; a constant level stays bit-identical", § 2b row "Speed crossfade"). As a listener and as an app developer, I want a playback speed-level change to blend from the old level into the new over a short fixed time instead of switching in one sample, so that a change to or from the fast levels no longer ticks on voice content above about 1.6 kHz, while a constant level stays bit-identical to 0.18. […] Out of scope: pitch-kept speed (c1), the live playback-stage bypass crossfade (spec 021), any change to the ratios or the banks' bands, record-side behavior."
 
