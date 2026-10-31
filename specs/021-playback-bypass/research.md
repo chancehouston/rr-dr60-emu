@@ -94,4 +94,4 @@ Figures as the harness printed them (`us1_bypass`, 2026-10-31):
 - **The level table**: +19.214 / 0.000 / 0.000 / −21.457 dB (earphone reference, earphone 1, speaker reference, speaker 1), pinned within 0.01 dB.
 - **Stage 10 on vs off at 48 kHz** on the voiced stimulus: the largest third-octave difference 0.85 dB (D1's "audible mainly at 6 kHz").
 - **The blend identity**: within two f32 steps of the branches' magnitude on every exact cell (worst 0.57 – 1.0 at most rates), the midpoint 0.500 on every cell.
-- **The A/B**: TBD-021-COST.
+- **The A/B and the states**: the per-sample cost in the all-on state with no landing +0.48 ns (+1.83 %) on the player and +0.45 ns (+0.61 %) on the one-pass against 0.20 (the solo A/B, 45 runs × 3 alternations at 48 kHz; budget 3 %, a 5 % ceiling on the CI runner); a bypassed steady state about +5.5 % and a stage-12 toggle every 200 ms about +6 % over the all-on state (reported; the worst 4096-sample block 157 – 298 µs of 85 333); on voice the blend's energy around a switch reads 0.35 – 2.0 dB below a step's (voice fills the band: the reader measures the content, as in spec 019).
