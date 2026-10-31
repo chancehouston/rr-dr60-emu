@@ -437,9 +437,11 @@ fn refusals_store_nothing() {
         Err(Error::NoSuchClock { .. })
     ));
     assert_eq!(p.input_position(Stream::Record), Ok(0));
+    // Spec 018 appended `battery_volts` at 29, so the first missing index is CONTROL_COUNT.
+    let past = rr_dr60::controls().len() as u32;
     assert!(matches!(
-        clock_of(29),
-        Err(Error::NoSuchControl { control: 29 })
+        clock_of(past),
+        Err(Error::NoSuchControl { control }) if control == past
     ));
     for stream in [Stream::Record, Stream::OnePass, Stream::Playback] {
         assert_eq!(

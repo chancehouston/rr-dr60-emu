@@ -1,8 +1,8 @@
 rr_dr60 manifest
-library_version: 0.17.0
+library_version: 0.18.0
 device_rate_hz: 6000
 stage_count: 15
-counts: not_modeled=3 assumed=12 sourced=0 checked=0
+counts: not_modeled=2 assumed=13 sourced=0 checked=0
 basis: Modeled on the RR-DR60 owner's and service manuals and the codec family datasheets; no stage has been checked against a real unit.
 evidence_link: https://github.com/chancehouston/rr-dr60-emu/issues/new?template=hardware_evidence.yml
 assumptions_link: https://github.com/chancehouston/rr-dr60-emu/blob/main/docs/hardware/assumptions.md
@@ -136,7 +136,7 @@ path: playback
 confidence: medium
 sources: S-001, S-002, S-006
 assumptions: A-031, A-043, A-044, A-045
-coverage: the 159 Hz corner's knob shift; the clip level's battery and transistor spread; wiper noise; knob speed; the beeps
+coverage: the 159 Hz corner's knob shift; the clip level's spread; the battery's sag; wiper noise; knob speed; the beeps
 controls: output.volume_amp_enabled; set_volume, volume; set_route, route; Tap::AfterVolumeAmp; EngineState.speaker_muted; Meters
 model_version: 0.11.0
 
@@ -179,11 +179,11 @@ model_version:
 stage 15 power
 name: Power supply
 description: Two AAA cells feed a 3.3 V converter whose switched rails supply the analog section and the flash; the speaker amplifier runs directly from the cells.
-status: not_modeled
+status: assumed
 path: both
-confidence: not_applicable
+confidence: low
 sources: S-001, S-002, S-006, S-014, S-015, S-017
 assumptions: A-013, A-056, A-057, A-058
-coverage:
-controls:
-model_version:
+coverage: the 3.3 V converter and its rails; the cells' sag under load; supply noise; the low-battery indicator and cut-off
+controls: set_battery_volts, battery_volts; Meters
+model_version: 0.18.0

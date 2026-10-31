@@ -71,6 +71,17 @@ impl Change {
         }
     }
 
+    /// A battery value change (spec 018; the output clock on either stream).
+    pub fn battery(stream: Stream, position: u64, volts: f32, tag: u64) -> Self {
+        Self {
+            stream,
+            position,
+            control: control_index("battery_volts"),
+            value: f64::from(volts),
+            tag,
+        }
+    }
+
     /// A playback speed change.
     pub fn speed(position: u64, level: u8, tag: u64) -> Self {
         Self {
@@ -92,6 +103,9 @@ impl Change {
             });
         } else if self.control == volume_control() {
             p.set_volume(self.value as f32).expect("a valid position");
+        } else if self.control == control_index("battery_volts") {
+            p.set_battery_volts(self.value as f32)
+                .expect("a valid battery value");
         } else {
             p.set_playback_speed(self.value as u8)
                 .expect("a valid level");

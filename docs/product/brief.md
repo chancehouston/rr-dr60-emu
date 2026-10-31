@@ -223,6 +223,8 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
 
 - **The volume position.** A change moves the knob over 20 ms (spec 011).
 - **The output route:** speaker or earphone.
+- **The playback speed:** five levels, pitch moving with speed (since 0.13.0, spec 013; missing from this list until 2026-10-30).
+- **The battery voltage** (since 0.18.0, spec 018): a unit condition, 2.2 – 3.0 V, default 3.0 V; lowers the speaker amplifier's clip ceiling by the static law; set by the user, never read from the phone's battery, a sensor or a timer; the law, the alkaline trajectory and the NiMH figure are public engine data for presets.
 
 **Settings** apply only through `reconfigure`. It is refused while a recording or a playback is in progress, it may allocate, and it is not real-time safe. Today no setting can change during a recording. *(Since 0.17.0 the eight record-side values above can, through the schedule; see § 4.)* The settings are:
 
@@ -238,7 +240,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
   - the optional output clamp.
 - **Plumbing:** host sample rate, output tap, noise seed.
 
-**Not separated today:** intended user controls versus calibration or implementation settings. The device's own controls (volume, route, voice activation on/off, sensitivity) are distinguishable from the model's parameters by their sources, but the engine marks no such split.
+**Not separated today** *(superseded 2026-10-29 by spec 014's control manifest, whose kinds separate device controls, unit conditions, model internals, emulator options and host parameters; kept as written on 2026-10-16)*: intended user controls versus calibration or implementation settings. The device's own controls (volume, route, voice activation on/off, sensitivity) are distinguishable from the model's parameters by their sources, but the engine marks no such split.
 
 **Not built:** two device features that the 2026-10-11 free-tier list includes.
 

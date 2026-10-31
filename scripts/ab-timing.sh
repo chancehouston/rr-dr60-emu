@@ -23,6 +23,9 @@
 #     record path and the one-pass with the record schedule empty, 3 %;
 #     RR_DR60_RECORD_COST_CEILING on the runner; one knee change per block and the worst block
 #     reported).
+#   HEAD_TEST = battery: spec 018's battery value against the baseline (018 FR-007: the default
+#     front on the speaker route at the default value, 3 %; RR_DR60_BATTERY_COST_CEILING on the
+#     runner; the chain at 2.4 V on a full-scale square reported beside 3.0 V).
 #   HEAD_TEST = meters: spec 016's per-block meters against the baseline (016 FR-013: the default
 #     front within 5 %, every stage off within the same absolute nanoseconds; the ceiling from
 #     RR_DR60_METERS_COST_CEILING, 0.12 on the CI runner); asserted, exits 1 when over.
@@ -130,6 +133,61 @@ print(f"A/B meters vs {rev}, 48 kHz, 4096 blocks, speaker route, codec bypassed 
 print(f"  default front (stages 1 – 2 on): {rev} {bf:.2f} ns, working tree {hf:.2f} ns per host sample, {hf - bf:+.2f} ns ({100 * (hf / bf - 1):+.2f} %; ceiling {100 * ceiling:.0f} %) {'PASS' if front_ok else 'FAIL'}")
 print(f"  every stage off: {rev} {bo:.2f} ns, working tree {ho:.2f} ns per host sample, {ho - bo:+.2f} ns (budget {budget_ns:.2f} ns, the same absolute nanoseconds) {'PASS' if off_ok else 'FAIL'}")
 sys.exit(0 if front_ok and off_ok else 1)
+PY
+  exit $?
+fi
+
+if [ "$head_test" = "battery" ]; then
+  # Spec 018 FR-007 (research R-08): the battery value's idle cost. `tests/battery_timing.rs` is
+  # written against 0.17's public API and copied into the baseline worktree; each build prints
+  # the fastest-of-45 figure of the default front on the speaker route (the codec bypassed, the
+  # battery at its default). Asserted: within the ceiling (3 % by default,
+  # RR_DR60_BATTERY_COST_CEILING on the CI runner: 0.05); exits 1 when over. Then the head's
+  # `battery_clipped_timing` (the chain at 2.4 V and at 3.0 V on a full-scale square) is run
+  # alone and reported.
+  cp "$root/crates/rr_dr60_harness/tests/battery_timing.rs" "$work/base/crates/rr_dr60_harness/tests/"
+  bbin_of() {
+    (cd "$1" && cargo test -q -p rr_dr60_harness --release --test "$2" --no-run --message-format=json 2>/dev/null) |
+      python3 -c 'import json,sys
+name = sys.argv[1]
+for l in sys.stdin:
+    try: m = json.loads(l)
+    except ValueError: continue
+    if m.get("reason") == "compiler-artifact" and m.get("target", {}).get("name") == name and m.get("executable"):
+        print(m["executable"])' "$2" | tail -1
+  }
+  echo "building the baseline ($baseline) and the working tree (battery) ..." >&2
+  base_bin="$(bbin_of "$work/base" battery_timing)"
+  head_bin="$(bbin_of "$root" battery_timing)"
+  clipped_bin="$(bbin_of "$root" battery_clipped_timing)"
+  [ -x "$base_bin" ] && [ -x "$head_bin" ] && [ -x "$clipped_bin" ] || { echo "ab-timing: a build failed" >&2; exit 1; }
+  : >"$work/base.txt"
+  : >"$work/head.txt"
+  for i in 1 2 3; do
+    echo "round $i of 3" >&2
+    "$base_bin" --ignored --exact battery_cost --nocapture --test-threads=1 2>/dev/null | grep -oE 'speaker_ns=[0-9.]+' >>"$work/base.txt"
+    "$head_bin" --ignored --exact battery_cost --nocapture --test-threads=1 2>/dev/null | grep -oE 'speaker_ns=[0-9.]+' >>"$work/head.txt"
+  done
+  clipped="$("$clipped_bin" --ignored --exact battery_clipped_cost --nocapture --test-threads=1 2>/dev/null | grep -oE '(clipped_ns|clipped_default_ns)=[0-9.]+' | tr '\n' ' ')"
+  python3 - "$work/base.txt" "$work/head.txt" "$baseline" "${RR_DR60_BATTERY_COST_CEILING:-0.03}" "$clipped" <<'PY'
+import re, sys
+def best(path):
+    out = {}
+    for line in open(path):
+        m = re.search(r"(\w+)=([\d.]+)", line.strip())
+        if m:
+            out[m.group(1)] = min(out.get(m.group(1), float("inf")), float(m.group(2)))
+    return out
+b, h, rev, ceiling, clipped = best(sys.argv[1]), best(sys.argv[2]), sys.argv[3], float(sys.argv[4]), sys.argv[5]
+bs, hs = b["speaker_ns"], h["speaker_ns"]
+ok = hs / bs - 1 <= ceiling
+c = dict(re.findall(r"(\w+)=([\d.]+)", clipped))
+cd = float(c.get("clipped_default_ns", "nan"))
+cn = float(c.get("clipped_ns", "nan"))
+print(f"A/B battery vs {rev}, 48 kHz, 4096 blocks, the default front, speaker route, codec bypassed, the battery at its default (018 FR-007; fastest of 45 runs × 3 alternations):")
+print(f"  speaker route: {rev} {bs:.2f} ns, working tree {hs:.2f} ns per host sample, {hs - bs:+.2f} ns ({100 * (hs / bs - 1):+.2f} %; ceiling {100 * ceiling:.0f} %) {'PASS' if ok else 'FAIL'}")
+print(f"  the chain on a full-scale square at position 1 (reported): 3.0 V {cd:.2f} ns, 2.4 V {cn:.2f} ns per host sample ({cn - cd:+.2f} ns, {100 * (cn / cd - 1):+.2f} %)")
+sys.exit(0 if ok else 1)
 PY
   exit $?
 fi

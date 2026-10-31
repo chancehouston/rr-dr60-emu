@@ -7,6 +7,7 @@
 
 pub mod agc_checks;
 pub mod analysis;
+pub mod battery_checks;
 pub mod chain_checks;
 pub mod changes_checks;
 pub mod checks;

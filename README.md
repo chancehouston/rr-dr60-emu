@@ -3,7 +3,7 @@
 **A software emulator of the Panasonic RR-DR60 voice recorder's sound, from the microphone to the speaker.** Feed it audio and get back what the recorder would have recorded and played back, as modeled from its service manual and the datasheets of its parts.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Version 0.17.0](https://img.shields.io/badge/version-0.17.0-informational)
+![Version 0.18.0](https://img.shields.io/badge/version-0.18.0-informational)
 ![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)
 ![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-lightgrey)
 
@@ -13,8 +13,8 @@ The RR-DR60 is a pocket digital voice recorder Panasonic sold in the late 1990s.
 
 | | |
 |---|---|
-| **Version** | 0.17.0, pre-alpha. Not yet released or published to crates.io; the API may still change before 1.0. |
-| **Signal chain** | 12 of the 15 stages are modeled and on by default. Not modeled: noise reduction (no evidence the device has it), the clock and the power supply. |
+| **Version** | 0.18.0, pre-alpha. Not yet released or published to crates.io; the API may still change before 1.0. |
+| **Signal chain** | 13 of the 15 stages are modeled and on by default (the power supply as the battery's effect on the speaker amplifier's clip ceiling, a user-set value). Not modeled: noise reduction (no evidence the device has it) and the clock. |
 | **Accuracy** | Every modeled stage is built from documents (the service manual, the owner's manual, datasheets) plus recorded assumptions. **No stage has been checked against a real unit**; see [Accuracy](#accuracy). |
 | **Platforms** | Rust library (`no_std`), C API, and a Swift package for iOS and macOS. Bit-identical output on Linux, macOS, Windows, the iOS simulator and an iOS device. |
 | **Not yet** | A published release, a Swift-native API, an app (planned as a separate project). |
@@ -38,7 +38,7 @@ What you hear, in the model's default configuration:
 - **Loud sounds are clipped, then held.** Very loud input clips in the microphone amplifier; the limiter lets an onset through for a few milliseconds, then holds the level just below full scale and recovers over about 1.4 s. Below its threshold the limiter leaves the signal untouched.
 - **Pauses are cut out.** The voice-activated system stops recording while the sound stays below a threshold, so the output can be shorter than the input, with clipped onsets and abrupt joins.
 - **Low-rate speech coding.** A 4 kbit/s CELP-class coder gives speech a slightly watery, buzzy texture and renders everything else (music, noise, tones) through a speech model. It models the *class* of coder the device used, not the device's own coder, which is undocumented.
-- **A small speaker.** Playback goes through the volume control and power amplifier (which clips above its ceiling) to a small-speaker resonance, or to the earphone output. Playback can run at the device's five speeds, 0.6× to 1.4×, with the pitch following.
+- **A small speaker.** Playback goes through the volume control and power amplifier (which clips above its ceiling) to a small-speaker resonance, or to the earphone output. The amplifier runs from the two cells, so its clip ceiling follows a **battery voltage** value: fresh cells by default, lower cells clip loud playback sooner and lower, quiet playback is unchanged. Playback can run at the device's five speeds, 0.6× to 1.4×, with the pitch following.
 
 Each stage can be switched off or tapped on its own, for example to hear the codec alone.
 
@@ -68,7 +68,7 @@ Four things to know before you ship:
 3. **There is latency.** 1923 samples (about 40 ms) at 48 kHz by default; `latency_samples()` reports it for any configuration.
 4. **The hiss is seeded.** Output is deterministic; set a different `seed` per session if recordings must not share the same hiss.
 
-The engine also models the device's recording memory (60 minutes, 99 recordings, with export and import), its volume control, speaker/earphone routing and playback speed as live controls, it describes its own stages and its controls through a built-in stage manifest and control manifest, and it offers a per-call **meter read-out** of what each stage did (peaks, the limiter's gain reduction and hold, the clamp counts, the voice activation's state and hang) for apps that draw the chain live. The [user guide](docs/guide.md) covers all of it.
+The engine also models the device's recording memory (60 minutes, 99 recordings, with export and import), its volume control, speaker/earphone routing, playback speed and battery voltage (a unit condition, set by the user, never read from the host device) as live controls, it describes its own stages and its controls through a built-in stage manifest and control manifest, and it offers a per-call **meter read-out** of what each stage did (peaks, the limiter's gain reduction and hold, the clamp counts, the voice activation's state and hang, the amplifier's clip count and the battery's ceiling factor) for apps that draw the chain live. The [user guide](docs/guide.md) covers all of it.
 
 ## Documentation
 
@@ -108,11 +108,11 @@ The table below is the engine's own **stage manifest**, generated from the libra
 | 8 | Flash memory | assumed | low | S-001, S-002; A-037, A-038, A-039 | item locking (F.LOCK) | 0.8.0 |
 | 9 | Speech decoder (CELP) | assumed | low | S-001, S-002, S-003, S-008, S-009, S-010, S-011, S-012, S-018; A-004, A-040, A-041, A-054 | the device's own decoder (frame length, look-ahead, codebooks, postfilter); its speed method (A-054); pitch-kept speeds | 0.13.0 |
 | 10 | Codec output: DAC and reconstruction filter | assumed | medium | S-002, S-003, S-005, S-007; A-015, A-016, A-026, A-027, A-030 | µ-law expansion, idle noise on the playback side, DAC imaging residue above 3 kHz | 0.4.0 |
-| 11 | Volume control and power amplifier | assumed | medium | S-001, S-002, S-006; A-031, A-043, A-044, A-045 | the 159 Hz corner's knob shift; the clip level's battery and transistor spread; wiper noise; knob speed; the beeps | 0.11.0 |
+| 11 | Volume control and power amplifier | assumed | medium | S-001, S-002, S-006; A-031, A-043, A-044, A-045 | the 159 Hz corner's knob shift; the clip level's spread; the battery's sag; wiper noise; knob speed; the beeps | 0.11.0 |
 | 12 | Speaker | assumed | low | S-001, S-002; A-010, A-042 | this driver's own response (the model is a generic small-speaker template, not a capture); nonlinearity, enclosure, room | 0.9.0 |
 | 13 | Earphone output | assumed | low | S-001, S-002; A-012, A-032, A-042 | the follower's clipping cut-off on loud material; its corners' spread with the transistor's gain; loads other than 16 Ω | 0.9.0 |
 | 14 | Clock | not modeled | — | S-002, S-003, S-016; A-011 |  |  |
-| 15 | Power supply | not modeled | — | S-001, S-002, S-006, S-014, S-015, S-017; A-013, A-056, A-057, A-058 |  |  |
+| 15 | Power supply | assumed | low | S-001, S-002, S-006, S-014, S-015, S-017; A-013, A-056, A-057, A-058 | the 3.3 V converter and its rails; the cells' sag under load; supply noise; the low-battery indicator and cut-off | 0.18.0 |
 <!-- manifest-table:end -->
 
 Nothing in this table claims the emulator sounds like a real RR-DR60. It claims that each stage is built to a stated, traceable description, and that the harness checks the build against that description.

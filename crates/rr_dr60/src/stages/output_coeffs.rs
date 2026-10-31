@@ -123,6 +123,15 @@
 //!   96000 amplifier passband 800 Hz – 2.5 kHz                                                                            flat within 0.2 dB                   0.157 dB
 //!   96000 volume-0 decay to −120 dB                                                                                      ≤ 100 ms                             18.3 ms
 //!   96000 shelf rise remaining above 2.5 kHz (to 0.45 fs)                                                                ≤ 0.7 dB                             0.000 dB
+//!   trajectory 0 h rounds to the register                                                                                -0.3 ± 0.05                          -0.294
+//!   trajectory 1 h rounds to the register                                                                                -1.9 ± 0.05                          -1.938
+//!   trajectory 2 h rounds to the register                                                                                -2.9 ± 0.05                          -2.894
+//!   trajectory 4 h rounds to the register                                                                                -4.4 ± 0.05                          -4.437
+//!   trajectory 6 h rounds to the register                                                                                -5.7 ± 0.05                          -5.736
+//!   trajectory 8 h rounds to the register                                                                                -7.3 ± 0.05                          -7.264
+//!   trajectory 10 h rounds to the register                                                                               -9.1 ± 0.05                          -9.119
+//!   battery factor exactly 1 at the default                                                                              bits 0x3f800000                      0x3f800000
+//!   battery factor at 2.2 V                                                                                              0.333 ± 0.001                        0.3333
 
 /// A-043: the reference position (the `f32` default's value), where codec full scale meets the ceiling under the loaded law.
 pub(crate) const VOLUME_REFERENCE: f64 = f64::from_bits(0x3fc114f260000000); // 0.13345174491405487
@@ -334,5 +343,44 @@ pub(crate) const GROUP_DELAY_1K_EAR_MS: [f64; 7] = [
 /// (spec 006 FR-008's criterion on the pole's envelope; research R-08).
 #[rustfmt::skip]
 pub(crate) const N_OUT: [u32; 7] = [346, 461, 922, 2539, 2764, 5078, 5527];
+
+/// Spec 018 (A-056): the battery value's lower bound, V of the cell pair: the amplifier's operating range (S-006) and the firmware cut-off end here.
+pub(crate) const BATTERY_VOLTS_MIN: f32 = f32::from_bits(0x400ccccd); // 2.20000005
+/// Spec 018 (A-056): the upper bound, the nominal mark (V+ 2.8 V, S-002): the ceiling never exceeds the model's 1.15 V (A-042).
+pub(crate) const BATTERY_VOLTS_MAX: f32 = f32::from_bits(0x40400000); // 3
+/// Spec 018: the default, the nominal mark; the ceiling factor is exactly 1 (an app's "fresh").
+pub(crate) const BATTERY_VOLTS_DEFAULT: f32 = f32::from_bits(0x40400000); // 3
+/// Spec 018 (A-056): a NiMH pair's steady voltage (2.4 – 2.5 V), for an app's preset.
+pub(crate) const BATTERY_NIMH_PAIR_VOLTS: f32 = f32::from_bits(0x401ccccd); // 2.45000005
+/// Spec 018 (A-056, S-017): the alkaline reference trajectory under the device's load, `(hours of
+/// recording, volts)`; row 0 is a loaded-cell reading, not the default.
+#[rustfmt::skip]
+pub(crate) const BATTERY_ALKALINE_TRAJECTORY: [(f32, f32); 7] = [
+    (f32::from_bits(0x00000000), f32::from_bits(0x403d70a4)), // 0 h, 2.96 V: -0.294 dB
+    (f32::from_bits(0x3f800000), f32::from_bits(0x4030a3d7)), // 1 h, 2.76 V: -1.938 dB
+    (f32::from_bits(0x40000000), f32::from_bits(0x402a3d71)), // 2 h, 2.66 V: -2.894 dB
+    (f32::from_bits(0x40800000), f32::from_bits(0x402147ae)), // 4 h, 2.52 V: -4.437 dB
+    (f32::from_bits(0x40c00000), f32::from_bits(0x401ae148)), // 6 h, 2.42 V: -5.736 dB
+    (f32::from_bits(0x41000000), f32::from_bits(0x40147ae1)), // 8 h, 2.32 V: -7.264 dB
+    (f32::from_bits(0x41200000), f32::from_bits(0x400e147b)), // 10 h, 2.22 V: -9.119 dB
+];
+/// Spec 018: the law's f32 factor at the six law points and the seven rows, as the script printed
+/// them (the core pins bit equality): `[volts, factor]`.
+#[rustfmt::skip]
+pub(crate) const BATTERY_LAW_PRINT: [(f32, f32); 13] = [
+    (f32::from_bits(0x40400000), f32::from_bits(0x3f800000)), // 3.0 V: 0.0000 dB
+    (f32::from_bits(0x40333333), f32::from_bits(0x3f555555)), // 2.8 V: -1.5836 dB
+    (f32::from_bits(0x40266666), f32::from_bits(0x3f2aaaa9)), // 2.6 V: -3.5218 dB
+    (f32::from_bits(0x4019999a), f32::from_bits(0x3f000001)), // 2.4 V: -6.0206 dB
+    (f32::from_bits(0x400ccccd), f32::from_bits(0x3eaaaaac)), // 2.2 V: -9.5424 dB
+    (f32::from_bits(0x403d70a4), f32::from_bits(0x3f777778)), // 2.96 V: -0.2945 dB
+    (f32::from_bits(0x4030a3d7), f32::from_bits(0x3f4ccccd)), // 2.76 V: -1.9382 dB
+    (f32::from_bits(0x402a3d71), f32::from_bits(0x3f377779)), // 2.66 V: -2.8937 dB
+    (f32::from_bits(0x402147ae), f32::from_bits(0x3f199999)), // 2.52 V: -4.4370 dB
+    (f32::from_bits(0x401ae148), f32::from_bits(0x3f044445)), // 2.42 V: -5.7358 dB
+    (f32::from_bits(0x40147ae1), f32::from_bits(0x3edddddc)), // 2.32 V: -7.2636 dB
+    (f32::from_bits(0x400e147b), f32::from_bits(0x3eb33334)), // 2.22 V: -9.1186 dB
+    (f32::from_bits(0x401ccccd), f32::from_bits(0x3f0aaaab)), // 2.45 V: -5.3254 dB
+];
 /// The host rates the tables are indexed by (`SUPPORTED_HOST_RATES` order, 004 FR-002).
 pub(crate) const RATES: [u32; 7] = [6000, 8000, 16000, 44100, 48000, 88200, 96000];

@@ -40,3 +40,9 @@ echo "smoke --changes matches the Rust example"
 cargo run -q -p rr_dr60_harness --example record_changes_rows > target/example-record-changes.txt
 diff target/smoke-record-changes.txt target/example-record-changes.txt
 echo "smoke --record-changes matches the Rust example"
+# Spec 018 SC-004: the C program's battery rows (entries, the two battery meters per block, the
+# digests, the law and the trajectory as bit patterns) equal the Rust example's, byte for byte.
+./target/smoke --battery > target/smoke-battery.txt
+cargo run -q -p rr_dr60_harness --example battery_rows > target/example-battery.txt
+diff target/smoke-battery.txt target/example-battery.txt
+echo "smoke --battery matches the Rust example"

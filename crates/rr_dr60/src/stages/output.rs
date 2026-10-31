@@ -96,7 +96,9 @@ fn hold(g: f64, prev: f64, to: f64, up: bool) -> f64 {
 
 /// The amplifier's clipper (research R-04; A-031, low): a symmetric parabolic knee from
 /// `k = KNEE_START` of the ceiling to `2 − k`, C¹ at both joints, a hard ceiling of 1.0 above.
-/// Plain IEEE arithmetic: compares, multiplies, one divide of constants.
+/// Plain IEEE arithmetic: compares, multiplies, one divide of constants. Since spec 018 the
+/// chain applies [`knee_b`] with the battery's ceiling factor; this form is its b = 1 twin
+/// (bit-identical, pinned).
 #[inline(always)]
 pub(crate) fn knee(x: f64, k: f64) -> f64 {
     let u = x.abs(); // exact (a sign-bit clear), so bit-identical everywhere
@@ -107,6 +109,25 @@ pub(crate) fn knee(x: f64, k: f64) -> f64 {
     } else {
         let d = 2.0 - k - u;
         1.0 - d * d / (4.0 * (1.0 - k))
+    };
+    if x < 0.0 { -y } else { y }
+}
+
+/// The clipper at a ceiling of `b` (spec 018 FR-002, research R-03): the knee's start at
+/// `lo = k·b`, the hard ceiling `b` from `hi = (2 − k)·b`, the parabola `b − d² ÷ den` with
+/// `den = 4·(1 − k)·b` between them, the sample untouched below the start (the below-knee
+/// identity). The three thresholds are the chain's stored fields, recomputed when the factor
+/// moves; at b = 1.0 every branch is [`knee`]'s bit for bit (a multiply by 1.0 is exact).
+#[inline(always)]
+pub(crate) fn knee_b(x: f64, b: f64, lo: f64, hi: f64, den: f64) -> f64 {
+    let u = x.abs();
+    let y = if u <= lo {
+        u
+    } else if u >= hi {
+        b
+    } else {
+        let d = hi - u;
+        b - d * d / den
     };
     if x < 0.0 { -y } else { y }
 }
@@ -200,6 +221,29 @@ pub(crate) struct OutputChain {
     /// Test hook (spec 015 research R-13): a route switch runs the full reset, losing the
     /// call's meter accumulators. False in production.
     pub(crate) full_reset_on_route: bool,
+    /// Spec 018 (research R-02, R-03): the battery's ceiling factor in force, its transition
+    /// (start, target, the counter and its length with 1 / N), the last value `set_battery`
+    /// received, and the clipper's thresholds for the factor in force.
+    batt: f64,
+    batt_from: f64,
+    batt_to: f64,
+    batt_target: f32,
+    batt_k: u32,
+    batt_n: u32,
+    batt_inv_n: f64,
+    knee_lo: f64,
+    knee_hi: f64,
+    knee_den: f64,
+    /// Spec 018 FR-010 (l): the host samples of the call the knee or the ceiling changed.
+    amp_clip_count: u32,
+    /// Spec 018 (research R-05): the amplifier meters are read at the taps that run the knee
+    /// (`AfterVolumeAmp`, `AfterSpeaker`, `RouteOutput`), decided at construction.
+    meter_amp: bool,
+    /// Test hooks (spec 018 research R-07; `__test-hooks`), all false / 0 in production.
+    batt_shape_linear: bool,
+    batt_scale_sample: bool,
+    batt_no_at_once_on_route: bool,
+    batt_count_at_or_above: bool,
 }
 
 impl OutputChain {
@@ -264,10 +308,31 @@ impl OutputChain {
             volume_step: false,
             shape_linear: false,
             full_reset_on_route: false,
+            batt: 1.0, // 018: the default's factor is exactly 1 (A-056 at the nominal mark)
+            batt_from: 1.0,
+            batt_to: 1.0,
+            batt_target: crate::battery::DEFAULT_BATTERY_VOLTS,
+            batt_k: 0,
+            batt_n: 0,
+            batt_inv_n: 0.0,
+            knee_lo: 0.0,
+            knee_hi: 0.0,
+            knee_den: 1.0,
+            amp_clip_count: 0,
+            meter_amp: matches!(
+                tap,
+                Tap::AfterVolumeAmp | Tap::AfterSpeaker | Tap::RouteOutput
+            ),
+            batt_shape_linear: false,
+            batt_scale_sample: false,
+            batt_no_at_once_on_route: false,
+            batt_count_at_or_above: false,
         };
         // A-045: N = 20 ms of host samples. Unreachable fallback: `Pipeline::new` validated the
         // rate before building the chain; 120 (the 6 kHz figure) only avoids a panic site.
         chain.set_ramp_len(volume_transition_samples(settings.host_rate_hz).unwrap_or(120));
+        chain.set_batt_len(volume_transition_samples(settings.host_rate_hz).unwrap_or(120)); // 018: the same 20 ms
+        chain.recompute_knee();
         chain.set_controls(Route::Speaker, c::VOLUME_REFERENCE as f32);
         chain
     }
@@ -339,6 +404,76 @@ impl OutputChain {
         self.ramp_k = self.ramp_n;
     }
 
+    /// Spec 018: the battery transition's N (the volume's 20 ms) and 1 / N; ends any transition.
+    fn set_batt_len(&mut self, n: u32) {
+        self.batt_n = n.max(1);
+        self.batt_inv_n = 1.0 / f64::from(self.batt_n);
+        self.batt_k = self.batt_n;
+        self.batt = self.batt_to;
+        self.recompute_knee(); // hardware review B4: the thresholds follow the factor here too
+    }
+
+    /// Spec 018 (research R-03): the clipper's thresholds for the factor in force: `k·b`,
+    /// `(2 − k)·b` and `4·(1 − k)·b`; at b = 1.0 exactly [`knee`]'s constants.
+    fn recompute_knee(&mut self) {
+        let k = self.knee_start;
+        self.knee_lo = k * self.batt;
+        self.knee_hi = (2.0 - k) * self.batt;
+        self.knee_den = 4.0 * (1.0 - k) * self.batt;
+    }
+
+    /// Spec 018 FR-001, FR-003 (research R-01, R-02): the battery value in volts. Idempotent
+    /// against the last request. The factor is taken at once (no transition) while the chain
+    /// is fresh, inactive or has stage 11 off and on the earphone route; otherwise a **20 ms
+    /// transition** on the factor starts from the factor in force (a change during a
+    /// transition restarts from where it is).
+    pub(crate) fn set_battery(&mut self, volts: f32) {
+        if volts == self.batt_target {
+            return;
+        }
+        self.batt_target = volts;
+        let b = f64::from(crate::battery::ceiling_factor(volts));
+        self.batt_to = b;
+        if self.fresh || !self.active || !self.run_amp || self.route == Route::Earphone {
+            self.batt = b;
+            self.batt_from = b;
+            self.batt_k = self.batt_n;
+            self.recompute_knee();
+        } else {
+            self.batt_from = self.batt;
+            self.batt_k = 0;
+        }
+    }
+
+    /// One battery transition sample (spec 018 FR-003; spec 011's form on the factor): the
+    /// smoothstep from the start to the target, monotonic by construction; at sample N the
+    /// target exactly. The thresholds follow.
+    #[inline]
+    fn batt_step(&mut self) {
+        self.batt_k += 1;
+        if self.batt_k >= self.batt_n {
+            self.batt_k = self.batt_n;
+            self.batt = self.batt_to;
+        } else {
+            let u = f64::from(self.batt_k) * self.batt_inv_n;
+            let s = if self.batt_shape_linear {
+                u
+            } else {
+                u * u * (3.0 - 2.0 * u)
+            };
+            self.batt = self.batt_from + (self.batt_to - self.batt_from) * s;
+        }
+        self.recompute_knee();
+    }
+
+    /// The battery's ceiling factor in force (the unit tests and the test hook; the meters read
+    /// the field directly). Gated like its only callers, or the feature-less builds see dead
+    /// code under `-D warnings` (spec 016's lesson).
+    #[cfg(any(test, feature = "__test-hooks"))]
+    pub(crate) fn battery_factor(&self) -> f64 {
+        self.batt
+    }
+
     /// One transition sample (spec 011 FR-001 – FR-003; data-model.md › The per-sample step):
     /// the knob along the smoothstep `u²(3 − 2u)`, the active route's scalar the loaded law at
     /// the knob held within the previous scalar and the target's; at sample N the target's
@@ -398,6 +533,14 @@ impl OutputChain {
         let n = i64::from(self.ramp_n) + m.volume_ramp_delta;
         self.set_ramp_len(u32::try_from(n).unwrap_or(1));
         self.take_at_once(self.volume_for_rescale());
+        // Spec 018 (research R-07): the battery mutants; the thresholds follow the moved knee.
+        self.batt_shape_linear = m.battery_shape_linear;
+        self.batt_scale_sample = m.battery_scale_sample;
+        self.batt_no_at_once_on_route = m.battery_no_at_once_on_route;
+        self.batt_count_at_or_above = m.battery_count_at_or_above;
+        let bn = i64::from(self.batt_n) + m.battery_ramp_delta;
+        self.set_batt_len(u32::try_from(bn).unwrap_or(1));
+        self.recompute_knee();
     }
 
     /// Test-only: the position the current scalars were computed from is not stored (the
@@ -444,6 +587,15 @@ impl OutputChain {
             m.route_peak = crate::sanitize::narrow_out(peak);
             m.output_clamp_count = count;
         }
+        // Spec 018 FR-010 (research R-05): the factor is reported at the taps that run the
+        // knee; the count only where the knee runs (the speaker route with stage 11 on).
+        let clips = core::mem::replace(&mut self.amp_clip_count, 0);
+        if self.meter_amp {
+            m.battery_ceiling = self.batt as f32;
+            if self.route == Route::Speaker && self.run_amp {
+                m.amp_clip_count = clips;
+            }
+        }
     }
 
     /// The stages themselves: the sample at the configured tap before the output clamp. With
@@ -469,7 +621,28 @@ impl OutputChain {
                 // Stage 11's amplifier path: the input corner, the loaded gain over the ceiling,
                 // the knee. `+ 0.0` turns a −0.0 at position 0 into +0.0.
                 let a = if self.run_amp {
-                    knee(self.k_spk * self.amp_hpf.process(u) + 0.0, self.knee_start)
+                    if self.batt_k < self.batt_n {
+                        self.batt_step(); // 018 FR-003: one battery transition sample
+                    }
+                    let xin = self.k_spk * self.amp_hpf.process(u) + 0.0;
+                    // 018 FR-010: the samples the knee or the ceiling changes.
+                    let clipped = if self.batt_count_at_or_above {
+                        xin.abs() >= self.knee_lo
+                    } else {
+                        xin.abs() > self.knee_lo
+                    };
+                    if clipped {
+                        self.amp_clip_count += 1;
+                    }
+                    if self.batt_scale_sample {
+                        // The mutant (research R-07, restated at implementation): the knee's
+                        // output scaled by the factor with the thresholds fixed, D3's rejected
+                        // "output scale follows the ceiling" (scaling the input and the output
+                        // both is bit-identical after the f32 narrowing, so it is no mutant).
+                        knee(xin, self.knee_start) * self.batt
+                    } else {
+                        knee_b(xin, self.batt, self.knee_lo, self.knee_hi, self.knee_den)
+                    }
                 } else {
                     u
                 };
@@ -510,6 +683,7 @@ impl OutputChain {
         self.reset_sections();
         self.route_peak = 0.0;
         self.clamp_count = 0;
+        self.amp_clip_count = 0;
     }
 
     /// The sections' part of [`reset`](Self::reset), without the meter accumulators: what a
@@ -522,6 +696,13 @@ impl OutputChain {
         self.k_spk = self.g_to_spk;
         self.k_ear = self.g_to_ear;
         self.knob = self.to;
+        // Spec 018 FR-003: a battery transition in progress ends at the switch (the mutant
+        // leaves it running).
+        if !self.batt_no_at_once_on_route {
+            self.batt_k = self.batt_n;
+            self.batt = self.batt_to;
+            self.recompute_knee();
+        }
         self.vol_hpf.reset();
         self.amp_hpf.reset();
         self.speaker_res.reset();
@@ -1403,5 +1584,178 @@ mod tests {
                 }
             }
         }
+    }
+}
+
+/// Spec 018 (research R-02, R-03): the scaled clipper and the battery transition.
+#[cfg(test)]
+mod battery_tests {
+    extern crate std;
+    use super::*;
+    use crate::battery::ceiling_factor;
+    use crate::settings::Settings;
+    use std::vec::Vec;
+
+    fn chain(rate: u32) -> OutputChain {
+        let mut s = Settings::new(rate);
+        s.tap = Tap::AfterVolumeAmp;
+        let mut c = OutputChain::new(&s, false);
+        c.set_controls(Route::Speaker, crate::output::VOLUME_6DB_OVER);
+        c
+    }
+
+    fn knee_b_at(x: f64, b: f64) -> f64 {
+        let k = c::KNEE_START;
+        knee_b(x, b, k * b, (2.0 - k) * b, 4.0 * (1.0 - k) * b)
+    }
+
+    /// FR-002, FR-005: at b = 1.0 the scaled clipper is `knee` bit for bit over a sweep.
+    #[test]
+    fn knee_b_equals_knee_at_unity() {
+        let k = c::KNEE_START;
+        for i in 0..=20_000 {
+            let x = -2.5 + 5.0 * f64::from(i) / 20_000.0;
+            assert_eq!(knee_b_at(x, 1.0).to_bits(), knee(x, k).to_bits(), "{x}");
+        }
+        assert_eq!(knee_b_at(-0.0, 1.0).to_bits(), knee(-0.0, k).to_bits());
+    }
+
+    /// FR-002: at b = 0.5 the sample passes below 0.425, the ceiling is 0.5 at and above
+    /// 0.575, the parabola is C¹ at both joints.
+    #[test]
+    fn knee_b_scales_the_thresholds() {
+        // Hardware review B7 (post-implementation): the joints at every law point, not at 0.5
+        // alone (finite differences; T004's wording restated).
+        for volts in [3.0f32, 2.8, 2.6, 2.4, 2.2] {
+            let b = f64::from(ceiling_factor(volts));
+            let (lo, hi) = (c::KNEE_START * b, (2.0 - c::KNEE_START) * b); // the chain's own products
+            for x in [0.0, 0.1 * b, 0.5 * b, 0.999 * lo, -0.8 * b] {
+                assert_eq!(knee_b_at(x, b).to_bits(), x.to_bits(), "{volts} V {x}");
+            }
+            for x in [hi, 1.2 * b, 1.5 * b, 2.0] {
+                assert_eq!(knee_b_at(x, b), b, "{volts} V {x}");
+                assert_eq!(knee_b_at(-x, b), -b, "{volts} V {x}");
+            }
+            let h = 1e-6;
+            // Continuity and matching slopes at the joints (1 at the start, 0 at the ceiling).
+            assert!(
+                (knee_b_at(lo + h, b) - knee_b_at(lo - h, b)).abs() < 1e-5,
+                "{volts} V"
+            );
+            assert!(
+                ((knee_b_at(lo + h, b) - knee_b_at(lo, b)) / h - 1.0).abs() < 1e-3,
+                "{volts} V"
+            );
+            assert!((knee_b_at(hi - h, b) - b).abs() < 1e-9, "{volts} V");
+            assert!(
+                ((knee_b_at(hi, b) - knee_b_at(hi - h, b)) / h).abs() < 1e-3,
+                "{volts} V"
+            );
+        }
+    }
+
+    /// FR-003: the factor follows spec 011's smoothstep from the factor in force to the target,
+    /// exactly the target at sample N; at 44.1 kHz sample ⌊N/4⌋ carries s(220 / 882).
+    #[test]
+    fn battery_transition_shape() {
+        for rate in [48_000u32, 44_100] {
+            let mut ch = chain(rate);
+            let n = crate::output::volume_transition_samples(rate).unwrap() as usize;
+            let _ = ch.process(0.0); // the first sample ends "fresh"
+            let b0 = ch.battery_factor();
+            assert_eq!(b0, 1.0);
+            ch.set_battery(2.4);
+            let b1 = f64::from(ceiling_factor(2.4));
+            let mut trace = Vec::new();
+            for _ in 0..n + 10 {
+                let _ = ch.process(0.0);
+                trace.push(ch.battery_factor());
+            }
+            let inv = 1.0 / n as f64;
+            for (j, &b) in trace.iter().enumerate().take(n) {
+                let k = (j + 1) as f64;
+                let want = if j + 1 == n {
+                    b1
+                } else {
+                    let u = k * inv;
+                    b0 + (b1 - b0) * (u * u * (3.0 - 2.0 * u))
+                };
+                assert_eq!(b.to_bits(), want.to_bits(), "{rate} Hz sample {}", j + 1);
+            }
+            assert!(trace.windows(2).all(|w| w[1] <= w[0]), "monotonic");
+            assert_eq!(trace[n - 1], b1);
+            assert_eq!(trace[n + 5], b1);
+            let q = n / 4;
+            let u = q as f64 * inv;
+            let s = u * u * (3.0 - 2.0 * u);
+            assert!(
+                (trace[q - 1] - (b0 + (b1 - b0) * s)).abs() < 1e-12,
+                "{rate} Hz ⌊N/4⌋"
+            );
+            if rate == 44_100 {
+                assert_eq!(q, 220);
+                assert!((s - 0.155_613).abs() < 1e-5);
+            } else {
+                assert!((s - 0.156_25).abs() < 1e-12);
+            }
+        }
+    }
+
+    /// Research R-01: a request equal to the target does not restart a transition.
+    #[test]
+    fn set_battery_is_idempotent() {
+        let mut ch = chain(48_000);
+        let _ = ch.process(0.0);
+        ch.set_battery(2.4);
+        for _ in 0..100 {
+            let _ = ch.process(0.0);
+        }
+        let mid = ch.battery_factor();
+        ch.set_battery(2.4); // the per-call plain apply
+        let _ = ch.process(0.0);
+        assert!(ch.battery_factor() < mid, "the transition continued");
+        assert_ne!(ch.battery_factor(), mid);
+        // A different request restarts from the factor in force.
+        let here = ch.battery_factor();
+        ch.set_battery(3.0);
+        let _ = ch.process(0.0);
+        assert!(ch.battery_factor() > here && ch.battery_factor() < 1.0);
+    }
+
+    /// FR-003: at once on a fresh chain, with stage 11 off, on the earphone route, and at a
+    /// route change (which ends a transition in progress).
+    #[test]
+    fn at_once_cases() {
+        let mut ch = chain(48_000);
+        ch.set_battery(2.4); // fresh
+        assert_eq!(ch.battery_factor(), f64::from(ceiling_factor(2.4)));
+        let _ = ch.process(0.0);
+        assert_eq!(ch.battery_factor(), f64::from(ceiling_factor(2.4)));
+        // Stage 11 off.
+        let mut s = Settings::new(48_000);
+        s.output.volume_amp_enabled = false;
+        let mut off = OutputChain::new(&s, false);
+        let _ = off.process(0.0);
+        off.set_battery(2.2);
+        assert_eq!(off.battery_factor(), f64::from(ceiling_factor(2.2)));
+        // The earphone route: at once, and in force when the speaker returns.
+        let mut ear = chain(48_000);
+        ear.set_controls(Route::Earphone, 1.0);
+        let _ = ear.process(0.0);
+        ear.set_battery(2.4);
+        assert_eq!(ear.battery_factor(), f64::from(ceiling_factor(2.4)));
+        ear.set_controls(Route::Speaker, 1.0);
+        let _ = ear.process(0.0);
+        assert_eq!(ear.battery_factor(), f64::from(ceiling_factor(2.4)));
+        // A route change ends a transition in progress.
+        let mut sw = chain(48_000);
+        let _ = sw.process(0.0);
+        sw.set_battery(2.4);
+        for _ in 0..50 {
+            let _ = sw.process(0.0);
+        }
+        assert!(sw.battery_factor() > f64::from(ceiling_factor(2.4)));
+        sw.set_controls(Route::Earphone, 1.0);
+        assert_eq!(sw.battery_factor(), f64::from(ceiling_factor(2.4)));
     }
 }

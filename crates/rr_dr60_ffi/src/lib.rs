@@ -28,7 +28,9 @@
 //! `rr_dr60_start_recording`, `rr_dr60_record`, `rr_dr60_max_record_events`,
 //! `rr_dr60_stop_recording`, `rr_dr60_start_playback`, `rr_dr60_play`,
 //! `rr_dr60_stop_playback`, `rr_dr60_set_route`, `rr_dr60_get_route`, `rr_dr60_set_volume`,
-//! `rr_dr60_get_volume`, `rr_dr60_set_playback_speed`, `rr_dr60_get_playback_speed`,
+//! `rr_dr60_get_volume`, `rr_dr60_set_battery_volts`, `rr_dr60_get_battery_volts`,
+//! `rr_dr60_battery_ceiling_factor`, `rr_dr60_battery_ceiling_db`,
+//! `rr_dr60_battery_trajectory_row` (spec 018), `rr_dr60_set_playback_speed`, `rr_dr60_get_playback_speed`,
 //! `rr_dr60_playback_length_samples`, `rr_dr60_meters` (spec 016), the scheduled changes
 //! (`rr_dr60_schedule_change`, `rr_dr60_pending_changes`, `rr_dr60_stream_position`,
 //! `rr_dr60_clear_schedule`, `rr_dr60_process_with_events_and_changes`,
@@ -53,7 +55,7 @@ use rr_dr60::{
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 17;
+pub const RR_DR60_VERSION_MINOR: u32 = 18;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -140,6 +142,10 @@ pub enum RrDr60Status {
     /// `rr_dr60_input_position` on the playback stream (it has only the output clock); nothing
     /// is written.
     NoSuchClock = 29,
+    /// `rr_dr60_set_battery_volts`, or `rr_dr60_schedule_change` of the battery value, with a
+    /// voltage outside `RR_DR60_BATTERY_VOLTS_MIN` … `RR_DR60_BATTERY_VOLTS_MAX` or not finite;
+    /// the value is unchanged and nothing is stored (spec 018 FR-001).
+    InvalidBatteryVolts = 30,
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -777,6 +783,9 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
         }
         // Spec 017 contracts/api.md: status 29; a bad control index is the manifest's status.
         Error::NoSuchClock { .. } => (RrDr60Status::NoSuchClock, RrDr60SettingField::None),
+        Error::InvalidBatteryVolts { .. } => {
+            (RrDr60Status::InvalidBatteryVolts, RrDr60SettingField::None) // spec 018
+        }
         Error::NoSuchControl { .. } => (RrDr60Status::NoSuchControl, RrDr60SettingField::None),
         // Spec 013 contracts/c-api.md: status 25.
         Error::InvalidSpeedLevel { .. } => {
@@ -2425,17 +2434,183 @@ pub unsafe extern "C" fn rr_dr60_get_volume(
     RrDr60Status::Ok
 }
 
+/// The lowest battery value `rr_dr60_set_battery_volts` accepts, volts of the cell pair (spec
+/// 018 FR-001; A-056): where the device would show its low-battery indicator and stop. Equal to
+/// the Rust `battery::BATTERY_VOLTS_RANGE.0`. A double literal: cast to `float`.
+pub const RR_DR60_BATTERY_VOLTS_MIN: f32 = 2.2; // 018 FR-001: equal to `rr_dr60::battery::BATTERY_VOLTS_RANGE.0` (a literal so cbindgen emits the define; the unit test pins it)
+/// The highest battery value accepted: fresh cells (spec 018 FR-001; A-056). Equal to the Rust
+/// `battery::BATTERY_VOLTS_RANGE.1`.
+pub const RR_DR60_BATTERY_VOLTS_MAX: f32 = 3.0; // 018 FR-001: equal to `rr_dr60::battery::BATTERY_VOLTS_RANGE.1` (pinned)
+/// The default battery value, the nominal mark (V+ 2.8 V of S-002; spec 018 FR-001): the
+/// ceiling factor is exactly 1 and every output equals 0.17's. An app's "fresh" is this value,
+/// not the trajectory's first row. Equal to the Rust `battery::DEFAULT_BATTERY_VOLTS`.
+pub const RR_DR60_BATTERY_VOLTS_DEFAULT: f32 = 3.0; // 018 FR-001: equal to `rr_dr60::battery::DEFAULT_BATTERY_VOLTS` (pinned)
+/// A steady NiMH pair's voltage, a preset value (A-056; spec 018 FR-006). Equal to the Rust
+/// `battery::NIMH_PAIR_VOLTS`.
+pub const RR_DR60_BATTERY_NIMH_PAIR_VOLTS: f32 = 2.45; // A-056 (018 FR-006): equal to `rr_dr60::battery::NIMH_PAIR_VOLTS` (pinned)
+/// The rows of the alkaline reference trajectory `rr_dr60_battery_trajectory_row` reads (spec
+/// 018 FR-006; A-056, S-017). Equal to the Rust `battery::ALKALINE_TRAJECTORY.len()`.
+pub const RR_DR60_BATTERY_TRAJECTORY_ROWS: u32 = 7; // 018 FR-006: equal to `rr_dr60::battery::ALKALINE_TRAJECTORY.len()` (pinned)
+
+/// Sets the battery value, volts of the played unit's cell pair (spec 018 FR-001; A-056), at
+/// any time including during playback: the speaker amplifier runs on the raw battery, so its
+/// clip ceiling scales by the static law `rr_dr60_battery_ceiling_factor` (exactly 1 at the
+/// default `RR_DR60_BATTERY_VOLTS_DEFAULT`, where every output equals 0.17's); below the clip
+/// knee the output is unchanged; the earphone route and the record path do not move. A change
+/// takes effect at the next processing call or `rr_dr60_play` block and moves the factor over a
+/// 20 ms transition (`RR_DR60_VOLUME_TRANSITION_MS`; A-045), at once on a stream's first sample,
+/// with stage 11 bypassed, on the earphone route and at a route change; it survives
+/// `rr_dr60_reset` and `rr_dr60_reconfigure`. The value describes the played unit's cells and
+/// is set by the user: never drive it from the host device's battery, a sensor or a timer. Modeled
+/// on the circuit (S-002) and the amplifier's datasheet (S-006), not measured. Real-time safe.
+///
+/// Returns `RR_DR60_STATUS_INVALID_BATTERY_VOLTS` for a value outside
+/// `RR_DR60_BATTERY_VOLTS_MIN` … `RR_DR60_BATTERY_VOLTS_MAX` or not finite; the value is then
+/// unchanged.
+///
+/// # Safety
+///
+/// `pipeline` must be NULL or a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_set_battery_volts(
+    pipeline: *mut RrDr60Pipeline,
+    volts: f32,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    match p.inner.set_battery_volts(volts) {
+        Ok(()) => RrDr60Status::Ok,
+        Err(e) => status_from_error(e),
+    }
+}
+
+/// Writes the battery value to `*out_volts` (spec 018 FR-001): the last valid setting or the last
+/// landed scheduled change, not the factor during a transition (`rr_dr60_meters` reads that).
+/// Real-time safe.
+///
+/// # Safety
+///
+/// `pipeline` must be NULL or a live handle. `out_volts` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_get_battery_volts(
+    pipeline: *mut RrDr60Pipeline,
+    out_volts: *mut f32,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out_volts.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: out_volts is non-null and writable (caller contract).
+    unsafe { *out_volts = p.inner.battery_volts() };
+    RrDr60Status::Ok
+}
+
+/// Writes the static law's ceiling factor for a battery value to `*out_factor` (spec 018 FR-006;
+/// A-056): `(volts − 1.8) / 1.2`, the speaker amplifier's clip ceiling relative to the model's
+/// 1.15 V at the nominal 3.0 V (V+ = volts − 0.2 V through Q9; the swing limits V+ − 1.6 V of
+/// S-006). Total: any finite value is accepted, also outside the setter's range (the register's
+/// own figures at 2.96 … 2.22 V, or a 1.8 V pair reading 0). No handle; real-time safe.
+///
+/// Returns `RR_DR60_STATUS_INVALID_ARGUMENT` for a non-finite value; nothing is written.
+///
+/// # Safety
+///
+/// `out_factor` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_battery_ceiling_factor(
+    volts: f32,
+    out_factor: *mut f32,
+) -> RrDr60Status {
+    if out_factor.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    if !volts.is_finite() {
+        return RrDr60Status::InvalidArgument;
+    }
+    // SAFETY: out_factor is non-null and writable (caller contract).
+    unsafe { *out_factor = rr_dr60::battery::ceiling_factor(volts) };
+    RrDr60Status::Ok
+}
+
+/// Writes the static law's ceiling change in decibels to `*out_db` (spec 018 FR-006):
+/// `20·log10` of `rr_dr60_battery_ceiling_factor`, the level by which a clipped tone comes out
+/// lower than at the nominal value (−1.6 dB at 2.8 V, −6.0 dB at 2.4 V, −9.5 dB at 2.2 V;
+/// `-INFINITY` at or below 1.8 V). No handle; real-time safe.
+///
+/// Returns `RR_DR60_STATUS_INVALID_ARGUMENT` for a non-finite value; nothing is written.
+///
+/// # Safety
+///
+/// `out_db` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_battery_ceiling_db(volts: f32, out_db: *mut f32) -> RrDr60Status {
+    if out_db.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    if !volts.is_finite() {
+        return RrDr60Status::InvalidArgument;
+    }
+    // SAFETY: out_db is non-null and writable (caller contract).
+    unsafe { *out_db = rr_dr60::battery::ceiling_db(volts) };
+    RrDr60Status::Ok
+}
+
+/// Writes row `i` of the alkaline reference trajectory (spec 018 FR-006; A-056, S-017 with
+/// S-001's battery life) to `*out_hours` and `*out_volts`: the cell pair's voltage under the
+/// device's load after that many hours of **recording**, `RR_DR60_BATTERY_TRAJECTORY_ROWS` rows
+/// from 0 h at 2.96 V to 10 h at 2.22 V (row 0 is a loaded-cell reading, not a fresher state
+/// than the default 3.0 V). Preset values for an app, never a drain: the engine never moves the
+/// battery value on its own. No handle; real-time safe.
+///
+/// Returns `RR_DR60_STATUS_INVALID_ARGUMENT` for `i` at or past the row count; nothing is
+/// written.
+///
+/// # Safety
+///
+/// `out_hours` and `out_volts` must each be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_battery_trajectory_row(
+    i: u32,
+    out_hours: *mut f32,
+    out_volts: *mut f32,
+) -> RrDr60Status {
+    if out_hours.is_null() || out_volts.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let Some(&(hours, volts)) = rr_dr60::battery::ALKALINE_TRAJECTORY.get(i as usize) else {
+        return RrDr60Status::InvalidArgument;
+    };
+    // SAFETY: both out-pointers are non-null and writable (caller contract).
+    unsafe {
+        *out_hours = hours;
+        *out_volts = volts;
+    }
+    RrDr60Status::Ok
+}
+
 /// The meter read-out of the last non-empty processing call (spec 016 FR-001 – FR-003;
-/// contracts/api.md): the figures `rr_dr60_meters` fills. 56 bytes, 8-aligned; the caller sets
+/// contracts/api.md): the figures `rr_dr60_meters` fills. 64 bytes since 0.18 (56 in 0.16 and
+/// 0.17: spec 018 appended `amp_clip_count` and `battery_ceiling`), 8-aligned; the caller sets
 /// `struct_size` to `sizeof(RrDr60Meters)`. Every peak is linear full-scale (20·log10 for
 /// dBFS), the largest absolute sample at its point, and may exceed 1.0. A figure whose point
 /// the call did not reach keeps its rest value: 0 (`vas_paused` 0), except
-/// `hang_remaining_samples`, whose rest is the configured hang length.
+/// `hang_remaining_samples`, whose rest is the configured hang length, and `battery_ceiling`,
+/// whose rest is the factor of the battery value in force at the last non-empty call (a value
+/// set since shows in the next call's read-out; the Rust `rest_meters()` follows it at once).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RrDr60Meters {
-    /// Set by the caller to `sizeof(RrDr60Meters)` (56 in this version). Smaller is refused
-    /// (`RR_DR60_STATUS_INVALID_ARGUMENT`); larger is accepted and the tail zero-filled.
+    /// Set by the caller to `sizeof(RrDr60Meters)` (64 in this version; 56 in 0.16 and 0.17).
+    /// Below 56 is refused (`RR_DR60_STATUS_INVALID_ARGUMENT`); 56 … 63 fills the 56 bytes of
+    /// the 0.16 fields and touches nothing else (a 0.17 binary keeps working); 64 and above
+    /// fills every field and zeroes the bytes past 64.
     pub struct_size: u32,
     /// The largest absolute input sample after the engine's sanitizing of non-finite samples.
     pub input_peak: f32,
@@ -2473,10 +2648,19 @@ pub struct RrDr60Meters {
     pub output_clamp_count: u32,
     /// Explicit tail padding, written 0.
     pub reserved_016: u32,
+    /// The host samples of the call in the speaker amplifier's clip region, above the clipper's
+    /// start (0.85 of the ceiling at the battery value in force; A-031, A-056), on the speaker
+    /// route with stage 11 on; 0 on the earphone route, with stage 11 bypassed and at a tap
+    /// before stage 11 (spec 018 FR-010).
+    pub amp_clip_count: u32,
+    /// The battery's ceiling factor in force at the end of the call (spec 018 FR-010; A-056):
+    /// `rr_dr60_battery_ceiling_factor` of the value, 1.0 at the default 3.0 V, moving over the
+    /// 20 ms transition after a change; 20·log10 for dB. Reported on both routes.
+    pub battery_ceiling: f32,
 }
 
 const METERS_SIZE: u32 = size_of::<RrDr60Meters>() as u32;
-const _: () = assert!(size_of::<RrDr60Meters>() == 56);
+const _: () = assert!(size_of::<RrDr60Meters>() == 64); // 56 before spec 018
 const _: () = assert!(align_of::<RrDr60Meters>() == 8);
 const _: () = assert!(core::mem::offset_of!(RrDr60Meters, struct_size) == 0);
 const _: () = assert!(core::mem::offset_of!(RrDr60Meters, input_peak) == 4);
@@ -2491,6 +2675,12 @@ const _: () = assert!(core::mem::offset_of!(RrDr60Meters, reconstruction_peak) =
 const _: () = assert!(core::mem::offset_of!(RrDr60Meters, route_peak) == 44);
 const _: () = assert!(core::mem::offset_of!(RrDr60Meters, output_clamp_count) == 48);
 const _: () = assert!(core::mem::offset_of!(RrDr60Meters, reserved_016) == 52);
+const _: () = assert!(core::mem::offset_of!(RrDr60Meters, amp_clip_count) == 56); // spec 018
+const _: () = assert!(core::mem::offset_of!(RrDr60Meters, battery_ceiling) == 60); // spec 018
+/// The read-out's size in 0.16 and 0.17: the smallest `struct_size` accepted (spec 018 FR-010,
+/// the compatible prefix-fill rule).
+const METERS_SIZE_016: u32 = 56;
+const _: () = assert!(METERS_SIZE == 64 && METERS_SIZE_016 < METERS_SIZE);
 
 impl RrDr60Meters {
     fn from_core(m: rr_dr60::Meters, struct_size: u32) -> Self {
@@ -2508,6 +2698,8 @@ impl RrDr60Meters {
             route_peak: m.route_peak,
             output_clamp_count: m.output_clamp_count,
             reserved_016: 0,
+            amp_clip_count: m.amp_clip_count,   // spec 018
+            battery_ceiling: m.battery_ceiling, // spec 018
         }
     }
 }
@@ -2516,9 +2708,10 @@ impl RrDr60Meters {
 /// FR-001, FR-009): the figures of the last `rr_dr60_process*`, `rr_dr60_record`,
 /// `rr_dr60_play` or `rr_dr60_stop_recording` call that processed samples; the rest state
 /// before any, after `rr_dr60_reset` and after `rr_dr60_reconfigure`. Real-time safe; never
-/// changes the engine. `out->struct_size` is read first: smaller than this version's 56 →
-/// `RR_DR60_STATUS_INVALID_ARGUMENT` and nothing written; larger → the 56 bytes filled and the
-/// bytes `[56, struct_size)` zeroed (no upper cap).
+/// changes the engine. `out->struct_size` is read first (the compatible prefix-fill rule, spec
+/// 018 FR-010): below 56 (the size of 0.16 and 0.17) → `RR_DR60_STATUS_INVALID_ARGUMENT` and
+/// nothing written; 56 … 63 → the 56 bytes of the 0.16 fields filled and nothing else touched;
+/// 64 and above → the 64 bytes filled and the bytes `[64, struct_size)` zeroed (no upper cap).
 ///
 /// # Safety
 ///
@@ -2540,19 +2733,34 @@ pub unsafe extern "C" fn rr_dr60_meters(
     // SAFETY: `struct_size` is the first field of a `repr(C)` struct, at offset 0; the caller
     // guarantees that much is readable. `read_unaligned` assumes nothing about alignment.
     let size = unsafe { out.cast::<u32>().read_unaligned() };
-    if size < METERS_SIZE {
+    if size < METERS_SIZE_016 {
         return RrDr60Status::InvalidArgument;
     }
     let m = RrDr60Meters::from_core(p.inner.meters(), size);
-    // SAFETY: `out` is non-null, 8-aligned and at least `size` ≥ 56 bytes writable (caller
-    // contract); the tail `[56, size)` is zero-filled byte by byte.
+    // Hardware review B5: a 0.17-sized request (56 … 63) receives exactly the 0.16 fields, never
+    // a partial appended field.
+    let filled = if size < METERS_SIZE {
+        METERS_SIZE_016 as usize
+    } else {
+        METERS_SIZE as usize
+    };
+    // SAFETY: `out` is non-null and at least `size` ≥ 56 bytes writable (caller contract); the
+    // first 56 or 64 bytes of the filled struct are copied byte by byte (a `repr(C)` struct
+    // with no uninitialized padding: `reserved_016` is explicit), so a 0.17-sized buffer
+    // receives exactly its 56 bytes; the tail `[64, size)` is zero-filled.
     unsafe {
-        out.write(m);
-        core::ptr::write_bytes(
-            out.cast::<u8>().add(METERS_SIZE as usize),
-            0,
-            (size - METERS_SIZE) as usize,
+        core::ptr::copy_nonoverlapping(
+            (&m as *const RrDr60Meters).cast::<u8>(),
+            out.cast::<u8>(),
+            filled,
         );
+        if size > METERS_SIZE {
+            core::ptr::write_bytes(
+                out.cast::<u8>().add(METERS_SIZE as usize),
+                0,
+                (size - METERS_SIZE) as usize,
+            );
+        }
     }
     RrDr60Status::Ok
 }
@@ -3937,7 +4145,7 @@ mod tests {
         assert_eq!(d.reserved_010_tail, [0; 7]);
         assert_eq!(d.reserved_012, [0; 2]);
         assert_eq!(d.mic_hiss_offset_db, 0.0); // 012 FR-003
-        assert_eq!(RR_DR60_VERSION_MINOR, 17);
+        assert_eq!(RR_DR60_VERSION_MINOR, 18);
         let mut stale = rr_dr60_settings_default(48_000);
         stale.struct_size = 112; // a 0.10 or 0.11 caller (spec 012 FR-012)
         assert_eq!(
@@ -5128,6 +5336,10 @@ mod meters_tests {
         assert_eq!(m.vas_paused, u32::from(r.vas_paused));
         assert_eq!(m.reserved_016, 0);
         assert_eq!(m.struct_size, 56);
+        // Spec 018: a 0.17-sized request leaves the appended fields untouched (the default 0
+        // here, not the engine's 1.0 ceiling factor).
+        assert_eq!(m.battery_ceiling, 0.0);
+        assert_eq!(m.amp_clip_count, 0);
         // SAFETY: destroying once.
         unsafe { rr_dr60_destroy(h) };
     }
@@ -5156,19 +5368,21 @@ mod meters_tests {
     fn larger_size_is_filled_and_tail_zeroed() {
         let h = handle();
         process_some(h);
-        // A 64-byte, 8-aligned buffer with a sentinel-filled tail.
+        // A 72-byte, 8-aligned buffer with a sentinel-filled tail (spec 018: the struct is 64
+        // bytes; the tail past it is zeroed).
         #[repr(C, align(8))]
-        struct Big([u8; 64]);
-        let mut big = Big([0xA5; 64]);
-        big.0[..4].copy_from_slice(&64u32.to_ne_bytes());
+        struct Big([u8; 72]);
+        let mut big = Big([0xA5; 72]);
+        big.0[..4].copy_from_slice(&72u32.to_ne_bytes());
         let out = big.0.as_mut_ptr().cast::<RrDr60Meters>();
-        // SAFETY: 64 writable, 8-aligned bytes whose first field says 64.
+        // SAFETY: 72 writable, 8-aligned bytes whose first field says 72.
         assert_eq!(unsafe { rr_dr60_meters(h, out) }, RrDr60Status::Ok);
-        // SAFETY: the first 56 bytes are a filled struct.
+        // SAFETY: the first 64 bytes are a filled struct.
         let m = unsafe { out.read() };
-        assert_eq!(m.struct_size, 64);
+        assert_eq!(m.struct_size, 72);
         assert_eq!(m.input_peak, 0.5);
-        assert!(big.0[56..].iter().all(|&b| b == 0), "the tail is zeroed");
+        assert_eq!(m.battery_ceiling, 1.0, "the default's factor");
+        assert!(big.0[64..].iter().all(|&b| b == 0), "the tail is zeroed");
         // SAFETY: destroying once.
         unsafe { rr_dr60_destroy(h) };
     }
@@ -5823,5 +6037,253 @@ mod record_tests {
             );
             rr_dr60_destroy(h);
         }
+    }
+}
+
+/// Spec 018 (tasks.md T015): the battery C API, the defines against the core and the meters'
+/// compatible prefix-fill rule.
+#[cfg(test)]
+mod battery_tests {
+    use super::*;
+
+    fn handle() -> *mut RrDr60Pipeline {
+        let s = rr_dr60_settings_default(48_000);
+        let mut h: *mut RrDr60Pipeline = core::ptr::null_mut();
+        // SAFETY: valid pointers.
+        assert_eq!(unsafe { rr_dr60_create(&s, &mut h) }, RrDr60Status::Ok);
+        h
+    }
+
+    fn get(h: *mut RrDr60Pipeline) -> f32 {
+        let mut v = f32::NAN;
+        // SAFETY: a live handle and a writable out.
+        assert_eq!(
+            unsafe { rr_dr60_get_battery_volts(h, &mut v) },
+            RrDr60Status::Ok
+        );
+        v
+    }
+
+    #[test]
+    fn status_value_and_mapping() {
+        assert_eq!(RrDr60Status::InvalidBatteryVolts as u32, 30); // spec 018
+        assert_eq!(
+            status_from_error(Error::InvalidBatteryVolts { volts: 2.1 }),
+            RrDr60Status::InvalidBatteryVolts
+        );
+    }
+
+    #[test]
+    fn setter_and_getter() {
+        let h = handle();
+        assert_eq!(get(h), RR_DR60_BATTERY_VOLTS_DEFAULT);
+        // SAFETY: a live handle.
+        assert_eq!(
+            unsafe { rr_dr60_set_battery_volts(h, 2.4) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(get(h), 2.4);
+        for bad in [2.1f32, 3.1, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            // SAFETY: a live handle.
+            assert_eq!(
+                unsafe { rr_dr60_set_battery_volts(h, bad) },
+                RrDr60Status::InvalidBatteryVolts,
+                "{bad}"
+            );
+            assert_eq!(get(h), 2.4, "unchanged after {bad}");
+        }
+        // The range's ends are accepted (spec 018 FR-001).
+        // SAFETY: a live handle.
+        assert_eq!(
+            unsafe { rr_dr60_set_battery_volts(h, 2.2) },
+            RrDr60Status::Ok
+        );
+        // SAFETY: a live handle.
+        assert_eq!(
+            unsafe { rr_dr60_set_battery_volts(h, 3.0) },
+            RrDr60Status::Ok
+        );
+        // SAFETY: a NULL handle is allowed by contract; a NULL out is refused.
+        assert_eq!(
+            unsafe { rr_dr60_set_battery_volts(core::ptr::null_mut(), 2.4) },
+            RrDr60Status::NullPointer
+        );
+        // SAFETY: a live handle, a NULL out.
+        assert_eq!(
+            unsafe { rr_dr60_get_battery_volts(h, core::ptr::null_mut()) },
+            RrDr60Status::NullPointer
+        );
+        // SAFETY: destroying once.
+        unsafe { rr_dr60_destroy(h) };
+    }
+
+    #[test]
+    fn law_is_total_and_refuses_only_non_finite() {
+        let mut f = 0.0f32;
+        let mut db = 0.0f32;
+        for v in [1.8f32, 2.0, 2.2, 2.45, 2.8, 2.96, 3.0, 3.2] {
+            // SAFETY: writable outs.
+            assert_eq!(
+                unsafe { rr_dr60_battery_ceiling_factor(v, &mut f) },
+                RrDr60Status::Ok
+            );
+            assert_eq!(f, rr_dr60::battery::ceiling_factor(v), "{v}");
+            // SAFETY: writable out.
+            assert_eq!(
+                unsafe { rr_dr60_battery_ceiling_db(v, &mut db) },
+                RrDr60Status::Ok
+            );
+            assert_eq!(
+                db.to_bits(),
+                rr_dr60::battery::ceiling_db(v).to_bits(),
+                "{v}"
+            );
+        }
+        // SAFETY: writable out.
+        assert_eq!(
+            unsafe { rr_dr60_battery_ceiling_factor(3.0, &mut f) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(f, 1.0, "exactly 1 at the default");
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            f = 7.0;
+            // SAFETY: writable outs.
+            assert_eq!(
+                unsafe { rr_dr60_battery_ceiling_factor(bad, &mut f) },
+                RrDr60Status::InvalidArgument
+            );
+            assert_eq!(f, 7.0, "nothing written");
+            // SAFETY: writable out.
+            assert_eq!(
+                unsafe { rr_dr60_battery_ceiling_db(bad, &mut db) },
+                RrDr60Status::InvalidArgument
+            );
+        }
+        // SAFETY: NULL outs are refused.
+        assert_eq!(
+            unsafe { rr_dr60_battery_ceiling_factor(2.4, core::ptr::null_mut()) },
+            RrDr60Status::NullPointer
+        );
+        // SAFETY: NULL outs are refused.
+        assert_eq!(
+            unsafe { rr_dr60_battery_ceiling_db(2.4, core::ptr::null_mut()) },
+            RrDr60Status::NullPointer
+        );
+    }
+
+    #[test]
+    fn trajectory_rows_equal_the_core() {
+        let rows = rr_dr60::battery::ALKALINE_TRAJECTORY;
+        assert_eq!(rows.len(), RR_DR60_BATTERY_TRAJECTORY_ROWS as usize);
+        for (i, &(hours, volts)) in rows.iter().enumerate() {
+            let (mut h, mut v) = (-1.0f32, -1.0f32);
+            // SAFETY: writable outs.
+            assert_eq!(
+                unsafe { rr_dr60_battery_trajectory_row(i as u32, &mut h, &mut v) },
+                RrDr60Status::Ok
+            );
+            assert_eq!(
+                (h.to_bits(), v.to_bits()),
+                (hours.to_bits(), volts.to_bits())
+            );
+        }
+        let (mut h, mut v) = (-1.0f32, -1.0f32);
+        // SAFETY: writable outs.
+        assert_eq!(
+            unsafe {
+                rr_dr60_battery_trajectory_row(RR_DR60_BATTERY_TRAJECTORY_ROWS, &mut h, &mut v)
+            },
+            RrDr60Status::InvalidArgument
+        );
+        assert_eq!((h, v), (-1.0, -1.0), "nothing written");
+        // SAFETY: a NULL out is refused.
+        assert_eq!(
+            unsafe { rr_dr60_battery_trajectory_row(0, core::ptr::null_mut(), &mut v) },
+            RrDr60Status::NullPointer
+        );
+        // SAFETY: a NULL out is refused.
+        assert_eq!(
+            unsafe { rr_dr60_battery_trajectory_row(0, &mut h, core::ptr::null_mut()) },
+            RrDr60Status::NullPointer
+        );
+    }
+
+    #[test]
+    fn defines_equal_the_core() {
+        let (lo, hi) = rr_dr60::battery::BATTERY_VOLTS_RANGE;
+        assert_eq!(RR_DR60_BATTERY_VOLTS_MIN.to_bits(), lo.to_bits());
+        assert_eq!(RR_DR60_BATTERY_VOLTS_MAX.to_bits(), hi.to_bits());
+        assert_eq!(
+            RR_DR60_BATTERY_VOLTS_DEFAULT.to_bits(),
+            rr_dr60::battery::DEFAULT_BATTERY_VOLTS.to_bits()
+        );
+        assert_eq!(
+            RR_DR60_BATTERY_NIMH_PAIR_VOLTS.to_bits(),
+            rr_dr60::battery::NIMH_PAIR_VOLTS.to_bits()
+        );
+    }
+
+    #[test]
+    fn meters_layout() {
+        assert_eq!(size_of::<RrDr60Meters>(), 64);
+        assert_eq!(core::mem::offset_of!(RrDr60Meters, amp_clip_count), 56);
+        assert_eq!(core::mem::offset_of!(RrDr60Meters, battery_ceiling), 60);
+    }
+
+    /// The prefix-fill rule on a sentinel-filled 80-byte buffer: the request `size` is written
+    /// at offset 0, the call made, and the bytes examined.
+    fn fill(size: u32) -> (RrDr60Status, [u8; 80]) {
+        let h = handle();
+        let x = [0.5f32; 1024];
+        let mut y = [0.0f32; 1024];
+        let mut info = RrDr60BlockInfo::default();
+        // SAFETY: a live handle and 1024-sample buffers.
+        assert_eq!(
+            unsafe { rr_dr60_process(h, x.as_ptr(), y.as_mut_ptr(), 1024, &mut info) },
+            RrDr60Status::Ok
+        );
+        #[repr(C, align(8))]
+        struct Big([u8; 80]);
+        let mut big = Big([0xA5; 80]);
+        big.0[..4].copy_from_slice(&size.to_ne_bytes());
+        // SAFETY: 80 writable, 8-aligned bytes whose first field says `size` ≤ 80.
+        let status = unsafe { rr_dr60_meters(h, big.0.as_mut_ptr().cast::<RrDr60Meters>()) };
+        // SAFETY: destroying once.
+        unsafe { rr_dr60_destroy(h) };
+        (status, big.0)
+    }
+
+    fn f32_at(b: &[u8; 80], at: usize) -> f32 {
+        f32::from_ne_bytes(b[at..at + 4].try_into().unwrap())
+    }
+
+    #[test]
+    fn prefix_fill_rule() {
+        // 55: refused, nothing written (the sentinel stays past the size word).
+        let (s, b) = fill(55);
+        assert_eq!(s, RrDr60Status::InvalidArgument);
+        assert!(b[4..].iter().all(|&x| x == 0xA5));
+        // 56: the 0.16 fields filled, bytes 56 … 79 untouched.
+        let (s, b) = fill(56);
+        assert_eq!(s, RrDr60Status::Ok);
+        assert_eq!(f32_at(&b, 4), 0.5, "input_peak");
+        assert!(b[56..].iter().all(|&x| x == 0xA5), "nothing past 56");
+        // 60: the 0.16 fields filled, nothing past 56 (hardware review B5: never a partial
+        // appended field).
+        let (s, b) = fill(60);
+        assert_eq!(s, RrDr60Status::Ok);
+        assert_eq!(f32_at(&b, 4), 0.5, "input_peak");
+        assert!(b[56..].iter().all(|&x| x == 0xA5), "nothing past 56");
+        // 64: everything filled, nothing past.
+        let (s, b) = fill(64);
+        assert_eq!(s, RrDr60Status::Ok);
+        assert_eq!(f32_at(&b, 60), 1.0, "battery_ceiling at the default");
+        assert!(b[64..].iter().all(|&x| x == 0xA5), "nothing past 64");
+        // 72: everything filled, 64 … 71 zeroed, 72 … 79 untouched.
+        let (s, b) = fill(72);
+        assert_eq!(s, RrDr60Status::Ok);
+        assert_eq!(f32_at(&b, 60), 1.0);
+        assert!(b[64..72].iter().all(|&x| x == 0), "the tail is zeroed");
+        assert!(b[72..].iter().all(|&x| x == 0xA5), "nothing past the size");
     }
 }

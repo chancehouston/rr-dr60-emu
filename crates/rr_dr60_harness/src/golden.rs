@@ -290,6 +290,29 @@ pub struct GoldenEntry {
     /// in the eleven earlier files (FR-008).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record_changes: Option<RecordChangesGolden>,
+    /// Spec 018 (research R-09): the battery value, the route, the last call's two battery
+    /// meters and the change log of a run. Present in battery-file entries only; absent (and not
+    /// serialized) in the twelve earlier files (FR-005).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battery: Option<BatteryGolden>,
+}
+
+/// Spec 018: the battery part of a golden entry (research R-09).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BatteryGolden {
+    /// The battery value set before the stimulus (none for the twin without the setter).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volts: Option<f32>,
+    /// `speaker` or `earphone`.
+    pub route: String,
+    /// `meters_checks::battery_row` of the last call: the amplifier clip count and the ceiling
+    /// factor's bits.
+    pub battery_row: String,
+    /// Every battery change entry the calls reported, in order: `position control before after
+    /// tag` (the doubles as hex bit patterns).
+    pub log: Vec<String>,
+    /// The largest `changes` of one call.
+    pub max_per_call: u32,
 }
 
 /// Spec 017: the record-side part of a golden entry (research R-12).
@@ -488,6 +511,7 @@ pub fn entry(stimulus: &str, config: &str, host_rate_hz: u32, output: &[f32]) ->
         meters: None,
         timed_changes: None,
         record_changes: None,
+        battery: None,
     }
 }
 
@@ -2426,6 +2450,194 @@ pub fn committed_record_changes() -> GoldenFile {
 /// with a CHANGELOG entry.
 pub fn path_record_changes() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-record-changes-v1.json")
+}
+
+/// Spec 018 (research R-09): the three battery stimuli at `rate`: the clipped tone
+/// (`battery_checks::clipped_tone`, 1.5 s at 0 dBFS, run at `VOLUME_6DB_OVER`), the −20 dBFS
+/// voiced stimulus (2 s, run at the reference position) and a full-scale 1 kHz square (1 s, run
+/// at position 1).
+pub fn battery_stimulus(name: &str, rate: u32) -> Vec<f32> {
+    let f = f64::from(rate);
+    match name {
+        "clipped_tone" => crate::battery_checks::clipped_tone(rate),
+        "voiced_m20" => stimulus::voiced(f, 2.0, -20.0, 0x0D60),
+        "square_fs" => stimulus::square(1000.0, 1.0, f, rate as usize),
+        other => panic!("unknown battery stimulus {other}"),
+    }
+}
+
+/// The three battery stimuli and the volume position each runs at.
+pub const BATTERY_STIMULI: [(&str, f32); 3] = [
+    ("clipped_tone", rr_dr60::output::VOLUME_6DB_OVER),
+    ("voiced_m20", rr_dr60::output::VOLUME_REFERENCE),
+    ("square_fs", 1.0),
+];
+
+/// The battery configurations: the default output on the speaker and on the earphone route.
+pub const BATTERY_CONFIGS: [&str; 2] = ["battery_default", "battery_default_earphone"];
+
+fn battery_route(config: &str) -> rr_dr60::Route {
+    if config == "battery_default_earphone" {
+        rr_dr60::Route::Earphone
+    } else {
+        rr_dr60::Route::Speaker
+    }
+}
+
+/// One battery run: the engine at `config` and `rate` on its route at `volume`, the battery set
+/// to `volts` (none: the twin without the setter), `changes` scheduled, the stimulus run in
+/// 1024-sample blocks through the log-taking variant. Returns the output and the battery part.
+fn battery_run(
+    make: Make<'_>,
+    config: &str,
+    rate: u32,
+    stim: &str,
+    volume: f32,
+    volts: Option<f32>,
+    changes: &[crate::changes_checks::Change],
+) -> (Vec<f32>, BatteryGolden) {
+    use crate::changes_checks::{self as cc, Partition, Source};
+    let x = battery_stimulus(stim, rate);
+    let route = battery_route(config);
+    let mut p = make(configs::settings(config, rate));
+    p.set_route(route);
+    p.set_volume(volume).expect("a valid position");
+    if let Some(v) = volts {
+        p.set_battery_volts(v).expect("a valid battery value");
+    }
+    let r = cc::run_scheduled(&mut p, Source::OnePass(&x), changes, Partition::Fixed(1024));
+    let log = crate::battery_checks::battery_entries(&r.log)
+        .iter()
+        .map(|e| {
+            format!(
+                "{} {} {:016x} {:016x} {}",
+                e.position,
+                e.control,
+                e.before.to_bits(),
+                e.after.to_bits(),
+                e.tag
+            )
+        })
+        .collect();
+    let g = BatteryGolden {
+        volts,
+        route: if route == rr_dr60::Route::Earphone {
+            "earphone".into()
+        } else {
+            "speaker".into()
+        },
+        battery_row: crate::meters_checks::battery_row(&p.meters()),
+        log,
+        max_per_call: r.max_per_call as u32,
+    };
+    (r.out, g)
+}
+
+/// Spec 018 FR-005, FR-010 (research R-09): the battery golden: the five law points and the
+/// twin without the setter × the two routes × the three stimuli × the seven rates (252
+/// entries), plus one scheduled change 3.0 → 2.4 V at `battery_checks::change_at` on the
+/// clipped tone per rate (7 entries): 259. At bless time the default entries' digests equal
+/// the twin's, the below-knee (voiced) entries equal the default's at every value, every
+/// earphone-route entry equals its twin, and a scheduled no-op to 3.0 V equals the plain entry
+/// with a one-entry log.
+pub fn generate_battery(make: Make<'_>, bless: bool) -> GoldenFile {
+    use crate::changes_checks::{self as cc, Change};
+    let mut entries = Vec::new();
+    let points: [Option<f32>; 6] = [None, Some(3.0), Some(2.8), Some(2.6), Some(2.4), Some(2.2)];
+    for config in BATTERY_CONFIGS {
+        for (stim, volume) in BATTERY_STIMULI {
+            for rate in configs::all_rates() {
+                let mut twin: Option<GoldenEntry> = None;
+                for volts in points {
+                    let (y, g) = battery_run(make, config, rate, stim, volume, volts, &[]);
+                    let name = match volts {
+                        None => format!("{stim}@default"),
+                        Some(v) => format!("{stim}@{v}V"),
+                    };
+                    let mut e = entry(&name, config, rate, &y);
+                    e.battery = Some(g);
+                    if bless {
+                        let tag = format!("{name}/{config}/{rate} Hz");
+                        if let Some(t) = &twin {
+                            let identity = volts == Some(3.0)
+                                || stim == "voiced_m20"
+                                || config == "battery_default_earphone";
+                            if identity {
+                                assert_eq!(e.sha256, t.sha256, "{tag}: equals the twin");
+                            } else {
+                                assert_ne!(e.sha256, t.sha256, "{tag}: the ceiling moved");
+                            }
+                        } else {
+                            twin = Some(e.clone());
+                        }
+                    }
+                    entries.push(e);
+                }
+                if bless && config == "battery_default" && stim == "clipped_tone" {
+                    // The no-op: a scheduled change to the default equals the plain run with a
+                    // one-entry log.
+                    let (y, g) = battery_run(
+                        make,
+                        config,
+                        rate,
+                        stim,
+                        volume,
+                        None,
+                        &[Change::battery(rr_dr60::Stream::OnePass, 500, 3.0, 7)],
+                    );
+                    let plain = entry(stim, config, rate, &y);
+                    let t = twin.as_ref().expect("the twin");
+                    assert_eq!(plain.sha256, t.sha256, "{rate} Hz: the no-op twin's output");
+                    assert_eq!(g.log.len(), 1, "{rate} Hz: the no-op is logged once");
+                    let _ = cc::same;
+                }
+            }
+        }
+    }
+    for rate in configs::all_rates() {
+        let c = crate::battery_checks::change_at(rate);
+        let (y, g) = battery_run(
+            make,
+            "battery_default",
+            rate,
+            "clipped_tone",
+            rr_dr60::output::VOLUME_6DB_OVER,
+            None,
+            &[Change::battery(rr_dr60::Stream::OnePass, c, 2.4, 1)],
+        );
+        let mut e = entry(
+            &format!("clipped_tone@3.0->2.4V@{c}"),
+            "battery_default",
+            rate,
+            &y,
+        );
+        assert_eq!(g.log.len(), 1, "{rate} Hz: the scheduled change landed");
+        e.battery = Some(g);
+        entries.push(e);
+    }
+    GoldenFile {
+        format: "rr_dr60-golden".into(),
+        version: 1,
+        library_version: rr_dr60::VERSION.into(),
+        entries,
+    }
+}
+
+/// The committed spec 018 battery golden file.
+///
+/// # Panics
+///
+/// If the embedded file is not valid golden JSON.
+pub fn committed_battery() -> GoldenFile {
+    serde_json::from_str(include_str!("../golden/golden-battery-v1.json"))
+        .expect("valid embedded battery golden file")
+}
+
+/// Path of the spec 018 battery golden file. Bless it only with
+/// `RR_DR60_BLESS=battery cargo test -p rr_dr60_harness --test golden_battery`, with a CHANGELOG
+/// entry.
+pub fn path_battery() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-battery-v1.json")
 }
 
 #[cfg(test)]

@@ -96,6 +96,56 @@ def f32_round(x: float) -> float:
     return struct.unpack(">f", struct.pack(">f", x))[0]
 
 
+# ---- Spec 018: the battery state's static law (A-056; S-006's swing limits, S-017's discharge) ----
+BATTERY_VOLTS_MIN = 2.2  # the amplifier's operating range (V+ ≥ 2.0 V, S-006) and the firmware cut-off (A-056)
+BATTERY_VOLTS_MAX = 3.0  # the nominal mark: V+ 2.8 V (S-002), the factor exactly 1
+BATTERY_VOLTS_DEFAULT = 3.0
+BATTERY_Q9_DROP_V = 0.2  # A-056: V+ ≈ the cell pair less Q9's drop
+BATTERY_SWING_LOSS_V = 1.6  # S-006: the ceiling scales with V+ − 1.6
+BATTERY_LAW_POINTS = [3.0, 2.8, 2.6, 2.4, 2.2]
+# A-056's alkaline reference trajectory under the device's load: (hours of recording, volts).
+BATTERY_ALKALINE_TRAJECTORY = [(0.0, 2.96), (1.0, 2.76), (2.0, 2.66), (4.0, 2.52), (6.0, 2.42), (8.0, 2.32), (10.0, 2.22)]
+BATTERY_TRAJECTORY_REGISTER_DB = [-0.3, -1.9, -2.9, -4.4, -5.7, -7.3, -9.1]
+BATTERY_NIMH_PAIR_VOLTS = 2.45  # A-056: a NiMH pair's steady 2.4 – 2.5 V
+
+
+def hexbits32(x: float) -> str:
+    return "0x" + struct.pack(">f", float(x)).hex()
+
+
+def battery_factor(volts: float) -> float:
+    """The engine's law: ((f64(f32 volts) − 1.8) / 1.2) narrowed to f32 (research R-04)."""
+    v = f32_round(volts)
+    return f32_round((v - (BATTERY_Q9_DROP_V + BATTERY_SWING_LOSS_V)) / (2.8 - BATTERY_SWING_LOSS_V))
+
+
+def battery_db(volts: float) -> float:
+    return db(battery_factor(volts))
+
+
+def battery_report(rows_out) -> None:
+    add = lambda name, bound, value, ok: rows_out.append((name, bound, value, ok))
+    print()
+    print("  battery state (spec 018; A-056): factor b = (V − 1.8) / 1.2 on the f32 volts, narrowed to f32")
+    print("    volts      factor (f32 bits)        dB")
+    for v in BATTERY_LAW_POINTS:
+        b = battery_factor(v)
+        print(f"    {v:<8.3g}  {b:.9f} {hexbits32(b)}  {battery_db(v):8.3f}")
+    print("    alkaline trajectory (hours of recording, volts):")
+    for (h, v), reg in zip(BATTERY_ALKALINE_TRAJECTORY, BATTERY_TRAJECTORY_REGISTER_DB):
+        b = battery_factor(v)
+        print(f"    {h:4.0f} h  {v:<6.3g} {b:.9f} {hexbits32(b)}  {battery_db(v):8.3f} dB (register {reg})")
+        add(f"trajectory {h:.0f} h rounds to the register", f"{reg} ± 0.05", f"{battery_db(v):.3f}", abs(battery_db(v) - reg) <= 0.05)
+    bn = battery_factor(BATTERY_NIMH_PAIR_VOLTS)
+    print(f"    NiMH pair {BATTERY_NIMH_PAIR_VOLTS} V: {bn:.9f} {hexbits32(bn)}  {battery_db(BATTERY_NIMH_PAIR_VOLTS):8.3f} dB")
+    add("battery factor exactly 1 at the default", "bits 0x3f800000", hexbits32(battery_factor(BATTERY_VOLTS_DEFAULT)), battery_factor(BATTERY_VOLTS_DEFAULT) == 1.0)
+    add("battery factor at 2.2 V", "0.333 ± 0.001", f"{battery_factor(2.2):.4f}", abs(battery_factor(2.2) - 1 / 3) <= 1e-3)
+
+
+def const_f32(name: str, x: float, doc: str) -> list[str]:
+    return [f"/// {doc}", f"pub(crate) const {name}: f32 = f32::from_bits({hexbits32(x)}); // {f32_round(x):.9g}"]
+
+
 def solve_position(target_v: float) -> float:
     """The position at which g_spk(p) · CODEC_FULL_SCALE_V == target_v."""
     return optimize.brentq(lambda p: g_spk(p) * CODEC_FULL_SCALE_V - target_v, 1e-9, 1.0, xtol=1e-15)
@@ -347,6 +397,7 @@ def report(designs: list[Design]) -> list[tuple[str, str, str, bool]]:
         rise = max(d.spk_db(f) - d.spk_db(2500) for f in np.arange(2500.0, 0.45 * fs, 5.0)) if 0.45 * fs > 2505 else 0.0
         add(f"{fs} shelf rise remaining above 2.5 kHz (to 0.45 fs)", "≤ 0.7 dB", f"{rise:.3f} dB", rise <= 0.7)
     print()
+    battery_report(rows)
     return rows
 
 
@@ -449,6 +500,25 @@ def render_file(designs: list[Design], rows) -> str:
               "/// (spec 006 FR-008's criterion on the pole's envelope; research R-08).",
               "#[rustfmt::skip]",
               f"pub(crate) const N_OUT: [u32; {len(designs)}] = [{', '.join(str(d.n_out()) for d in designs)}];"]
+    lines.append("")
+    lines += const_f32("BATTERY_VOLTS_MIN", BATTERY_VOLTS_MIN, "Spec 018 (A-056): the battery value's lower bound, V of the cell pair: the amplifier's operating range (S-006) and the firmware cut-off end here.")
+    lines += const_f32("BATTERY_VOLTS_MAX", BATTERY_VOLTS_MAX, "Spec 018 (A-056): the upper bound, the nominal mark (V+ 2.8 V, S-002): the ceiling never exceeds the model's 1.15 V (A-042).")
+    lines += const_f32("BATTERY_VOLTS_DEFAULT", BATTERY_VOLTS_DEFAULT, "Spec 018: the default, the nominal mark; the ceiling factor is exactly 1 (an app's \"fresh\").")
+    lines += const_f32("BATTERY_NIMH_PAIR_VOLTS", BATTERY_NIMH_PAIR_VOLTS, "Spec 018 (A-056): a NiMH pair's steady voltage (2.4 – 2.5 V), for an app's preset.")
+    lines += ["/// Spec 018 (A-056, S-017): the alkaline reference trajectory under the device's load, `(hours of",
+              "/// recording, volts)`; row 0 is a loaded-cell reading, not the default.",
+              "#[rustfmt::skip]",
+              f"pub(crate) const BATTERY_ALKALINE_TRAJECTORY: [(f32, f32); {len(BATTERY_ALKALINE_TRAJECTORY)}] = ["]
+    for h, v in BATTERY_ALKALINE_TRAJECTORY:
+        lines.append(f"    (f32::from_bits({hexbits32(h)}), f32::from_bits({hexbits32(v)})), // {h:.0f} h, {v} V: {battery_db(v):.3f} dB")
+    lines.append("];")
+    lines += ["/// Spec 018: the law's f32 factor at the six law points and the seven rows, as the script printed",
+              "/// them (the core pins bit equality): `[volts, factor]`.",
+              "#[rustfmt::skip]",
+              f"pub(crate) const BATTERY_LAW_PRINT: [(f32, f32); {len(BATTERY_LAW_POINTS) + len(BATTERY_ALKALINE_TRAJECTORY) + 1}] = ["]
+    for v in BATTERY_LAW_POINTS + [v for _, v in BATTERY_ALKALINE_TRAJECTORY] + [BATTERY_NIMH_PAIR_VOLTS]:
+        lines.append(f"    (f32::from_bits({hexbits32(v)}), f32::from_bits({hexbits32(battery_factor(v))})), // {v} V: {battery_db(v):.4f} dB")
+    lines.append("];")
     lines += ["/// The host rates the tables are indexed by (`SUPPORTED_HOST_RATES` order, 004 FR-002).",
               f"pub(crate) const RATES: [u32; {len(RATES)}] = [{', '.join(str(r) for r in RATES)}];"]
     return "\n".join(lines).rstrip("\n") + "\n"
@@ -463,8 +533,13 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true", help="verify every bound; exit non-zero on failure")
     ap.add_argument("--write", action="store_true", help="regenerate the Rust coefficient file")
+    ap.add_argument("--battery", action="store_true", help="print the battery law's section (spec 018) and exit")
     ap.add_argument("--output", type=Path, default=OUTPUT, help=argparse.SUPPRESS)
     args = ap.parse_args()
+    if args.battery:
+        rows: list = []
+        battery_report(rows)
+        return 0 if all(r[3] for r in rows) else 1
 
     designs = [Design(fs) for fs in RATES]
     rows = report(designs)

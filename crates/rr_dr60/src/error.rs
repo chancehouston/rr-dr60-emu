@@ -166,6 +166,13 @@ pub enum Error {
         /// The index given.
         control: u32,
     },
+    /// `set_battery_volts` or a scheduled battery change with a value outside
+    /// [`BATTERY_VOLTS_RANGE`](crate::battery::BATTERY_VOLTS_RANGE) or not finite (spec 018
+    /// FR-001); the value is unchanged, nothing stored.
+    InvalidBatteryVolts {
+        /// The rejected value.
+        volts: f32,
+    },
 }
 
 /// Inclusive range of `memory.capacity_s`, in seconds: one second to 24 hours (engineering
@@ -350,6 +357,10 @@ impl fmt::Display for Error {
             Error::NoSuchControl { control } => {
                 write!(f, "no such control: {control}")
             }
+            Error::InvalidBatteryVolts { volts } => write!(
+                f,
+                "invalid battery value {volts} V: must be finite and within 2.2 … 3.0"
+            ),
         }
     }
 }
@@ -520,5 +531,7 @@ mod tests {
         );
         let control = Error::NoSuchControl { control: 29 }.to_string();
         assert!(control.contains("29"), "{control}");
+        let volts = Error::InvalidBatteryVolts { volts: 3.1 }.to_string();
+        assert!(volts.contains("3.1") && volts.contains("2.2"), "{volts}");
     }
 }

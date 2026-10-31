@@ -25,7 +25,7 @@
 use crate::manifest::{bytes_eq, chars, ends_with_dot, ids_ok};
 
 /// The number of entries: three live controls and 26 settings (014 FR-001).
-pub const CONTROL_COUNT: usize = 29; // FR-001
+pub const CONTROL_COUNT: usize = 30; // FR-001; spec 018: `battery_volts` appended at 29
 
 /// What kind of adjustment an entry is (014 FR-003; the owner's decisions of 2026-10-29).
 #[non_exhaustive]
@@ -478,6 +478,15 @@ control_table! {
         sources: [], assumptions: ["A-048"],
         description: "Raises or lowers the microphone hiss, whose level differs between capsules and is unknown for this unit; lower it when the host's microphone adds its own floor.",
     },
+    // Spec 018: appended after the 0.14 entries so no earlier index moves (the order rule:
+    // later entries append; the change log and the goldens store indices).
+    {
+        identifier: "battery_volts", name: "Battery voltage", kind: UnitCondition, timing: Live,
+        paths: [PLAYBACK, ONE_PASS], stage: 15,
+        value: continuous(2.2, 3.0, 3.0), unit: "V",
+        sources: ["S-002", "S-006", "S-017"], assumptions: ["A-056"],
+        description: "Sets the played unit's cell voltage: the lower the cells, the lower the speaker amplifier's clip ceiling; set by the user, never read from the host device.",
+    },
 }
 
 // ---- Compile-time form rules (014 FR-002, FR-006; data-model.md › Form rules) ---------------
@@ -691,11 +700,18 @@ mod tests {
     }
 
     const LIVE: [&str; 3] = ["route", "volume", "playback_speed"];
+    /// Spec 018: entries added after 0.14 are appended in their order (indices are stable).
+    const APPENDED: [&str; 1] = ["battery_volts"];
 
     /// 014 FR-007: the mapped identifiers plus the live ones equal the table exactly, in
     /// FR-001's order (live first, then the settings' declaration order).
     fn missing_or_extra(entries: &[ControlEntry]) -> Result<(), String> {
-        let expected: Vec<&str> = LIVE.iter().copied().chain(setting_identifiers()).collect();
+        let expected: Vec<&str> = LIVE
+            .iter()
+            .copied()
+            .chain(setting_identifiers())
+            .chain(APPENDED.iter().copied())
+            .collect();
         for id in &expected {
             if !entries.iter().any(|e| e.identifier == *id) {
                 return Err(format!("missing entry: {id}"));
@@ -778,6 +794,10 @@ mod tests {
                 ("volume", ControlValue::Continuous { min, max, .. }) => {
                     assert_eq!((min, max), (0.0, 1.0)); // set_volume: 0 … 1 (011 FR-001)
                 }
+                ("battery_volts", ControlValue::Continuous { min, max, .. }) => {
+                    // Spec 018 FR-001: the range `set_battery_volts` accepts.
+                    assert_eq!((min, max), crate::battery::BATTERY_VOLTS_RANGE);
+                }
                 (id, ControlValue::Integer { min, max, .. }) => {
                     let (lo, hi) = range_of(id).unwrap_or_else(|| panic!("{id}: no range"));
                     assert_eq!((min as f32, max as f32), (lo, hi), "{id}");
@@ -844,6 +864,7 @@ mod tests {
             "route" => Def::C(Some(route_value(Route::default()).1)),
             "volume" => Def::F(crate::output::VOLUME_REFERENCE),
             "playback_speed" => Def::I(u64::from(crate::speed::DEFAULT_LEVEL)),
+            "battery_volts" => Def::F(crate::battery::DEFAULT_BATTERY_VOLTS), // spec 018
             "host_rate_hz" => Def::C(None),
             "record_stage_enabled" => Def::B(s.record_stage_enabled),
             "playback_stage_enabled" => Def::B(s.playback_stage_enabled),

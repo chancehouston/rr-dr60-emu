@@ -86,6 +86,13 @@ pub fn row(m: &Meters) -> String {
     )
 }
 
+/// Spec 018 FR-010: the two appended figures as one row (`meters_checks::row` keeps its eleven
+/// columns, so `golden-meters-v1.json` and the meters smoke are unmoved): the amplifier clip
+/// count and the battery's ceiling factor as hex bits.
+pub fn battery_row(m: &Meters) -> String {
+    format!("{} {:08x}", m.amp_clip_count, m.battery_ceiling.to_bits())
+}
+
 /// The voice activation of spec 003's data model › Per-sample processing, written from the
 /// pseudo-code (not from the engine): the harness's own gate.
 #[derive(Clone, Debug)]

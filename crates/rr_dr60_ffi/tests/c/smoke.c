@@ -327,6 +327,76 @@ static int print_changes(void) {
   return 0;
 }
 
+/* Spec 018 SC-004 (research R-09): the battery rows as the Rust example `battery_rows` prints
+   them: a ±1.0 square (24 up, 24 down; exactly representable, spec 006's lesson for a
+   C-versus-Rust stimulus) for 1.5 s at 48 kHz through the default engine with the codec
+   bypassed, the speaker route at position 1 (far over the ceiling at every value), at 3.0, 2.6
+   and 2.2 V set by rr_dr60_set_battery_volts before each run, in 1024-sample blocks: after each
+   block the entries and the battery row (the amplifier clip count and the ceiling factor's
+   bits), then the output digest; then the law at the six points, the seven trajectory rows and
+   the NiMH figure as hex bits. `run_smoke.sh` diffs the two. */
+static int print_battery(void) {
+  enum { BRATE = 48000, BN = BRATE * 3 / 2, BBLOCK = 1024 };
+  static float bin[BN], bout[BN];
+  for (size_t i = 0; i < BN; i++) bin[i] = (i % 48 < 24) ? 1.0f : -1.0f;
+  RrDr60Settings s = rr_dr60_settings_default(BRATE);
+  s.speech_codec_enabled = false;
+  const float volts[3] = {3.0f, 2.6f, 2.2f};
+  RrDr60ChangeEntry entries[RR_DR60_MAX_CHANGES_PER_CALL];
+  for (int r = 0; r < 3; r++) {
+    printf("battery %g\n", (double)volts[r]);
+    RrDr60Pipeline *p = NULL;
+    if (rr_dr60_create(&s, &p) != RR_DR60_STATUS_OK) return 1;
+    if (rr_dr60_set_route(p, RR_DR60_ROUTE_SPEAKER) != RR_DR60_STATUS_OK) return 1;
+    if (rr_dr60_set_volume(p, 1.0f) != RR_DR60_STATUS_OK) return 1;
+    if (rr_dr60_set_battery_volts(p, volts[r]) != RR_DR60_STATUS_OK) return 1;
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (size_t pos = 0; pos < BN; pos += BBLOCK) {
+      size_t n = BN - pos < BBLOCK ? BN - pos : BBLOCK;
+      RrDr60BlockInfo info;
+      size_t count = 0;
+      if (rr_dr60_process_with_events_and_changes(p, bin + pos, bout + pos, n, &info, NULL, 0, entries,
+                                                  RR_DR60_MAX_CHANGES_PER_CALL, &count) != RR_DR60_STATUS_OK)
+        return 1;
+      for (size_t k = 0; k < count; k++) print_entry(&entries[k]);
+      RrDr60Meters m;
+      memset(&m, 0, sizeof m);
+      m.struct_size = (uint32_t)sizeof m;
+      if (rr_dr60_meters(p, &m) != RR_DR60_STATUS_OK) return 1;
+      uint32_t bits;
+      memcpy(&bits, &m.battery_ceiling, 4);
+      printf("%u %08x\n", (unsigned)m.amp_clip_count, bits);
+      h = digest_add(h, bout + pos, info.produced);
+    }
+    printf("digest %016llx\n", (unsigned long long)h);
+    rr_dr60_destroy(p);
+  }
+  printf("law\n");
+  const float points[6] = {3.0f, 2.8f, 2.6f, 2.4f, 2.2f, (float)RR_DR60_BATTERY_NIMH_PAIR_VOLTS};
+  for (int i = 0; i < 6; i++) {
+    float f = 0.0f, d = 0.0f;
+    if (rr_dr60_battery_ceiling_factor(points[i], &f) != RR_DR60_STATUS_OK) return 1;
+    if (rr_dr60_battery_ceiling_db(points[i], &d) != RR_DR60_STATUS_OK) return 1;
+    uint32_t bv, bf, bd;
+    memcpy(&bv, &points[i], 4);
+    memcpy(&bf, &f, 4);
+    memcpy(&bd, &d, 4);
+    printf("%08x %08x %08x\n", bv, bf, bd);
+  }
+  printf("trajectory\n");
+  for (uint32_t i = 0; i < RR_DR60_BATTERY_TRAJECTORY_ROWS; i++) {
+    float hours = 0.0f, v = 0.0f, f = 0.0f;
+    if (rr_dr60_battery_trajectory_row(i, &hours, &v) != RR_DR60_STATUS_OK) return 1;
+    if (rr_dr60_battery_ceiling_factor(v, &f) != RR_DR60_STATUS_OK) return 1;
+    uint32_t bh, bv, bf;
+    memcpy(&bh, &hours, 4);
+    memcpy(&bv, &v, 4);
+    memcpy(&bf, &f, 4);
+    printf("%08x %08x %08x\n", bh, bv, bf);
+  }
+  return 0;
+}
+
 /* Spec 017 SC-003: a scheduled recording and a one-pass with record-side changes, as the Rust
    example `record_changes_rows` prints them. */
 static int print_record_changes(void) {
@@ -468,6 +538,9 @@ int main(int argc, char **argv) {
   }
   if (argc > 1 && strcmp(argv[1], "--record-changes") == 0) {
     return print_record_changes();
+  }
+  if (argc > 1 && strcmp(argv[1], "--battery") == 0) {
+    return print_battery();
   }
   if (argc > 1 && strcmp(argv[1], "--manifest") == 0) {
     print_manifest();

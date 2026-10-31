@@ -1,4 +1,4 @@
-control_count: 29
+control_count: 30
 
 [0] route
 name: Speaker or earphone
@@ -419,3 +419,19 @@ unit: dB
 sources: 
 assumptions: A-048
 description: Raises or lowers the microphone hiss, whose level differs between capsules and is unknown for this unit; lower it when the host's microphone adds its own floor.
+
+[29] battery_volts
+name: Battery voltage
+kind: unit condition
+timing: live
+paths: playback, one-pass
+stage: 15
+value: continuous
+min: 2.2
+max: 3
+step: 0
+default: 3
+unit: V
+sources: S-002, S-006, S-017
+assumptions: A-056
+description: Sets the played unit's cell voltage: the lower the cells, the lower the speaker amplifier's clip ceiling; set by the user, never read from the host device.

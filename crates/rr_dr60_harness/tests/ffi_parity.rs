@@ -3046,3 +3046,203 @@ fn record_parity() {
         unsafe { rr_dr60_destroy(h) };
     }
 }
+
+/// Spec 018 US2 AS3 (FR-011): the battery setter and getter, a scheduled change, the meters' two
+/// fields and the published law agree between the Rust and C paths, bit for bit, at the
+/// measurement rates.
+#[test]
+fn battery_parity() {
+    use rr_dr60::changes::MAX_CHANGES_PER_CALL;
+    use rr_dr60::{ChangeEntry, Stream};
+    use rr_dr60_ffi::{
+        RrDr60ChangeEntry, RrDr60Meters, rr_dr60_battery_ceiling_db,
+        rr_dr60_battery_ceiling_factor, rr_dr60_battery_trajectory_row, rr_dr60_get_battery_volts,
+        rr_dr60_meters, rr_dr60_schedule_change, rr_dr60_set_battery_volts, rr_dr60_set_volume,
+    };
+    use rr_dr60_harness::battery_checks as bat;
+    use rr_dr60_harness::changes_checks::{self as cc, Change};
+    let read = |h: *mut RrDr60Pipeline| -> RrDr60Meters {
+        let mut m = RrDr60Meters {
+            struct_size: size_of::<RrDr60Meters>() as u32,
+            ..Default::default()
+        };
+        // SAFETY: a live handle and a valid out struct.
+        assert_eq!(unsafe { rr_dr60_meters(h, &mut m) }, RrDr60Status::Ok);
+        m
+    };
+    // The published law, no handle.
+    for v in [3.0f32, 2.96, 2.8, 2.6, 2.45, 2.4, 2.22, 2.2] {
+        let (mut f, mut d) = (0.0f32, 0.0f32);
+        // SAFETY: writable outs.
+        assert_eq!(
+            unsafe { rr_dr60_battery_ceiling_factor(v, &mut f) },
+            RrDr60Status::Ok
+        );
+        // SAFETY: writable out.
+        assert_eq!(
+            unsafe { rr_dr60_battery_ceiling_db(v, &mut d) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            f.to_bits(),
+            rr_dr60::battery::ceiling_factor(v).to_bits(),
+            "{v}"
+        );
+        assert_eq!(
+            d.to_bits(),
+            rr_dr60::battery::ceiling_db(v).to_bits(),
+            "{v}"
+        );
+    }
+    for (i, &(hours, volts)) in rr_dr60::battery::ALKALINE_TRAJECTORY.iter().enumerate() {
+        let (mut h, mut v) = (0.0f32, 0.0f32);
+        // SAFETY: writable outs.
+        assert_eq!(
+            unsafe { rr_dr60_battery_trajectory_row(i as u32, &mut h, &mut v) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            (h.to_bits(), v.to_bits()),
+            (hours.to_bits(), volts.to_bits())
+        );
+    }
+    for &rate in configs::measurement_rates() {
+        let x = bat::clipped_tone(rate);
+        let s = bat::stage11_only(rate);
+        let cs = configs::c_settings(&s);
+        let volume = rr_dr60::output::VOLUME_6DB_OVER;
+        let change = Change::battery(Stream::OnePass, 1500, 2.2, 4);
+        let mut p = Pipeline::new(s).unwrap();
+        p.set_volume(volume).unwrap();
+        p.set_battery_volts(2.4).unwrap();
+        let h = create(&cs);
+        // SAFETY: a live handle.
+        assert_eq!(unsafe { rr_dr60_set_volume(h, volume) }, RrDr60Status::Ok);
+        // SAFETY: a live handle.
+        assert_eq!(
+            unsafe { rr_dr60_set_battery_volts(h, 2.4) },
+            RrDr60Status::Ok
+        );
+        let mut got = 0.0f32;
+        // SAFETY: a live handle and a writable out.
+        assert_eq!(
+            unsafe { rr_dr60_get_battery_volts(h, &mut got) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            got.to_bits(),
+            p.battery_volts().to_bits(),
+            "{rate}: the getter"
+        );
+        // Before any call both sides hold the construction-time rest read-out (the setter does
+        // not rewrite the stored read-out; `rest_meters()` follows the value).
+        let rest = read(h);
+        assert_eq!(
+            rest.battery_ceiling.to_bits(),
+            p.meters().battery_ceiling.to_bits(),
+            "{rate}: the stored read-out"
+        );
+        assert_eq!(
+            p.rest_meters().battery_ceiling.to_bits(),
+            rr_dr60::battery::ceiling_factor(2.4).to_bits(),
+            "{rate}: the rest read-out follows the value"
+        );
+        p.schedule_change(
+            change.stream,
+            change.position,
+            change.control,
+            change.value,
+            change.tag,
+        )
+        .unwrap();
+        // SAFETY: a live handle.
+        assert_eq!(
+            unsafe {
+                rr_dr60_schedule_change(
+                    h,
+                    change.stream as u32,
+                    change.position,
+                    change.control,
+                    change.value,
+                    change.tag,
+                )
+            },
+            RrDr60Status::Ok
+        );
+        let mut log = vec![ChangeEntry::default(); MAX_CHANGES_PER_CALL];
+        let mut entries = vec![RrDr60ChangeEntry::default(); MAX_CHANGES_PER_CALL];
+        let mut y = vec![0.0f32; 1024];
+        let mut yc = vec![0.0f32; 1024];
+        for chunk in x.chunks(1024) {
+            let info = p
+                .process_with_events_and_changes(chunk, &mut y[..chunk.len()], &mut [], &mut log)
+                .unwrap();
+            let mut cinfo = RrDr60BlockInfo::default();
+            let mut count = 0usize;
+            // SAFETY: a live handle and buffers of the chunk's length.
+            assert_eq!(
+                unsafe {
+                    rr_dr60_process_with_events_and_changes(
+                        h,
+                        chunk.as_ptr(),
+                        yc.as_mut_ptr(),
+                        chunk.len(),
+                        &mut cinfo,
+                        core::ptr::null_mut(),
+                        0,
+                        entries.as_mut_ptr(),
+                        MAX_CHANGES_PER_CALL,
+                        &mut count,
+                    )
+                },
+                RrDr60Status::Ok
+            );
+            assert_eq!(cinfo.produced, info.produced);
+            assert!(
+                cc::same(&y[..info.produced], &yc[..info.produced]),
+                "{rate}: the output"
+            );
+            assert_eq!(count, info.changes, "{rate}: the entry count");
+            for (c, r) in entries[..count].iter().zip(&log[..info.changes]) {
+                assert_eq!(
+                    (
+                        c.position,
+                        c.control,
+                        c.before.to_bits(),
+                        c.after.to_bits(),
+                        c.tag
+                    ),
+                    (
+                        r.position,
+                        r.control,
+                        r.before.to_bits(),
+                        r.after.to_bits(),
+                        r.tag
+                    ),
+                    "{rate}: an entry"
+                );
+            }
+            let (m, r) = (read(h), p.meters());
+            assert_eq!(m.amp_clip_count, r.amp_clip_count, "{rate}: the clip count");
+            assert_eq!(
+                m.battery_ceiling.to_bits(),
+                r.battery_ceiling.to_bits(),
+                "{rate}: the ceiling factor"
+            );
+            assert_eq!(
+                m.route_peak.to_bits(),
+                r.route_peak.to_bits(),
+                "{rate}: the route peak"
+            );
+        }
+        // SAFETY: a live handle and a writable out.
+        assert_eq!(
+            unsafe { rr_dr60_get_battery_volts(h, &mut got) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(got, 2.2, "{rate}: the landed value reads back");
+        assert_eq!(p.battery_volts(), 2.2);
+        // SAFETY: from rr_dr60_create.
+        unsafe { rr_dr60_destroy(h) };
+    }
+}
