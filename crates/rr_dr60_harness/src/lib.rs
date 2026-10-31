@@ -22,6 +22,7 @@ pub mod mic_checks;
 pub mod output_checks;
 pub mod output_clamp_checks;
 pub mod record_checks;
+pub mod record_contract_checks;
 pub mod report;
 pub mod smoke_reference;
 pub mod speed_checks;

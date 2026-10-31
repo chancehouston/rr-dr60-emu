@@ -211,6 +211,7 @@ mod codec;
 pub mod controls;
 pub mod digest;
 mod error;
+pub mod input;
 mod form;
 pub mod manifest;
 mod memory;
