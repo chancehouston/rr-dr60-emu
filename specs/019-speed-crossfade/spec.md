@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-30
 
-**Status**: Draft reviewed (coach 1 – 14, hardware B1 – B8, product M1 – M5 applied 2026-10-30); owner sign-off pending
+**Status**: Spec signed off (2026-10-30); planning
 
 **Input**: User description: "019 speed-change crossfade (spec 013's follow-up B2; the owner's engine order 018 → 019, decisions.md 2026-10-29; controls-discussion.md § 4 item 6 "removes the tick on a level change to or from levels 4 – 5; a constant level stays bit-identical", § 2b row "Speed crossfade"). As a listener and as an app developer, I want a playback speed-level change to blend from the old level into the new over a short fixed time instead of switching in one sample, so that a change to or from the fast levels no longer ticks on voice content above about 1.6 kHz, while a constant level stays bit-identical to 0.18. […] Out of scope: pitch-kept speed (c1), the live playback-stage bypass crossfade (spec 021), any change to the ratios or the banks' bands, record-side behavior."
 
@@ -25,6 +25,10 @@ The owner reads this section first. Each decision gives the recommendation; the 
 | D9 | **Cost.** At a constant level the per-sample cost within **3 %** of 0.18 (merge commit 13defc7) by the solo A/B (45 alternating runs; a **5 % runner ceiling** on the `ab-timing` label; one "blend running" test on the steady-identity and the general paths); during a blend two dots (at most 114 multiply-adds) per device sample for 120 samples, reported with the worst block, within the real-time budget; deterministic; real-time safe (no new bank; the ring of stored samples grows to hold the two branches' span, a plan figure). No C API change, no control manifest change; stage 9's manifest notes name "a 20 ms blend at a level change (engine convention)" at model version 0.19.0 and its coverage note names the change's own sound as not modeled; version 0.19.0. | Yes |
 
 ## Clarifications
+
+### Session 2026-10-30 (owner sign-off)
+
+- The owner approved D1 – D9 as recommended (the time-domain crossfade, 20 ms fixed as an engine convention, the smoothstep amplitude weights, the waited request, no level-3 branch, the end-of-recording cut, always on with the three re-pins, the oracles with the 40 ms reader asserted at 30 dB, the cost budget); no alternative chosen.
 
 ### Session 2026-10-30 (the draft reviews: coach 1 – 14, hardware B1 – B8, product M1 – M5)
 
