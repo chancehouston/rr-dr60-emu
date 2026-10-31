@@ -48,4 +48,4 @@ The handle-taking status functions (`get_state`, `memory_status`, `meters`): `li
 
 ## Swift
 
-`RRDR60Sized` (`.sized` sets `struct_size = MemoryLayout<Self>.size`) on the seventeen (never `RrDr60Settings`); `RRDR60.checkABI() throws`, the lazy `abiStatus`; `RRDR60Error.abiMismatch(reason: ABIMismatch)` with `version(library:header:)`, `pointerSize`, `settingsSize`, `vasEventSize`, `changeEntrySize`.
+`RRDR60Sized` (`.sized` sets `struct_size = MemoryLayout<Self>.size`) on the seventeen (never `RrDr60Settings`); `RRDR60.checkABI() throws`, the lazy `abiStatus`; the entry points throw; `RRDR60Error.abiMismatch(reason: ABIMismatch)` with `version(library:header:)`, `pointerSize`, `settingsSize`, `vasEventSize`, `changeEntrySize` (the three sizes with caller-supplied values only) and `libraryRefused(status:)`.

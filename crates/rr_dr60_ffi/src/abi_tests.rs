@@ -3,6 +3,7 @@
 
 use super::*;
 use core::mem::offset_of;
+use rr_dr60::{Settings, Tap, VasMode};
 
 /// Every struct's 64-bit size (research R-03's table) and the offsets the pass pins.
 #[test]
@@ -190,21 +191,109 @@ fn write_sized_every_out_struct_four_cases() {
             assert!(p.untouched_after(4));
         }
     }
-    cases::<RrDr60BlockInfo>(BLOCK_INFO_PUBLISHED, &[(4, 8), (25, 32)]);
-    cases::<RrDr60RecordInfo>(RECORD_INFO_PUBLISHED, &[(4, 8), (26, 28)]);
-    cases::<RrDr60StopOutcome>(STOP_OUTCOME_PUBLISHED, &[(4, 8), (26, 28), (49, 52)]);
-    cases::<RrDr60PlayInfo>(PLAY_INFO_PUBLISHED, &[(4, 8), (17, 24)]);
-    cases::<RrDr60EngineState>(ENGINE_STATE_PUBLISHED, &[(17, 20)]);
-    cases::<RrDr60MemoryStatus>(MEMORY_STATUS_PUBLISHED, &[(4, 8), (44, 48)]);
-    cases::<RrDr60SpeechCodecInfo>(SPEECH_CODEC_INFO_PUBLISHED, &[]);
-    cases::<RrDr60ManifestHeader>(MANIFEST_HEADER_PUBLISHED, &[(4, 8)]);
-    cases::<RrDr60StageEntry>(STAGE_ENTRY_PUBLISHED, &[]);
-    cases::<RrDr60Control>(CONTROL_PUBLISHED, &[(4, 8)]);
-    cases::<RrDr60ControlOption>(CONTROL_OPTION_PUBLISHED, &[(4, 8), (20, 24)]);
-    cases::<RrDr60Meters>(METERS_PUBLISHED, &[]);
-    cases::<RrDr60RecordReadout>(READOUT_PUBLISHED, &[(212, 216)]);
-    cases::<RrDr60InputAlignment>(ALIGNMENT_PUBLISHED, &[]);
-    cases::<RrDr60PlaceState>(PLACE_STATE_PUBLISHED, &[]);
+    cases::<RrDr60BlockInfo>(BLOCK_INFO_PUBLISHED, padding_of("RrDr60BlockInfo"));
+    cases::<RrDr60RecordInfo>(RECORD_INFO_PUBLISHED, padding_of("RrDr60RecordInfo"));
+    cases::<RrDr60StopOutcome>(STOP_OUTCOME_PUBLISHED, padding_of("RrDr60StopOutcome"));
+    cases::<RrDr60PlayInfo>(PLAY_INFO_PUBLISHED, padding_of("RrDr60PlayInfo"));
+    cases::<RrDr60EngineState>(ENGINE_STATE_PUBLISHED, padding_of("RrDr60EngineState"));
+    cases::<RrDr60MemoryStatus>(MEMORY_STATUS_PUBLISHED, padding_of("RrDr60MemoryStatus"));
+    cases::<RrDr60SpeechCodecInfo>(
+        SPEECH_CODEC_INFO_PUBLISHED,
+        padding_of("RrDr60SpeechCodecInfo"),
+    );
+    cases::<RrDr60ManifestHeader>(
+        MANIFEST_HEADER_PUBLISHED,
+        padding_of("RrDr60ManifestHeader"),
+    );
+    cases::<RrDr60StageEntry>(STAGE_ENTRY_PUBLISHED, padding_of("RrDr60StageEntry"));
+    cases::<RrDr60Control>(CONTROL_PUBLISHED, padding_of("RrDr60Control"));
+    cases::<RrDr60ControlOption>(CONTROL_OPTION_PUBLISHED, padding_of("RrDr60ControlOption"));
+    cases::<RrDr60Meters>(METERS_PUBLISHED, padding_of("RrDr60Meters"));
+    cases::<RrDr60RecordReadout>(READOUT_PUBLISHED, padding_of("RrDr60RecordReadout"));
+    cases::<RrDr60InputAlignment>(ALIGNMENT_PUBLISHED, padding_of("RrDr60InputAlignment"));
+    cases::<RrDr60PlaceState>(PLACE_STATE_PUBLISHED, padding_of("RrDr60PlaceState"));
+}
+
+/// Every out-struct's padding runs on 64-bit targets (research R-03): the four-cases test and
+/// the `Default` test read them.
+fn padding_of(name: &str) -> &'static [(usize, usize)] {
+    match name {
+        "RrDr60BlockInfo" => &[(4, 8), (25, 32)],
+        "RrDr60RecordInfo" => &[(4, 8), (26, 28)],
+        "RrDr60StopOutcome" => &[(4, 8), (26, 28), (49, 52)],
+        "RrDr60PlayInfo" => &[(4, 8), (17, 24)],
+        "RrDr60EngineState" => &[(17, 20)],
+        "RrDr60MemoryStatus" => &[(4, 8), (44, 48)],
+        "RrDr60ManifestHeader" => &[(4, 8)],
+        "RrDr60StageEntry" => &[(52, 56)], // before the 8-aligned `coverage` pointer
+        "RrDr60Control" => &[(4, 8)],
+        "RrDr60ControlOption" => &[(4, 8), (20, 24)],
+        "RrDr60RecordReadout" => &READOUT_PADDING,
+        _ => &[],
+    }
+}
+
+/// The read-out's fifteen padding bytes: its own four before `stop`, and the embedded
+/// settings' four implicit runs (`RrDr60Settings` offsets 10 – 11, 25 – 27, 49 – 51, 73 – 75,
+/// at 256 + those). The hardware review's post-implementation B1.
+const READOUT_PADDING: [(usize, usize); 5] =
+    [(212, 216), (266, 268), (281, 284), (305, 308), (329, 332)];
+
+/// The padding table follows from the field offsets (a moved field moves the table).
+#[test]
+fn readout_padding_table_follows_the_offsets() {
+    let base = offset_of!(RrDr60RecordReadout, settings);
+    assert_eq!(base, 256);
+    assert_eq!(offset_of!(RrDr60RecordReadout, reserved_2) + 2, 212);
+    assert_eq!(offset_of!(RrDr60RecordReadout, stop), 216);
+    assert_eq!(
+        base + offset_of!(RrDr60Settings, playback_stage_enabled) + 1,
+        266
+    );
+    assert_eq!(base + offset_of!(RrDr60Settings, tap), 268);
+    assert_eq!(base + offset_of!(RrDr60Settings, agc_enabled) + 1, 281);
+    assert_eq!(base + offset_of!(RrDr60Settings, agc_knee_dbfs), 284);
+    assert_eq!(base + offset_of!(RrDr60Settings, vas_enabled) + 1, 305);
+    assert_eq!(base + offset_of!(RrDr60Settings, vas_mode), 308);
+    assert_eq!(
+        base + offset_of!(RrDr60Settings, adc_clamp_enabled) + 1,
+        329
+    );
+    assert_eq!(base + offset_of!(RrDr60Settings, memory_capacity_s), 332);
+}
+
+/// A real read-out with non-default settings fills every padding byte zero (D10; the
+/// post-implementation reviews' finding: a whole-struct assignment of the embedded settings
+/// carried a temporary's padding). Under Miri a compare of an uninitialized byte is an error,
+/// so every byte of the 376 is read.
+#[test]
+fn readout_real_settings_padding_zero() {
+    let mut r = RecordReadout::default();
+    r.settings = Settings::new(44_100);
+    r.settings.tap = Tap::AfterMicAmp;
+    r.settings.vas.mode = VasMode::Mute;
+    r.settings.agc.knee_dbfs = -3.5;
+    r.settings.seed = 0x5555_5555_5555_5555;
+    r.settings.mic.hiss_offset_db = 2.5;
+    r.recording_digest = 0xAAAA_AAAA_AAAA_AAAA;
+    let mut p = Painted::new(376);
+    // SAFETY: a writable buffer.
+    assert_eq!(
+        unsafe { write_readout(p.ptr(), READOUT_PUBLISHED, &r) },
+        RrDr60Status::Ok
+    );
+    for (lo, hi) in READOUT_PADDING {
+        assert!(p.zero_in(lo, hi), "padding {lo}..{hi}: {:?}", &p.0[lo..hi]);
+    }
+    let every: u64 = p.0[..376].iter().map(|&b| u64::from(b)).sum();
+    assert!(every > 0, "every byte read; the struct is not all zero");
+    // SAFETY: the first 376 bytes are a filled struct.
+    let c = unsafe { p.ptr::<RrDr60RecordReadout>().read() };
+    assert_eq!(c.settings.host_rate_hz, 44_100);
+    assert_eq!(c.settings.tap, 10);
+    assert_eq!(c.settings.vas_mode, 1);
+    assert_eq!(c.settings.agc_knee_dbfs, -3.5);
+    assert_eq!(c.settings.struct_size, SETTINGS_SIZE);
 }
 
 /// A prefix fill of the read-out carries the settings bytes the prefix holds in the embedded
@@ -237,27 +326,47 @@ fn readout_prefix_fixes_embedded_settings() {
 /// `Default` on the fifteen out-structs is the zeroed value plus the size (R-10).
 #[test]
 fn default_is_zeroed_plus_size() {
-    fn check<T: Default>() {
+    // Every byte outside the padding runs is read (a typed value's padding is not observable),
+    // so every field is zero but the size.
+    fn check<T: Default>(name: &str) {
         let v = T::default();
-        // SAFETY: `struct_size` is the first field of a `repr(C)` struct.
-        let size = unsafe { (&v as *const T).cast::<u32>().read() };
-        assert_eq!(size as usize, size_of::<T>());
+        let n = size_of::<T>();
+        let mut bytes = vec![0xAAu8; n];
+        // SAFETY: `n` bytes are readable at `&v`; copied as bytes, never as a value.
+        unsafe {
+            core::ptr::copy_nonoverlapping((&v as *const T).cast::<u8>(), bytes.as_mut_ptr(), n)
+        };
+        let pads = padding_of(name);
+        assert_eq!(
+            u32::from_ne_bytes(bytes[..4].try_into().unwrap()) as usize,
+            n,
+            "{name}"
+        );
+        // The padding bytes are never read (a typed value's padding is uninitialized; Miri
+        // flags the read): only the indices outside the runs are.
+        #[allow(clippy::needless_range_loop)] // the padding bytes must not be read at all
+        for i in 4..n {
+            if pads.iter().any(|&(lo, hi)| (lo..hi).contains(&i)) {
+                continue;
+            }
+            assert_eq!(bytes[i], 0, "{name}: byte {i}");
+        }
     }
-    check::<RrDr60BlockInfo>();
-    check::<RrDr60RecordInfo>();
-    check::<RrDr60StopOutcome>();
-    check::<RrDr60PlayInfo>();
-    check::<RrDr60EngineState>();
-    check::<RrDr60MemoryStatus>();
-    check::<RrDr60SpeechCodecInfo>();
-    check::<RrDr60ManifestHeader>();
-    check::<RrDr60StageEntry>();
-    check::<RrDr60Control>();
-    check::<RrDr60ControlOption>();
-    check::<RrDr60Meters>();
-    check::<RrDr60RecordReadout>();
-    check::<RrDr60InputAlignment>();
-    check::<RrDr60PlaceState>();
+    check::<RrDr60BlockInfo>("RrDr60BlockInfo");
+    check::<RrDr60RecordInfo>("RrDr60RecordInfo");
+    check::<RrDr60StopOutcome>("RrDr60StopOutcome");
+    check::<RrDr60PlayInfo>("RrDr60PlayInfo");
+    check::<RrDr60EngineState>("RrDr60EngineState");
+    check::<RrDr60MemoryStatus>("RrDr60MemoryStatus");
+    check::<RrDr60SpeechCodecInfo>("RrDr60SpeechCodecInfo");
+    check::<RrDr60ManifestHeader>("RrDr60ManifestHeader");
+    check::<RrDr60StageEntry>("RrDr60StageEntry");
+    check::<RrDr60Control>("RrDr60Control");
+    check::<RrDr60ControlOption>("RrDr60ControlOption");
+    check::<RrDr60Meters>("RrDr60Meters");
+    check::<RrDr60RecordReadout>("RrDr60RecordReadout");
+    check::<RrDr60InputAlignment>("RrDr60InputAlignment");
+    check::<RrDr60PlaceState>("RrDr60PlaceState");
 }
 
 const OUT_STRUCTS: [&str; 15] = [
@@ -290,6 +399,22 @@ fn scan_source(src: &str) -> Vec<String> {
                 let above = lines[i.saturating_sub(3)..i].join("\n");
                 if above.contains("derive(") && above.contains("Default") {
                     findings.push(format!("{name} derives Default (line {})", i + 1));
+                }
+            }
+        }
+        // A filler (`fn fill…`) must assign fields, never a whole sub-struct.
+        if line.trim_start().starts_with("fn fill") && !line.contains("fn fill_settings") {
+            let end = lines[i..]
+                .iter()
+                .position(|l| l.trim_end() == "    }" || *l == "}")
+                .map_or(lines.len(), |e| i + e);
+            let body = lines[i..end].join("\n");
+            for pat in ["= settings_to_c(", "::from_core("] {
+                if body.contains(pat) {
+                    findings.push(format!(
+                        "{pat:?} (a whole-struct write) in the filler at line {}",
+                        i + 1
+                    ));
                 }
             }
         }
@@ -333,9 +458,9 @@ fn no_out_struct_derives_default_and_no_whole_writes() {
     let findings = scan_source(include_str!("lib.rs"));
     assert!(findings.is_empty(), "{findings:?}");
     // The scan has teeth: a doctored source fails on both rules.
-    let doctored = "#[repr(C)]\n#[derive(Clone, Copy, Default)]\npub struct RrDr60BlockInfo {\n}\npub unsafe extern \"C\" fn f(out: *mut RrDr60BlockInfo) {\n    unsafe { put(out, v) };\n}\n";
+    let doctored = "#[repr(C)]\n#[derive(Clone, Copy, Default)]\npub struct RrDr60BlockInfo {\n}\npub unsafe extern \"C\" fn f(out: *mut RrDr60BlockInfo) {\n    unsafe { put(out, v) };\n}\n    fn fill(&mut self, r: &R) {\n        self.settings = settings_to_c(&r.settings);\n    }\n";
     let f = scan_source(doctored);
-    assert_eq!(f.len(), 2, "{f:?}");
+    assert_eq!(f.len(), 3, "{f:?}");
 }
 
 /// The ABI check: the right tuple, each argument wrong alone (the settings size one above and
@@ -444,10 +569,9 @@ fn run_data_cap_on_read() {
     run.stop.how = RR_DR60_STOP_CALL;
     // SAFETY: a valid struct.
     assert!(unsafe { run_in(&run) }.is_ok());
-    assert_eq!(
-        RrDr60StopFields::from_core(&StopFields::default()).struct_size,
-        40
-    );
+    let mut sf = RrDr60StopFields::default();
+    sf.fill(&StopFields::default());
+    assert_eq!(sf.struct_size, 40);
 }
 
 fn handle() -> *mut RrDr60Pipeline {
@@ -610,6 +734,97 @@ fn per_call_check_order_matrix() {
         unsafe { rr_dr60_destroy(h) };
     }
 
+    // PlaybackInProgress on the one-pass, each size (coach 7).
+    {
+        let loud = vec![0.5f32; 4096];
+        let mut out = vec![0.0f32; 4096];
+        let h = handle();
+        // SAFETY: a live handle and valid buffers; a kept recording for the playback.
+        unsafe {
+            assert_eq!(rr_dr60_start_recording(h), RrDr60Status::Ok);
+            let mut ri = RrDr60RecordInfo::default();
+            assert_eq!(
+                rr_dr60_record(h, loud.as_ptr(), 4096, &mut ri, core::ptr::null_mut(), 0),
+                RrDr60Status::Ok
+            );
+            let mut so = RrDr60StopOutcome::default();
+            assert_eq!(
+                rr_dr60_stop_recording(h, &mut so, core::ptr::null_mut(), 0),
+                RrDr60Status::Ok
+            );
+            assert!(so.kept);
+            assert_eq!(rr_dr60_start_playback(h, 1), RrDr60Status::Ok);
+        }
+        for (size, valid) in sizes(40) {
+            let mut b = Painted::new(size);
+            // SAFETY: as above.
+            let st = unsafe { rr_dr60_process(h, loud.as_ptr(), out.as_mut_ptr(), 64, b.ptr()) };
+            assert_eq!(
+                st,
+                if valid {
+                    RrDr60Status::PlaybackInProgress
+                } else {
+                    RrDr60Status::InvalidArgument
+                },
+                "playing at {size}"
+            );
+            if valid {
+                assert_eq!(b.size(), 40);
+            } else {
+                assert!(b.untouched_after(4));
+            }
+        }
+        // SAFETY: destroying once.
+        unsafe { rr_dr60_destroy(h) };
+    }
+    // Poisoned handle on the stop and play families, each size (coach 7): poison through a
+    // valid-size process call, then the report call.
+    for (size, valid) in sizes(88) {
+        let h = handle();
+        // SAFETY: a live handle.
+        unsafe { rr_dr60__test_force_panic(h) };
+        let mut ok = Painted::new(40);
+        // SAFETY: as above; poisons.
+        assert_eq!(
+            unsafe { rr_dr60_process(h, input.as_ptr(), output.as_mut_ptr(), 64, ok.ptr()) },
+            RrDr60Status::InternalError
+        );
+        let mut b = Painted::new(size);
+        // SAFETY: a poisoned handle.
+        assert_eq!(
+            unsafe { rr_dr60_stop_recording(h, b.ptr(), ev.as_mut_ptr(), 8) },
+            RrDr60Status::InternalError,
+            "poisoned stop at {size}"
+        );
+        if valid {
+            assert_eq!(b.size(), 88);
+        } else {
+            assert!(b.untouched_after(4));
+        }
+        let mut pb = Painted::new(if size == 88 {
+            48
+        } else if size == 87 {
+            47
+        } else if size == 104 {
+            64
+        } else {
+            size
+        });
+        let psize = pb.size();
+        // SAFETY: a poisoned handle.
+        assert_eq!(
+            unsafe { rr_dr60_play(h, output.as_mut_ptr(), 64, pb.ptr()) },
+            RrDr60Status::InternalError,
+            "poisoned play at {psize}"
+        );
+        if valid {
+            assert_eq!(pb.size(), 48);
+        } else {
+            assert!(pb.untouched_after(4));
+        }
+        // SAFETY: destroying once.
+        unsafe { rr_dr60_destroy(h) };
+    }
     // record family (48) and stop (88)
     for (size, valid) in sizes(48) {
         let mut p = Painted::new(size);

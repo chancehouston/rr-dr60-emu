@@ -860,6 +860,64 @@ typedef struct {
 
 typedef RrDr60Status (*AbiFill)(AbiCtx *ctx, void *out);
 
+/* A recording's processing record for the three read-side fills (the read-out, the alignment, the
+   place state): built once on its own engine by abi_record_context(). */
+static RrDr60Pipeline *abi_rp = NULL;
+static uint8_t *abi_rec = NULL;
+static size_t abi_rec_len = 0;
+static RrDr60Settings abi_rs;
+static RrDr60VasEvent abi_ev[128];
+static size_t abi_nev = 0;
+static RrDr60StopFields abi_stop;
+
+static int abi_record_context(const float *in) {
+  abi_rs = rr_dr60_settings_default(48000);
+  abi_rs.speech_codec_enabled = false;
+  if (rr_dr60_create(&abi_rs, &abi_rp) != RR_DR60_STATUS_OK) return 0;
+  if (rr_dr60_start_recording(abi_rp) != RR_DR60_STATUS_OK) return 0;
+  SIZED(RrDr60RecordInfo, ri);
+  RrDr60VasEvent e1[64];
+  if (rr_dr60_record(abi_rp, in, 4096, &ri, e1, 64) != RR_DR60_STATUS_OK) return 0;
+  for (size_t k = 0; k < ri.events && abi_nev < 128; k++) abi_ev[abi_nev++] = e1[k];
+  SIZED(RrDr60StopOutcome, so);
+  if (rr_dr60_stop_recording(abi_rp, &so, e1, 64) != RR_DR60_STATUS_OK || !so.kept) return 0;
+  for (size_t k = 0; k < so.flush_events && abi_nev < 128; k++) abi_ev[abi_nev++] = e1[k];
+  memset(&abi_stop, 0, sizeof abi_stop);
+  abi_stop.struct_size = sizeof abi_stop;
+  abi_stop.how = RR_DR60_STOP_CALL;
+  abi_stop.stop_input_position = so.stop_input_position;
+  abi_stop.padding_start_sample = so.padding_start_sample;
+  abi_stop.input_samples_total = so.stop_input_position;
+  abi_stop.silence_fed_samples = so.silence_fed_samples;
+  RrDr60RunData run;
+  memset(&run, 0, sizeof run);
+  run.struct_size = sizeof run;
+  run.events = abi_ev;
+  run.event_count = abi_nev;
+  run.stop = abi_stop;
+  if (rr_dr60_processing_record_len(abi_rp, so.number, &run, &abi_rec_len) != RR_DR60_STATUS_OK) return 0;
+  abi_rec = (uint8_t *)malloc(abi_rec_len + 1);
+  size_t written = 0;
+  if (!abi_rec ||
+      rr_dr60_processing_record_write(abi_rp, so.number, &run, abi_rec, abi_rec_len, &written) != RR_DR60_STATUS_OK ||
+      written != abi_rec_len)
+    return 0;
+  return 1;
+}
+
+static RrDr60Status abi_fill_readout(AbiCtx *x, void *out) {
+  (void)x;
+  return rr_dr60_processing_record_read(abi_rp, abi_rec, abi_rec_len, (RrDr60RecordReadout *)out);
+}
+static RrDr60Status abi_fill_alignment(AbiCtx *x, void *out) {
+  (void)x;
+  return rr_dr60_kept_to_input(&abi_rs, 0, abi_ev, abi_nev, &abi_stop, (RrDr60InputAlignment *)out);
+}
+static RrDr60Status abi_fill_place(AbiCtx *x, void *out) {
+  (void)x;
+  return rr_dr60_place_at(10, 48000, 3, 1500, NULL, 0, (RrDr60PlaceState *)out);
+}
+
 static RrDr60Status abi_fill_block(AbiCtx *x, void *out) {
   return rr_dr60_process(x->p, x->in, x->out, 64, (RrDr60BlockInfo *)out);
 }
@@ -995,6 +1053,7 @@ static void abi_cases(void) {
   static const size_t pad_state[1][2] = {{17, 20}};
   static const size_t pad_memory[2][2] = {{4, 8}, {44, 48}};
   static const size_t pad_header[1][2] = {{4, 8}};
+  static const size_t pad_stage[1][2] = {{52, 56}};
   static const size_t pad_control[1][2] = {{4, 8}};
   static const size_t pad_option[2][2] = {{4, 8}, {20, 24}};
   abi_struct_cases("RrDr60BlockInfo", 40, 40, pad_block, 2, abi_fill_block, &ctx);
@@ -1006,9 +1065,18 @@ static void abi_cases(void) {
   abi_struct_cases("RrDr60Meters", 56, 64, NULL, 0, abi_fill_meters, &ctx);
   abi_struct_cases("RrDr60SpeechCodecInfo", 28, 28, NULL, 0, abi_fill_codec, &ctx);
   abi_struct_cases("RrDr60ManifestHeader", 72, 72, pad_header, 1, abi_fill_header, &ctx);
-  abi_struct_cases("RrDr60StageEntry", 80, 80, NULL, 0, abi_fill_stage, &ctx);
+  abi_struct_cases("RrDr60StageEntry", 80, 80, pad_stage, 1, abi_fill_stage, &ctx);
   abi_struct_cases("RrDr60Control", 120, 120, pad_control, 1, abi_fill_control, &ctx);
   abi_struct_cases("RrDr60ControlOption", 24, 24, pad_option, 2, abi_fill_option, &ctx);
+  /* The three read-side structs of spec 020 on a processing record: the read-out's fifteen
+     padding bytes (its own 212 … 215 and the embedded settings' four runs) must read zero. */
+  static const size_t pad_readout[5][2] = {{212, 216}, {266, 268}, {281, 284}, {305, 308}, {329, 332}};
+  CHECK(abi_record_context(cin), "the record context for the read-side fills");
+  abi_struct_cases("RrDr60RecordReadout", 376, 376, pad_readout, 5, abi_fill_readout, &ctx);
+  abi_struct_cases("RrDr60InputAlignment", 32, 32, NULL, 0, abi_fill_alignment, &ctx);
+  abi_struct_cases("RrDr60PlaceState", 32, 32, NULL, 0, abi_fill_place, &ctx);
+  rr_dr60_destroy(abi_rp);
+  free(abi_rec);
   /* Meters' known smaller layout: 60 fills 56, reads back 56, zeroes 56 … 59 (D11). */
   {
     AbiBuf buf;
@@ -1079,7 +1147,7 @@ static void abi_cases(void) {
       for (size_t i = 0; i < 1000000; i++) rr_dr60_process(q, NULL, NULL, 0, &bi);
       clock_t t3 = clock();
       printf("abi timing (reported): process 64: %.0f ns/call; process 4096: %.0f ns/call; size check and idle write "
-             "(frames 0): %.1f ns/call\n",
+             "(frames 0; the whole idle call, an upper bound on the pass's added work): %.1f ns/call\n",
              abi_ns_per_call(t0, t1, (double)calls64), abi_ns_per_call(t1, t2, (double)calls4096),
              abi_ns_per_call(t2, t3, 1e6));
     }

@@ -289,6 +289,48 @@ fn us3_header_diff_listed() {
         new.contains("uintptr_t flush_stored;"),
         "the flattened outcome"
     );
+    // Every differing non-comment line is one of the listed changes (T012, SC-003): the size
+    // fields, the flattened outcome, the rename, the four defines, the two functions, the
+    // status, the version, and the amended contract comment; doc comments may say anything.
+    let code_lines = |src: &str| -> std::collections::BTreeSet<String> {
+        src.lines()
+            .map(str::trim_end)
+            .filter(|l| {
+                let t = l.trim_start();
+                !t.is_empty() && !t.starts_with("//") && !t.starts_with('*') && !t.starts_with("/*")
+            })
+            .map(str::to_owned)
+            .collect()
+    };
+    let (o, n) = (code_lines(&old), code_lines(&new));
+    let allowed = [
+        "struct_size",
+        "flush_",
+        "struct RrDr60RecordInfo flush;",
+        "uint32_t stream;",
+        "uint32_t reserved;",
+        "RR_DR60_ABI_VERSION",
+        "RR_DR60_MAX_STRUCT_SIZE",
+        "RR_DR60_VAS_EVENT_SIZE",
+        "RR_DR60_CHANGE_ENTRY_SIZE",
+        "rr_dr60_abi_check",
+        "rr_dr60_abi_version",
+        "ABI_MISMATCH",
+        "RR_DR60_VERSION_MINOR",
+        "uintptr_t pointer_size",
+        "uintptr_t settings_size",
+        "uintptr_t vas_event_size",
+        "uintptr_t change_entry_size",
+        "sizeof(RrDr60Settings)",
+    ];
+    let unmatched: Vec<&String> = o
+        .symmetric_difference(&n)
+        .filter(|l| !allowed.iter().any(|a| l.contains(a)))
+        .collect();
+    assert!(
+        unmatched.is_empty(),
+        "header lines outside the listed changes: {unmatched:#?}"
+    );
 }
 
 /// The Swift fixture is the Rust rows at 48 kHz (the Swift test compares its C rows to it).

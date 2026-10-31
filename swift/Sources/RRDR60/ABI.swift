@@ -16,6 +16,10 @@ public enum ABIMismatch: Error, Equatable, Sendable {
     case vasEventSize
     /// `sizeof(RrDr60ChangeEntry)` is not 40 (frozen).
     case changeEntrySize
+    /// The library refused the header's tuple while every comparison this package can make
+    /// holds (the library's own sizes are not exposed, so a settings or frozen-size difference
+    /// against the library reports here; by D13 a settings growth moves the version first).
+    case libraryRefused(status: Int32)
 }
 
 /// The package's errors.
@@ -36,8 +40,12 @@ public enum RRDR60 {
     /// package's first library call.
     static let abiStatus: Int32 = rr_dr60_abi_check(headerVersion, pointerSize, settingsSize, vasEventSize, changeEntrySize)
 
+    /// Test-only: a status that replaces the library's answer (the package's tests exercise the
+    /// mismatch path with it; never set by an app).
+    nonisolated(unsafe) static var abiOverride: Int32?
+
     /// Whether the header matches the library.
-    public static var abiOK: Bool { abiStatus == Int32(RR_DR60_STATUS_OK.rawValue) }
+    public static var abiOK: Bool { (abiOverride ?? abiStatus) == Int32(RR_DR60_STATUS_OK.rawValue) }
 
     /// Checks the header against the library; call it once at launch. The package's own entry
     /// points run it before their first library call.
@@ -47,12 +55,15 @@ public enum RRDR60 {
                 reason: mismatchReason(
                     version: headerVersion, pointerSize: pointerSize, settingsSize: settingsSize,
                     vasEventSize: vasEventSize, changeEntrySize: changeEntrySize)
-                    ?? .version(library: rr_dr60_abi_version(), header: headerVersion))
+                    ?? .libraryRefused(status: abiOverride ?? abiStatus))
         }
     }
 
     /// The first failing comparison of the five, in the check's order, or `nil` when all hold
-    /// (the C check returns one status; the reason is derived here).
+    /// (the C check returns one status; the reason is derived here). The three size reasons are
+    /// reachable only with caller-supplied values: from `checkABI()` the header's values are
+    /// compared with themselves, so a library refusal with an equal version is
+    /// `.libraryRefused`.
     public static func mismatchReason(version: UInt32, pointerSize: UInt, settingsSize: UInt, vasEventSize: UInt,
                                changeEntrySize: UInt) -> ABIMismatch? {
         let library = rr_dr60_abi_version()

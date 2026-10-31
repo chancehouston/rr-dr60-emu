@@ -18,10 +18,11 @@ public enum ProcessingRecord {
         return out
     }
 
-    /// Reads a record; `nil` when the library refuses it, or when the header does not match the
-    /// library (`RRDR60.checkABI()` names the reason). A `pipeline` adds the host-rate flag.
-    public static func read(_ record: [UInt8], pipeline: OpaquePointer? = nil) -> RrDr60RecordReadout? {
-        guard RRDR60.abiOK else { return nil }
+    /// Reads a record; `nil` when the library refuses it; throws `RRDR60Error.abiMismatch` when
+    /// the header does not match the library (spec 022: a build error of the app, told apart
+    /// from an unreadable record). A `pipeline` adds the host-rate flag.
+    public static func read(_ record: [UInt8], pipeline: OpaquePointer? = nil) throws -> RrDr60RecordReadout? {
+        try RRDR60.checkABI()
         var r = RrDr60RecordReadout.sized
         let status = record.withUnsafeBufferPointer { bytes in
             rr_dr60_processing_record_read(pipeline, bytes.baseAddress, UInt(record.count), &r)
@@ -30,9 +31,9 @@ public enum ProcessingRecord {
     }
 
     /// The record's change rows (the control's manifest index, the stream word in `stream`);
-    /// empty when the header does not match the library.
-    public static func changes(of record: [UInt8], count: UInt64) -> [RrDr60ChangeEntry] {
-        guard RRDR60.abiOK else { return [] }
+    /// throws `RRDR60Error.abiMismatch` when the header does not match the library.
+    public static func changes(of record: [UInt8], count: UInt64) throws -> [RrDr60ChangeEntry] {
+        try RRDR60.checkABI()
         var rows = [RrDr60ChangeEntry](repeating: RrDr60ChangeEntry(), count: Int(count))
         let got = record.withUnsafeBufferPointer { bytes in
             rows.withUnsafeMutableBufferPointer { out in
@@ -43,10 +44,11 @@ public enum ProcessingRecord {
     }
 
     /// Re-renders `raw` (24-bit samples) from `record` and returns the stored form's digest, or
-    /// `nil` when a step is refused. The caller compares it with the read-out's
+    /// `nil` when a step is refused; throws `RRDR60Error.abiMismatch` on a header mismatch. The caller compares it with the read-out's
     /// `recording_digest`.
-    public static func reRender(record: [UInt8], raw: [Int32], block: Int = 4096) -> UInt64? {
-        guard RRDR60.abiOK, let r = read(record), r.origin == RR_DR60_ORIGIN_ENGINE else { return nil }
+    public static func reRender(record: [UInt8], raw: [Int32], block: Int = 4096) throws -> UInt64? {
+        try RRDR60.checkABI()
+        guard let r = try read(record), r.origin == RR_DR60_ORIGIN_ENGINE else { return nil }
         var settings = r.settings
         var handle: OpaquePointer?
         guard rr_dr60_create_at_counter(&settings, r.recording_counter, &handle) == Int32(RR_DR60_STATUS_OK.rawValue),
@@ -61,7 +63,7 @@ public enum ProcessingRecord {
             let missing = status.remaining_samples - r.remaining_samples_at_start
             guard fill(p, samples: missing, codec: settings.speech_codec_enabled) else { return nil }
         }
-        let entries = changes(of: record, count: r.change_count)
+        let entries = try changes(of: record, count: r.change_count)
         var next = 0
         func schedule() -> Bool {
             while next < entries.count {

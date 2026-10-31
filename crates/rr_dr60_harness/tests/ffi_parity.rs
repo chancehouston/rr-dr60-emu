@@ -4387,6 +4387,127 @@ fn abi_pass_parity() {
                 );
             }
         }
+        // The three read-side structs of spec 020 on a processing record built here: the
+        // read-out (its fifteen padding bytes zero), the alignment and the place state.
+        {
+            let loud = vec![0.5f32; 4096];
+            let mut e1 = [RrDr60VasEvent::default(); 64];
+            let mut events: Vec<RrDr60VasEvent> = Vec::new();
+            // SAFETY: a live handle and valid buffers.
+            unsafe {
+                assert_eq!(rr_dr60_start_recording(p), RrDr60Status::Ok);
+                let mut ri = RrDr60RecordInfo::default();
+                assert_eq!(
+                    rr_dr60_record(p, loud.as_ptr(), 4096, &mut ri, e1.as_mut_ptr(), 64),
+                    RrDr60Status::Ok
+                );
+                events.extend_from_slice(&e1[..ri.events]);
+                let mut so = RrDr60StopOutcome::default();
+                assert_eq!(
+                    rr_dr60_stop_recording(p, &mut so, e1.as_mut_ptr(), 64),
+                    RrDr60Status::Ok
+                );
+                assert!(so.kept);
+                events.extend_from_slice(&e1[..so.flush_events]);
+                let stop = RrDr60StopFields {
+                    struct_size: size_of::<RrDr60StopFields>() as u32,
+                    how: RR_DR60_STOP_CALL,
+                    stop_input_position: so.stop_input_position,
+                    padding_start_sample: so.padding_start_sample,
+                    input_samples_total: so.stop_input_position,
+                    silence_fed_samples: so.silence_fed_samples,
+                };
+                let run = RrDr60RunData {
+                    struct_size: size_of::<RrDr60RunData>() as u32,
+                    reserved: 0,
+                    events: events.as_ptr(),
+                    event_count: events.len(),
+                    changes: std::ptr::null(),
+                    change_count: 0,
+                    stop,
+                };
+                let mut len = 0usize;
+                assert_eq!(
+                    rr_dr60_processing_record_len(p, so.number, &run, &mut len),
+                    RrDr60Status::Ok
+                );
+                let mut rec = vec![0u8; len];
+                let mut written = 0usize;
+                assert_eq!(
+                    rr_dr60_processing_record_write(
+                        p,
+                        so.number,
+                        &run,
+                        rec.as_mut_ptr(),
+                        len,
+                        &mut written
+                    ),
+                    RrDr60Status::Ok
+                );
+                let readout_pads: [(usize, usize); 5] =
+                    [(212, 216), (266, 268), (281, 284), (305, 308), (329, 332)];
+                type ReadCase<'a> = (&'a str, u32, &'a [(usize, usize)], Fill<'a>);
+                let mut read_cases: Vec<ReadCase> = Vec::new();
+                let rp = rec.as_ptr();
+                let sp = &stop as *const RrDr60StopFields;
+                let ep = events.as_ptr();
+                let ne = events.len();
+                let csp = &cs as *const RrDr60Settings;
+                read_cases.push((
+                    "readout",
+                    376,
+                    &readout_pads,
+                    Box::new(move |b| rr_dr60_processing_record_read(p, rp, len, b.cast())),
+                ));
+                read_cases.push((
+                    "alignment",
+                    32,
+                    &[],
+                    Box::new(move |b| rr_dr60_kept_to_input(csp, 0, ep, ne, sp, b.cast())),
+                ));
+                read_cases.push((
+                    "place",
+                    32,
+                    &[],
+                    Box::new(move |b| {
+                        rr_dr60_place_at(10, rate, 3, 1500, std::ptr::null(), 0, b.cast())
+                    }),
+                ));
+                for (name, full, pads, fill) in &read_cases {
+                    for size in [0, full - 1, 4097, u32::MAX] {
+                        let mut b = paint(size);
+                        assert_eq!(
+                            fill(b.0.as_mut_ptr()),
+                            RrDr60Status::InvalidArgument,
+                            "{name} at {size}"
+                        );
+                        assert!(
+                            b.0[4..].iter().all(|&v| v == 0xAA),
+                            "{name}: nothing written at {size}"
+                        );
+                    }
+                    for size in [*full, full + 16, 4096] {
+                        let mut b = paint(size);
+                        assert_eq!(fill(b.0.as_mut_ptr()), RrDr60Status::Ok, "{name} at {size}");
+                        assert_eq!(size_of_buf(&b), *full, "{name}: the read-back at {size}");
+                        for &(lo, hi) in pads.iter() {
+                            assert!(
+                                b.0[lo..hi].iter().all(|&v| v == 0),
+                                "{name}: padding {lo}..{hi} at {size}"
+                            );
+                        }
+                        assert!(
+                            b.0[*full as usize..size as usize].iter().all(|&v| v == 0),
+                            "{name}: the tail at {size}"
+                        );
+                        assert!(
+                            b.0[size as usize..].iter().all(|&v| v == 0xAA),
+                            "{name}: beyond {size}"
+                        );
+                    }
+                }
+            }
+        }
         // The record, stop and play reports on their own transport states.
         // SAFETY: a live handle.
         assert_eq!(unsafe { rr_dr60_start_recording(p) }, RrDr60Status::Ok);

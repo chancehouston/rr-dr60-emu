@@ -3,7 +3,7 @@
 // and the ABI rows built through the C API equal the Rust example's (the committed fixture,
 // which the harness's `us2_abi` test pins to `abi_checks::rows_at(48000)`).
 import Foundation
-import RRDR60
+@testable import RRDR60
 import RRDR60C
 import Testing
 
@@ -71,7 +71,7 @@ private func sizedMatches<T: RRDR60Sized>(_: T.Type) -> Bool {
     #expect(q == nil)
 }
 
-@Test func mismatchReasonIsNamed() {
+@Test func mismatchReasonIsNamed() throws {
     let ok = (UInt32(1), UInt(8), UInt(120), UInt(16), UInt(40))
     #expect(RRDR60.mismatchReason(version: ok.0, pointerSize: ok.1, settingsSize: ok.2, vasEventSize: ok.3, changeEntrySize: ok.4) == nil)
     #expect(RRDR60.mismatchReason(version: 2, pointerSize: 8, settingsSize: 120, vasEventSize: 16, changeEntrySize: 40)
@@ -81,6 +81,20 @@ private func sizedMatches<T: RRDR60Sized>(_: T.Type) -> Bool {
     #expect(RRDR60.mismatchReason(version: 1, pointerSize: 8, settingsSize: 119, vasEventSize: 16, changeEntrySize: 40) == .settingsSize)
     #expect(RRDR60.mismatchReason(version: 1, pointerSize: 8, settingsSize: 120, vasEventSize: 24, changeEntrySize: 40) == .vasEventSize)
     #expect(RRDR60.mismatchReason(version: 1, pointerSize: 8, settingsSize: 120, vasEventSize: 16, changeEntrySize: 48) == .changeEntrySize)
+    // A library refusal with every header comparison holding names the status (coach 9, B2).
+    RRDR60.abiOverride = Int32(RR_DR60_STATUS_ABI_MISMATCH.rawValue)
+    defer { RRDR60.abiOverride = nil }
+    #expect(!RRDR60.abiOK)
+    #expect(throws: RRDR60Error.abiMismatch(reason: .libraryRefused(status: Int32(RR_DR60_STATUS_ABI_MISMATCH.rawValue)))) {
+        try RRDR60.checkABI()
+    }
+    // The package's entry points consult the check before any library call (coach 2).
+    #expect(throws: RRDR60Error.self) { try ProcessingRecord.read([1, 2, 3]) }
+    #expect(throws: RRDR60Error.self) { try ProcessingRecord.changes(of: [1, 2, 3], count: 0) }
+    #expect(throws: RRDR60Error.self) { try ProcessingRecord.reRender(record: [1, 2, 3], raw: []) }
+    RRDR60.abiOverride = nil
+    let unreadable = try ProcessingRecord.read([1, 2, 3])
+    #expect(unreadable == nil, "an unreadable record is nil, not an error")
     // The C check itself, each argument wrong alone.
     #expect(isOK(rr_dr60_abi_check(1, 8, 120, 16, 40)))
     for bad in [(2, 8, 120, 16, 40), (1, 4, 120, 16, 40), (1, 8, 121, 16, 40), (1, 8, 119, 16, 40), (1, 8, 120, 24, 40), (1, 8, 120, 16, 48)] {

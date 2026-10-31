@@ -9,7 +9,8 @@
  *  2. A failed call changes nothing: out-parameters are untouched and state is unchanged.
  *     Exception: the info struct of rr_dr60_process, rr_dr60_process_with_events,
  *     rr_dr60_record, rr_dr60_stop_recording and rr_dr60_play is always written when not
- *     NULL, so a host that only checks `produced` or `stored` never reads a stale count.
+ *     NULL and its struct_size is accepted (spec 022), so a host that only checks `produced`
+ *     or `stored` never reads a stale count; a refused struct_size processes nothing.
  *  3. The caller owns all buffers; the library never keeps a pointer after a call returns.
  *     Using a handle after rr_dr60_destroy is undefined behavior.
  *  4. A handle must not be used by two threads at the same time; separate handles are
@@ -1560,8 +1561,9 @@ RrDr60Status rr_dr60_start_recording(struct RrDr60Pipeline *pipeline);
 // recording in progress; writes the block's VAS events (positions in the recording's device
 // samples from its start) to `events`, the first `events_capacity` of them (spec 006 FR-001,
 // FR-006). The recording stops by itself at the exact sample at which the memory fills
-// (`out_info->stopped`, FR-012). `out_info` is always written when not NULL (zeros on an
-// error). `events` may be NULL only when `events_capacity` is 0; `input` may be NULL only when
+// (`out_info->stopped`, FR-012). `out_info` is always written when not NULL and its
+// `struct_size` is accepted (the idle report on an error: `stored` 0, the current `paused`,
+// the tail zeroed; a refused size processes nothing, spec 022 D12). `events` may be NULL only when `events_capacity` is 0; `input` may be NULL only when
 // `frames` is 0. Real-time safe.
 //
 // With the speech codec on, `out_info.frames` and `frames_total` count the frames completed
@@ -1597,7 +1599,9 @@ RrDr60Status rr_dr60_max_record_events(struct RrDr60Pipeline *pipeline,
 // Stops the recording (spec 006 FR-005): flushes the record path's own latency of silence
 // through it (its events go to `events`), and keeps the recording (`kept`, its number and
 // length) or, when nothing was fed since the start, discards it as empty (A-039).
-// `out_outcome` is always written when not NULL (zeros on an error). Real-time safe.
+// `out_outcome` is always written when not NULL and its `struct_size` is accepted (the idle
+// outcome on an error, the tail zeroed; a refused size processes nothing, spec 022 D12).
+// Real-time safe.
 //
 // Statuses: `NOT_RECORDING` (including after a memory-full stop).
 //
@@ -1622,7 +1626,9 @@ RrDr60Status rr_dr60_start_playback(struct RrDr60Pipeline *pipeline, uint32_t nu
 
 // Produces the next block of host samples of the recording being played into
 // `output[0 .. produced)` (spec 006 FR-002, FR-008): the recording, then its drain, then
-// `finished` and idle. `out_info` is always written when not NULL (zeros on an error).
+// `finished` and idle. `out_info` is always written when not NULL and its `struct_size` is
+// accepted (the idle report on an error, the tail zeroed; a refused size processes nothing,
+// spec 022 D12).
 // `frames == 0` is OK (`output` may then be NULL). Real-time safe.
 //
 // Statuses: `NOT_PLAYING`.

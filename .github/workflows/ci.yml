@@ -13,6 +13,7 @@ name: CI
 #   golden-matrix golden (001 + AGC + VAS + codec + output + clamp + volume ramp + mic + speed) + determinism on 6 desktop targets (FR-014) — T061
 #   ios           golden (001 + AGC + VAS + codec + output + clamp + volume ramp + mic + speed) + determinism in the iOS simulator; iOS builds — T063
 #   msrv          full test suite on Rust 1.85                                — T065
+#   miri          the C layer's sized-struct helper under Miri (spec 022 T007; the padding oracle) — 022 hardware review
 # The 8th FR-014 target, a physical iOS device, is a release-time manual gate
 # (scripts/ios-device-golden.sh, docs/release-checklist.md).
 #
@@ -184,3 +185,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Test on the minimum supported Rust version
         run: cargo +1.85 test --workspace --all-features
+
+  miri:
+    name: miri (the FFI layer's fill under Miri)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install nightly with Miri
+        run: |
+          rustup toolchain install nightly --profile minimal --component miri
+          cargo +nightly miri setup
+      - uses: Swatinem/rust-cache@v2
+      # Spec 022 T007: the helper's cases, the read-out's real-settings fill and the Default
+      # rule under Miri, which reports an uninitialized padding byte where a painted-byte test
+      # passes by luck (the first run caught `MaybeUninit::zeroed()`'s typed move).
+      - name: Miri on the ABI helper's tests
+        run: cargo +nightly miri test -p rr_dr60_ffi --lib -- abi_tests::write_sized abi_tests::readout abi_tests::default_is abi_tests::published

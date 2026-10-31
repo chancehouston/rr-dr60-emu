@@ -15,8 +15,10 @@
 //! 2. A failed call changes nothing: out-parameters are left untouched and pipeline state is
 //!    unchanged, apart from poisoning. The one exception is the info struct of
 //!    `rr_dr60_process`, `rr_dr60_process_with_events`, `rr_dr60_record`,
-//!    `rr_dr60_stop_recording` and `rr_dr60_play`, which is always written when not NULL
-//!    (spec 003 contracts/c-api.md › Rule 2 amendment; extended by spec 006).
+//!    `rr_dr60_stop_recording` and `rr_dr60_play`, which is always written when not NULL and
+//!    its `struct_size` is accepted (the idle report: `produced` / `stored` 0, the current
+//!    `paused`, the tail zeroed); a refused size processes nothing (spec 003 contracts/c-api.md
+//!    › Rule 2 amendment; extended by spec 006; amended by spec 022 D12).
 //! 3. The caller owns all buffers. The library never keeps a pointer after a call returns.
 //! 4. A handle must not be used by two threads at the same time.
 //! 5. `RrDr60Settings` only grows at the end. Callers set `struct_size`.
@@ -1569,7 +1571,8 @@ pub unsafe extern "C" fn rr_dr60_settings_validate(
 // ---- Spec 006: the record and playback paths, the memory, the route, export and import
 // (contracts/c-api.md). Every call: NULL handle → NULL_POINTER; poisoned → INTERNAL_ERROR; a
 // caught panic poisons the handle; a non-OK status leaves the required out-parameters
-// untouched, except the info structs, which are always written when not NULL.
+// untouched, except the info structs, which are always written when not NULL and their
+// `struct_size` is accepted (spec 022 D12).
 
 /// Writes `value` to `out` unless it is NULL.
 ///
@@ -1760,8 +1763,9 @@ pub unsafe extern "C" fn rr_dr60_start_recording(pipeline: *mut RrDr60Pipeline) 
 /// recording in progress; writes the block's VAS events (positions in the recording's device
 /// samples from its start) to `events`, the first `events_capacity` of them (spec 006 FR-001,
 /// FR-006). The recording stops by itself at the exact sample at which the memory fills
-/// (`out_info->stopped`, FR-012). `out_info` is always written when not NULL (zeros on an
-/// error). `events` may be NULL only when `events_capacity` is 0; `input` may be NULL only when
+/// (`out_info->stopped`, FR-012). `out_info` is always written when not NULL and its
+/// `struct_size` is accepted (the idle report on an error: `stored` 0, the current `paused`,
+/// the tail zeroed; a refused size processes nothing, spec 022 D12). `events` may be NULL only when `events_capacity` is 0; `input` may be NULL only when
 /// `frames` is 0. Real-time safe.
 ///
 /// With the speech codec on, `out_info.frames` and `frames_total` count the frames completed
@@ -1856,7 +1860,9 @@ pub unsafe extern "C" fn rr_dr60_max_record_events(
 /// Stops the recording (spec 006 FR-005): flushes the record path's own latency of silence
 /// through it (its events go to `events`), and keeps the recording (`kept`, its number and
 /// length) or, when nothing was fed since the start, discards it as empty (A-039).
-/// `out_outcome` is always written when not NULL (zeros on an error). Real-time safe.
+/// `out_outcome` is always written when not NULL and its `struct_size` is accepted (the idle
+/// outcome on an error, the tail zeroed; a refused size processes nothing, spec 022 D12).
+/// Real-time safe.
 ///
 /// Statuses: `NOT_RECORDING` (including after a memory-full stop).
 ///
@@ -1929,7 +1935,9 @@ pub unsafe extern "C" fn rr_dr60_start_playback(
 
 /// Produces the next block of host samples of the recording being played into
 /// `output[0 .. produced)` (spec 006 FR-002, FR-008): the recording, then its drain, then
-/// `finished` and idle. `out_info` is always written when not NULL (zeros on an error).
+/// `finished` and idle. `out_info` is always written when not NULL and its `struct_size` is
+/// accepted (the idle report on an error, the tail zeroed; a refused size processes nothing,
+/// spec 022 D12).
 /// `frames == 0` is OK (`output` may then be NULL). Real-time safe.
 ///
 /// Statuses: `NOT_PLAYING`.
@@ -6886,24 +6894,27 @@ impl RrDr60StopFields {
         })
     }
 
-    fn from_core(f: &StopFields) -> Self {
-        Self {
-            struct_size: STOP_FIELDS_SIZE,
-            how: match f.how {
-                StopHow::StopCall => RR_DR60_STOP_CALL,
-                StopHow::MemoryFull => RR_DR60_STOP_MEMORY_FULL,
-            },
-            stop_input_position: f.stop_input_position,
-            padding_start_sample: f.padding_start_sample,
-            input_samples_total: f.input_samples_total,
-            silence_fed_samples: f.silence_fed_samples,
-        }
+    /// Assigns the fields (spec 022 D10; the struct has no padding, the rule is kept anyway).
+    fn fill(&mut self, f: &StopFields) {
+        self.struct_size = STOP_FIELDS_SIZE;
+        self.how = match f.how {
+            StopHow::StopCall => RR_DR60_STOP_CALL,
+            StopHow::MemoryFull => RR_DR60_STOP_MEMORY_FULL,
+        };
+        self.stop_input_position = f.stop_input_position;
+        self.padding_start_sample = f.padding_start_sample;
+        self.input_samples_total = f.input_samples_total;
+        self.silence_fed_samples = f.silence_fed_samples;
     }
 }
 
 /// The C settings struct for Rust settings (the inverse of `to_settings`; every variant
 /// mapped: a new tap or mode fails to compile until listed).
-fn settings_to_c(s: &Settings) -> RrDr60Settings {
+/// Assigns the C settings struct's fields from Rust settings (spec 022 D10: field by field into
+/// a zeroed value, so the struct's three implicit padding runs stay zero; a whole-struct
+/// assignment would carry a temporary's padding). The inverse of `to_settings`; every variant
+/// mapped: a new tap or mode fails to compile until listed.
+fn fill_settings(t: &mut RrDr60Settings, s: &Settings) {
     let tap = match s.tap {
         Tap::AfterRecord => 0,
         Tap::AfterPlayback => 1,
@@ -6923,34 +6934,49 @@ fn settings_to_c(s: &Settings) -> RrDr60Settings {
         VasMode::Mute => 1,
         _ => 0,
     };
-    RrDr60Settings {
-        record_stage_enabled: s.record_stage_enabled,
-        playback_stage_enabled: s.playback_stage_enabled,
-        tap,
-        seed: s.seed,
-        agc_enabled: s.agc.enabled,
-        agc_knee_dbfs: s.agc.knee_dbfs,
-        agc_attack_ms: s.agc.attack_ms,
-        agc_release_ms: s.agc.release_ms,
-        vas_enabled: s.vas.enabled,
-        vas_mode,
-        vas_sensitivity: u32::from(s.vas.sensitivity),
-        vas_threshold_dbfs: s.vas.threshold_dbfs,
-        vas_hang_ms: s.vas.hang_ms,
-        vas_onset_ms: s.vas.onset_ms,
-        adc_clamp_enabled: s.adc_clamp_enabled,
-        memory_capacity_s: s.memory.capacity_s,
-        memory_max_recordings: s.memory.max_recordings,
-        speech_codec_enabled: s.speech_codec_enabled,
-        output_volume_amp_enabled: s.output.volume_amp_enabled,
-        output_speaker_enabled: s.output.speaker_enabled,
-        output_earphone_enabled: s.output.earphone_enabled,
-        output_clamp_enabled: s.output.clamp_enabled,
-        mic_capsule_enabled: s.mic.capsule_enabled,
-        mic_amp_enabled: s.mic.amp_enabled,
-        mic_hiss_offset_db: s.mic.hiss_offset_db,
-        ..rr_dr60_settings_default(s.host_rate_hz)
-    }
+    t.struct_size = SETTINGS_SIZE;
+    t.host_rate_hz = s.host_rate_hz;
+    t.record_stage_enabled = s.record_stage_enabled;
+    t.playback_stage_enabled = s.playback_stage_enabled;
+    t.tap = tap;
+    t.seed = s.seed;
+    t.agc_enabled = s.agc.enabled;
+    t.agc_knee_dbfs = s.agc.knee_dbfs;
+    t.reserved_agc_1 = 0.0;
+    t.reserved_agc_2 = 0.0;
+    t.agc_attack_ms = s.agc.attack_ms;
+    t.agc_release_ms = s.agc.release_ms;
+    t.vas_enabled = s.vas.enabled;
+    t.vas_mode = vas_mode;
+    t.vas_sensitivity = u32::from(s.vas.sensitivity);
+    t.vas_threshold_dbfs = s.vas.threshold_dbfs;
+    t.vas_hang_ms = s.vas.hang_ms;
+    t.vas_onset_ms = s.vas.onset_ms;
+    t.adc_clamp_enabled = s.adc_clamp_enabled;
+    t.memory_capacity_s = s.memory.capacity_s;
+    t.memory_max_recordings = s.memory.max_recordings;
+    t.reserved_008 = 0;
+    t.speech_codec_enabled = s.speech_codec_enabled;
+    t.reserved_009 = [0; 7];
+    t.output_volume_amp_enabled = s.output.volume_amp_enabled;
+    t.output_speaker_enabled = s.output.speaker_enabled;
+    t.output_earphone_enabled = s.output.earphone_enabled;
+    t.reserved_010 = [0; 5];
+    t.output_clamp_enabled = s.output.clamp_enabled;
+    t.reserved_010_tail = [0; 7];
+    t.mic_capsule_enabled = s.mic.capsule_enabled;
+    t.mic_amp_enabled = s.mic.amp_enabled;
+    t.reserved_012 = [0; 2];
+    t.mic_hiss_offset_db = s.mic.hiss_offset_db;
+}
+
+/// The C settings struct for Rust settings, by value (the tests' round trips; a by-value C
+/// struct carries no padding promise, so no writer uses it: spec 022 D10).
+#[cfg(test)]
+fn settings_to_c(s: &Settings) -> RrDr60Settings {
+    let mut t = rr_dr60_settings_default(s.host_rate_hz);
+    fill_settings(&mut t, s);
+    t
 }
 
 impl RrDr60RecordReadout {
@@ -6985,8 +7011,8 @@ impl RrDr60RecordReadout {
         self.change_count = r.change_count;
         self.stage_model_versions = r.stage_model_versions;
         self.reserved_2 = 0;
-        self.stop = RrDr60StopFields::from_core(&r.stop);
-        self.settings = settings_to_c(&r.settings);
+        self.stop.fill(&r.stop);
+        fill_settings(&mut self.settings, &r.settings); // spec 022 D10: never a whole-struct assignment
     }
 
     fn to_core(self) -> Result<RecordReadout, RrDr60Status> {
@@ -7463,7 +7489,8 @@ pub unsafe extern "C" fn rr_dr60_record_write(
         return RrDr60Status::NullPointer;
     }
     // SAFETY: non-null; the caller's contract on the size.
-    if unsafe { struct_size_at(readout) } < READOUT_SIZE {
+    if !(READOUT_SIZE..=RR_DR60_MAX_STRUCT_SIZE).contains(&unsafe { struct_size_at(readout) }) {
+        // spec 022 D8: the cap on the read-out as an input too
         return RrDr60Status::InvalidArgument;
     }
     // SAFETY: a valid read-out of at least its size.
@@ -7528,7 +7555,8 @@ pub unsafe extern "C" fn rr_dr60_recording_digest_matches(
         return RrDr60Status::NullPointer;
     }
     // SAFETY: non-null; the caller's contract on the size.
-    if unsafe { struct_size_at(readout) } < READOUT_SIZE {
+    if !(READOUT_SIZE..=RR_DR60_MAX_STRUCT_SIZE).contains(&unsafe { struct_size_at(readout) }) {
+        // spec 022 D8: the cap on the read-out as an input too
         return RrDr60Status::InvalidArgument;
     }
     // SAFETY: a valid read-out of at least its size.

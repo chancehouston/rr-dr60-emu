@@ -106,24 +106,27 @@ private func squareWithGap() -> [Int32] {
 @Test func digestRoundTrip() throws {
     let raw = squareWithGap()
     let (record, digest) = try recordAndWrite(raw: raw, schedule: [(10000, kneeControl, -30), (30000, hissControl, 3)])
-    let r = try #require(ProcessingRecord.read(record))
+    let r = try #require(try ProcessingRecord.read(record))
     #expect(r.recording_digest == digest)
     #expect(r.flags == 0)
     #expect(r.change_count == 2)
-    #expect(ProcessingRecord.reRender(record: record, raw: raw) == digest)
+    let again = try ProcessingRecord.reRender(record: record, raw: raw)
+    #expect(again == digest)
     // One sample moved: the digest differs.
     var other = raw
     other[12000] += 400_000
-    #expect(ProcessingRecord.reRender(record: record, raw: other) != digest)
+    let moved = try ProcessingRecord.reRender(record: record, raw: other)
+    #expect(moved != digest)
 }
 
 @Test func scheduleRefillPast64() throws {
     let raw = squareWithGap()
     let schedule: [(UInt64, UInt32, Double)] = (0 ..< 80).map { i in (UInt64(2000 + 500 * i), hissControl, Double(i % 5)) }
     let (record, digest) = try recordAndWrite(raw: raw, schedule: schedule)
-    let r = try #require(ProcessingRecord.read(record))
+    let r = try #require(try ProcessingRecord.read(record))
     #expect(r.change_count == 80)
-    #expect(ProcessingRecord.reRender(record: record, raw: raw) == digest)
+    let again = try ProcessingRecord.reRender(record: record, raw: raw)
+    #expect(again == digest)
 }
 
 @Test func samplesFromI24MatchesTheRule() {
