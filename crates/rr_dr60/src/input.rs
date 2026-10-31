@@ -48,6 +48,12 @@ mod tests {
         assert_eq!(i24_from_sample(1.0), 8_388_607);
         assert_eq!(i24_from_sample(-1.0), -8_388_608);
         assert_eq!(i24_from_sample(2.0), 8_388_607);
+        assert_eq!(i24_from_sample(-2.0), -8_388_608);
+        assert_eq!(
+            i24_from_sample(f32::NAN),
+            0,
+            "a NaN falls through the clamp to 0"
+        );
         let mut d = [0.0f32; 2];
         samples_from_i24(&[1, 2, 3], &mut d);
         assert_eq!(d, [1.0 / 8_388_608.0, 2.0 / 8_388_608.0]);

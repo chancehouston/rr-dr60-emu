@@ -28,8 +28,11 @@ fn as1_markers_and_splice_oracle() {
 fn as1_impulse_latency() {
     at(|rate| {
         let (b, a) = rc::impulse_check(rate);
-        println!("{rate} Hz: impulse: map (b) within {b:.2}, map (a) within {a:.2} device samples");
-        assert!(b <= 1.0 && a <= 1.0, "{rate} Hz: {b} {a}");
+        println!("{rate} Hz: impulse (signed): map (b) {b:+.2}, map (a) {a:+.2} device samples");
+        assert!(
+            (-1.0..=0.0).contains(&b) && (-1.0..=0.0).contains(&a),
+            "{rate} Hz: {b} {a}"
+        );
     });
 }
 
@@ -49,11 +52,22 @@ fn as1_codec_on_within_two_and_fails_under_full_latency() {
 }
 
 #[test]
+fn as1_mute_mode_markers() {
+    at(|rate| {
+        let dev = rc::mute_markers_check(rate);
+        println!(
+            "{rate} Hz: mute mode: map (a) within {dev:.2} device samples, every region stored"
+        );
+        assert!(dev <= 1.0, "{rate} Hz: {dev}");
+    });
+}
+
+#[test]
 fn as2_onepass_alignment() {
     at(|rate| {
         let dev = rc::onepass_check(rate);
         println!("{rate} Hz: one-pass alignment within {dev:.2} device samples");
-        assert!(dev <= 6.0, "{rate} Hz: {dev}"); // restated at implementation: the envelope correlation of CELP-decoded voiced bursts reads 1 – 5 device samples by rate (a 1 ms tolerance; 008's ±2 was a waveform correlation on continuous speech); the kept-domain rule is pinned by the 180-sample miss
+        assert!(dev <= 1.0, "{rate} Hz: {dev}"); // the figures read 0.00 – 0.75 device samples
     });
 }
 

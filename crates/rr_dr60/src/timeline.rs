@@ -31,15 +31,24 @@ pub struct InputAlignment {
     pub clamped: bool,
 }
 
-/// Where a host-input sample went (map (b)).
+/// Where a host-input sample went (map (b)). Not clamped at the end: a position past the stop's
+/// input position maps past the recording (a kept index at or past the stored length means a
+/// gap still open at the stop, or the flush); compare against the stop fields.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeptOrRemoved {
     /// Kept, at this stored device sample.
     Kept(u64),
-    /// Removed by the voice activation: the event (its index in the record's rows) that
-    /// removed it.
+    /// Removed by the voice activation (drop mode): the event (its index in the record's rows)
+    /// that removed it.
     Removed {
         /// The event's index.
+        event_index: u64,
+    },
+    /// Stored as a muted zero (mute mode): the kept sample and the region's event.
+    Muted {
+        /// The stored device sample.
+        kept: u64,
+        /// The region's event index.
         event_index: u64,
     },
 }
@@ -60,21 +69,32 @@ pub struct PlaceState {
     pub latched: bool,
 }
 
-/// The codec's kept-domain analysis window around a frame, in kept samples before and after
-/// the frame's start (research R-01: 60 past + the frame + 60 ahead for the LPC, 240 of pitch
-/// memory).
-const CODEC_WINDOW_BEFORE: u64 = 240;
-const CODEC_WINDOW_AFTER: u64 = 179;
-const FRAME: u64 = 120; // A-040: the codec's 20 ms frame at 6 kHz
+/// The model coder's reach around a frame, in kept samples before and after the frame's start
+/// (research R-01, corrected at implementation): before it the larger of the past excitation
+/// the pitch search reads and the LPC window's past input; after it the frame and its
+/// look-ahead. Derived from the coder's own constants (A-040, A-041: a class match, not the
+/// device's coder).
+const CODEC_WINDOW_BEFORE: u64 = crate::codec::PAST_REACH as u64;
+const CODEC_WINDOW_AFTER: u64 = FRAME + crate::codec::LOOKAHEAD_SAMPLES as u64 - 1;
+const FRAME: u64 = crate::codec::FRAME_SAMPLES as u64; // A-040: the codec's 20 ms frame at 6 kHz
 
-/// The removed device samples at or before kept sample `k` (drop mode; 0 in mute mode where
-/// nothing is removed).
-fn removed_through(k: u64, events: &[VasEvent]) -> u64 {
+/// The removed device samples at or before kept sample `k` in drop mode; 0 in mute mode, where
+/// a region is stored (hardware review B1 at implementation).
+fn removed_through(k: u64, events: &[VasEvent], drop: bool) -> u64 {
+    if !drop {
+        return 0;
+    }
     events
         .iter()
         .take_while(|e| e.output_position <= k)
         .map(|e| e.input_length)
         .sum()
+}
+
+/// Whether `settings` drop the gate's pauses (else they are stored as zeros, or there is no
+/// gate).
+fn drops(settings: &Settings) -> bool {
+    settings.vas.enabled && settings.vas.mode == crate::settings::VasMode::Drop
 }
 
 /// The alignment's centre of a pre-gate device index: ⌊d · m ÷ l⌋ − L_pre, clamped at 0.
@@ -87,7 +107,9 @@ fn centre_of(pre_gate: u64, l: u64, m: u64, latency: u64) -> (u64, bool) {
 /// centre ⌊(k + R(k)) · m ÷ l⌋ − L_pre with R(k) the device samples removed at or before k and
 /// L_pre the record path's latency to the encoder's input; the window ± the decimator's
 /// half-length in host samples, widened with the speech codec on to the frame's analysis
-/// window; the ends clamped to the recording's input range (0 … the input total − 1).
+/// window; the centre and the ends clamped to the audio the host holds (0 … the stop's input
+/// position − 1; a kept sample of the flush or the padding reads clamped). In mute mode nothing
+/// is removed (R ≡ 0).
 ///
 /// # Errors
 ///
@@ -102,7 +124,8 @@ pub fn kept_to_input(
     let (l, m) = crate::paths::l_m(&plan);
     let latency = u64::from(crate::paths::record_latency_pre_encoder_for(settings)?);
     let half = u64::from(plan.delay_host_samples());
-    let (centre, mut clamped) = centre_of(k + removed_through(k, events), l, m, latency);
+    let drop = drops(settings);
+    let (centre, mut clamped) = centre_of(k + removed_through(k, events, drop), l, m, latency);
     let (mut first, mut last) = (centre.saturating_sub(half), centre.saturating_add(half));
     if centre < half {
         clamped = true;
@@ -114,16 +137,23 @@ pub fn kept_to_input(
             clamped = true;
         }
         let hi = frame_start + CODEC_WINDOW_AFTER;
-        let (lo_c, lo_clamped) = centre_of(lo + removed_through(lo, events), l, m, latency);
-        let (hi_c, _) = centre_of(hi + removed_through(hi, events), l, m, latency);
+        let (lo_c, lo_clamped) = centre_of(lo + removed_through(lo, events, drop), l, m, latency);
+        let (hi_c, _) = centre_of(hi + removed_through(hi, events, drop), l, m, latency);
         clamped |= lo_clamped;
         first = first.min(lo_c.saturating_sub(half));
         last = last.max(hi_c.saturating_add(half));
     }
-    let end = stop.input_samples_total.saturating_sub(1);
-    if stop.input_samples_total > 0 && last > end {
-        last = end;
-        clamped = true;
+    let end = stop.stop_input_position.saturating_sub(1);
+    let mut centre = centre;
+    if stop.stop_input_position > 0 {
+        if last > end {
+            last = end;
+            clamped = true;
+        }
+        if centre > end {
+            centre = end;
+            clamped = true;
+        }
     }
     if first > last {
         first = last;
@@ -152,6 +182,7 @@ pub fn input_to_kept(
 ) -> Result<KeptOrRemoved, Error> {
     let latency = u64::from(crate::paths::record_latency_pre_encoder_for(settings)?);
     let j = crate::changes::record_landing(p + latency, settings.host_rate_hz)?;
+    let drop = drops(settings);
     let mut removed_before = 0u64;
     for (i, e) in events.iter().enumerate() {
         let start = e.output_position + removed_before;
@@ -159,27 +190,46 @@ pub fn input_to_kept(
             break;
         }
         if j < start + e.input_length {
-            return Ok(KeptOrRemoved::Removed {
-                event_index: i as u64,
+            return Ok(if drop {
+                KeptOrRemoved::Removed {
+                    event_index: i as u64,
+                }
+            } else {
+                KeptOrRemoved::Muted {
+                    kept: j,
+                    event_index: i as u64,
+                }
             });
         }
-        removed_before += e.input_length;
+        if drop {
+            removed_before += e.input_length;
+        }
     }
     Ok(KeptOrRemoved::Kept(j - removed_before))
 }
 
 /// The one-pass's clocks (spec 015 and 017's pointer to 020): the input-clock position an
 /// output-clock `position` aligns with, through the one-pass's `latency` (the engine's
-/// [`latency_samples`](crate::Pipeline::latency_samples), host samples) and the host samples its
-/// voice-activation `events` removed at or before the output; `(input, clamped)` with the
-/// clamp at 0 (the first outputs align with inputs before the stream's start).
+/// [`latency_samples`](crate::Pipeline::latency_samples), host samples) and, with the gate in
+/// `drop` mode, the host samples its voice-activation `events` removed at or before the output
+/// (in mute mode nothing is removed); `(input, clamped)` with the clamp at 0 (the first outputs
+/// align with inputs before the stream's start).
 #[must_use]
-pub fn onepass_output_to_input(position: u64, latency: u32, events: &[VasEvent]) -> (u64, bool) {
-    let removed: u64 = events
-        .iter()
-        .take_while(|e| e.output_position <= position)
-        .map(|e| e.input_length)
-        .sum();
+pub fn onepass_output_to_input(
+    position: u64,
+    latency: u32,
+    events: &[VasEvent],
+    drop: bool,
+) -> (u64, bool) {
+    let removed: u64 = if drop {
+        events
+            .iter()
+            .take_while(|e| e.output_position <= position)
+            .map(|e| e.input_length)
+            .sum()
+    } else {
+        0
+    };
     let raw = position + removed;
     let latency = u64::from(latency);
     if raw < latency {
@@ -300,6 +350,9 @@ pub fn place_at(
     unit_count: u64,
     entries: &[ChangeEntry],
 ) -> Result<PlaceState, Error> {
+    if !(1..=5).contains(&start_level) {
+        return Err(Error::InvalidSpeedLevel { level: start_level });
+    }
     let speed_control = crate::changes::LIVE_SPEED;
     let mut w = Walker::new(start_level, unit_count);
     let mut pending = entries
@@ -386,6 +439,32 @@ mod tests {
         }
     }
 
+    /// Mute mode: nothing removed, a region's samples are `Muted` with their kept index.
+    #[test]
+    fn mute_mode_stores_regions() {
+        let events = [VasEvent::new(600, 300), VasEvent::new(1800, 120)];
+        let mut s = settings(48_000, false);
+        s.vas.mode = crate::settings::VasMode::Mute;
+        let lat = u64::from(crate::paths::record_latency_pre_encoder_for(&s).unwrap());
+        for k in [100u64, 700, 2000] {
+            let a = kept_to_input(k, &s, &events, &stop(u64::MAX)).unwrap();
+            assert_eq!(a.centre, k * 8 - lat, "R is 0 in mute mode");
+            match input_to_kept(a.centre, &s, &events).unwrap() {
+                KeptOrRemoved::Kept(got) | KeptOrRemoved::Muted { kept: got, .. } => {
+                    assert_eq!(got, k)
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_eq!(
+            input_to_kept(700 * 8 - lat, &s, &events).unwrap(),
+            KeptOrRemoved::Muted {
+                kept: 700,
+                event_index: 0
+            }
+        );
+    }
+
     /// Map (b) is the inverse of (a)'s centre outside the gaps; inside, the event.
     #[test]
     fn inverse_pair() {
@@ -432,17 +511,26 @@ mod tests {
         let a = kept_to_input(1000, &c, &[], &stop(u64::MAX)).unwrap();
         let plain = kept_to_input(1000, &s, &[], &stop(u64::MAX)).unwrap();
         assert_eq!(a.centre, plain.centre);
-        // Frame 8 (960 … 1079): the window spans kept 720 … 1139 → ± in host samples.
         assert!(a.first <= plain.first && a.last >= plain.last);
-        assert!(a.first <= (720u64 * 8).saturating_sub(242) + 1);
+        // Frame 8 (960 … 1079): the coder's reach spans kept 828 … 1139.
+        assert!(a.first <= ((960 - 132) * 8u64).saturating_sub(242) + 1);
         assert!(a.last >= 1139 * 8 - 242 - 1);
-        assert_eq!(onepass_output_to_input(1000, 483, &[]), (517, false));
-        assert_eq!(onepass_output_to_input(100, 483, &[]), (0, true));
+        assert_eq!(onepass_output_to_input(1000, 483, &[], true), (517, false));
+        assert_eq!(onepass_output_to_input(100, 483, &[], true), (0, true));
         assert_eq!(
-            onepass_output_to_input(1000, 483, &[VasEvent::new(500, 2000)]),
+            onepass_output_to_input(1000, 483, &[VasEvent::new(500, 2000)], true),
             (2517, false)
         );
+        assert_eq!(
+            onepass_output_to_input(1000, 483, &[VasEvent::new(500, 2000)], false),
+            (517, false),
+            "mute mode removes nothing"
+        );
         assert!(kept_to_input(0, &settings(7000, false), &[], &stop(1)).is_err());
+        assert!(place_at(0, 6000, 0, 10, &[]).is_err() && place_at(0, 6000, 6, 10, &[]).is_err());
+        // The centre is clamped with the ends at the stop's input position.
+        let a = kept_to_input(1000, &s, &[], &stop(100)).unwrap();
+        assert!(a.clamped && a.centre == 99 && a.last == 99);
     }
 
     /// Map (c)'s walker on hand-stepped cases: the first-output switch, a fade, the wait, the

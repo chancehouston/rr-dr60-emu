@@ -66,15 +66,27 @@ fn deltas_at_every_rate() {
 
 #[test]
 fn maps_at_every_rate() {
-    println!("rate     map(a)  map(b)  impulse(b) impulse(a) codec  one-pass");
+    println!(
+        "rate     map(a)  map(b)  impulse(b) impulse(a) codec  one-pass  (signed impulses; device samples)"
+    );
     for rate in rates() {
         let (a, b, _) = rc::markers_check(rate);
         let (ib, ia) = rc::impulse_check(rate);
         let (c, miss) = rc::codec_markers_check(rate);
         let o = rc::onepass_check(rate);
-        println!("{rate:6}   {a:5.2}   {b:5.2}   {ib:5.2}      {ia:5.2}      {c:5.2}  {o:5.2}");
+        let mu = rc::mute_markers_check(rate);
+        println!(
+            "{rate:6}   {a:5.2}   {b:5.2}   {ib:+5.2}     {ia:+5.2}     {c:5.2}  {o:5.2}  mute {mu:5.2}"
+        );
         assert!(
-            a <= 1.0 && b <= 1.0 && ib <= 1.0 && ia <= 1.0 && c <= 6.0 && o <= 2.0 && miss >= 100.0,
+            a <= 1.0
+                && b <= 1.0
+                && (-1.0..=0.0).contains(&ib)
+                && (-1.0..=0.0).contains(&ia)
+                && c <= 6.0
+                && o <= 1.0
+                && mu <= 1.0
+                && miss >= 100.0,
             "{rate} Hz"
         );
         for (name, start, requests) in rc::place_cases() {

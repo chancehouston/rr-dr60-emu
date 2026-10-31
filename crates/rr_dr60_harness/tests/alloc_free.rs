@@ -1267,7 +1267,7 @@ fn record_contract_allocate_nothing() {
         let before = snapshot();
         let _ = timeline::kept_to_input(100, &r.settings, &events, &run.stop).unwrap();
         let _ = timeline::input_to_kept(1000, &r.settings, &events).unwrap();
-        let _ = timeline::onepass_output_to_input(1000, 483, &events);
+        let _ = timeline::onepass_output_to_input(1000, 483, &events, true);
         assert_eq!(allocations_since(before), 0, "{rate} Hz: maps (a) and (b)");
         let before = snapshot();
         let _ = timeline::place_at(50, rate, 3, 3000, &[]).unwrap();

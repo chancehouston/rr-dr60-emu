@@ -726,6 +726,11 @@ mod req {
     }
 }
 
+/// Sets `bit` in `seen` once: a repeated line is malformed (hardware review B5).
+fn once(seen: u32, bit: u32) -> Option<u32> {
+    (seen & bit == 0).then_some(seen | bit)
+}
+
 /// The first line's version, or the refusal (research R-02: version first).
 fn read_version(bytes: &[u8]) -> Result<u32, Error> {
     let first = lines(bytes).next().unwrap_or(&[]);
@@ -799,7 +804,7 @@ pub fn read(bytes: &[u8], out: &mut RecordReadout) -> Result<(), Error> {
         match name {
             "library_version" => {
                 r.library_version = parse_version(value).map_err(e)?;
-                seen |= req::LIBRARY;
+                seen = once(seen, req::LIBRARY).ok_or(bad)?;
             }
             "origin" => {
                 let o = match value {
@@ -1172,16 +1177,25 @@ pub(crate) struct EventRows<'a> {
     l: u64,
     m: u64,
     latency_pre: u64,
+    /// The gate drops (else a region is stored and nothing is removed; hardware review B1).
+    drop: bool,
 }
 
 impl<'a> EventRows<'a> {
-    pub(crate) fn new(events: &'a [VasEvent], l: u64, m: u64, latency_pre: u64) -> Self {
+    pub(crate) fn new(
+        events: &'a [VasEvent],
+        l: u64,
+        m: u64,
+        latency_pre: u64,
+        drop: bool,
+    ) -> Self {
         Self {
             events: events.iter(),
             removed: 0,
             l,
             m,
             latency_pre,
+            drop,
         }
     }
 }
@@ -1196,7 +1210,9 @@ impl Iterator for EventRows<'_> {
             self.m,
             self.latency_pre,
         );
-        self.removed += e.input_length;
+        if self.drop {
+            self.removed += e.input_length;
+        }
         Some(RecordEvent {
             event: e,
             host_input_position,
@@ -1571,9 +1587,15 @@ mod tests {
         assert_eq!(host_centre(100, 1, 8, 242), (558, false));
         assert_eq!(host_centre(7, 20, 147, 0), (51, false)); // ⌊7 · 147 ÷ 20⌋
         let ev = [VasEvent::new(600, 300), VasEvent::new(1800, 120)];
-        let rows: Vec<RecordEvent> = EventRows::new(&ev, 1, 8, 242).collect();
+        let rows: Vec<RecordEvent> = EventRows::new(&ev, 1, 8, 242, true).collect();
         assert_eq!(rows[0].host_input_position, 600 * 8 - 242);
         assert_eq!(rows[1].host_input_position, (1800 + 300) * 8 - 242);
+        let rows: Vec<RecordEvent> = EventRows::new(&ev, 1, 8, 242, false).collect();
+        assert_eq!(
+            rows[1].host_input_position,
+            1800 * 8 - 242,
+            "mute mode: nothing removed"
+        );
     }
 
     #[test]

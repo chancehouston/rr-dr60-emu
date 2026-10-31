@@ -34,7 +34,7 @@ Plan choices, each traced to the research:
 | P4 | The form of [record-form.md](contracts/record-form.md): identity, 24 settings, run, `event.fields`/`change.fields`, rows, checksum; shortest round-trip decimals (R-02). | D2, FR-001 |
 | P5 | The reader: version first (0 or > 1 refused), the checksum, the shapes (an undefined name is malformed), the required fields per origin; flags for every difference; `recording_digest_matches` (R-02). | D4, FR-002 |
 | P6 | The maps per finding 1, 10, 11 (R-01, R-04). | D8, FR-006 |
-| P7 | `SpeedPlace` factored out of `SpeedStage` (finding 10), guarded by the goldens and the A/B; the independent walker as the fallback (R-04). | D8(c) |
+| P7 | `SpeedPlace` factored out of `SpeedStage` (finding 10), guarded by the goldens and the A/B; the independent walker as the fallback (R-04). *Implemented as the fallback walker (T018, 2026-10-31): `stages/speed.rs` gained only the `__test-hooks` place trace; the A/B read −0.02 % / +0.87 % on playback, the latter the hooks build's trace.* | D8(c) |
 | P8 | `input::samples_from_i24`; `examples/re_render.rs` (`--demo <dir>` writes a record and a raw file; the fill by import); the Swift `RRDR60` target and `ReRender.swift` (R-06). | D12 |
 | P9 | The matrix and oracles of finding 12 (R-06, R-01). | D6, FR-005, FR-006 |
 | P10 | The C API of [api.md](contracts/api.md): fourteen functions, five new structs with `struct_size` (prefix-fill), statuses 31 – 35, `RrDr60StopOutcome` 64 → 80 bytes (R-08); the smoke's `--record` case. | FR-009 |
@@ -84,7 +84,7 @@ One versioned text record per recording, written beside the stored form from a f
 - Coverage ≥ 80 % and within 1 point: SC-007.
 - Simplicity: no new assumption; the record is data.
 
-Post-design re-check: no violation; the `SpeedPlace` factoring is the one refactor on an audio path, guarded by two goldens and the A/B.
+Post-design re-check: no violation; the `SpeedPlace` factoring was the one refactor planned on an audio path and was not made (the walker fallback, 2026-10-31): no audio-path code moved.
 
 ## Project Structure
 
@@ -108,7 +108,7 @@ crates/rr_dr60/src/
 ├── memory.rs          # SlotBlock, blocks parallel to spans
 ├── transport.rs       # the stop fields, the totals, processing_record_*, recording_digest
 ├── changes.rs         # ChangeEntry::stream
-├── stages/speed.rs    # SpeedPlace factored out
+├── stages/speed.rs    # the __test-hooks place trace only (the walker lives in timeline.rs)
 ├── pipeline.rs        # new_at_counter, record_latency_pre_encoder_samples, VasEvent::new
 └── error.rs           # five statuses
 crates/rr_dr60_ffi/src/lib.rs, cbindgen.toml, include/rr_dr60.h, tests/c/smoke.c

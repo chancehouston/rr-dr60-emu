@@ -3639,6 +3639,12 @@ fn record_contract_parity() {
                 KeptOrRemoved::Removed { event_index } => {
                     assert_eq!((kept, removed), (0, event_index))
                 }
+                KeptOrRemoved::Muted {
+                    kept: k,
+                    event_index,
+                } => {
+                    assert_eq!((kept, removed), (k, event_index))
+                }
             }
         }
         let (mut input, mut clamped) = (0u64, false);
@@ -3650,6 +3656,7 @@ fn record_contract_parity() {
                     483,
                     c_events.as_ptr(),
                     c_events.len(),
+                    true,
                     &mut input,
                     &mut clamped,
                 )
@@ -3658,7 +3665,7 @@ fn record_contract_parity() {
         );
         assert_eq!(
             (input, clamped),
-            timeline::onepass_output_to_input(5000, 483, &run.events)
+            timeline::onepass_output_to_input(5000, 483, &run.events, true)
         );
         let entries = [ChangeEntry::new(
             rc::host_position_for(100, rate),

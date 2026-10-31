@@ -53,8 +53,12 @@ fn as1_record_written_from_the_block() {
         assert!(!run.events.is_empty(), "{tag}: the gaps paused the gate");
         assert!(!run.flush_paused, "{tag}: the gate was open at the stop");
         // The rows' host positions by the harness's own rule.
-        let want =
-            rc::event_host_positions(&run.events, rate, p.record_latency_pre_encoder_samples());
+        let want = rc::event_host_positions(
+            &run.events,
+            rate,
+            p.record_latency_pre_encoder_samples(),
+            true,
+        );
         for (i, w) in want.iter().enumerate() {
             let row = record::record_event(&run.record, i as u64).unwrap();
             assert_eq!(row.event, run.events[i]);

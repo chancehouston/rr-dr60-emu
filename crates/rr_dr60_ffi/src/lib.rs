@@ -6704,7 +6704,7 @@ impl RrDr60RecordReadout {
         }
     }
 
-    fn to_core(&self) -> Result<RecordReadout, RrDr60Status> {
+    fn to_core(self) -> Result<RecordReadout, RrDr60Status> {
         let settings = to_settings(&self.settings).map_err(|(s, _)| s)?;
         let mut r = RecordReadout::default();
         r.form_version = self.form_version;
@@ -7490,8 +7490,10 @@ pub unsafe extern "C" fn rr_dr60_kept_to_input(
 }
 
 /// Map (b) (spec 020 D8): the kept device sample host-input sample `p` reaches
-/// (`*out_kept`, `*out_removed_by_event` = UINT64_MAX), or the voice-activation event that
-/// removed it (`*out_removed_by_event` its index, `*out_kept` 0).
+/// (`*out_kept`, `*out_removed_by_event` = UINT64_MAX), the voice-activation event that
+/// removed it in drop mode (`*out_removed_by_event` its index, `*out_kept` 0), or in mute mode
+/// the stored region that muted it (`*out_kept` the stored sample, `*out_removed_by_event` the
+/// region's event index). Not clamped at the end: compare against the stop fields.
 ///
 /// # Safety
 ///
@@ -7539,13 +7541,20 @@ pub unsafe extern "C" fn rr_dr60_input_to_kept(
             *out_removed_by_event = event_index;
             RrDr60Status::Ok
         },
+        // SAFETY: the outs are writable (caller contract).
+        Ok(KeptOrRemoved::Muted { kept, event_index }) => unsafe {
+            *out_kept = kept;
+            *out_removed_by_event = event_index;
+            RrDr60Status::Ok
+        },
         Err(e) => status_from_error(e),
     }
 }
 
 /// The one-pass's clocks (spec 020 D8): the input-clock position output-clock `position`
-/// aligns with, through the one-pass's `latency` (`rr_dr60_latency_samples`) and its
-/// `event_count` voice-activation events; `*out_clamped` when the result was clamped at 0.
+/// aligns with, through the one-pass's `latency` (`rr_dr60_latency_samples`) and, with the gate
+/// in `drop` mode (`vas_enabled` and `vas_mode` drop), its `event_count` voice-activation events
+/// (in mute mode nothing is removed); `*out_clamped` when the result was clamped at 0.
 ///
 /// # Safety
 ///
@@ -7556,6 +7565,7 @@ pub unsafe extern "C" fn rr_dr60_onepass_output_to_input(
     latency: u32,
     events: *const RrDr60VasEvent,
     event_count: usize,
+    drop: bool,
     out_input: *mut u64,
     out_clamped: *mut bool,
 ) -> RrDr60Status {
@@ -7571,7 +7581,7 @@ pub unsafe extern "C" fn rr_dr60_onepass_output_to_input(
         // SAFETY: readable for the count; the layouts match (the const assert).
         unsafe { std::slice::from_raw_parts(events.cast::<VasEvent>(), event_count) }
     };
-    let (input, clamped) = timeline::onepass_output_to_input(position, latency, events);
+    let (input, clamped) = timeline::onepass_output_to_input(position, latency, events, drop);
     // SAFETY: the outs are writable (caller contract).
     unsafe {
         *out_input = input;
@@ -7658,6 +7668,22 @@ pub unsafe extern "C" fn rr_dr60_samples_from_i24(src: *const i32, dst: *mut f32
 #[cfg(test)]
 mod record_contract_tests {
     use super::*;
+
+    /// The five structs' sizes on 64-bit targets (the CHANGELOG quotes them).
+    #[test]
+    fn struct_sizes() {
+        assert_eq!(
+            (
+                STOP_FIELDS_SIZE,
+                RUN_DATA_SIZE,
+                READOUT_SIZE,
+                ALIGNMENT_SIZE,
+                PLACE_STATE_SIZE
+            ),
+            (40, 80, 376, 32, 32),
+            "contracts/api.md and the CHANGELOG quote these"
+        );
+    }
 
     /// The define equals the core's constant; the flags equal the core's; the stream words.
     #[test]

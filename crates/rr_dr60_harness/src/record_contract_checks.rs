@@ -515,8 +515,28 @@ pub fn dirty_engine_identity(make: Make<'_>, rate: u32, c: u64) -> usize {
     assert_eq!(dirty.recording_counter(), c);
     let mut fs2 = *dirty.settings();
     fs2.memory = s.memory;
-    let mut fresh = Pipeline::new_at_counter(fs2, c).expect("fresh");
     let mut mismatches = 0;
+    // The one-pass keyed at construction (coach 2): a fresh engine at c, never reset, equals the
+    // original after its reset; a counter-0 engine differs.
+    {
+        let mut at_c = Pipeline::new_at_counter(fs2, c).expect("fresh");
+        let mut at_0 = Pipeline::new(fs2).expect("fresh");
+        let mut orig = dirty.clone();
+        orig.reset();
+        let (mut a, mut b, mut z) = (vec![0.0f32; 4096], vec![0.0f32; 4096], vec![0.0f32; 4096]);
+        let _ = at_c.process(&x[..4096], &mut a).unwrap();
+        let _ = orig.process(&x[..4096], &mut b).unwrap();
+        let _ = at_0.process(&x[..4096], &mut z).unwrap();
+        mismatches += a
+            .iter()
+            .zip(&b)
+            .filter(|(p, q)| p.to_bits() != q.to_bits())
+            .count();
+        if a.iter().zip(&z).all(|(p, q)| p.to_bits() == q.to_bits()) {
+            mismatches += 1; // the stream is not keyed
+        }
+    }
+    let mut fresh = Pipeline::new_at_counter(fs2, c).expect("fresh");
     for p in [&mut dirty, &mut fresh] {
         p.start_recording().unwrap();
         let _ = p.record(&x, &mut []).unwrap();
@@ -559,17 +579,111 @@ pub fn l_m(rate: u32) -> (u64, u64) {
 
 /// The harness's own event-row rule (research R-01): the first removed input sample's host
 /// centre, ⌊(k + R_before) · m ÷ l⌋ − L_pre, clamped at 0.
-pub fn event_host_positions(events: &[VasEvent], rate: u32, latency_pre: u32) -> Vec<u64> {
+pub fn event_host_positions(
+    events: &[VasEvent],
+    rate: u32,
+    latency_pre: u32,
+    drop: bool,
+) -> Vec<u64> {
     let (l, m) = l_m(rate);
     let mut removed = 0u64;
     events
         .iter()
         .map(|e| {
             let host = (e.output_position + removed) * m / l;
-            removed += e.input_length;
+            if drop {
+                removed += e.input_length;
+            }
             host.saturating_sub(u64::from(latency_pre))
         })
         .collect()
+}
+
+/// The mute-mode markers (hardware review B1 at implementation): a region is stored, so every
+/// kept index equals the pre-gate index (the stored stream equals the VAS-bypassed twin bit for
+/// bit outside the muted zeros), map (b) reports a position inside a region as `Muted` with that
+/// index, every event row's host position lies before the input total, and map (a) of a kept
+/// sample returns within one device sample of the twin's. Returns the largest deviation.
+pub fn mute_markers_check(rate: u32) -> f64 {
+    let x = marker_stimulus(rate);
+    let mut mute_s = marker_settings(rate, false, true);
+    mute_s.vas.mode = rr_dr60::VasMode::Mute;
+    let twin_s = marker_settings(rate, false, false);
+    let (p, stored, events, stop) = record_samples(mute_s, &x);
+    let (_, twin, _, _) = record_samples(twin_s, &x);
+    assert!(!events.is_empty(), "{rate} Hz: muted regions");
+    assert_eq!(stored.len(), twin.len(), "{rate} Hz: nothing removed");
+    let mut muted = vec![false; stored.len()];
+    for e in &events {
+        for k in e.output_position..(e.output_position + e.input_length).min(stored.len() as u64) {
+            muted[k as usize] = true;
+        }
+    }
+    for (k, (a, b)) in stored.iter().zip(&twin).enumerate() {
+        if muted[k] {
+            assert_eq!(*a, 0.0, "{rate} Hz: kept {k} muted");
+        } else {
+            assert_eq!(
+                a.to_bits(),
+                b.to_bits(),
+                "{rate} Hz: kept {k} stored as the twin's"
+            );
+        }
+    }
+    let rows = event_host_positions(&events, rate, p.record_latency_pre_encoder_samples(), false);
+    assert!(
+        rows.iter().all(|&h| h < stop.input_samples_total),
+        "{rate} Hz: every row before the input total"
+    );
+    let run = RunData {
+        events: &events,
+        changes: &[],
+        stop,
+    };
+    let number = p.memory_status().count;
+    let mut rec = vec![
+        0u8;
+        p.processing_record_len(number, &run)
+            .expect("a consistent run")
+    ];
+    p.processing_record_write(number, &run, &mut rec).unwrap();
+    for (i, h) in rows.iter().enumerate() {
+        assert_eq!(
+            record::record_event(&rec, i as u64)
+                .unwrap()
+                .host_input_position,
+            *h,
+            "{rate} Hz: row {i}"
+        );
+    }
+    let per_device = f64::from(rate) / 6000.0;
+    let mut max_dev = 0.0f64;
+    for b in marker_positions(rate) {
+        // 40 ms into the burst: kept (the gate opened); 5 ms in: muted (the gate's onset).
+        let h = b + u64::from(rate) * 4 / 100;
+        let KeptOrRemoved::Kept(k) = timeline::input_to_kept(h, &mute_s, &events).unwrap() else {
+            panic!("{rate} Hz: kept")
+        };
+        let pre_gate = rr_dr60::changes::record_landing(
+            h + u64::from(p.record_latency_pre_encoder_samples()),
+            rate,
+        )
+        .unwrap();
+        assert_eq!(
+            k, pre_gate,
+            "{rate} Hz: the kept index is the pre-gate index"
+        );
+        let a = timeline::kept_to_input(k, &mute_s, &events, &stop).unwrap();
+        max_dev = max_dev.max((a.centre as f64 - h as f64).abs() / per_device);
+        let inside = b + u64::from(rate) * 5 / 1000;
+        match timeline::input_to_kept(inside, &mute_s, &events).unwrap() {
+            KeptOrRemoved::Muted { kept, .. } => {
+                assert!(muted[kept as usize], "{rate} Hz: the muted sample")
+            }
+            other => panic!("{rate} Hz: {other:?}"),
+        }
+    }
+    max_dev
 }
 
 /// `STREAM_RECORD` for the tests' assertions.
@@ -783,9 +897,12 @@ pub fn impulse_check(rate: u32) -> (f64, f64) {
     };
     let a = timeline::kept_to_input(peak as u64, &s, &events, &stop).expect("rate");
     let per_device = f64::from(rate) / 6000.0;
+    // Signed (hardware review B7): the impulse peak sits one device sample before the 1 kHz
+    // group-delay convention (the record band-pass's largest tap is h[0]); the callers assert
+    // −1 ≤ d ≤ 0.
     (
-        (got as f64 - peak as f64).abs(),
-        (a.centre as f64 - n0 as f64).abs() / per_device,
+        peak as f64 - got as f64,
+        (a.centre as f64 - n0 as f64) / per_device,
     )
 }
 
@@ -917,8 +1034,12 @@ pub fn onepass_check(rate: u32) -> f64 {
     let per_device = f64::from(rate) / 6000.0;
     let mut max_dev = 0.0f64;
     for (j, b) in marker_positions(rate).iter().enumerate() {
-        let (input, clamped) =
-            timeline::onepass_output_to_input(out_onsets[j] as u64, p.latency_samples(), &events);
+        let (input, clamped) = timeline::onepass_output_to_input(
+            out_onsets[j] as u64,
+            p.latency_samples(),
+            &events,
+            true,
+        );
         assert!(!clamped);
         let want = b + GATE_ONSET_DEVICE * u64::from(rate) / 6000;
         max_dev = max_dev.max((input as f64 - want as f64).abs() / per_device);
@@ -929,7 +1050,10 @@ pub fn onepass_check(rate: u32) -> f64 {
 /// The ten corner cases of map (c) (research R-04): `(name, start level, requests as
 /// (device output index the request should land on, level))`; the host positions are the
 /// smallest P with `speed_landing(P) = d`.
-pub fn place_cases() -> Vec<(&'static str, u8, Vec<(u64, u8)>)> {
+pub type PlaceCase = (&'static str, u8, Vec<(u64, u8)>);
+
+/// The ten corner cases of map (c), see [`place_cases`].
+pub fn place_cases() -> Vec<PlaceCase> {
     let n = u64::from(rr_dr60::speed::CROSSFADE_SAMPLES);
     vec![
         ("first output", 3, vec![(0, 5)]),

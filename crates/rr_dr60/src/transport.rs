@@ -992,7 +992,7 @@ impl Pipeline {
         let Some(b) = block else {
             r.origin = Origin::Imported;
             r.flags |= flags::IMPORTED_ORIGIN;
-            return Ok((r, record::EventRows::new(&[], 1, 1, 0)));
+            return Ok((r, record::EventRows::new(&[], 1, 1, 0, true)));
         };
         for (i, e) in crate::manifest::manifest().stages.iter().enumerate() {
             r.stage_model_versions[i] = parse_model_version(e.model_version);
@@ -1052,13 +1052,37 @@ impl Pipeline {
         if run.changes.len() as u64 > b.changes_total {
             return refuse("more entries than counted");
         }
+        // The stop's own relations (hardware review B5).
+        match stop.how {
+            crate::record::StopHow::MemoryFull => {
+                if stop.stop_input_position != stop.input_samples_total
+                    || stop.silence_fed_samples != 0
+                {
+                    return refuse("a self-stop's fields");
+                }
+            }
+            crate::record::StopHow::StopCall => {}
+        }
+        let padding_bound = match encoding {
+            Encoding::Frames => u64::from(codec::DELAY_SAMPLES) - 1,
+            Encoding::Samples => 0,
+        };
+        if stop.silence_fed_samples > padding_bound {
+            return refuse("the padding's count");
+        }
         r.stop = stop;
         let (l, m) = paths::l_m_for(b.settings.host_rate_hz)?;
         let latency = paths::record_latency_pre_encoder_for(&b.settings)?;
-        Ok((
-            r,
-            record::EventRows::new(run.events, l, m, u64::from(latency)),
-        ))
+        let drop = b.settings.vas.enabled && b.settings.vas.mode == VasMode::Drop;
+        let rows = record::EventRows::new(run.events, l, m, u64::from(latency), drop);
+        // Every event row's host position lies before the input total (hardware review B1, B5).
+        if rows
+            .clone()
+            .any(|row| row.host_input_position >= stop.input_samples_total)
+        {
+            return refuse("an event past the input total");
+        }
+        Ok((r, rows))
     }
 
     /// The recording counter recording `number` was keyed with (spec 020 D5, FR-004), or
@@ -3092,8 +3116,9 @@ mod record_block_tests {
     fn stimulus(n: usize) -> Vec<f32> {
         (0..n)
             .map(|i| {
+                // An exactly representable ±0.5 square (no libm in the core's tests).
                 if i < 2400 || (i % 6000) < 1200 {
-                    0.5 * (i as f32 * 0.7).sin()
+                    if i % 12 < 6 { 0.5 } else { -0.5 }
                 } else {
                     0.0
                 }
@@ -3136,7 +3161,7 @@ mod record_block_tests {
                     .unwrap();
             }
             let mut tail = x.clone();
-            tail.extend((0..600).map(|k| 0.9 * (k as f32 * 1.3).sin())); // a burst at the end
+            tail.extend((0..600).map(|k| if k % 10 < 5 { 0.9 } else { -0.9 })); // a burst at the end
             tail.extend(core::iter::repeat_n(0.0, 3000)); // then a pause
             let _ = record_one(&mut dirty, &tail);
             let _ = one_pass(&mut dirty, 1500);
@@ -3145,6 +3170,17 @@ mod record_block_tests {
         // The landed knee stays in the settings: the fresh engine must start from it.
         let mut s = *dirty.settings();
         s.memory = settings(77).memory;
+        // The one-pass keyed at construction (coach 2): a fresh engine at 3, never reset, equals
+        // the original after its reset (both at stream 3), and differs from a counter-0 engine.
+        {
+            let mut at3 = Pipeline::new_at_counter(s, 3).unwrap();
+            let mut at0 = Pipeline::new(s).unwrap();
+            let mut orig = dirty.clone();
+            orig.reset();
+            let a = one_pass(&mut at3, 2000);
+            assert_eq!(a, one_pass(&mut orig, 2000), "keyed to 3 at construction");
+            assert_ne!(a, one_pass(&mut at0, 2000), "a counter-0 engine differs");
+        }
         let mut fresh = Pipeline::new_at_counter(s, 3).unwrap();
         assert_eq!(fresh.recording_counter(), 3);
         let _ = record_one(&mut dirty, &x);
@@ -3393,8 +3429,9 @@ mod record_tests {
     fn stimulus(n: usize) -> Vec<f32> {
         (0..n)
             .map(|i| {
+                // An exactly representable ±0.5 square (no libm in the core's tests).
                 if i < 2400 || (i % 6000) < 1200 {
-                    0.5 * (i as f32 * 0.7).sin()
+                    if i % 12 < 6 { 0.5 } else { -0.5 }
                 } else {
                     0.0
                 }

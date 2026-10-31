@@ -1,7 +1,7 @@
 //! Spec 020: the edge cases (tasks.md T022; spec › Edge Cases; plan review coach 4, hardware
 //! B3, B5, B8).
 
-use rr_dr60::record::{self, RecordReadout, RunData, StopFields, StopHow, flags};
+use rr_dr60::record::{self, RecordReadout, RunData, StopHow, flags};
 use rr_dr60::timeline::{self, KeptOrRemoved};
 use rr_dr60::{ChangeEntry, Error, Pipeline, Settings, Stream, VasEvent};
 use rr_dr60_harness::checks::standard;
@@ -176,9 +176,8 @@ fn empty_slot_in_progress_and_imported() {
         p.processing_record_len(1, &data).unwrap_err(),
         Error::RecordingInProgress
     );
-    assert_eq!(
+    assert!(
         p.recording_digest(1).is_ok(),
-        true,
         "the digest is allowed in any state"
     );
     let _ = p.stop_recording(&mut []).unwrap();
@@ -256,19 +255,20 @@ fn small_moves_change_the_record_not_necessarily_the_digest() {
     let (_, run) = rc::record_run(&standard, RATE, cell(false), &raw);
     let r = rc::readout(&run.record);
     let mut moved = raw.clone();
-    // Inside the first gap (0.5 … 0.9 s): removed by the gate.
+    // Inside the first gap (0.5 … 0.9 s): removed by the gate (a code of 1000 is −78 dBFS, far
+    // below the −40 dBFS threshold: the quiet-sample case; a loud sample would reopen the gate).
     moved[RATE as usize * 7 / 10] = 1000;
     let got = rc::re_render(&run.record, &moved, 1024, Delta::None);
     assert_eq!(
         got, run.digest,
         "a sample inside a removed gap cannot move a stored byte"
     );
-    let mut r2 = r;
-    r2.stop = StopFields {
-        stop_input_position: r.stop.stop_input_position - 1,
-        ..r.stop
-    };
-    assert_ne!(r2.stop, r.stop);
+    // A second recording stopped one input sample earlier: its record differs in the stop
+    // position (the reader reports both), whether or not the digest moved.
+    let (_, run2) = rc::record_run(&standard, RATE, cell(false), &raw[..raw.len() - 1]);
+    let r2 = rc::readout(&run2.record);
+    assert_eq!(r2.stop.stop_input_position + 1, r.stop.stop_input_position);
+    assert_ne!(run2.record, run.record);
 }
 
 /// The counter near its maximum wraps, as the engine's own counter does.
@@ -292,13 +292,16 @@ fn map_ends() {
     let a = timeline::kept_to_input(0, &s, &run.events, &run.stop).unwrap();
     assert!(a.clamped && a.centre == 0);
     let a = timeline::kept_to_input(u64::MAX / 16, &s, &run.events, &run.stop).unwrap();
-    assert!(a.clamped && a.last == run.stop.input_samples_total - 1);
+    assert!(a.clamped && a.last == run.stop.stop_input_position - 1 && a.centre <= a.last);
     let inside = RATE as u64 * 7 / 10;
     assert!(matches!(
         timeline::input_to_kept(inside, &s, &run.events).unwrap(),
         KeptOrRemoved::Removed { .. }
     ));
-    assert_eq!(timeline::onepass_output_to_input(0, 483, &[]), (0, true));
+    assert_eq!(
+        timeline::onepass_output_to_input(0, 483, &[], true),
+        (0, true)
+    );
 }
 
 /// Erase moves the blocks; a memory-keeping reconfigure keeps them; a reset keeps them.

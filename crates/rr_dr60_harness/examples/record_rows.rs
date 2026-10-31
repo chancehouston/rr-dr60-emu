@@ -108,6 +108,7 @@ fn main() {
     {
         KeptOrRemoved::Kept(k) => (k, u64::MAX),
         KeptOrRemoved::Removed { event_index } => (0, event_index),
+        KeptOrRemoved::Muted { kept, event_index } => (kept, event_index),
     };
     println!("input_to_kept 24000: {kept} {removed}");
     let ps = timeline::place_at(10, rate, 3, 1500, &[]).expect("level");

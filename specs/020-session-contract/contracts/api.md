@@ -23,7 +23,7 @@ pub mod record {
 pub mod timeline {
     pub fn kept_to_input(k: u64, settings: &Settings, events: &[VasEvent], stop: &StopFields) -> InputAlignment;
     pub fn input_to_kept(p: u64, settings: &Settings, events: &[VasEvent]) -> KeptOrRemoved;
-    pub fn onepass_output_to_input(position: u64, settings: &Settings, events: &[VasEvent]) -> (u64, bool /* clamped */);
+    pub fn onepass_output_to_input(position: u64, latency: u32, events: &[VasEvent], drop: bool) -> (u64, bool /* clamped */);   // latency: Pipeline::latency_samples(); drop: the gate in drop mode (restated at implementation)
     pub fn place_at(index: u64, host_rate_hz: u32, start_level: u8, unit_count: u64, entries: &[ChangeEntry]) -> Result<PlaceState, Error>;
 }
 impl VasEvent { pub const fn new(output_position: u64, input_length: u64) -> Self; }
@@ -35,6 +35,7 @@ impl Pipeline {
     pub fn recording_digest(&self, number: u32) -> Result<u64, Error>;
     pub fn recording_digest_matches(&self, number: u32, readout: &mut RecordReadout) -> Result<bool, Error>;
     pub fn recording_counter_of(&self, number: u32) -> Result<Option<u64>, Error>;   // None: imported
+    pub fn processing_record_read(&self, bytes: &[u8], out: &mut RecordReadout) -> Result<(), Error>;   // record::read plus the host-rate flag
 }
 ```
 
@@ -59,7 +60,9 @@ size_t       rr_dr60_record_changes(const uint8_t*, size_t, uint64_t first, RrDr
 bool         rr_dr60_record_unknown_setting(const uint8_t*, size_t, uint32_t i, char*, size_t);
 RrDr60Status rr_dr60_kept_to_input(const RrDr60Settings*, uint64_t k, const RrDr60VasEvent*, size_t, const RrDr60StopFields*, RrDr60InputAlignment*);
 RrDr60Status rr_dr60_input_to_kept(const RrDr60Settings*, uint64_t p, const RrDr60VasEvent*, size_t, uint64_t* kept, uint64_t* removed_by_event);  // removed: UINT64_MAX when kept
-RrDr60Status rr_dr60_onepass_output_to_input(const RrDr60Settings*, uint64_t position, const RrDr60VasEvent*, size_t, uint64_t* input, bool* clamped);
+RrDr60Status rr_dr60_onepass_output_to_input(uint64_t position, uint32_t latency, const RrDr60VasEvent*, size_t, bool drop, uint64_t* input, bool* clamped);
+RrDr60Status rr_dr60_record_write(const RrDr60RecordReadout*, const RrDr60VasEvent*, const uint64_t* host_input_positions, size_t, const RrDr60ChangeEntry*, size_t, uint8_t*, size_t, size_t* written);   // the pure writer
+RrDr60Status rr_dr60_recording_counter_of(RrDr60Pipeline*, uint32_t number, bool* known, uint64_t* counter);
 RrDr60Status rr_dr60_place_at(uint64_t index, uint32_t host_rate_hz, uint8_t start_level, uint64_t unit_count, const RrDr60ChangeEntry*, size_t, RrDr60PlaceState*);
 void         rr_dr60_samples_from_i24(const int32_t*, float*, size_t);
 #define RR_DR60_PROCESSING_RECORD_VERSION 1
