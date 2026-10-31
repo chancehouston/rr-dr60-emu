@@ -4,6 +4,8 @@ import PackageDescription
 
 let package = Package(
     name: "RRDR60",
+    // The oldest versions the library is built for (scripts/build-xcframework.sh); the app's own
+    // minimum is the app's (iOS 26 for the owner's app). Spec 022: the C ABI is 64-bit only.
     platforms: [.iOS(.v16), .macOS(.v13)],
     products: [
         // The C API (include/rr_dr60.h) as the Swift module RRDR60C.
@@ -15,6 +17,6 @@ let package = Package(
         .binaryTarget(name: "RRDR60C", path: "RRDR60C.xcframework"),
         .target(name: "RRDR60", dependencies: ["RRDR60C"]),
         .testTarget(name: "RRDR60CTests", dependencies: ["RRDR60C"]),
-        .testTarget(name: "RRDR60Tests", dependencies: ["RRDR60", "RRDR60C"]),
+        .testTarget(name: "RRDR60Tests", dependencies: ["RRDR60", "RRDR60C"], resources: [.copy("Fixtures")]),
     ]
 )

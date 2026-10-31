@@ -48,6 +48,7 @@ private func isOK(_ status: Int32) -> Bool {
     var all: [Float] = []
     for start in stride(from: 0, to: input.count, by: block) {
         var info = RrDr60BlockInfo()
+        info.struct_size = UInt32(MemoryLayout<RrDr60BlockInfo>.size) // the bare C module: sized by hand (spec 022)
         let status = input.withUnsafeBufferPointer { inBuf in
             output.withUnsafeMutableBufferPointer { outBuf in
                 rr_dr60_process(handle, inBuf.baseAddress! + start, outBuf.baseAddress!, UInt(block), &info)
