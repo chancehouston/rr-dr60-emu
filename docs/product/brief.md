@@ -121,7 +121,7 @@ The dossier does not change these. Details and reasoning are in decisions.md.
 - **Ads:** none, and no consumables.
 - **Subscriptions:** none at launch. The dossier selects none either; confirmation is question O-6.
 - **Evidence program:** *superseded 2026-10-18:* real-unit checks are out of scope until the project has a unit it can open (decisions.md). The status header still shows the truth: no stage checked against a real unit.
-- **Engine distribution:** a Swift Package wrapping an XCFramework (later an Android archive), not a source port.
+- **Engine distribution:** a Swift Package wrapping an XCFramework (later an Android archive), not a source port. 64-bit targets only (iOS is 64-bit; on Android `arm64-v8a` and `x86_64`, which Play serves to every current device; 32-bit-only devices are not offered the app; spec 022, 2026-10-31).
 - **Stage strings:** the engine carries short, neutral, English strings per stage (the stage manifest), and apps localize them.
 - **Status vocabulary:** product copy says "checked against a real unit", never "verified".
 - **The status header and badges on the inside:** sourced, assumed, not modeled, checked against a real unit (front-and-inside.md › Status badges).

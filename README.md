@@ -16,7 +16,7 @@ The RR-DR60 is a pocket digital voice recorder Panasonic sold in the late 1990s.
 | **Version** | 0.21.0, pre-alpha. Not yet released or published to crates.io; the API may still change before 1.0. |
 | **Signal chain** | 13 of the 15 stages are modeled and on by default (the power supply as the battery's effect on the speaker amplifier's clip ceiling, a user-set value). Not modeled: noise reduction (no evidence the device has it) and the clock. |
 | **Accuracy** | Every modeled stage is built from documents (the service manual, the owner's manual, datasheets) plus recorded assumptions. **No stage has been checked against a real unit**; see [Accuracy](#accuracy). |
-| **Platforms** | Rust library (`no_std`), C API, and a Swift package for iOS and macOS. Bit-identical output on Linux, macOS, Windows, the iOS simulator and an iOS device. |
+| **Platforms** | Rust library (`no_std`), C API (64-bit targets) and a Swift package for iOS and macOS. Bit-identical output on Linux, macOS, Windows, the iOS simulator and an iOS device. |
 | **Not yet** | A published release, a Swift-native API, an app (planned as a separate project). |
 
 The [CHANGELOG](CHANGELOG.md) records every version; the per-stage table under [Accuracy](#accuracy) is generated from the library itself.

@@ -171,7 +171,7 @@ pub enum RrDr60Status {
     /// struct's size differs. The library ships inside the app, so this is a build error of the
     /// app (a stale XCFramework, a mixed build), never a user condition: stop in a debug build,
     /// refuse to create an engine in a release build.
-    AbiMismatch = 37, // spec 022 D3: appended
+    AbiMismatch = 37, // spec 022 D3, FR-003: appended
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -776,20 +776,20 @@ const _: () = assert!(
 /// reorder, a growth of `RrDr60Settings` or a change of its input rule) and never on an appended
 /// status, control, tap, define, function or a field appended to a struct the library fills.
 /// Pass it to `rr_dr60_abi_check` once at start.
-pub const RR_DR60_ABI_VERSION: u32 = 1; // spec 022 D3 (a literal so cbindgen emits the define; the unit test pins it)
+pub const RR_DR60_ABI_VERSION: u32 = 1; // spec 022 D3, FR-003 (a literal so cbindgen emits the define; the unit test pins it)
 
 /// The largest `struct_size` any struct the library fills accepts (spec 022 D8): above it the
 /// call is refused with `RR_DR60_STATUS_INVALID_ARGUMENT` and nothing is written, so an
 /// uninitialized size field is a refusal, not a fill past the caller's struct.
-pub const RR_DR60_MAX_STRUCT_SIZE: u32 = 4096; // spec 022 D8 (a literal so cbindgen emits the define; the unit test pins it)
+pub const RR_DR60_MAX_STRUCT_SIZE: u32 = 4096; // spec 022 D8, FR-001 (a literal so cbindgen emits the define; the unit test pins it)
 
 /// `sizeof(RrDr60VasEvent)`, 16: the struct is frozen (spec 022 D2). Pass it to
 /// `rr_dr60_abi_check`.
-pub const RR_DR60_VAS_EVENT_SIZE: u32 = 16; // spec 022 D2 (a literal; pinned to `size_of` below)
+pub const RR_DR60_VAS_EVENT_SIZE: u32 = 16; // spec 022 D2, FR-002 (a literal; pinned to `size_of` below)
 
 /// `sizeof(RrDr60ChangeEntry)`, 40: the struct is frozen (spec 022 D2). Pass it to
 /// `rr_dr60_abi_check`.
-pub const RR_DR60_CHANGE_ENTRY_SIZE: u32 = 40; // spec 022 D2 (a literal; pinned to `size_of` below)
+pub const RR_DR60_CHANGE_ENTRY_SIZE: u32 = 40; // spec 022 D2, FR-002 (a literal; pinned to `size_of` below)
 
 const _: () = assert!(RR_DR60_VAS_EVENT_SIZE as usize == size_of::<RrDr60VasEvent>());
 const _: () = assert!(RR_DR60_CHANGE_ENTRY_SIZE as usize == size_of::<RrDr60ChangeEntry>());
