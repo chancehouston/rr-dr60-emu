@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-31
 
-**Status**: Implemented on `021-playback-bypass` (2026-10-31); PR pending
+**Status**: Complete on `main` (PR #53 merged 2026-10-31, merge commit 81f14dd)
 
 **Input**: User description: "021 live playback-stage bypass with a crossfade (the owner's engine order 020 → 021, decisions.md 2026-10-29; controls-discussion.md § 2a row 6 'Stage bypass and A/B (with / without the speaker): playback-side stages live with a crossfade; record-side stages an offline re-render, not live', § 2b 'Playback-stage bypass, live (10, 11, 12, 13): both branches computed for a 20 ms crossfade; each bypassed branch keeps running to stay warm', § 4 item 8 '021: Live playback-stage bypass with a crossfade (M; Workbench A/B for stages 10 – 13)'). As a Workbench user listening to a playback, I want to switch each playback-side stage in and out while the recording plays, with no click, so that I can hear what each stage does to the same passage instead of stopping, reconfiguring and playing again."
 
