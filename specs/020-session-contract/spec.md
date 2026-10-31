@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-31
 
-**Status**: Spec approved by the owner (2026-10-31); plan drafted with the three plan reviews applied, awaiting the plan sign-off
+**Status**: Spec approved by the owner (2026-10-31); plan drafted with the three plan reviews applied, plan approved 2026-10-31; implementing
 
 **Input**: User description: "020 session contract (the owner's engine order 019 → 020, decisions.md 2026-10-29; controls-discussion.md § 4 item 7; investigation-mode.md § 5 "020, record side first"; the items specs 015 and 017 moved here). As an Investigation-mode app and as someone sharing a case file, I want a versioned record for each recording, exported beside the stored form, that says exactly how the recording was processed, so that a recipient with the kept microphone audio and the same library can re-render the recording bit for bit and confirm that the record and the recording belong together, and an app can place every logged change and every voice-activation gap on the microphone's timeline."
 
@@ -40,6 +40,10 @@ The owner reads this section first. Each decision gives the recommendation; the 
 - **D8(c)**: `place_at` takes the host rate and uses the `playback_speed` entries; ten corner cases (coach 9, hardware B14); the one-pass map takes the settings (an alignment through the latency) (hardware B9).
 - **FR-005**: the deltas are named (hiss +1 dB, knee −1 dB, threshold −3 dB, the codec toggled); the stimulus ends in voice (coach 14, hardware B12); the fill is by import (coach 12).
 - **D12 / the guide**: the seed is drawn once per engine, the counter distinguishes recordings; no pre-sizing bound (product M6, M7).
+
+### Session 2026-10-31 (plan sign-off)
+
+- The plan with its fifteen restatements approved ("Approve"); the next owner stop is the merge.
 
 ### Session 2026-10-31 (owner sign-off)
 
