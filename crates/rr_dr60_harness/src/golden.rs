@@ -2966,7 +2966,13 @@ pub fn generate_bypass(make: Make<'_>, bless: bool) -> GoldenFile {
                             );
                         } else {
                             let settle = rr_dr60::output::settle_samples(rate).unwrap() as usize;
-                            let from = p + n_host as usize - 1 + settle;
+                            let two_d = if cell.stage == 10 {
+                                2 * rr_dr60::__test_hooks::resampler_delay_host_samples(rate)
+                                    .unwrap_or(0) as usize
+                            } else {
+                                0
+                            };
+                            let from = p + n_host as usize - 1 + settle + two_d;
                             let worst = (from..q)
                                 .map(|i| (f64::from(run.out[i]) - f64::from(twin.out[i])).abs())
                                 .fold(0.0, f64::max);

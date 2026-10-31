@@ -80,8 +80,9 @@ pub fn earphone_gain_db(position: f32) -> f32 {
 /// −[`earphone_gain_db`] (+19.2 dB at [`VOLUME_REFERENCE`], 0.0 at position 1); +∞ at position
 /// 0. Stated for levels below the amplifier's knee (above it the on-branch is clipped). The
 /// neutral positions, where a bypass changes no level: the speaker route's reference position,
-/// the earphone route's position 1. Computed from the committed law (A-044, A-031, A-043), not
-/// measured; the device has no stage switches. Real-time safe.
+/// the earphone route's position 1. For 0 ≤ position ≤ 1 (the range the volume setter accepts;
+/// the law's domain). Computed from the committed law (A-044, A-031, A-043), not measured; the
+/// device has no stage switches. Real-time safe.
 pub fn stage11_bypass_level_db(route: crate::Route, position: f32) -> f32 {
     let p = f64::from(position);
     match route {

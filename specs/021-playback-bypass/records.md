@@ -15,6 +15,6 @@ What the feature writes outside the code, each with its gate.
 | `include/rr_dr60.h` | Status 36 with its comment (the `Display` text plus "see the guide, Live stage bypass"), the bound 142, `rr_dr60_stage11_bypass_level_db`. | the header drift check |
 | Swift package | No status list to update (`swift/README.md` has a "Status codes" note only); nothing. | — |
 | Version 0.21.0 | `Cargo.toml` ×4, the header's version, the manifest's version line, `CHANGELOG.md`. | `us2_cross_check`, the header drift check |
-| `tools/output-chain/design_output_chain.py` | Prints the private speaker scale constant (`--check` pins it, `--write` keeps `output_coeffs.rs` byte-identical). | `--check` |
+| `tools/output-chain/design_output_chain.py` | No change: superseded at implementation (R-07): `stage11_bypass_level_db` is −20·log10 of the chain's own scalar, so no constant exists. | — |
 | `CLAUDE.md` | The status entry, the Spec 021 reports commands, the engine order. | review |
 | Memory bookmark | The step reached. | — |

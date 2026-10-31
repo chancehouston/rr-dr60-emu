@@ -740,18 +740,25 @@ pub fn blend_identity(make: Make<'_>, cell: &Cell, rate: u32) -> Vec<Measurement
         let want = y + weight(k, n) * (x - y);
         worst = worst.max(ulps_at(f64::from(live.out[i]) - want, y.abs().max(x.abs())));
     }
-    // The midpoint: (live − y) / (x − y) where the branches differ enough to read it.
-    let mid = p + n / 2 - 1;
-    let (y, x, l) = (
-        f64::from(all_on.out[mid]),
-        f64::from(twin.out[mid]),
-        f64::from(live.out[mid]),
-    );
-    let ratio = if (x - y).abs() > 1e-3 {
-        (l - y) / (x - y)
-    } else {
-        0.5
-    };
+    // The weight read from the output at the sample nearest the midpoint where the branches
+    // differ by more than 0.01 (a tone's difference crosses zero twice a millisecond; coach
+    // review 4): (live − y) / (x − y) against the published weight there.
+    let mut ratio = -1.0;
+    let mut want_w = 0.5;
+    'search: for d in 0..n / 2 {
+        for k in [n / 2 - d, n / 2 + d] {
+            if k == 0 || k >= n {
+                continue;
+            }
+            let i = p + k - 1;
+            let (y, x) = (f64::from(all_on.out[i]), f64::from(twin.out[i]));
+            if (x - y).abs() > 1e-2 {
+                ratio = (f64::from(live.out[i]) - y) / (x - y);
+                want_w = weight(k, n);
+                break 'search;
+            }
+        }
+    }
     let stim = format!("{}: bypass at {p}", cell.label());
     vec![
         MeasurementResult::new(
@@ -767,14 +774,14 @@ pub fn blend_identity(make: Make<'_>, cell: &Cell, rate: u32) -> Vec<Measurement
         ),
         MeasurementResult::new(
             "FR-002",
-            "the midpoint's weight read from the output",
+            "the weight read from the output nearest the midpoint, less the published weight",
             T_BYPASS,
             rate,
             cell.config,
             stim,
-            ratio,
+            ratio - want_w,
             "",
-            Tolerance::Range(0.5 - 1e-4, 0.5 + 1e-4), // 021 SC-002 (w(N/2) = 0.5; read on f32)
+            Tolerance::Range(-1e-4, 1e-4), // 021 SC-002 (the core pins w(N/2) = 0.5 exactly; read on f32)
         ),
     ]
 }
@@ -936,6 +943,9 @@ pub struct ClickRow {
     pub volume: f32,
     /// The stored tone's frequency.
     pub f_tone: f64,
+    /// The stored tone's amplitude (0.5 = −6 dBFS; 0.05 = −26 dBFS for the speaker route's
+    /// position-1 row, below the amplifier's knee: 11.83 × 0.05 = 0.59 < 0.85).
+    pub amp: f64,
     /// Asserted (≥ 30 dB at 6 kHz) or reported.
     pub asserted: bool,
 }
@@ -950,6 +960,7 @@ pub fn asserted_rows() -> Vec<ClickRow> {
             route: Route::Speaker,
             volume: output::VOLUME_REFERENCE,
             f_tone: 1000.0,
+            amp: AMP,
             asserted: true,
         },
         ClickRow {
@@ -958,6 +969,7 @@ pub fn asserted_rows() -> Vec<ClickRow> {
             route: Route::Speaker,
             volume: neutral_position(Route::Speaker),
             f_tone: 1000.0,
+            amp: AMP,
             asserted: true,
         },
         ClickRow {
@@ -966,6 +978,7 @@ pub fn asserted_rows() -> Vec<ClickRow> {
             route: Route::Earphone,
             volume: neutral_position(Route::Earphone),
             f_tone: 1000.0,
+            amp: AMP,
             asserted: true,
         },
         ClickRow {
@@ -974,6 +987,7 @@ pub fn asserted_rows() -> Vec<ClickRow> {
             route: Route::Speaker,
             volume: output::VOLUME_REFERENCE,
             f_tone: 1000.0,
+            amp: AMP,
             asserted: true,
         },
         ClickRow {
@@ -982,6 +996,7 @@ pub fn asserted_rows() -> Vec<ClickRow> {
             route: Route::Earphone,
             volume: output::VOLUME_REFERENCE,
             f_tone: 1000.0,
+            amp: AMP,
             asserted: true,
         },
     ]
@@ -997,6 +1012,7 @@ pub fn reported_rows() -> Vec<ClickRow> {
             route: Route::Speaker,
             volume: output::VOLUME_REFERENCE,
             f_tone: 2600.0,
+            amp: AMP,
             asserted: false,
         },
         ClickRow {
@@ -1005,6 +1021,7 @@ pub fn reported_rows() -> Vec<ClickRow> {
             route: Route::Speaker,
             volume: output::VOLUME_REFERENCE,
             f_tone: 300.0,
+            amp: AMP,
             asserted: false,
         },
         ClickRow {
@@ -1013,6 +1030,7 @@ pub fn reported_rows() -> Vec<ClickRow> {
             route: Route::Earphone,
             volume: output::VOLUME_REFERENCE,
             f_tone: 100.0,
+            amp: AMP,
             asserted: false,
         },
         ClickRow {
@@ -1021,6 +1039,7 @@ pub fn reported_rows() -> Vec<ClickRow> {
             route: Route::Speaker,
             volume: neutral_position(Route::Speaker),
             f_tone: 100.0,
+            amp: AMP,
             asserted: false,
         },
         ClickRow {
@@ -1029,6 +1048,7 @@ pub fn reported_rows() -> Vec<ClickRow> {
             route: Route::Earphone,
             volume: neutral_position(Route::Earphone),
             f_tone: 100.0,
+            amp: AMP,
             asserted: false,
         },
         ClickRow {
@@ -1037,6 +1057,7 @@ pub fn reported_rows() -> Vec<ClickRow> {
             route: Route::Speaker,
             volume: 1.0,
             f_tone: 1000.0,
+            amp: 0.05,
             asserted: false,
         },
         ClickRow {
@@ -1045,6 +1066,7 @@ pub fn reported_rows() -> Vec<ClickRow> {
             route: Route::Earphone,
             volume: output::VOLUME_REFERENCE,
             f_tone: 1000.0,
+            amp: AMP,
             asserted: false,
         },
     ]
@@ -1062,7 +1084,7 @@ fn control_of(stage: u8) -> u32 {
 /// One click row at `rate` (the reader's top `top_hz`; 2750 at 6 kHz, 0.45 × rate at 48 kHz).
 pub fn click_row(make: Make<'_>, row: &ClickRow, rate: u32, top_hz: f64) -> Vec<MeasurementResult> {
     let s = settings(row.config, rate);
-    let stored = stored_tone(row.f_tone, 1.5);
+    let stored = stimulus::stored_tone(row.f_tone, row.amp, (6000.0 * 1.5) as usize);
     let p = u64::from(rate) * 3 / 4;
     let n_host = blend_host_len(row.stage, rate) as f64;
     let d_host = if row.stage == 10 {
@@ -1110,9 +1132,21 @@ pub fn click_row(make: Make<'_>, row: &ClickRow, rate: u32, top_hz: f64) -> Vec<
         Partition::Fixed(256),
     );
     let excl = [row.f_tone];
-    let e_step = click_energy_band(&step.out, rate, p as f64 + d_host, 0.04, &excl, top_hz);
+    // Post-implementation hardware review B1: read both energies on the **residual against the
+    // held run** (bit-identical before P, so the tone's own leakage cancels exactly and the
+    // reader measures the switch, not its floor); the held run's own reading is the floor the
+    // raw reader would have had, reported.
+    let residual = |y: &[f32]| -> Vec<f64> {
+        y.iter()
+            .zip(&held.out)
+            .map(|(a, b)| f64::from(*a) - f64::from(*b))
+            .collect()
+    };
+    let r_step = residual(&step.out);
+    let r_fade = residual(&fade.out);
+    let e_step = click_energy_band(&r_step, rate, p as f64 + d_host, 0.04, &excl, top_hz);
     let e_fade = click_energy_band(
-        &fade.out,
+        &r_fade,
         rate,
         p as f64 + d_host + n_host / 2.0,
         0.04,
@@ -1136,8 +1170,8 @@ pub fn click_row(make: Make<'_>, row: &ClickRow, rate: u32, top_hz: f64) -> Vec<
         0.0
     };
     let stim = format!(
-        "stage {} {} {:?} volume {:.4}, {} Hz tone, reader top {} Hz",
-        row.stage, row.config, row.route, row.volume, row.f_tone, top_hz
+        "stage {} {} {:?} volume {:.4}, {} Hz tone at {:.2}, reader top {} Hz",
+        row.stage, row.config, row.route, row.volume, row.f_tone, row.amp, top_hz
     );
     let tol = if row.asserted && rate == 6000 {
         Tolerance::AtLeast(30.0) // 021 FR-007
@@ -1158,7 +1192,7 @@ pub fn click_row(make: Make<'_>, row: &ClickRow, rate: u32, top_hz: f64) -> Vec<
         ),
         MeasurementResult::new(
             "FR-007",
-            "the step above the held-run floor (dB)",
+            "the step above the raw reader's held-run floor (dB)",
             T_BYPASS,
             rate,
             row.config,
@@ -1239,12 +1273,35 @@ pub fn voiced_click(make: Make<'_>) -> Vec<MeasurementResult> {
             &sched,
             Partition::Fixed(256),
         );
+        let held = run_cell(
+            make,
+            s,
+            &cell,
+            &x,
+            &[],
+            r.volume,
+            &[],
+            Partition::Fixed(256),
+        );
+        let residual = |y: &[f32]| -> Vec<f64> {
+            y.iter()
+                .zip(&held.out)
+                .map(|(a, b)| f64::from(*a) - f64::from(*b))
+                .collect()
+        };
         let n_host = blend_host_len(r.stage, rate) as f64;
-        let e_step = click_energy_band(&step.out, rate, p as f64, 0.04, &[], 2750.0);
-        let e_fade = click_energy_band(&fade.out, rate, p as f64 + n_host / 2.0, 0.04, &[], 2750.0);
+        let e_step = click_energy_band(&residual(&step.out), rate, p as f64, 0.04, &[], 2750.0);
+        let e_fade = click_energy_band(
+            &residual(&fade.out),
+            rate,
+            p as f64 + n_host / 2.0,
+            0.04,
+            &[],
+            2750.0,
+        );
         rows.push(MeasurementResult::new(
             "FR-007",
-            "voiced: crossfade energy below the step's (dB, no exclusion)",
+            "voiced: crossfade energy below the step's on the residual (dB, no exclusion)",
             T_BYPASS,
             rate,
             r.config,

@@ -19,43 +19,59 @@ fn each(check: impl Fn(u32) -> Vec<MeasurementResult>) -> Vec<MeasurementResult>
         .collect()
 }
 
-/// US1 AS1 (FR-006): every pre-021 configuration is bit-identical to 0.20: the fourteen golden
-/// guards hold (`golden*` binaries) and no cell's all-on run differs from a chain built with no
-/// bypass state (the byte gate is 0): checked through the endpoint rows' "before the landing".
+/// US1 AS1 (FR-006): every pre-021 configuration is bit-identical to 0.20: the fourteen earlier
+/// golden files are byte-identical to the SHA constants their guards pin (re-read from the test
+/// sources), and the stepped build equals the standard build when nothing lands (the click
+/// reader's step reference is the engine itself; FR-007).
 #[test]
 fn as1_pre_021_configurations_unmoved() {
-    // The guards themselves run in the golden binaries; here the no-schedule runs of two cells
-    // at every measurement rate are identical between the standard build and the stepped build
-    // (no fade state is ever entered without a landing).
+    use sha2::{Digest, Sha256};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let re =
+        regex::Regex::new(r#"const (GOLDEN_[A-Z0-9_]*SHA256): &str =\s*"([0-9a-f]{64})""#).unwrap();
+    let mut checked = 0;
+    for entry in std::fs::read_dir(root.join("tests")).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        if !name.starts_with("golden") || name == "golden_bypass.rs" || !name.ends_with(".rs") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).unwrap();
+        for cap in re.captures_iter(&text) {
+            let file = match &cap[1] {
+                "GOLDEN_V1_SHA256" => "golden-v1.json".to_string(),
+                c => {
+                    let stem = c
+                        .trim_start_matches("GOLDEN_")
+                        .trim_end_matches("_SHA256")
+                        .to_lowercase()
+                        .replace('_', "-");
+                    format!("golden-{stem}.json")
+                }
+            };
+            let bytes =
+                std::fs::read(root.join("golden").join(&file)).unwrap_or_else(|_| panic!("{file}"));
+            let hex: String = Sha256::digest(&bytes)
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            assert_eq!(hex, &cap[2], "{file} moved");
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 14, "the fourteen earlier golden guards");
     let mut rows = Vec::new();
     for &rate in configs::measurement_rates() {
         for cell in bp::cells().iter().filter(|c| c.exact).take(3) {
             let s = bp::settings(cell.config, rate);
             let stored = bp::stored_tone(1000.0, 0.5);
             let host = bp::host_tone(1000.0, 0.5, rate);
-            let a = bp::run_cell(
-                &standard,
-                s,
-                cell,
-                &stored,
-                &host,
-                0.5,
-                &[],
-                rr_dr60_harness::changes_checks::Partition::Fixed(256),
-            );
-            let b = bp::run_cell(
-                &bp::stepped,
-                s,
-                cell,
-                &stored,
-                &host,
-                0.5,
-                &[],
-                rr_dr60_harness::changes_checks::Partition::Fixed(256),
-            );
+            let part = rr_dr60_harness::changes_checks::Partition::Fixed(256);
+            let a = bp::run_cell(&standard, s, cell, &stored, &host, 0.5, &[], part);
+            let b = bp::run_cell(&bp::stepped, s, cell, &stored, &host, 0.5, &[], part);
             rows.push(MeasurementResult::new(
-                "FR-006",
-                "no landing: identical to the stepped build",
+                "FR-007",
+                "no landing: the stepped build is the standard build",
                 bp::T_BYPASS,
                 rate,
                 cell.config,
@@ -66,7 +82,7 @@ fn as1_pre_021_configurations_unmoved() {
                     0.0
                 },
                 "",
-                rr_dr60_harness::checks::Tolerance::Exact(1.0), // 021 FR-006
+                rr_dr60_harness::checks::Tolerance::Exact(1.0), // 021 FR-007 (the step reference)
             ));
         }
     }

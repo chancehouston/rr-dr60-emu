@@ -18,7 +18,6 @@ The stage's contribution at a sample: k = 0 → y (selected); k = N → x (selec
 | Field | Type | Meaning |
 |---|---|---|
 | `bypass_state` | u8 | Bit 0: any fade running; bits 1 – 3: stages 11, 12, 13 at rest bypassed. 0 = 0.20's path (R-08). |
-| `amp_counting` | bool | Stage 11's clip count runs (k < N); updated at the fade step and the snaps (D7). |
 | `fade_amp`, `fade_speaker`, `fade_earphone` | Fade | Stages 11, 12, 13. |
 
 `reaches(stage) -> bool`: the construction switch on and the tap reaching the stage (`RouteOutput`: 11, 12, 13; `AfterVolumeAmp`: 11; `AfterSpeaker`: 11, 12; `AfterEarphone`: 11, 13; the taps before the chain: none) (R-04). `reset_sections` (a route switch) keeps the fades; the engine's `reset` snaps each fade to `settings()`'s value (R-11).
@@ -34,7 +33,8 @@ The stage's contribution at a sample: k = 0 → y (selected); k = N → x (selec
 | Field | Type | Meaning |
 |---|---|---|
 | `last_bypass` | [bool; 3] | The last applied value per stage 11 – 13 (true = bypassed); the one-pass compares `settings` to it at `begin_call` and lands the differences first (R-05). |
-| `landed_bypass` | [Option<bool>; 3] | The call's landings, read by the pipeline into `settings` and `bypass_tags`. |
+| `landed_bypass` | [Option<(bool, u64)>; 3] | The call's landings with their tags, read by the pipeline into `settings` and `bypass_tags`. |
+| `mirror` | [Option<(bool, u64)>; 3] | The one-pass's pending mirror landings for the call (set by `begin_mirror`). |
 | `last_stage10` | bool | The player's stage-10 value (no mirror). |
 
 `Apply` gains `Bypass { stage: u8, bypassed: bool, at_once: bool }` (stage 10 … 13; `at_once` = the stream's first produced sample).
@@ -75,4 +75,4 @@ Entries 5, 22, 23, 24: `timing: Live`; everything else unchanged. The canonical 
 
 ## Golden (`golden-bypass-v1.json`)
 
-Entry: `{ config, route, stream, rate, stages, schedule: [{position, stage, value, tag}], produced, changes: [...], digest, exact: bool }`; 140 entries; `exact` marks the entries whose endpoint identities are bit-exact (R-10), the others carrying the convergence bound (R-09).
+Entry: `{ stages, schedule, stream, route, log, produced, exact, reversal }` beside the output digest; 168 entries (eleven cells × two scenarios + two whole-path entries, × 7 rates); `exact` marks the entries whose endpoint identities are bit-exact (R-10), the others carrying the convergence bound (R-09).

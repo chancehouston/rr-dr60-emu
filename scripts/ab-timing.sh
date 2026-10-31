@@ -242,8 +242,11 @@ for key, name in [("playback_ns", "player (level 3)"), ("onepass_ns", "one-pass"
 sys.exit(0 if ok else 1)
 PY
   status=$?
-  echo "the head's bypassed and blending states (reported):" >&2
-  (cd "$root" && cargo test -q -p rr_dr60_harness --release --test bypass_states_timing -- --ignored --exact bypass_states --nocapture --test-threads=1 2>/dev/null | grep "bypass states")
+  echo "the head's bypassed and blending states (reported; the worst block asserted):" >&2
+  states_out="$(cd "$root" && cargo test -q -p rr_dr60_harness --release --test bypass_states_timing -- --ignored --exact bypass_states --nocapture --test-threads=1 2>&1)"
+  states_status=$?
+  printf '%s\n' "$states_out" | grep "bypass states"
+  [ "$states_status" -eq 0 ] || { echo "ab-timing: bypass_states_timing failed (the worst block over the budget)" >&2; exit 1; }
   exit $status
 fi
 

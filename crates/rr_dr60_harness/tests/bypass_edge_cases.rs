@@ -135,7 +135,8 @@ fn several_toggles_reverse_each_time() {
     for i in 400..(400 + n) as usize {
         let (y, x) = (f64::from(all_on.out[i]), f64::from(twin.out[i]));
         let v = f64::from(r.out[i]);
-        let tol = y.abs().max(x.abs()) * f64::from(f32::EPSILON) * 2.0;
+        // 021 FR-005: within one f32 step of the branches' interval.
+        let tol = y.abs().max(x.abs()) * f64::from(f32::EPSILON);
         assert!(v >= y.min(x) - tol && v <= y.max(x) + tol, "sample {i}");
     }
     // Back at rest on well before 400 + 2n: the last toggle at n/2 toward on from phase ≤ n/2.
@@ -212,6 +213,11 @@ fn landing_during_the_drain() {
     assert_eq!(r.out.len(), plain.out.len());
     assert_eq!(cc::entries_of(&r.log, 23).len(), 1);
     assert_eq!(cc::entries_of(&r.log, 23)[0].position, pos);
+    // The blend ran on the drain's samples (the chain still rings there): the output differs.
+    assert!(
+        !cc::same(&r.out[pos as usize..], &plain.out[pos as usize..]),
+        "the blend ran on the drain"
+    );
 }
 
 /// A stage not on the active route: the change lands, logs, is inaudible, and its phase
@@ -296,7 +302,7 @@ fn route_change_mid_blend_keeps_the_weight() {
     let worst = (from..end)
         .map(|i| (f64::from(r.out[i]) - f64::from(twin.out[i])).abs())
         .fold(0.0, f64::max);
-    assert!(worst < 1e-5, "{worst}");
+    assert!(worst < 1e-5, "{worst}"); // 021 FR-003: −100 dBFS, the convergence bound
     // The phase continued: at the switch the fade was at N/2, and the run differs from a run
     // whose bypass lands at the switch (a frozen or restarted fade).
     let mut f = recorded(quiet(), Route::Speaker);
@@ -346,7 +352,7 @@ fn stage11_bypassed_volume_and_battery_on_the_warm_branch() {
     let worst = (a..b)
         .map(|i| (f64::from(r.out[i]) - f64::from(twin.out[i])).abs())
         .fold(0.0, f64::max);
-    assert!(worst < 1e-5, "inaudible while bypassed: {worst}");
+    assert!(worst < 1e-5, "inaudible while bypassed: {worst}"); // 021 FR-003: −100 dBFS
     // After the return: the all-on run with the same volume and battery schedule, whose
     // transitions ran on the warm branch (bit for bit once stage 12 has settled).
     let mut q = recorded(quiet(), Route::Speaker);
@@ -365,7 +371,7 @@ fn stage11_bypassed_volume_and_battery_on_the_warm_branch() {
         .map(|i| (f64::from(r.out[i]) - f64::from(all_on.out[i])).abs())
         .fold(0.0, f64::max);
     assert!(
-        worst < 1e-5,
+        worst < 1e-5, // 021 FR-003: −100 dBFS, the convergence bound
         "the settled new value heard after the return: {worst}"
     );
     assert_eq!(cc::entries_of(&r.log, 1).len(), 1);
