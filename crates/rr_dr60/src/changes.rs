@@ -70,11 +70,11 @@ pub struct ChangeEntry {
 }
 
 /// The stream word of the playback stream (spec 020 D9).
-pub const STREAM_PLAYBACK: u32 = 1;
+pub const STREAM_PLAYBACK: u32 = 1; // FR-007 (020 D9): the stream word
 /// The stream word of the one-pass stream.
-pub const STREAM_ONE_PASS: u32 = 2;
+pub const STREAM_ONE_PASS: u32 = 2; // FR-007 (020 D9)
 /// The stream word of the record stream (the recorder).
-pub const STREAM_RECORD: u32 = 3;
+pub const STREAM_RECORD: u32 = 3; // FR-007 (020 D9)
 
 impl ChangeEntry {
     /// An entry with every field given (spec 020: a recipient assembles the timeline map's and
