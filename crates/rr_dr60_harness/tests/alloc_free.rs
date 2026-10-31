@@ -1184,3 +1184,81 @@ fn crossfade_allocate_nothing() {
         unsafe { rr_dr60_destroy(handle) };
     }
 }
+
+
+/// Spec 020 FR-001 – FR-003, FR-006, FR-008 (tasks.md T023): the writer, the reader, the maps
+/// and the record path with its block allocate nothing per call.
+#[test]
+fn record_contract_allocate_nothing() {
+    use rr_dr60::record::{self, RecordReadout, RunData, StopFields};
+    use rr_dr60::timeline;
+    use rr_dr60::{ChangeEntry, Stream};
+    use rr_dr60_harness::record_contract_checks::{self as rc, Cell};
+    let _turn = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let snapshot = counts;
+    let allocations_since = |before: [usize; 3]| {
+        let after = counts();
+        (after[0] - before[0]) + (after[2] - before[2])
+    };
+    MEASURING.with(|m| m.set(true));
+    for &rate in configs::measurement_rates() {
+        let raw = rc::raw_stimulus(rate);
+        let x = rc::samples(&raw);
+        let cell = Cell { codec: false, changes: true, mute: false, self_stop: false };
+        let mut p = Pipeline::new(rc::settings(cell, rate)).unwrap();
+        for (pos, control, value, tag) in rc::cell_changes(rate) {
+            p.schedule_change(Stream::Record, pos, control, value, tag).unwrap();
+        }
+        let mut ev = vec![VasEvent::default(); p.max_record_events(1024)];
+        let mut ch = vec![ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
+        let mut events = Vec::with_capacity(64);
+        let mut changes = Vec::with_capacity(8);
+        p.start_recording().unwrap();
+        // The record path with the block and the totals: nothing allocated per call.
+        let mut inside = 0usize;
+        for block in x.chunks(1024) {
+            let before = snapshot();
+            let info = p.record_with_changes(block, &mut ev, &mut ch).unwrap();
+            inside += allocations_since(before);
+            events.extend_from_slice(&ev[..info.events]);
+            changes.extend_from_slice(&ch[..info.changes]);
+        }
+        assert_eq!(inside, 0, "{rate} Hz: the record path");
+        let before = snapshot();
+        let out = p.stop_recording_with_changes(&mut ev, &mut ch).unwrap();
+        assert_eq!(allocations_since(before), 0, "{rate} Hz: the stop");
+        events.extend_from_slice(&ev[..out.flush.events]);
+        changes.extend_from_slice(&ch[..out.changes]);
+        let run = RunData { events: &events, changes: &changes, stop: StopFields::from(&out) };
+        // The writer: counting and writing into a caller buffer.
+        let before = snapshot();
+        let n = p.processing_record_len(1, &run).unwrap();
+        assert_eq!(allocations_since(before), 0, "{rate} Hz: the length");
+        let mut rec = vec![0u8; n];
+        let before = snapshot();
+        p.processing_record_write(1, &run, &mut rec).unwrap();
+        let _ = p.recording_digest(1).unwrap();
+        assert_eq!(allocations_since(before), 0, "{rate} Hz: the writer and the digest");
+        // The reader, the cursors and the batch reads.
+        let mut r = RecordReadout::default();
+        let mut ev2 = vec![VasEvent::default(); 64];
+        let before = snapshot();
+        p.processing_record_read(&rec, &mut r).unwrap();
+        let _ = record::record_event(&rec, 0);
+        let _ = record::record_change(&rec, 0);
+        let _ = record::record_events(&rec, 0, &mut ev2);
+        let _ = record::record_unknown_setting(&rec, 0);
+        let _ = p.recording_digest_matches(1, &mut r).unwrap();
+        assert_eq!(allocations_since(before), 0, "{rate} Hz: the reader");
+        // The maps (c) allocates its pending list once: measured apart, bounded by one).
+        let before = snapshot();
+        let _ = timeline::kept_to_input(100, &r.settings, &events, &run.stop).unwrap();
+        let _ = timeline::input_to_kept(1000, &r.settings, &events).unwrap();
+        let _ = timeline::onepass_output_to_input(1000, 483, &events);
+        assert_eq!(allocations_since(before), 0, "{rate} Hz: maps (a) and (b)");
+        let before = snapshot();
+        let _ = timeline::place_at(50, rate, 3, 3000, &[]).unwrap();
+        assert!(allocations_since(before) <= 1, "{rate} Hz: map (c) allocates its request list once");
+    }
+    MEASURING.with(|m| m.set(false));
+}

@@ -77,8 +77,10 @@ pub const STREAM_ONE_PASS: u32 = 2;
 pub const STREAM_RECORD: u32 = 3;
 
 impl ChangeEntry {
-    /// An entry with every field given.
-    pub(crate) const fn new(
+    /// An entry with every field given (spec 020: a recipient assembles the timeline map's and
+    /// the pure writer's inputs; the engine sets the stream word itself).
+    #[must_use]
+    pub const fn new(
         position: u64,
         control: u32,
         before: f64,

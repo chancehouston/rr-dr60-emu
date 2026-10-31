@@ -297,6 +297,9 @@ pub enum Delta {
     TwinClamp,
     /// The fill by recording instead of import (the counter moves: must fail).
     RecordedFiller,
+    /// No fill at all (the self-stop cell's mutant: the recording cannot stop itself where
+    /// the original did).
+    NoFill,
 }
 
 impl Delta {
@@ -401,6 +404,8 @@ pub fn re_render(record: &[u8], raw: &[i32], block: usize, delta: Delta) -> u64 
             .record(&vec![0.0f32; units as usize * p.encoding().unit_samples()], &mut [])
             .unwrap();
         let _ = p.stop_recording(&mut []).unwrap();
+    } else if delta == Delta::NoFill {
+        // The mutant: no fill.
     } else if st.remaining_samples > r.remaining_samples_at_start && delta != Delta::Capacity {
         fill_to_remaining(&mut p, r.remaining_samples_at_start);
     } else if delta == Delta::Capacity {
@@ -787,7 +792,9 @@ pub fn codec_markers_check(rate: u32) -> (f64, f64) {
     player_settings.speech_codec_enabled = true;
     let mut q = Pipeline::new(player_settings).unwrap();
     let m = q.import(&bytes).unwrap();
-    let decoded = crate::split_checks::play_to_end(&mut q, m, 1024);
+    // The envelopes (a periodic waveform can lock a correlation one period off).
+    let decoded = envelope(&crate::split_checks::play_to_end(&mut q, m, 1024));
+    let twin = envelope(&twin);
     // Four gaps; the codec-on stop holds the gate open for its flush and adds a fifth event.
     assert_eq!(events.len(), 5, "{rate} Hz: four gaps and the stop's");
     let latency = u64::from(p.record_latency_pre_encoder_samples());
@@ -803,6 +810,7 @@ pub fn codec_markers_check(rate: u32) -> (f64, f64) {
         // its end (tone → silence): the kept part is 300 − 120 = 180 samples, so [60, 300).
         let probe = &twin[t + 30..t + 300];
         let lag = best_lag(&decoded, probe, k as usize + 30, 30);
+        max_lag = max_lag.max(lag.unsigned_abs() as f64);
         // The map's alignment of the kept onset, against the same reading with the wrong
         // latency (the codec's 180 kept samples included): the miss is about 30 ms.
         let a = timeline::kept_to_input(k, &drop_s, &events, &stop).unwrap();
@@ -916,4 +924,112 @@ pub fn place_case_mismatches(rate: u32, start: u8, requests: &[(u64, u8)]) -> (u
         }
     }
     (mismatches, own_and_tail)
+}
+
+
+// ---- The six mutants (spec 020 SC-003, SC-005; tasks.md T023), each an alternative
+// implementation that its named oracle must reject.
+
+/// The mutants of the record contract.
+pub mod mutants {
+    use super::*;
+
+    /// The digest over every exported byte but the last: `digest_equals_export_hash` rejects
+    /// it.
+    pub fn digest_without_last_byte(p: &Pipeline, number: u32) -> u64 {
+        let mut bytes = vec![0u8; p.export_len(number).unwrap()];
+        p.export(number, &mut bytes).unwrap();
+        rr_dr60::digest::fnv1a64(&bytes[..bytes.len() - 1])
+    }
+
+    /// The record's checksum over the bytes without the line end before the checksum line:
+    /// the reader rejects it (the round trip's read).
+    pub fn checksum_wrong_span(record: &[u8]) -> Vec<u8> {
+        let body_end = record[..record.len() - 1].iter().rposition(|&b| b == b'\n').unwrap() + 1;
+        let h = rr_dr60::digest::fnv1a64(&record[..body_end - 1]);
+        let mut v = record[..body_end].to_vec();
+        v.extend_from_slice(format!("record_checksum = fnv1a64:{h:016x}\n").as_bytes());
+        v
+    }
+
+    /// The record written with the engine's current settings instead of the slot block's:
+    /// after a landed change the bytes differ from the true record (US1 AS1 rejects it).
+    pub fn settings_from_engine(p: &Pipeline, record: &[u8]) -> Vec<u8> {
+        let mut r = readout(record);
+        r.settings = *p.settings();
+        let rows: Vec<_> = (0..r.event_count).map(|i| record::record_event(record, i).unwrap()).collect();
+        let mut changes = vec![ChangeEntry::default(); r.change_count as usize];
+        let n = record::record_changes(record, 0, &mut changes);
+        changes.truncate(n);
+        let mut out = vec![0u8; record::len(&r, &rows, &changes)];
+        record::write(&r, &rows, &changes, &mut out).unwrap();
+        out
+    }
+
+    /// Map (a) with the codec's 180 kept samples added to the latency (the draft's error):
+    /// the markers reject it (the centre moves by 180 device samples).
+    pub fn alignment_with_codec_delay(k: u64, s: &Settings, events: &[VasEvent], stop: &StopFields) -> u64 {
+        let a = timeline::kept_to_input(k, s, events, stop).unwrap();
+        let (l, m) = l_m(s.host_rate_hz);
+        a.centre.saturating_sub(180 * m / l)
+    }
+
+    /// Map (c) without the wait: a request during a crossfade applies at once (spec 019's
+    /// rejected alternative); the corner case "two requests inside one fade" rejects it.
+    pub fn place_at_without_wait(index: u64, rate: u32, start: u8, unit_count: u64, entries: &[ChangeEntry]) -> PlaceState {
+        let numerator = |level: u8| -> u64 { [3u64, 4, 5, 6, 7][(level - 1) as usize] };
+        let level_of = |k: u64| -> u8 { [1u8, 2, 3, 4, 5][(k - 3) as usize] };
+        let mut p5 = 0u64;
+        let mut active = numerator(start);
+        let mut requested = active;
+        let mut latched = unit_count == 0;
+        let mut fade: Option<(u64, u64, u32)> = None;
+        let mut started = false;
+        let n = u64::from(rr_dr60::speed::CROSSFADE_SAMPLES);
+        let mut pending: Vec<(u64, u8)> = entries
+            .iter()
+            .filter(|e| e.control == 2)
+            .map(|e| (rr_dr60::changes::speed_landing(e.position, rate).unwrap(), e.after as u8))
+            .collect();
+        pending.reverse();
+        let mut st = PlaceState::default();
+        for i in 0..=index {
+            while let Some(&(d, level)) = pending.last() {
+                if d > i {
+                    break;
+                }
+                requested = numerator(level);
+                pending.pop();
+            }
+            if p5 >= 5 * unit_count {
+                latched = true;
+            }
+            // The mutant: no `fade.is_none()` test.
+            if !latched && requested != active && !(requested == 5 && p5 % 5 != 0) {
+                let old = active;
+                active = requested;
+                if started {
+                    fade = Some((old, p5, 0));
+                }
+            }
+            st = PlaceState { place_fifths: p5, level: level_of(active), fading: false, old_place_fifths: 0, latched };
+            if let Some((ok, op5, k)) = fade {
+                let k = k + 1;
+                if u64::from(k) < n {
+                    st.fading = true;
+                    st.old_place_fifths = op5;
+                    fade = Some((ok, op5 + ok, k));
+                } else {
+                    fade = None;
+                }
+            }
+            started = true;
+            p5 += active;
+            if p5 >= 5 * unit_count {
+                latched = true;
+            }
+            st.latched = latched;
+        }
+        st
+    }
 }
