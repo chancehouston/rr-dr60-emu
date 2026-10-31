@@ -1366,15 +1366,38 @@ pub fn generate_speed(make: Make<'_>, bless: bool) -> GoldenFile {
 /// # Panics
 ///
 /// If the file is missing or unreadable.
+/// The SHA-256 of `golden-speed-v1.json` as version 0.18 committed it (spec 013's bless): the
+/// 0.18 gate runs while the committed file is still that one and skips itself afterwards.
+const GOLDEN_SPEED_0_18_SHA256: &str =
+    "d36b0a75625e67b11cb513d6b80be29b8827e3f60ee737c084eebdbc6e28dce2";
+/// The SHA-256 of `golden-changes-v1.json` as version 0.18 committed it (spec 015's bless).
+const GOLDEN_CHANGES_0_18_SHA256: &str =
+    "e6f1565c425a068b5a51ad39d07d15cad994847318407a5e2e9f8566c94b88de";
+
+/// Whether the committed golden `name` is still version 0.18's (its SHA-256 equals `sha`).
+fn committed_is_0_18(name: &str, sha: &str) -> bool {
+    let bytes = std::fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("golden")
+            .join(name),
+    )
+    .expect("the committed golden");
+    let hex: String = Sha256::digest(&bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    hex == sha
+}
+
 /// Spec 019 research R-07, the re-bless gate (hardware B2): with `fade_step` on (no fade, the
 /// request applied at once: version 0.18's switch) the generator regenerates the committed
 /// `golden-speed-v1.json` bit for bit, entry by entry, before the file is re-blessed for the
 /// crossfade; afterwards every entry without a schedule must still equal the committed one
-/// (the constant-level identity, FR-003). `RR_DR60_SKIP_018_GATE=1` skips the first check on a
-/// later re-bless, when the committed file is no longer 0.18's.
+/// (the constant-level identity, FR-003). The 0.18 check runs only while the committed file is
+/// still 0.18's (its SHA-256) and skips itself on a later re-bless.
 pub fn speed_re_bless_gate() {
     let committed = committed_speed();
-    if std::env::var("RR_DR60_SKIP_018_GATE").is_err() {
+    if committed_is_0_18("golden-speed-v1.json", GOLDEN_SPEED_0_18_SHA256) {
         let stepped = generate_speed(&crate::crossfade_checks::stepped, false);
         assert_eq!(stepped.entries.len(), committed.entries.len());
         for (c, a) in committed.entries.iter().zip(&stepped.entries) {
@@ -2064,14 +2087,15 @@ pub fn generate_changes(make: Make<'_>, bless: bool) -> GoldenFile {
 }
 
 /// Spec 019 research R-07 (hardware B2, B3): before `golden-changes-v1.json` is re-blessed for
-/// the crossfade, the stepped build regenerates the committed `speed_inside` entries bit for
-/// bit (`RR_DR60_SKIP_018_GATE=1` skips it on a later re-bless), every other entry equals the
+/// the crossfade, the stepped build regenerates the committed entries with a speed change bit
+/// for bit (while the committed file is still 0.18's, by its SHA-256), every other entry equals the
 /// committed one, and the `speed_inside` entries' produced counts moved by the wait (longer: the
 /// request into level 3 lands at the fade's end instead of a few outputs after the request).
 pub fn changes_re_bless_gate() {
     let committed = committed_changes();
     let actual = generate_changes(&crate::checks::standard, false);
     assert_eq!(committed.entries.len(), actual.entries.len());
+    let run_gate = committed_is_0_18("golden-changes-v1.json", GOLDEN_CHANGES_0_18_SHA256);
     // An entry carries a speed change when a schedule row names the speed control
     // (`position control value tag`; `speed_inside` and the drain / post-latch scenarios).
     let speed = crate::changes_checks::speed_control().to_string();
@@ -2082,7 +2106,7 @@ pub fn changes_re_bless_gate() {
                 .any(|row| row.split(' ').nth(1) == Some(speed.as_str()))
         })
     };
-    if std::env::var("RR_DR60_SKIP_018_GATE").is_err() {
+    if run_gate {
         let stepped = generate_changes(&crate::crossfade_checks::stepped, false);
         for (c, a) in committed.entries.iter().zip(&stepped.entries) {
             if has_speed(c) {

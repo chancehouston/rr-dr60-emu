@@ -73,6 +73,14 @@ fn first_output_switches_without_a_blend() {
         Partition::Fixed(64),
     );
     assert_eq!(sc::mismatches(&early, &r.out), 0, "a change scheduled at 0");
+    // Logged as spec 015 logs it (one entry, 3 -> 5); the start-value run has no speed entry.
+    let e = cc::entries_of(&r.log, cc::speed_control());
+    assert_eq!(e.len(), 1);
+    assert_eq!((e[0].position, e[0].before, e[0].after), (0, 3.0, 5.0));
+    let mut t = xf::recorded(&standard, speed_only(), &x);
+    t.set_playback_speed(5).unwrap();
+    let start_value = cc::run(&mut t, Source::Playback(1), Partition::Fixed(64));
+    assert!(cc::entries_of(&start_value.log, cc::speed_control()).is_empty());
 }
 
 /// Consecutive-position requests: the first starts a blend, the last of the rest waits.

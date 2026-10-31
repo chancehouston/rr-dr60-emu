@@ -39,6 +39,20 @@ fn crossfade_fades_cost() {
     }
     let _ = p.stop_recording(&mut []).unwrap();
     let mut out = vec![0.0f32; 4096];
+    // The constant level 3's worst block in the same run (the relative bound; coach review 9).
+    let mut worst_constant_us = 0.0f64;
+    for _ in 0..5 {
+        p.set_playback_speed(3).unwrap();
+        p.start_playback(1).unwrap();
+        loop {
+            let tb = Instant::now();
+            let info = p.play(&mut out).unwrap();
+            worst_constant_us = worst_constant_us.max(tb.elapsed().as_nanos() as f64 / 1000.0);
+            if info.finished {
+                break;
+            }
+        }
+    }
     let cycle = [3u8, 5, 1];
     let per_change = 200 * rate as usize / 1000; // 200 ms of host samples
     let mut best = f64::MAX;
@@ -66,8 +80,13 @@ fn crossfade_fades_cost() {
     }
     println!("fades_ns={best:.3}");
     println!("worst_block_us={worst_block_us:.1}");
+    println!("worst_constant_block_us={worst_constant_us:.1}");
     assert!(
         worst_block_us <= 85_333.0,
         "the worst block {worst_block_us:.1} µs exceeds the real-time budget (019 FR-009)"
+    );
+    assert!(
+        worst_block_us <= 4.0 * worst_constant_us,
+        "the worst block with fades {worst_block_us:.1} µs is more than four times the constant level's {worst_constant_us:.1} µs (019 FR-009, an engineering target)"
     );
 }

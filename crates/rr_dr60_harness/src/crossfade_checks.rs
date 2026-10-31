@@ -84,7 +84,7 @@ pub fn device_mismatches(got: &[f64], want: &[f32]) -> usize {
     got[..n]
         .iter()
         .zip(&want[..n])
-        .filter(|(g, w)| (**g as f32).to_bits() != w.to_bits())
+        .filter(|(g, w)| sc::narrow(**g).to_bits() != w.to_bits())
         .count()
         + got[n..].iter().filter(|v| **v != 0.0).count()
         + want.len().saturating_sub(got.len())
@@ -253,20 +253,24 @@ fn exclusions(f: f64, a: u8, b: u8) -> [f64; 2] {
     ]
 }
 
-/// Spec 019 US1 AS3 (FR-007): the twenty rows of spec 013's step table at 6 kHz: the
-/// crossfade's click energy against the stepped build's under the 40 ms reader (both output
-/// tones excluded; the step centred on the switch, the crossfade on s + N ÷ 2): the thirteen
-/// 2 and 2.4 kHz rows at least 30 dB; the seven 1 kHz rows, the 0.5 s reader's ratio, the
-/// absolute energies and a held-level floor reported; each ratio within 0.5 dB of the design
-/// script's print.
+/// Spec 019 US1 AS3 (FR-007): the twenty rows of spec 013's step table at 6 kHz on an
+/// 8000-sample stored tone with the request when the place reaches stored sample 4000 (the
+/// script's rule; the switch's click energy depends on the tone's phase at the switch, and the
+/// 0.5 s window must lie inside the recording's own part): the crossfade's click energy against
+/// the stepped build's under the 40 ms reader (both output tones excluded; the step centred on
+/// the switch, the crossfade on s + N ÷ 2), **every row at least 30 dB**; the 50 ms reader
+/// (20 Hz bins: every output tone on the grid; hardware review B2) and the 0.5 s reader's
+/// ratios, the absolute energies and a held-level floor reported; each 40 ms ratio within
+/// 0.5 dB of the design script's print. The crossfade reads 8 – 15 dB above the held-level
+/// floor on eighteen rows (its own residue, the two-pitch double image) and at the floor on
+/// the 2.4 kHz 1 → 5 and 2 → 4 rows, whose off-grid output tones (1440 and 1920 Hz at 25 Hz
+/// bins) set the 40 ms reader's floor.
 pub fn click_table(make: Make<'_>) -> Vec<MeasurementResult> {
     let settings = configs::settings("speed_only", 6000);
     let mut rows = Vec::new();
     for &(f, a, b, _) in &SCRIPT_STEPS {
-        let x = stored_tone(f, 4000);
-        // The request at the output whose place first reaches stored sample 1500 (the script's
-        // rule; the switch's click energy depends on the tone's phase at the switch).
-        let s = 7500usize.div_ceil(numerator(a) as usize);
+        let x = stored_tone(f, 8000);
+        let s = 20_000usize.div_ceil(numerator(a) as usize);
         let mut p = recorded(make, settings, &x);
         let fade = play_6k(&mut p, &[(0, a), (s, b)]);
         let mut q = recorded(&stepped, settings, &x);
@@ -290,6 +294,9 @@ pub fn click_table(make: Make<'_>) -> Vec<MeasurementResult> {
         let e_fade = click_energy_in(&fade, 6000, s_eff as f64 + half, 0.04, &ex);
         let e_floor = click_energy_in(&hold, 6000, s_eff as f64 + half, 0.04, &ex);
         let r40 = db(e_step / e_fade) / 2.0;
+        let r50 = db(click_energy_in(&step, 6000, s_eff as f64, 0.05, &ex)
+            / click_energy_in(&fade, 6000, s_eff as f64 + half, 0.05, &ex))
+            / 2.0;
         let r500 = db(click_energy_in(&step, 6000, s_eff as f64, 0.5, &ex)
             / click_energy_in(&fade, 6000, s_eff as f64 + half, 0.5, &ex))
             / 2.0;
@@ -303,11 +310,18 @@ pub fn click_table(make: Make<'_>) -> Vec<MeasurementResult> {
             stim.clone(),
             r40,
             "dB",
-            if f >= 2000.0 {
-                Tolerance::AtLeast(30.0) // 019 FR-007
-            } else {
-                Tolerance::Report // the 1 kHz rows: the switch's step is near the f32 floor
-            },
+            Tolerance::AtLeast(30.0), // 019 FR-007 (every row: the 1 kHz rows read 46 – 51 dB too)
+        ));
+        rows.push(MeasurementResult::new(
+            "FR-007",
+            "the 50 ms reader's ratio, every tone on its grid (reported)",
+            T_XFADE,
+            6000,
+            "speed_only",
+            stim.clone(),
+            r50,
+            "dB",
+            Tolerance::Report,
         ));
         rows.push(MeasurementResult::new(
             "FR-007",
@@ -340,11 +354,12 @@ pub fn click_table(make: Make<'_>) -> Vec<MeasurementResult> {
     rows
 }
 
-/// The design script's 40 ms ratios (`speed_design.py --crossfade`, printed 2026-10-30), in
-/// `SCRIPT_STEPS`'s order; the harness's rows within 0.5 dB.
+/// The design script's 40 ms ratios (`speed_design.py --crossfade`, printed 2026-10-30 on the
+/// 8000-sample tone with the request at stored sample 4000), in `SCRIPT_STEPS`'s order; the
+/// harness's rows within 0.5 dB.
 pub const SCRIPT_RATIOS_40MS: [f64; 20] = [
-    50.9, 50.6, 46.5, 48.1, 48.1, 48.3, 48.5, 53.0, 52.8, 53.1, 52.0, 50.8, 50.7, 50.9, 49.1, 49.2,
-    50.6, 50.5, 48.9, 49.2,
+    50.7, 50.8, 46.5, 46.5, 46.4, 45.6, 45.7, 52.9, 52.8, 53.1, 51.9, 50.8, 50.7, 50.8, 49.4, 49.4,
+    54.6, 50.5, 48.9, 49.2,
 ];
 
 /// The click table's 40 ms ratios against the script's print, within 0.5 dB (research R-09).
@@ -411,7 +426,6 @@ pub fn voiced_click(make: Make<'_>) -> Vec<MeasurementResult> {
 /// at the latch (dropped): the engine equals the reference bit for bit; the reading follows
 /// the latest request.
 pub fn wait_cases(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
-    let settings = configs::settings("speed_only", rate);
     let x = stored_tone(2000.0, 4000);
     let xs = stored_stream(&x);
     let cases: [(&str, Vec<(usize, u8)>); 4] = [
@@ -432,13 +446,36 @@ pub fn wait_cases(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
             vec![(0, 5), ((5 * xs.len()).div_ceil(7), 1)],
         ),
     ];
+    let mut rows = wait_rows(make, rate, &x, &xs, &cases);
+    // The fifth case (coach review 3): a blend started ten outputs before the new branch's own
+    // part ends, a second request inside it: the wait runs into the latch and is dropped.
+    let short = stored_tone(2000.0, 1200);
+    let xs_short = stored_stream(&short);
+    let own_5 = (5 * xs_short.len()).div_ceil(7);
+    let late = [(
+        "waited into the latch: 3 -> 5 ten outputs before K, 1 five later",
+        vec![(0, 3), (xs_short.len() - 10, 5), (xs_short.len() - 5, 1)],
+    )];
+    let _ = own_5;
+    rows.extend(wait_rows(make, rate, &short, &xs_short, &late));
+    rows
+}
+
+fn wait_rows(
+    make: Make<'_>,
+    rate: u32,
+    x: &[f32],
+    xs: &[f32],
+    cases: &[(&str, Vec<(usize, u8)>)],
+) -> Vec<MeasurementResult> {
+    let settings = configs::settings("speed_only", rate);
     let mut rows = Vec::new();
     for (name, requests) in cases {
-        let mut p = recorded(make, settings, &x);
-        let got = device_outputs(&mut p, rate, &requests);
+        let mut p = recorded(make, settings, x);
+        let got = device_outputs(&mut p, rate, requests);
         let start = requests[0].1;
         let dev: Vec<(u64, u8)> = requests[1..].iter().map(|&(c, l)| (c as u64, l)).collect();
-        let (want, _) = sc::reference_output_at(&xs, 1, start, &dev);
+        let (want, _) = sc::reference_output_at(xs, 1, start, &dev);
         let mism = device_mismatches(&got, &want);
         let last = requests.last().unwrap().1;
         rows.push(MeasurementResult::new(
@@ -447,7 +484,7 @@ pub fn wait_cases(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
             T_XFADE,
             rate,
             "speed_only",
-            name,
+            *name,
             mism as f64,
             "",
             Tolerance::Exact(0.0), // 019 FR-005
@@ -458,7 +495,7 @@ pub fn wait_cases(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
             T_XFADE,
             rate,
             "speed_only",
-            name,
+            *name,
             pass(p.playback_speed() == last),
             "",
             Tolerance::Exact(1.0), // 019 FR-005
@@ -470,22 +507,41 @@ pub fn wait_cases(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
 // ---- FR-006: the end cut ------------------------------------------------------------------------
 
 /// Spec 019 US1 AS6 (FR-006): a change at the new branch's last own output of a short
-/// recording: the length rule holds (the total equals the stepped build's), the blend samples
-/// cut by the drain, and the cut's peak (dB re the tone) and energy, in both configurations;
-/// reported, the length asserted.
+/// recording, in both speed configurations: the total equals the stepped build's (the length
+/// rule), the whole playback equals the reference bit for bit (a blend across K: both branches
+/// read zeros past K), and the cut remainder is **measured** from the reference's stored
+/// stream: the old branch's samples the drain cut, (1 − w_n)·y_old at its places, their peak
+/// (dB re the tone) and energy (hardware review B4). Measured: the remainder is the old level's
+/// content when the old branch is still inside the recording at the cut (1 → 3: −2.7 dB re the
+/// tone in one sample; 5 → 3: −20 dB) and zero when it lies past K (3 → 5, 5 → 1, 4 → 2,
+/// 3 → 1); a 1200-sample recording is ten whole frames, so the codec configuration ends on
+/// content too, and D6's "mostly silence" holds only for recordings that end in fed silence.
 pub fn end_cut(make: Make<'_>) -> Vec<MeasurementResult> {
     let x = stored_tone(2000.0, 1200);
+    let weights = sc::fade_weights();
     let mut rows = Vec::new();
     for config in ["speed_only", "speed_only_codec"] {
         let settings = configs::settings(config, 6000);
+        let xs = {
+            let mut p = recorded(&crate::checks::standard, settings, &x);
+            sc::stored_stream(&mut p, 1)
+        };
+        let banks: Vec<(u32, Vec<f64>)> = [1u8, 2, 4, 5]
+            .iter()
+            .map(|&l| (numerator(l), __test_hooks::speed_bank(l).expect("bank")))
+            .collect();
+        let bank = |k: u32| {
+            banks
+                .iter()
+                .find(|(kk, _)| *kk == k)
+                .map(|(_, b)| b.as_slice())
+        };
         for (a, b) in PAIRS {
-            let ka = numerator(a) as usize;
-            // The latest landing that still starts a fade: the output whose place is the last
-            // before K (for b = 3 a whole one).
-            let own_a = (5 * x.len()).div_ceil(ka);
+            let (ka, kb) = (numerator(a), numerator(b));
+            let own_a = (5 * xs.len()).div_ceil(ka as usize);
             let mut s = own_a - 1;
             if b == 3 {
-                while (s * ka) % 5 != 0 {
+                while (s * ka as usize) % 5 != 0 {
                     s -= 1;
                 }
             }
@@ -493,18 +549,28 @@ pub fn end_cut(make: Make<'_>) -> Vec<MeasurementResult> {
             let fade = play_6k(&mut p, &[(0, a), (s, b)]);
             let mut q = recorded(&stepped, settings, &x);
             let step = play_6k(&mut q, &[(0, a), (s, b)]);
-            let produced_after = fade.len().saturating_sub(s);
-            let cut = n_fade().saturating_sub(produced_after.min(n_fade()));
-            // The cut's content: the old branch's remaining weight times the tone (an upper
-            // bound on its peak), reported.
-            let w = sc::fade_weights();
-            let idx = produced_after.min(n_fade()).max(1) - 1;
-            let weight = if produced_after >= n_fade() {
-                0.0
-            } else {
-                1.0 - w[idx]
-            };
-            let stim = format!("{a} -> {b} at the last own output {s} of K = {}", x.len());
+            let (want, _) = sc::reference_output_at(&xs, 1, a, &[(s as u64, b)]);
+            let mism = device_mismatches(
+                &fade.iter().map(|&v| f64::from(v)).collect::<Vec<_>>(),
+                &want,
+            );
+            // The switch output's place and the old branch's places from there.
+            let p_switch = s as u64 * u64::from(ka);
+            let produced_after = fade.len().saturating_sub(s).min(n_fade());
+            let cut = n_fade() - produced_after;
+            let (mut peak, mut energy) = (0.0f64, 0.0f64);
+            for n in produced_after + 1..=n_fade() {
+                if n == n_fade() {
+                    break; // output N is the new branch alone: nothing of the old branch
+                }
+                let old_p5 = p_switch + (n as u64 - 1) * u64::from(ka);
+                let y_old = sc::value_at(&xs, bank(ka), ka, old_p5);
+                let v = (1.0 - weights[n - 1]) * y_old;
+                peak = peak.max(v.abs());
+                energy += v * v;
+            }
+            let _ = kb;
+            let stim = format!("{a} -> {b} at the last own output {s} of K = {}", xs.len());
             rows.push(MeasurementResult::new(
                 "FR-006",
                 "total length equals the stepped build's",
@@ -515,6 +581,17 @@ pub fn end_cut(make: Make<'_>) -> Vec<MeasurementResult> {
                 pass(fade.len() == step.len()),
                 "",
                 Tolerance::Exact(1.0), // 019 FR-006
+            ));
+            rows.push(MeasurementResult::new(
+                "FR-006",
+                "a blend across K equals the reference bit for bit (mismatches)",
+                T_XFADE,
+                6000,
+                config,
+                stim.clone(),
+                mism as f64,
+                "",
+                Tolerance::Exact(0.0), // 019 FR-006: both branches read zeros past K
             ));
             rows.push(MeasurementResult::new(
                 "FR-006",
@@ -529,12 +606,23 @@ pub fn end_cut(make: Make<'_>) -> Vec<MeasurementResult> {
             ));
             rows.push(MeasurementResult::new(
                 "FR-006",
-                "the old branch's weight at the cut, dB re its full level (reported)",
+                "the cut remainder's peak, dB re the tone (reported)",
+                T_XFADE,
+                6000,
+                config,
+                stim.clone(),
+                db(peak.max(1e-300) / AMP),
+                "dB",
+                Tolerance::Report,
+            ));
+            rows.push(MeasurementResult::new(
+                "FR-006",
+                "the cut remainder's energy, dB re one sample of the tone (reported)",
                 T_XFADE,
                 6000,
                 config,
                 stim,
-                db(weight.max(1e-300)),
+                db(energy.max(1e-300) / (AMP * AMP)) / 2.0,
                 "dB",
                 Tolerance::Report,
             ));

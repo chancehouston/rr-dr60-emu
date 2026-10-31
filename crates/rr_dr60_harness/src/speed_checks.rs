@@ -110,7 +110,7 @@ pub fn play(p: &mut Pipeline, number: u32, call: usize, schedule: &[(usize, u8)]
 
 /// `narrow_out`: the engine's narrowing of a 64-bit sample for output (round to nearest, `f32`
 /// subnormals flushed to 0.0).
-fn narrow(y: f64) -> f32 {
+pub fn narrow(y: f64) -> f32 {
     let v = y as f32;
     if v.is_subnormal() { 0.0 } else { v }
 }

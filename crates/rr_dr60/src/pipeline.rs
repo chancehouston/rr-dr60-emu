@@ -431,9 +431,11 @@ impl OnePass {
 }
 
 /// Spec 018 FR-001: within `BATTERY_VOLTS_RANGE`, inclusive.
-/// The device-rate trace's fixed capacity (spec 019 test hooks): 60 s of device samples.
+/// The device-rate trace's fixed capacity (spec 019 test hooks): the device samples one play
+/// call of 8192 host samples pulls at the identity rate, 64 KiB, within the one-mebibyte
+/// footprint (spec 006 FR-017); the checks read it in calls of one host sample.
 #[cfg(feature = "__test-hooks")]
-const SPEED_TRACE_CAPACITY: usize = 360_000;
+const SPEED_TRACE_CAPACITY: usize = 8192; // engineering target (019 R-06)
 
 /// The live controls' values a pipeline starts with (`new`: the defaults; `reconfigure`: the
 /// values kept, spec 013 FR-001 and spec 018 FR-001).

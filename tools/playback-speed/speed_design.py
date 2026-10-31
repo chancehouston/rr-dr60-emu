@@ -204,13 +204,13 @@ def xfade_run(f: float, a: int, b: int, mode: str):
     into level 3 waits for a whole place): mode "step" switches (0.18), "xfade" blends with the
     committed rule (n < N: y_old + w_n·(y_new − y_old); n = N: y_new), "hold" keeps level a.
     Returns the outputs and the change's output index s."""
-    x = AMP * np.sin(2 * np.pi * f / FS * np.arange(4000))
+    x = AMP * np.sin(2 * np.pi * f / FS * np.arange(8000))
     ka, kb = a + 2, b + 2
     w = fade_weights()
     out = []
     p5 = 0
-    while p5 < 5 * 1500:
-        out.append(value_at(x, ka, p5))
+    while p5 < 5 * 4000:  # the request when the place reaches stored sample 4000 (the 0.5 s
+        out.append(value_at(x, ka, p5))  # window then lies inside the own part; hardware B3)
         p5 += ka
     if kb == 5:
         while p5 % 5:
@@ -219,7 +219,7 @@ def xfade_run(f: float, a: int, b: int, mode: str):
     s = len(out)
     pa = pb = p5
     n = 0
-    while pb < 5 * 3900:
+    while pb < 5 * 7900:
         if mode == "hold":
             out.append(value_at(x, ka, pa))
         else:
@@ -245,9 +245,12 @@ def crossfade_report(bound) -> None:
     bound(w[29] == 0.15625 and w[119] == 1.0, "crossfade weights: w[30] or w[120] not exact")
     bound(bool(np.all(np.diff(w) > 0)), "crossfade weights: not strictly increasing")
     print("crossfade click table (research R-06): step/crossfade click-energy ratio, dB; the 40 ms reader"
-          " (240 samples, both output tones ± 250 Hz excluded, the step centred on s, the crossfade on"
-          " s + 60) and the 0.5 s reader (3000 samples); absolute energies in dB; the floor = the held level")
-    print("    Hz  a->b   40 ms ratio   0.5 s ratio   step dB   fade dB   floor dB")
+          " (240 samples, 25 Hz bins, both output tones ± 250 Hz excluded, the step centred on s, the"
+          " crossfade on s + 60), the 50 ms reader (300 samples, 20 Hz bins: every output tone on the grid)"
+          " and the 0.5 s reader (3000 samples); absolute 40 ms energies in dB; the floor = the held level"
+          " (the crossfade reads above it where its own residue, the two-pitch image, dominates, and at it"
+          " where an off-grid output tone's leakage does: 2.4 kHz 1->5 and 2->4)")
+    print("    Hz  a->b   40 ms ratio   50 ms ratio   0.5 s ratio   step dB   fade dB   floor dB")
     for f, a, b in XFADE_ROWS:
         ys, s = xfade_run(f, a, b, "step")
         yx, _ = xfade_run(f, a, b, "xfade")
@@ -257,17 +260,25 @@ def crossfade_report(bound) -> None:
         e_fade = click_in(yx, s + 60, ex, 240)
         e_floor = click_in(yh, s + 60, ex, 240)
         r40 = 10 * np.log10(e_step / e_fade)
+        r50 = 10 * np.log10(click_in(ys, s, ex, 300) / click_in(yx, s + 60, ex, 300))
         r500 = 10 * np.log10(click_in(ys, s, ex, 3000) / click_in(yx, s + 60, ex, 3000))
-        print("  %4.0f  %d->%d  %11.1f  %12.1f  %8.1f  %8.1f  %9.1f"
-              % (f, a, b, r40, r500, 10 * np.log10(e_step), 10 * np.log10(e_fade), 10 * np.log10(e_floor)))
-        if f >= 2000.0:
-            bound(r40 >= 30.0, f"crossfade {f:.0f} Hz {a}->{b}: 40 ms ratio {r40:.1f} dB < 30")
-    print("crossfade end cut (research R-04): a change at the new branch's last own output of a 4000-sample"
-          " recording: blend samples cut by the drain and the old branch's weight there")
+        print("  %4.0f  %d->%d  %11.1f  %11.1f  %12.1f  %8.1f  %8.1f  %9.1f"
+              % (f, a, b, r40, r50, r500, 10 * np.log10(e_step), 10 * np.log10(e_fade), 10 * np.log10(e_floor)))
+        bound(r40 >= 30.0, f"crossfade {f:.0f} Hz {a}->{b}: 40 ms ratio {r40:.1f} dB < 30")
+    print("crossfade end cut (research R-04): a change at the new branch's last own output of a 1200-sample"
+          " recording (for a change into level 3, the last whole place): blend samples cut by the drain and"
+          " the old branch's weight there (an upper bound on the cut's level; the harness measures the cut)")
     for a, b in STEP_PAIRS:
-        kb = b + 2
+        ka, kb = a + 2, b + 2
         tail = tail_len(kb) if kb != 5 else 0
-        produced = 1 + tail  # one own output from the landing, then the tail
+        own_a = -(-5 * 1200 // ka)
+        s = own_a - 1
+        if kb == 5:
+            while (s * ka) % 5:
+                s -= 1
+        p_switch = s * ka
+        own_from_switch = -(-(5 * 1200 - p_switch) // kb)
+        produced = own_from_switch + tail
         cut = max(0, FADE_N - produced)
         wt = 1.0 - w[produced - 1] if produced <= FADE_N else 0.0
         print("  %d->%d: %3d blend samples cut, the old branch's weight at the cut %.3f (%.1f dB)"
