@@ -46,6 +46,12 @@ echo "smoke --record-changes matches the Rust example"
 cargo run -q -p rr_dr60_harness --example battery_rows > target/example-battery.txt
 diff target/smoke-battery.txt target/example-battery.txt
 echo "smoke --battery matches the Rust example"
+# Spec 021 FR-011: the C program's bypass rows (the entries per block, the output digest, the
+# level function's four cells) are byte-identical to the Rust example.
+./target/smoke --bypass > target/smoke-bypass.txt
+cargo run -q -p rr_dr60_harness --example bypass_rows > target/example-bypass.txt
+diff target/smoke-bypass.txt target/example-bypass.txt
+echo "smoke --bypass matches the Rust example"
 # Spec 020 (contracts/api.md): the C program's processing-record rows (the record's text, the
 # read-out, the rewrite, the digest check, the three maps, the feed-point rule) against the Rust
 # example `record_rows`.

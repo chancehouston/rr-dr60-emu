@@ -32,6 +32,7 @@
 use crate::output::volume_transition_samples;
 use crate::settings::{OutputSettings, Route, SUPPORTED_HOST_RATES, Settings, Tap};
 use crate::stages::biquad::Biquad;
+use crate::stages::fade::{self, Fade, FadeOut};
 use crate::stages::first_order::FirstOrder;
 use crate::stages::output_coeffs as c;
 
@@ -150,6 +151,7 @@ pub(crate) fn bound(y: f64, lo: f64, hi: f64) -> f64 {
 
 /// The output chain's state for one playback path (data-model.md › `OutputChain` state).
 #[derive(Clone, Debug)]
+#[repr(C)] // spec 021 research R-08: the hot fields first (`bypass_state` beside `active`)
 pub(crate) struct OutputChain {
     route: Route,
     k_spk: f64,
@@ -159,6 +161,9 @@ pub(crate) struct OutputChain {
     run_earphone: bool,
     /// `run_amp || run_speaker || run_earphone`, precomputed for the per-sample path.
     active: bool,
+    /// Spec 021 (research R-08): bit 0 any bypass fade running, bits 1 – 3 stages 11 – 13 at
+    /// rest bypassed. 0 takes version 0.20's per-sample path unchanged.
+    bypass_state: u8,
     /// The point `process` returns: `RouteOutput` for the player; the configured tap for the
     /// one-pass.
     tap: Tap,
@@ -244,6 +249,14 @@ pub(crate) struct OutputChain {
     batt_scale_sample: bool,
     batt_no_at_once_on_route: bool,
     batt_count_at_or_above: bool,
+    /// Spec 021 D3: the live bypass fades of stages 11, 12 and 13 (N = 20 ms of host samples,
+    /// A-045's length; the stages keep running while bypassed).
+    fade_amp: Fade,
+    fade_speaker: Fade,
+    fade_earphone: Fade,
+    /// Spec 021 test hooks (research R-09), all false in production.
+    #[cfg(any(test, feature = "__test-hooks"))]
+    pub(crate) bypass_mut: fade::BypassMutation,
 }
 
 impl OutputChain {
@@ -268,6 +281,8 @@ impl OutputChain {
         } else {
             Tap::RouteOutput
         };
+        // Spec 021: N = 20 ms of host samples (A-045); the same unreachable fallback as the ramp.
+        let n_fade = volume_transition_samples(settings.host_rate_hz).unwrap_or(120);
         let mut chain = Self {
             route: Route::Speaker,
             k_spk: 1.0,
@@ -276,6 +291,7 @@ impl OutputChain {
             run_speaker: enabled && speaker_enabled, // A-010 (009 FR-002)
             run_earphone: enabled && earphone_enabled, // A-032 (009 FR-002)
             active: enabled && (volume_amp_enabled || speaker_enabled || earphone_enabled),
+            bypass_state: 0, // 021: every stage at rest on
             tap,
             knee_start: c::KNEE_START, // A-031 (low): the knee's shape
             gain_scale: 1.0,
@@ -327,6 +343,11 @@ impl OutputChain {
             batt_scale_sample: false,
             batt_no_at_once_on_route: false,
             batt_count_at_or_above: false,
+            fade_amp: Fade::new(n_fade),
+            fade_speaker: Fade::new(n_fade),
+            fade_earphone: Fade::new(n_fade),
+            #[cfg(any(test, feature = "__test-hooks"))]
+            bypass_mut: fade::BypassMutation::default(),
         };
         // A-045: N = 20 ms of host samples. Unreachable fallback: `Pipeline::new` validated the
         // rate before building the chain; 120 (the 6 kHz figure) only avoids a panic site.
@@ -543,6 +564,12 @@ impl OutputChain {
         self.recompute_knee();
     }
 
+    /// Test-only (spec 021 research R-09): the bypass mutants.
+    #[cfg(any(test, feature = "__test-hooks"))]
+    pub(crate) fn set_bypass_mutation(&mut self, m: fade::BypassMutation) {
+        self.bypass_mut = m;
+    }
+
     /// Test-only: the position the current scalars were computed from is not stored (the
     /// controls are re-copied at every block), so a mutation re-applies the reference position;
     /// the harness sets its own position afterwards.
@@ -600,9 +627,20 @@ impl OutputChain {
 
     /// The stages themselves: the sample at the configured tap before the output clamp. With
     /// every stage off (or at a tap before the chain) the sample passes through with no
-    /// arithmetic.
+    /// arithmetic. Spec 021 (research R-08): with no bypass fade running or at rest, version
+    /// 0.20's path unchanged; otherwise [`inner_fades`](Self::inner_fades).
     #[inline(always)]
     fn inner(&mut self, y: f64) -> f64 {
+        if self.bypass_state == 0 {
+            self.inner_plain(y)
+        } else {
+            self.inner_fades(y)
+        }
+    }
+
+    /// Version 0.20's per-sample path (every stage at rest on).
+    #[inline(always)]
+    fn inner_plain(&mut self, y: f64) -> f64 {
         if !self.active {
             return y;
         }
@@ -684,6 +722,217 @@ impl OutputChain {
         self.route_peak = 0.0;
         self.clamp_count = 0;
         self.amp_clip_count = 0;
+        // Spec 021 research R-11: a fade in progress ends at its target (the landed value), so a
+        // playback stopped mid-blend restarts at rest; `reset_sections` (a route switch) keeps
+        // the fades running (FR-008).
+        self.fade_amp.snap(self.fade_amp.target_bypassed());
+        self.fade_speaker.snap(self.fade_speaker.target_bypassed());
+        self.fade_earphone.snap(self.fade_earphone.target_bypassed());
+        self.refresh_bypass_state();
+    }
+
+    /// Spec 021 D4 (research R-04): whether `stage` (11, 12 or 13) runs on this chain: its
+    /// construction switch on **and** the return point reaching it (`AfterVolumeAmp` reaches 11
+    /// only, `AfterSpeaker` 11 and 12, `AfterEarphone` 11 and 13, `RouteOutput` all three; the
+    /// taps before the chain none). The route is not part of the rule: a stage not on the
+    /// active route still runs its fade's phase (FR-008).
+    pub(crate) fn reaches(&self, stage: u8) -> bool {
+        match stage {
+            11 => self.run_amp,
+            12 => self.run_speaker && matches!(self.tap, Tap::RouteOutput | Tap::AfterSpeaker),
+            13 => {
+                self.run_earphone && matches!(self.tap, Tap::RouteOutput | Tap::AfterEarphone)
+            }
+            _ => false,
+        }
+    }
+
+    /// Spec 021 D2, D5 (research R-02): a landing of `stage`'s switch (`bypassed` = the value 0),
+    /// `at_once` on the stream's first produced sample (spec 011's rule); otherwise a fade from
+    /// rest or a reversal from the current phase. The caller checked `reaches(stage)`.
+    pub(crate) fn land_bypass(&mut self, stage: u8, bypassed: bool, at_once: bool) {
+        #[cfg(any(test, feature = "__test-hooks"))]
+        let at_once = at_once || self.bypass_mut.fade_step; // the step mutant: no fade
+        match stage {
+            11 => self.fade_amp.land(bypassed, at_once),
+            12 => self.fade_speaker.land(bypassed, at_once),
+            13 => self.fade_earphone.land(bypassed, at_once),
+            _ => {}
+        }
+        self.refresh_bypass_state();
+    }
+
+    /// Snaps `stage`'s switch to `bypassed` at rest (the engine's `reset` re-applying
+    /// `settings()`, `start_playback`'s adopt; spec 021 research R-11).
+    pub(crate) fn snap_bypass(&mut self, stage: u8, bypassed: bool) {
+        self.land_bypass(stage, bypassed, true);
+    }
+
+    /// The value in force or being approached for `stage` (true = bypassed).
+    #[cfg(any(test, feature = "__test-hooks"))]
+    pub(crate) fn bypass_target(&self, stage: u8) -> bool {
+        match stage {
+            11 => self.fade_amp.target_bypassed(),
+            12 => self.fade_speaker.target_bypassed(),
+            13 => self.fade_earphone.target_bypassed(),
+            _ => false,
+        }
+    }
+
+    /// Recomputes the hot byte from the three fades (research R-08).
+    #[inline]
+    fn refresh_bypass_state(&mut self) {
+        let running =
+            self.fade_amp.running() || self.fade_speaker.running() || self.fade_earphone.running();
+        self.bypass_state = u8::from(running)
+            | (u8::from(self.fade_amp.at_rest_bypassed()) << 1)
+            | (u8::from(self.fade_speaker.at_rest_bypassed()) << 2)
+            | (u8::from(self.fade_earphone.at_rest_bypassed()) << 3);
+    }
+
+    /// Spec 021 FR-002: a stage's contribution from its fade's verdict, processed output `y`
+    /// and input `x`; the mutants (research R-09) invert the weight or make it linear.
+    #[inline(always)]
+    fn blend(&self, out: FadeOut, f: &Fade, y: f64, x: f64) -> f64 {
+        #[cfg(any(test, feature = "__test-hooks"))]
+        if let FadeOut::Blend(_) = out {
+            let w = if self.bypass_mut.fade_linear {
+                f.weight_linear(f.phase())
+            } else {
+                f.weight(f.phase())
+            };
+            return if self.bypass_mut.weight_inverted {
+                x + w * (y - x)
+            } else {
+                y + w * (x - y)
+            };
+        }
+        let _ = f;
+        fade::apply(out, y, x)
+    }
+
+    /// Spec 021 (the `stage_cold` mutant): a bypassed stage's filter not run.
+    #[inline(always)]
+    fn cold(&self, out: FadeOut) -> bool {
+        #[cfg(any(test, feature = "__test-hooks"))]
+        {
+            self.bypass_mut.stage_cold && out == FadeOut::Bypassed
+        }
+        #[cfg(not(any(test, feature = "__test-hooks")))]
+        {
+            let _ = out;
+            false
+        }
+    }
+
+    /// The stages with a bypass fade running or at rest bypassed (spec 021 D3, D7; research
+    /// R-08): every fade steps each sample whatever the route (FR-008), each stage configured on
+    /// still runs, and its contribution is selected or blended; stage 11's clip count counts only
+    /// while its verdict is not "bypassed".
+    #[inline(never)]
+    fn inner_fades(&mut self, y: f64) -> f64 {
+        if !self.active {
+            return y;
+        }
+        self.fresh = false;
+        if self.ramp_k < self.ramp_n {
+            self.ramp_step();
+        }
+        let o_amp = self.fade_amp.step();
+        #[cfg(any(test, feature = "__test-hooks"))]
+        let frozen = self.bypass_mut.phase_frozen_off_route;
+        #[cfg(not(any(test, feature = "__test-hooks")))]
+        let frozen = false;
+        let o_spk = if frozen && self.route != Route::Speaker {
+            FadeOut::On
+        } else {
+            self.fade_speaker.step()
+        };
+        let o_ear = if frozen && self.route != Route::Earphone {
+            FadeOut::On
+        } else {
+            self.fade_earphone.step()
+        };
+        #[cfg(any(test, feature = "__test-hooks"))]
+        let count_ungated = self.bypass_mut.count_ungated;
+        #[cfg(not(any(test, feature = "__test-hooks")))]
+        let count_ungated = false;
+        // Stage 11's input is the chain's input `y` (a configured-off stage 11 passes `y`
+        // through, the 32 Hz corner skipped); the warm corner runs regardless.
+        let u = if self.run_amp && !self.cold(o_amp) {
+            self.vol_hpf.process(y)
+        } else {
+            y
+        };
+        let out = match self.route {
+            Route::Speaker => {
+                let a = if self.run_amp {
+                    let a_on = if self.cold(o_amp) {
+                        y
+                    } else {
+                        if self.batt_k < self.batt_n {
+                            self.batt_step();
+                        }
+                        let xin = self.k_spk * self.amp_hpf.process(u) + 0.0;
+                        let clipped = if self.batt_count_at_or_above {
+                            xin.abs() >= self.knee_lo
+                        } else {
+                            xin.abs() > self.knee_lo
+                        };
+                        // Spec 021 D7: the count only while the knee is heard.
+                        if clipped && (count_ungated || o_amp != FadeOut::Bypassed) {
+                            self.amp_clip_count += 1;
+                        }
+                        if self.batt_scale_sample {
+                            knee(xin, self.knee_start) * self.batt
+                        } else {
+                            knee_b(xin, self.batt, self.knee_lo, self.knee_hi, self.knee_den)
+                        }
+                    };
+                    self.blend(o_amp, &self.fade_amp, a_on, y)
+                } else {
+                    u
+                };
+                if self.tap == Tap::AfterVolumeAmp {
+                    a
+                } else if self.run_speaker {
+                    let s_on = if self.cold(o_spk) {
+                        a
+                    } else {
+                        self.speaker_shelf.process(self.speaker_res.process(a))
+                    };
+                    self.blend(o_spk, &self.fade_speaker, s_on, a)
+                } else {
+                    a
+                }
+            }
+            Route::Earphone => {
+                let v = if self.run_amp {
+                    let v_on = if self.cold(o_amp) {
+                        y
+                    } else {
+                        self.k_ear * u + 0.0
+                    };
+                    self.blend(o_amp, &self.fade_amp, v_on, y)
+                } else {
+                    u
+                };
+                if self.tap == Tap::AfterVolumeAmp {
+                    v
+                } else if self.run_earphone {
+                    let e_on = if self.cold(o_ear) {
+                        v
+                    } else {
+                        self.ear_out.process(self.ear_in.process(v))
+                    };
+                    self.blend(o_ear, &self.fade_earphone, e_on, v)
+                } else {
+                    v
+                }
+            }
+        };
+        self.refresh_bypass_state();
+        out
     }
 
     /// The sections' part of [`reset`](Self::reset), without the meter accumulators: what a
@@ -750,6 +999,307 @@ impl OutputChain {
 
 /// 009 T008 (spec 009 FR-003 – FR-009; research R-03 – R-05, R-08; contracts/output-chain-
 /// design.md): the clipper, the loaded law, the chain's semantics and the pinned table.
+#[cfg(test)]
+mod bypass_tests {
+    //! Spec 021 T004: the chain's live bypass (research R-04, R-08, R-10, R-11).
+    extern crate std;
+    use super::*;
+    use crate::settings::{Settings, Tap};
+    use crate::stages::fade::BypassMutation;
+    use std::vec::Vec;
+
+    fn settings(rate: u32) -> Settings {
+        let mut s = Settings::new(rate);
+        s.tap = Tap::RouteOutput;
+        s
+    }
+
+    /// An exact stimulus (no libm): a fast square with a slow square under it.
+    fn stimulus(n: usize) -> Vec<f64> {
+        (0..n)
+            .map(|i| {
+                let a = if (i / 3) % 2 == 0 { 0.5 } else { -0.5 };
+                let b = if (i / 97) % 2 == 0 { 0.1 } else { -0.1 };
+                a + b
+            })
+            .collect()
+    }
+
+    #[test]
+    fn reaches_at_the_five_taps() {
+        let s = settings(48_000);
+        let player = OutputChain::new(&s, false);
+        assert!(player.reaches(11) && player.reaches(12) && player.reaches(13));
+        assert!(!player.reaches(10) && !player.reaches(14));
+        let at = |tap: Tap| {
+            let mut t = s;
+            t.tap = tap;
+            let c = OutputChain::new(&t, true);
+            [c.reaches(11), c.reaches(12), c.reaches(13)]
+        };
+        assert_eq!(at(Tap::RouteOutput), [true, true, true]);
+        assert_eq!(at(Tap::AfterVolumeAmp), [true, false, false]);
+        assert_eq!(at(Tap::AfterSpeaker), [true, true, false]);
+        assert_eq!(at(Tap::AfterEarphone), [true, false, true]);
+        assert_eq!(at(Tap::AfterPlayback), [false, false, false]);
+        let mut off = s;
+        off.output.speaker_enabled = false;
+        assert!(!OutputChain::new(&off, false).reaches(12));
+    }
+
+    /// Research R-08: with no landing the byte is 0 (0.20's path); a landing of the value in
+    /// force keeps it 0; a settled bypass sets the stage's rest bit; a snap back clears it.
+    #[test]
+    fn bypass_state_zero_is_the_plain_path() {
+        let s = settings(6000);
+        let mut c = OutputChain::new(&s, false);
+        assert_eq!(c.bypass_state, 0);
+        c.land_bypass(12, false, false);
+        assert_eq!(c.bypass_state, 0);
+        c.land_bypass(12, true, false);
+        assert_eq!(c.bypass_state, 1);
+        for &x in &stimulus(200) {
+            c.process(x);
+        }
+        assert_eq!(c.bypass_state, 1 << 2);
+        c.land_bypass(12, false, true);
+        assert_eq!(c.bypass_state, 0);
+    }
+
+    /// Research R-10: a bypassed last stage equals the configured-off chain from the blend's
+    /// last sample on, and the return equals the all-on chain, bit for bit.
+    fn last_stage_identity(stage: u8, route: Route, rate: u32) {
+        let mut on_s = settings(rate);
+        if stage == 11 {
+            on_s.output.speaker_enabled = false; // stage 11 alone (output_only_amp)
+            on_s.output.earphone_enabled = false;
+        }
+        let mut off = on_s;
+        match stage {
+            11 => off.output.volume_amp_enabled = false,
+            12 => off.output.speaker_enabled = false,
+            _ => off.output.earphone_enabled = false,
+        }
+        let mut live = OutputChain::new(&on_s, false);
+        let mut twin = OutputChain::new(&off, false);
+        let mut all_on = OutputChain::new(&on_s, false);
+        for c in [&mut live, &mut twin, &mut all_on] {
+            c.set_controls(route, 0.6);
+        }
+        let n = live.fade_speaker.len() as usize;
+        let land = 500usize;
+        let back = land + n + 700;
+        let xs = stimulus(back + n + 2000);
+        for (i, &x) in xs.iter().enumerate() {
+            if i == land {
+                live.land_bypass(stage, true, false);
+            }
+            if i == back {
+                live.land_bypass(stage, false, false);
+            }
+            let y = live.process(x);
+            let t = twin.process(x);
+            let a = all_on.process(x);
+            if i < land {
+                assert_eq!(y.to_bits(), a.to_bits(), "stage {stage} {route:?} {rate}: before");
+            } else if i >= land + n - 1 && i < back {
+                assert_eq!(y.to_bits(), t.to_bits(), "stage {stage} {route:?} {rate}: bypassed at {i}");
+            } else if i >= back + n - 1 {
+                assert_eq!(y.to_bits(), a.to_bits(), "stage {stage} {route:?} {rate}: returned at {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn bypassed_stage_equals_configured_off_when_last() {
+        for rate in [6000, 44_100, 48_000] {
+            last_stage_identity(12, Route::Speaker, rate);
+            last_stage_identity(13, Route::Earphone, rate);
+            last_stage_identity(11, Route::Speaker, rate);
+            last_stage_identity(11, Route::Earphone, rate);
+        }
+    }
+
+    /// Research R-09: inside the blend the sample equals y + w·(x − y) of the two constant
+    /// chains; w(N/2) = 0.5 exactly.
+    #[test]
+    fn blend_identity_between_the_constant_chains() {
+        let s = settings(48_000);
+        let mut off = s;
+        off.output.speaker_enabled = false;
+        let mut live = OutputChain::new(&s, false);
+        let mut twin = OutputChain::new(&off, false);
+        let mut all_on = OutputChain::new(&s, false);
+        let n = live.fade_speaker.len();
+        let land = 300usize;
+        let f = Fade::new(n);
+        for (i, &x) in stimulus(land + n as usize + 10).iter().enumerate() {
+            if i == land {
+                live.land_bypass(12, true, false);
+            }
+            let y = live.process(x);
+            let t = twin.process(x);
+            let a = all_on.process(x);
+            if i >= land && i < land + n as usize - 1 {
+                let k = (i - land + 1) as u32;
+                let w = f.weight(k);
+                assert_eq!(y, a + w * (t - a), "sample {i}");
+                if k == n / 2 {
+                    assert_eq!(w, 0.5);
+                }
+            }
+        }
+    }
+
+    /// D7: the clip count stops while stage 11 is at rest bypassed and counts again from the
+    /// first sample with w < 1; the `count_ungated` mutant counts regardless.
+    #[test]
+    fn clip_count_gated() {
+        let s = settings(6000);
+        let mut c = OutputChain::new(&s, false);
+        c.set_controls(Route::Speaker, 1.0);
+        let n = c.fade_amp.len() as usize;
+        let loud = |i: usize| if i % 2 == 0 { 0.9 } else { -0.9 };
+        for i in 0..200 {
+            c.process(loud(i));
+        }
+        assert!(c.amp_clip_count > 0);
+        c.land_bypass(11, true, false);
+        for i in 0..n {
+            c.process(loud(i));
+        }
+        c.amp_clip_count = 0;
+        for i in 0..200 {
+            c.process(loud(i));
+        }
+        assert_eq!(c.amp_clip_count, 0, "bypassed: nothing heard");
+        c.land_bypass(11, false, false);
+        c.process(0.9);
+        assert_eq!(c.amp_clip_count, 1, "the first return sample counts");
+        let mut m = OutputChain::new(&s, false);
+        m.set_bypass_mutation(BypassMutation {
+            count_ungated: true,
+            ..Default::default()
+        });
+        m.set_controls(Route::Speaker, 1.0);
+        m.land_bypass(11, true, true);
+        for i in 0..100 {
+            m.process(loud(i));
+        }
+        assert!(m.amp_clip_count > 0);
+    }
+
+    /// FR-008 / research R-11: a route switch keeps a running fade; the engine's reset snaps it
+    /// to its target.
+    #[test]
+    fn reset_sections_keeps_fades_and_reset_snaps() {
+        let s = settings(48_000);
+        let mut c = OutputChain::new(&s, false);
+        c.land_bypass(12, true, false);
+        for &x in &stimulus(100) {
+            c.process(x);
+        }
+        let k = c.fade_speaker.phase();
+        assert!(k > 0 && c.fade_speaker.running());
+        c.set_controls(Route::Earphone, 0.6);
+        assert_eq!(c.fade_speaker.phase(), k);
+        assert!(c.fade_speaker.running());
+        c.reset();
+        assert!(c.fade_speaker.at_rest_bypassed());
+        assert!(c.bypass_target(12));
+        assert_eq!(c.bypass_state, 1 << 2);
+    }
+
+    /// The `stage_cold` mutant: the return no longer equals the all-on chain.
+    #[test]
+    fn cold_mutant_breaks_the_return() {
+        let s = settings(6000);
+        let mut cold = OutputChain::new(&s, false);
+        cold.set_bypass_mutation(BypassMutation {
+            stage_cold: true,
+            ..Default::default()
+        });
+        let mut all_on = OutputChain::new(&s, false);
+        let n = cold.fade_speaker.len() as usize;
+        let mut differs = false;
+        for (i, &x) in stimulus(4000).iter().enumerate() {
+            if i == 100 {
+                cold.land_bypass(12, true, false);
+            }
+            if i == 100 + n + 300 {
+                cold.land_bypass(12, false, false);
+            }
+            let y = cold.process(x);
+            let a = all_on.process(x);
+            if i >= 100 + 2 * n + 300 && y != a {
+                differs = true;
+            }
+        }
+        assert!(differs);
+    }
+
+    /// Spec 021 D11 (research R-07): the published level change pinned to the chain's scalars
+    /// and the plan's figures within 0.01 dB; position 0 is +∞.
+    #[test]
+    fn stage11_bypass_level_table() {
+        use crate::output::{VOLUME_REFERENCE, speaker_gain_db, stage11_bypass_level_db};
+        let p_ref = VOLUME_REFERENCE as f32;
+        let near = |got: f32, want: f32| (got - want).abs() < 0.01;
+        assert!(near(stage11_bypass_level_db(Route::Earphone, p_ref), 19.21));
+        assert!(near(stage11_bypass_level_db(Route::Earphone, 1.0), 0.0));
+        assert!(near(stage11_bypass_level_db(Route::Speaker, p_ref), 0.0));
+        assert!(near(stage11_bypass_level_db(Route::Speaker, 1.0), -21.46));
+        assert!(stage11_bypass_level_db(Route::Speaker, 0.0).is_infinite());
+        // The speaker route's scalar beyond the published gain law: 20·log10(1.0 / 1.15).
+        let scale = -stage11_bypass_level_db(Route::Speaker, 1.0) - speaker_gain_db(1.0);
+        assert!((f64::from(scale) - 20.0 * (1.0f64 / 1.15).log10()).abs() < 1e-4, "{scale}");
+    }
+
+    /// The `weight_inverted`, `fade_linear` and `fade_step` mutants change the blend.
+    #[test]
+    fn weight_mutants_change_the_blend() {
+        let s = settings(6000);
+        let mut plain = OutputChain::new(&s, false);
+        let mut mutants: Vec<OutputChain> = [
+            BypassMutation {
+                weight_inverted: true,
+                ..Default::default()
+            },
+            BypassMutation {
+                fade_linear: true,
+                ..Default::default()
+            },
+            BypassMutation {
+                fade_step: true,
+                ..Default::default()
+            },
+        ]
+        .iter()
+        .map(|m| {
+            let mut c = OutputChain::new(&s, false);
+            c.set_bypass_mutation(*m);
+            c
+        })
+        .collect();
+        let mut differs = [false; 3];
+        for (i, &x) in stimulus(400).iter().enumerate() {
+            if i == 100 {
+                plain.land_bypass(12, true, false);
+                for m in &mut mutants {
+                    m.land_bypass(12, true, false);
+                }
+            }
+            let y = plain.process(x);
+            for (j, m) in mutants.iter_mut().enumerate() {
+                if m.process(x) != y {
+                    differs[j] = true;
+                }
+            }
+        }
+        assert_eq!(differs, [true; 3]);
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // analysis in tests, not the DSP path (001 R-04)
 mod tests {

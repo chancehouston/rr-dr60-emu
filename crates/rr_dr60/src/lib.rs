@@ -554,6 +554,35 @@ pub mod __test_hooks {
     pub fn speed_place_fifths(pipeline: &crate::Pipeline) -> u64 {
         pipeline.speed.place_fifths()
     }
+
+    /// Spec 021 (research R-09): the live stage bypass's mutants.
+    pub use crate::stages::fade::BypassMutation;
+
+    /// Spec 021 (research R-03): the rate conversion's delay D in host samples at `rate`
+    /// (0 at the identity rate), the bound on stage 10's host-output settle; `None` for an
+    /// unsupported rate.
+    pub fn resampler_delay_host_samples(rate: u32) -> Option<u32> {
+        crate::rate::RatePlan::for_host(rate)
+            .ok()
+            .map(|p| p.delay_host_samples())
+    }
+
+    /// Spec 021 (research R-03): stage 10's output per device sample pushed in the last `play`
+    /// call (the first 8192), for the blend identity against the speed control's outputs
+    /// (stage 10's input, [`speed_device_outputs`]).
+    pub fn stage10_trace(pipeline: &crate::Pipeline) -> alloc::vec::Vec<f64> {
+        pipeline.player.stage10_trace.clone()
+    }
+
+    /// Spec 021: the switch values in force or being approached on the player (stages 11 – 13
+    /// as bypass flags, then stage 10), for the lifecycle tests.
+    pub fn player_bypass_targets(pipeline: &crate::Pipeline) -> ([bool; 3], bool) {
+        let c = &pipeline.player.chain;
+        (
+            [c.bypass_target(11), c.bypass_target(12), c.bypass_target(13)],
+            pipeline.player.half.bypass_target(),
+        )
+    }
 }
 
 /// Crate version, e.g. `"0.1.0"`.

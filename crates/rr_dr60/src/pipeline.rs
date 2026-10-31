@@ -168,6 +168,9 @@ pub struct Pipeline {
     /// Spec 017 D4: the tag of the last landed change per record-side value (by slot), carried
     /// to the other stream's cross-stream landing.
     pub(crate) record_tags: [u64; 8],
+    /// Spec 021 research R-05: the tag of the last landed switch per stage 11 – 13, carried to
+    /// the one-pass's mirror landing.
+    pub(crate) bypass_tags: [u64; 3],
     /// The battery value (spec 018 FR-001): volts of the cell pair, a unit condition; not a
     /// setting; kept through reset and reconfigure; lands on each stream at its next call.
     pub(crate) battery_volts: f32,
@@ -554,6 +557,7 @@ impl Pipeline {
             },
             recorder,
             record_tags: [0; 8],
+            bypass_tags: [0; 3],
             battery_volts,
             player: {
                 let mut p = PlaybackPath::new(&settings, plan, false);
@@ -774,6 +778,29 @@ impl Pipeline {
             Stream::OnePass => &mut self.one_pass.play,
             Stream::Record => return Err(Error::ControlNotOnStream { control, stream }),
         };
+        // Spec 021 FR-001, FR-004: a playback-stage switch: exactly 0 or 1; stage 10 on the
+        // player only; the stage must run on the stream (its switch on and the tap reaching it).
+        if let Some(stage) = crate::changes::stage_of(control) {
+            if stage == 10 && stream != Stream::Playback {
+                return Err(Error::ControlNotOnStream { control, stream });
+            }
+            if !(value == 0.0 || value == 1.0) {
+                return Err(Error::InvalidControlValue { control, value });
+            }
+            if !path.runs_stage(stage) {
+                return Err(Error::StageNotConfigured { control });
+            }
+            if path
+                .ctl
+                .schedule
+                .insert(position, control, value + 0.0, tag)
+                .is_err()
+            {
+                return Err(Error::ScheduleFull { stream });
+            }
+            path.ctl.rearm();
+            return Ok(());
+        }
         let on_stream = match control {
             LIVE_ROUTE | LIVE_VOLUME | LIVE_BATTERY => true,
             LIVE_SPEED => stream == Stream::Playback,
@@ -1096,6 +1123,13 @@ impl Pipeline {
         self.one_pass
             .play
             .begin_call(self.route, self.volume, None, self.battery_volts);
+        // Spec 021 research R-05: the player's landed switches land here first (the mirror).
+        let reach = self.one_pass.play.reach;
+        self.one_pass.play.ctl.begin_mirror(
+            crate::changes::bypassed_of(&self.settings),
+            self.bypass_tags,
+            reach,
+        );
         // Spec 017 research R-02: the record side's cross-stream pending changes.
         self.one_pass
             .rec
@@ -1151,8 +1185,32 @@ impl Pipeline {
         }
     }
 
+    /// Spec 021 research R-05: the settings follow the switches a stream landed, with their
+    /// tags (the other stream lands them at its next call: the one-pass through its mirror, the
+    /// player through `start_playback`'s adopt).
+    pub(crate) fn take_landed_bypass(ctl: &mut crate::changes::StreamState, settings: &mut Settings, tags: &mut [u64; 3]) {
+        for i in 0..3 {
+            if let Some((b, tag)) = ctl.landed_bypass[i].take() {
+                match i {
+                    0 => settings.output.volume_amp_enabled = !b,
+                    1 => settings.output.speaker_enabled = !b,
+                    _ => settings.output.earphone_enabled = !b,
+                }
+                tags[i] = tag;
+            }
+        }
+        if let Some((b, _)) = ctl.landed_stage10.take() {
+            settings.playback_stage_enabled = !b;
+        }
+    }
+
     /// Spec 015 research R-07: the readings follow the changes the one-pass stream landed.
     fn take_landed_one_pass(&mut self) {
+        Self::take_landed_bypass(
+            &mut self.one_pass.play.ctl,
+            &mut self.settings,
+            &mut self.bypass_tags,
+        ); // 021
         let ctl = &mut self.one_pass.play.ctl;
         if let Some(r) = ctl.landed_route.take() {
             self.route = r;
@@ -1267,6 +1325,10 @@ impl Pipeline {
             self.speed_level,
             self.battery_volts,
         );
+        // Spec 021 research R-11: every switch re-applied from the settings (the landed values)
+        // at rest on both streams, the one-pass's stage 10 included; no entry.
+        self.one_pass.play.adopt_bypass(&self.settings);
+        self.player.adopt_bypass(&self.settings);
     }
 
     /// Applies new settings and resets all path state, as if the pipeline had been created
@@ -1372,6 +1434,26 @@ impl Pipeline {
         let plan = RatePlan::for_host(settings.host_rate_hz)?;
         p.one_pass.play.mutate_chain(m, &plan);
         p.player.mutate_chain(m, &plan);
+        Ok(p)
+    }
+
+    /// Test-only (hidden): a pipeline whose live stage bypass is altered by `m` on both streams
+    /// (spec 021 research R-09); `BypassMutation::default()` is the committed engine.
+    ///
+    /// # Errors
+    ///
+    /// As [`Pipeline::new`].
+    #[doc(hidden)]
+    #[cfg(feature = "__test-hooks")]
+    pub fn __with_bypass_mutation(
+        settings: Settings,
+        m: &crate::__test_hooks::BypassMutation,
+    ) -> Result<Self, Error> {
+        let mut p = Self::new(settings)?;
+        p.one_pass.play.chain.set_bypass_mutation(*m);
+        p.one_pass.play.half.bypass_mut = *m;
+        p.player.chain.set_bypass_mutation(*m);
+        p.player.half.bypass_mut = *m;
         Ok(p)
     }
 

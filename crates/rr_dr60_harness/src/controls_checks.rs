@@ -288,8 +288,42 @@ fn live_accepts(p: &mut Pipeline, id: &str, v: Val) -> Option<bool> {
         // setter); the value is validated as the setting.
         (_, Val::F(x)) if is_record_side(id) => Some(schedule_record_side(p, id, f64::from(x))),
         (_, Val::I(x)) if is_record_side(id) => Some(schedule_record_side(p, id, x as f64)),
+        // Spec 021: the four playback-stage switches change live through the schedule only, on
+        // the playback stream (kept by `start_playback`; stage 10 is playback-only, D6).
+        (_, Val::B(b)) if is_stage_switch(id) => Some(schedule_stage_switch(p, id, b)),
         _ => None,
     }
+}
+
+/// Spec 021 FR-001: the four playback-stage switches (live through the schedule only).
+pub fn is_stage_switch(id: &str) -> bool {
+    matches!(
+        id,
+        "playback_stage_enabled"
+            | "output.volume_amp_enabled"
+            | "output.speaker_enabled"
+            | "output.earphone_enabled"
+    )
+}
+
+/// Schedules the switch `id` to `on` at the playback stream's position and returns whether the
+/// call was accepted (an all-on default engine runs every stage).
+fn schedule_stage_switch(p: &mut Pipeline, id: &str, on: bool) -> bool {
+    let control = rr_dr60::controls()
+        .iter()
+        .position(|e| e.identifier == id)
+        .expect("a control") as u32;
+    let position = p
+        .stream_position(rr_dr60::Stream::Playback)
+        .expect("the output clock");
+    p.schedule_change(
+        rr_dr60::Stream::Playback,
+        position,
+        control,
+        if on { 1.0 } else { 0.0 },
+        1,
+    )
+    .is_ok()
 }
 
 /// Spec 017 FR-001: the eight record-side values.
@@ -857,15 +891,19 @@ pub fn setters(
     }
     for id in live {
         // Spec 017 D4 (restated): the eight record-side values are live through the schedule
-        // only; a plain setter for one of them would be a defect.
-        if is_record_side(id) {
+        // only; a plain setter for one of them would be a defect. Spec 021 FR-001: the four
+        // playback-stage switches likewise.
+        if is_record_side(id) || is_stage_switch(id) {
             let bare = id.rsplit('.').next().unwrap_or(id);
             if found_core.iter().any(|(_, n)| n == id || n == bare)
                 || found_c.iter().any(|n| n == id || n == bare)
             {
-                f.push(format!(
-                    "{id}: a record-side value with a plain setter (spec 017: the schedule only)"
-                ));
+                let which = if is_record_side(id) {
+                    "a record-side value with a plain setter (spec 017: the schedule only)"
+                } else {
+                    "a playback-stage switch with a plain setter (spec 021: the schedule only)"
+                };
+                f.push(format!("{id}: {which}"));
             }
             continue;
         }

@@ -397,6 +397,53 @@ static int print_battery(void) {
   return 0;
 }
 
+/* Spec 021 FR-011 (tasks.md T019): the bypass rows as the Rust example `bypass_rows` prints them:
+   a ±0.125 square for 1.5 s at 48 kHz through the default engine with the codec bypassed on the
+   one-pass stream, the speaker route at the reference position, stage 12 scheduled off at 20000
+   and on at 40000 and stage 11 off at 60000, in 1024-sample blocks: after each block the
+   entries, then the output digest; then the level function's four cells as hex bits. */
+static int print_bypass(void) {
+  enum { YRATE = 48000, YN = YRATE * 3 / 2, YBLOCK = 1024 };
+  static float yin[YN], yout[YN];
+  for (size_t i = 0; i < YN; i++) yin[i] = (i % 48 < 24) ? 0.125f : -0.125f;
+  RrDr60Settings s = rr_dr60_settings_default(YRATE);
+  s.speech_codec_enabled = false;
+  RrDr60ChangeEntry entries[RR_DR60_MAX_CHANGES_PER_CALL];
+  printf("bypass\n");
+  RrDr60Pipeline *p = NULL;
+  if (rr_dr60_create(&s, &p) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_set_route(p, RR_DR60_ROUTE_SPEAKER) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_schedule_change(p, RR_DR60_STREAM_ONE_PASS, 20000, 23, 0.0, 1) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_schedule_change(p, RR_DR60_STREAM_ONE_PASS, 40000, 23, 1.0, 2) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_schedule_change(p, RR_DR60_STREAM_ONE_PASS, 60000, 22, 0.0, 3) != RR_DR60_STATUS_OK) return 1;
+  uint64_t h = 0xcbf29ce484222325ULL;
+  for (size_t pos = 0; pos < YN; pos += YBLOCK) {
+    size_t n = YN - pos < YBLOCK ? YN - pos : YBLOCK;
+    RrDr60BlockInfo info;
+    size_t count = 0;
+    if (rr_dr60_process_with_events_and_changes(p, yin + pos, yout + pos, n, &info, NULL, 0, entries,
+                                                RR_DR60_MAX_CHANGES_PER_CALL, &count) != RR_DR60_STATUS_OK)
+      return 1;
+    for (size_t k = 0; k < count; k++) print_entry(&entries[k]);
+    h = digest_add(h, yout + pos, info.produced);
+  }
+  printf("digest %016llx\n", (unsigned long long)h);
+  rr_dr60_destroy(p);
+  printf("level\n");
+  const float ref = (float)RR_DR60_VOLUME_REFERENCE;
+  const RrDr60Route routes[4] = {RR_DR60_ROUTE_EARPHONE, RR_DR60_ROUTE_EARPHONE, RR_DR60_ROUTE_SPEAKER,
+                                 RR_DR60_ROUTE_SPEAKER};
+  const float positions[4] = {ref, 1.0f, ref, 1.0f};
+  for (int i = 0; i < 4; i++) {
+    float d = rr_dr60_stage11_bypass_level_db(routes[i], positions[i]);
+    uint32_t bp, bd;
+    memcpy(&bp, &positions[i], 4);
+    memcpy(&bd, &d, 4);
+    printf("%08x %08x\n", bp, bd);
+  }
+  return 0;
+}
+
 /* Spec 017 SC-003: a scheduled recording and a one-pass with record-side changes, as the Rust
    example `record_changes_rows` prints them. */
 /* Spec 020 (contracts/api.md): the processing-record rows as the Rust example `record_rows`
@@ -662,6 +709,9 @@ int main(int argc, char **argv) {
   }
   if (argc > 1 && strcmp(argv[1], "--record") == 0) {
     return print_record();
+  }
+  if (argc > 1 && strcmp(argv[1], "--bypass") == 0) {
+    return print_bypass();
   }
   if (argc > 1 && strcmp(argv[1], "--manifest") == 0) {
     print_manifest();

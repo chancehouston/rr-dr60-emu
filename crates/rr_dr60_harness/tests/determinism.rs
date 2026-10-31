@@ -986,3 +986,44 @@ fn record_contract_same_calls_same_bytes() {
         assert_eq!(a.export, b.export, "{rate} Hz: the stored form");
     }
 }
+
+/// Spec 021 FR-010 (tasks.md T018): the same schedule of stage switches gives identical outputs
+/// and logs on both streams at the irregular partition.
+#[test]
+fn bypass_same_calls_same_log() {
+    use rr_dr60::{Route, Stream};
+    use rr_dr60_harness::bypass_checks as bp;
+    use rr_dr60_harness::changes_checks::{self as cc, Change, Partition, Source};
+    for rate in [6000u32, 48_000] {
+        let s = bp::settings(bp::DEFAULT_CHAIN, rate);
+        let stored = bp::stored_tone(1000.0, 1.0);
+        let host = bp::host_tone(1000.0, 0.6, rate);
+        let n = bp::n_fade(12, rate) as u64;
+        let p0 = u64::from(rate) / 4;
+        let played = |_: ()| {
+            let mut p = bp::engine(&|s| Pipeline::new(s).unwrap(), s, &stored, Route::Speaker, 0.5);
+            let sched = [
+                Change { stream: Stream::Playback, position: p0, control: 23, value: 0.0, tag: 1 },
+                Change { stream: Stream::Playback, position: p0 + n / 2, control: 23, value: 1.0, tag: 2 },
+                Change { stream: Stream::Playback, position: p0 + 2 * n, control: 5, value: 0.0, tag: 3 },
+                Change { stream: Stream::Playback, position: p0 + 3 * n, control: 22, value: 0.0, tag: 4 },
+            ];
+            cc::run_scheduled(&mut p, Source::Playback(1), &sched, Partition::Irregular)
+        };
+        let (a, b) = (played(()), played(()));
+        assert!(cc::same(&a.out, &b.out), "{rate}: the playback");
+        assert_eq!(a.log, b.log, "{rate}: the playback log");
+        assert_eq!(cc::entries_of(&a.log, 23).len(), 2);
+        let one_pass = |_: ()| {
+            let mut p = Pipeline::new(s).unwrap();
+            let sched = [
+                Change { stream: Stream::OnePass, position: p0, control: 22, value: 0.0, tag: 1 },
+                Change { stream: Stream::OnePass, position: p0 + n, control: 24, value: 0.0, tag: 2 },
+            ];
+            cc::run_scheduled(&mut p, Source::OnePass(&host), &sched, Partition::Irregular)
+        };
+        let (a, b) = (one_pass(()), one_pass(()));
+        assert!(cc::same(&a.out, &b.out), "{rate}: the one-pass");
+        assert_eq!(a.log, b.log, "{rate}: the one-pass log");
+    }
+}

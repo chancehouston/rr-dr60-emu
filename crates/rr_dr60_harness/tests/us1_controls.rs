@@ -109,13 +109,15 @@ fn literal_kinds_and_timing() {
         .filter(|e| e.timing == ControlTiming::Live)
         .map(|e| e.identifier)
         .collect();
-    // Spec 017: the eight record-side values are live too (through the schedule).
+    // Spec 017: the eight record-side values are live too (through the schedule); spec 021: the
+    // four playback-stage switches.
     assert_eq!(
         live,
         [
             "route",
             "volume",
             "playback_speed",
+            "playback_stage_enabled",
             "agc.knee_dbfs",
             "agc.attack_ms",
             "agc.release_ms",
@@ -123,8 +125,11 @@ fn literal_kinds_and_timing() {
             "vas.threshold_dbfs",
             "vas.hang_ms",
             "vas.onset_ms",
+            "output.volume_amp_enabled",
+            "output.speaker_enabled",
+            "output.earphone_enabled",
             "mic.hiss_offset_db",
-            "battery_volts", // spec 018: the twelfth, appended
+            "battery_volts",
         ]
     );
     // Spec 017 FR-010: the live entries are the output-clock controls (three, four since spec

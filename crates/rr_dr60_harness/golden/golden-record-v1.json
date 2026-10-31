@@ -1,7 +1,7 @@
 {
   "format": "rr_dr60-golden",
   "version": 1,
-  "library_version": "0.20.0",
+  "library_version": "0.21.0",
   "entries": [
     {
       "stimulus": "matrix_voice",
@@ -53,7 +53,7 @@
           "stored_codec_model_version = 0.0.0",
           "encoding = samples",
           "stored_unit_count = 9785",
-          "recording_digest = fnv1a64:33417d24c2d4a944",
+          "recording_digest = <version-dependent>",
           "setting.record_stage_enabled = true",
           "setting.playback_stage_enabled = true",
           "setting.adc_clamp_enabled = true",
@@ -94,7 +94,7 @@
           "change.1 = 5400 mic.hiss_offset_db 0 3 8 record",
           "record_checksum = <dropped>"
         ],
-        "digest": "fnv1a64:33417d24c2d4a944",
+        "digest": "<version-dependent>",
         "event_count": 2,
         "change_count": 2
       }
@@ -149,7 +149,7 @@
           "stored_codec_model_version = 0.0.0",
           "encoding = samples",
           "stored_unit_count = 9821",
-          "recording_digest = fnv1a64:69cb6cd2ca636bcf",
+          "recording_digest = <version-dependent>",
           "setting.record_stage_enabled = true",
           "setting.playback_stage_enabled = true",
           "setting.adc_clamp_enabled = true",
@@ -190,7 +190,7 @@
           "change.1 = 7200 mic.hiss_offset_db 0 3 8 record",
           "record_checksum = <dropped>"
         ],
-        "digest": "fnv1a64:69cb6cd2ca636bcf",
+        "digest": "<version-dependent>",
         "event_count": 2,
         "change_count": 2
       }
@@ -245,7 +245,7 @@
           "stored_codec_model_version = 0.0.0",
           "encoding = samples",
           "stored_unit_count = 9828",
-          "recording_digest = fnv1a64:241f26d52e8d8e00",
+          "recording_digest = <version-dependent>",
           "setting.record_stage_enabled = true",
           "setting.playback_stage_enabled = true",
           "setting.adc_clamp_enabled = true",
@@ -286,7 +286,7 @@
           "change.1 = 14400 mic.hiss_offset_db 0 3 8 record",
           "record_checksum = <dropped>"
         ],
-        "digest": "fnv1a64:241f26d52e8d8e00",
+        "digest": "<version-dependent>",
         "event_count": 2,
         "change_count": 2
       }
@@ -341,7 +341,7 @@
           "stored_codec_model_version = 0.0.0",
           "encoding = samples",
           "stored_unit_count = 9815",
-          "recording_digest = fnv1a64:72a12feaa48005a1",
+          "recording_digest = <version-dependent>",
           "setting.record_stage_enabled = true",
           "setting.playback_stage_enabled = true",
           "setting.adc_clamp_enabled = true",
@@ -382,7 +382,7 @@
           "change.1 = 39690 mic.hiss_offset_db 0 3 8 record",
           "record_checksum = <dropped>"
         ],
-        "digest": "fnv1a64:72a12feaa48005a1",
+        "digest": "<version-dependent>",
         "event_count": 2,
         "change_count": 2
       }
@@ -437,7 +437,7 @@
           "stored_codec_model_version = 0.0.0",
           "encoding = samples",
           "stored_unit_count = 9815",
-          "recording_digest = fnv1a64:0857ad713806fc68",
+          "recording_digest = <version-dependent>",
           "setting.record_stage_enabled = true",
           "setting.playback_stage_enabled = true",
           "setting.adc_clamp_enabled = true",
@@ -478,7 +478,7 @@
           "change.1 = 43200 mic.hiss_offset_db 0 3 8 record",
           "record_checksum = <dropped>"
         ],
-        "digest": "fnv1a64:0857ad713806fc68",
+        "digest": "<version-dependent>",
         "event_count": 2,
         "change_count": 2
       }
@@ -533,7 +533,7 @@
           "stored_codec_model_version = 0.0.0",
           "encoding = samples",
           "stored_unit_count = 9819",
-          "recording_digest = fnv1a64:f89186815f69c7be",
+          "recording_digest = <version-dependent>",
           "setting.record_stage_enabled = true",
           "setting.playback_stage_enabled = true",
           "setting.adc_clamp_enabled = true",
@@ -574,7 +574,7 @@
           "change.1 = 79380 mic.hiss_offset_db 0 3 8 record",
           "record_checksum = <dropped>"
         ],
-        "digest": "fnv1a64:f89186815f69c7be",
+        "digest": "<version-dependent>",
         "event_count": 2,
         "change_count": 2
       }
@@ -629,7 +629,7 @@
           "stored_codec_model_version = 0.0.0",
           "encoding = samples",
           "stored_unit_count = 9815",
-          "recording_digest = fnv1a64:7f46c68e1fafea4a",
+          "recording_digest = <version-dependent>",
           "setting.record_stage_enabled = true",
           "setting.playback_stage_enabled = true",
           "setting.adc_clamp_enabled = true",
@@ -670,7 +670,7 @@
           "change.1 = 86400 mic.hiss_offset_db 0 3 8 record",
           "record_checksum = <dropped>"
         ],
-        "digest": "fnv1a64:7f46c68e1fafea4a",
+        "digest": "<version-dependent>",
         "event_count": 2,
         "change_count": 2
       }

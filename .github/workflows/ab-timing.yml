@@ -64,3 +64,7 @@ jobs:
         run: scripts/ab-timing.sh 01a61ca record_contract
         env:
           RR_DR60_RECORD_CONTRACT_COST_CEILING: "0.05"
+      - name: Live bypass A/B (021 FR-010, ceiling 5 %)
+        run: scripts/ab-timing.sh f303c99 bypass
+        env:
+          RR_DR60_BYPASS_COST_CEILING: "0.05"

@@ -1226,6 +1226,43 @@ fn readme_speed_statements() {
 /// consistency check, never a seal; "events" and "measured" are the guide's existing words,
 /// scanned by the manifest's list elsewhere).
 #[test]
+fn guide_bypass() {
+    // Spec 021 FR-011 (tasks.md T022): the guide's section exists, names the convention and
+    // the contract, and avoids the forbidden words (the general denylist plus the stems the
+    // product review added for a bypassed branch: raw, clean, unfiltered, the true signal).
+    let text = std::fs::read_to_string(mc::repo_root().join("docs/guide.md")).unwrap();
+    let start = text
+        .find("## Live stage bypass\n")
+        .expect("the guide's Live stage bypass section");
+    let end = text[start + 1..]
+        .find("\n## ")
+        .map_or(text.len(), |i| start + 1 + i);
+    let section = text[start..end].to_lowercase();
+    assert!(section.contains("emulator convention") && section.contains("no stage switches"));
+    assert!(section.contains("neutral position") && section.contains("stage11_bypass_level_db"));
+    assert!(!section.contains("tbd-021"), "a figure is still a placeholder");
+    for word in [
+        "verified",
+        "authentic",
+        "proves",
+        "genuine",
+        "accurate",
+        "honest",
+        "raw ",
+        "clean",
+        "unfiltered",
+        "true signal",
+        "reveal",
+        "strip away",
+    ] {
+        assert!(
+            !section.contains(word),
+            "the guide's Live stage bypass section uses {word:?}"
+        );
+    }
+}
+
+#[test]
 fn guide_record_contract() {
     let text = std::fs::read_to_string(mc::repo_root().join("docs/guide.md")).unwrap();
     let start = text

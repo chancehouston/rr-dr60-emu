@@ -299,6 +299,11 @@ pub struct GoldenEntry {
     /// entries only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record_contract: Option<RecordContractGolden>,
+    /// Spec 021 (research R-09): the live bypass schedule, the log's switch entries, the
+    /// produced count and whether the endpoint identities are bit-exact for the entry. Present
+    /// in bypass-file entries only; absent (and not serialized) in the earlier files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bypass: Option<BypassGolden>,
 }
 
 /// Spec 020: the record part of a golden entry (plan review, coach 11): the record's text with
@@ -534,6 +539,7 @@ pub fn entry(stimulus: &str, config: &str, host_rate_hz: u32, output: &[f32]) ->
         record_changes: None,
         battery: None,
         record_contract: None,
+        bypass: None,
     }
 }
 
@@ -2786,6 +2792,196 @@ pub fn committed_battery() -> GoldenFile {
         .expect("valid embedded battery golden file")
 }
 
+// ---- Spec 021: the live bypass golden (research R-09) -----------------------------------------
+
+/// Spec 021: the bypass part of a golden entry.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BypassGolden {
+    /// The stage(s) switched.
+    pub stages: Vec<u8>,
+    /// The schedule: (position, control, value, tag).
+    pub schedule: Vec<(u64, u32, f64, u64)>,
+    /// The stream: `playback` or `one_pass`.
+    pub stream: String,
+    /// The route.
+    pub route: String,
+    /// The switch entries of the log: (position, control, before, after, tag, stream word).
+    pub log: Vec<(u64, u32, f64, f64, u64, u32)>,
+    /// The produced count.
+    pub produced: u64,
+    /// The endpoint identities are bit-exact for this entry (asserted at bless time); the
+    /// others carry the convergence bound.
+    pub exact: bool,
+    /// A reversal schedule (the second change inside the blend).
+    pub reversal: bool,
+}
+
+/// One golden scenario per cell: `bypass_return` (a bypass at P and a return at Q) or
+/// `reversal` (a bypass at P reversed at P + N/2).
+fn bypass_scenarios() -> [&'static str; 2] {
+    ["bypass_return", "reversal"]
+}
+
+/// Spec 021 (research R-09): 20 entries per rate (the cells' two scenarios and two two-stage
+/// entries), the output's digest with the schedule and the switch entries. At bless time the
+/// exact entries' endpoint identities (the all-on run before P, the configured-off twin from
+/// P + N − 1 to Q, the all-on run after Q + N − 1) and every entry's partition identity (block
+/// size 1 against 4096) are asserted; the converging entries' difference from the twin after
+/// the settle is asserted ≤ −100 dBFS.
+pub fn generate_bypass(make: Make<'_>, bless: bool) -> GoldenFile {
+    use crate::bypass_checks as bp;
+    use crate::changes_checks::{self as cc, Partition};
+    let mut entries = Vec::new();
+    for rate in configs::all_rates() {
+        let stored = bp::stored_tone(1000.0, 1.5);
+        let host = bp::host_tone(1000.0, 1.5, rate);
+        let mut cells = bp::cells();
+        cells.retain(|c| {
+            // The matrix's 14 cells less the four whose twin is the same engine twice (the
+            // one-pass stage-11/12/13 stage-only cells duplicate the player's identities).
+            !(c.stream == rr_dr60::Stream::OnePass && c.config != bp::DEFAULT_CHAIN)
+        });
+        for cell in &cells {
+            let (p, q) = bp::positions(cell.stage, rate);
+            let volume = if cell.stage == 11 {
+                bp::neutral_position(cell.route)
+            } else {
+                rr_dr60::output::VOLUME_REFERENCE as f32
+            };
+            let n = bp::n_fade(cell.stage, rate) as u64;
+            let n_host = if cell.stage == 10 { n * u64::from(rate) / 6000 } else { n };
+            for scenario in bypass_scenarios() {
+                let sched = match scenario {
+                    "bypass_return" => vec![bp::change(cell, p, false, 1), bp::change(cell, q, true, 2)],
+                    _ => vec![bp::change(cell, p, false, 1), bp::change(cell, p + n_host / 2, true, 2)],
+                };
+                let s = bp::settings(cell.config, rate);
+                let run = bp::run_cell(make, s, cell, &stored, &host, volume, &sched, Partition::Fixed(4096));
+                let name = format!("{scenario}/stage{}/{:?}", cell.stage, cell.route);
+                let config = if cell.stream == rr_dr60::Stream::OnePass {
+                    format!("{}@one_pass", cell.config)
+                } else {
+                    cell.config.to_string()
+                };
+                let mut e = entry(&name, &config, rate, &run.out);
+                let log: Vec<(u64, u32, f64, f64, u64, u32)> = cc::entries_of(&run.log, cell.control)
+                    .iter()
+                    .map(|c| (c.position, c.control, c.before, c.after, c.tag, c.stream))
+                    .collect();
+                e.bypass = Some(BypassGolden {
+                    stages: vec![cell.stage],
+                    schedule: sched.iter().map(|c| (c.position, c.control, c.value, c.tag)).collect(),
+                    stream: if cell.stream == rr_dr60::Stream::OnePass { "one_pass".into() } else { "playback".into() },
+                    route: format!("{:?}", cell.route).to_lowercase(),
+                    log,
+                    produced: run.out.len() as u64,
+                    exact: cell.exact,
+                    reversal: scenario == "reversal",
+                });
+                if bless {
+                    let tag = format!("{name}/{config}/{rate} Hz");
+                    // The partition identity.
+                    let one = bp::run_cell(make, s, cell, &stored, &host, volume, &sched, Partition::Fixed(1));
+                    assert!(cc::same(&one.out, &run.out) && one.log == run.log, "{tag}: block size 1");
+                    if scenario == "bypass_return" {
+                        let all_on = bp::run_cell(make, s, cell, &stored, &host, volume, &[], Partition::Fixed(4096));
+                        let twin = bp::run_cell(make, bp::twin_settings(cell, rate), cell, &stored, &host, volume, &[], Partition::Fixed(4096));
+                        let (p, q) = (p as usize, q as usize);
+                        assert!(cc::same(&run.out[..p], &all_on.out[..p]), "{tag}: before P");
+                        if cell.exact {
+                            let n_h = n_host as usize;
+                            assert!(cc::same(&run.out[p + n_h - 1..q], &twin.out[p + n_h - 1..q]), "{tag}: the twin");
+                            let end = run.out.len().min(all_on.out.len());
+                            assert!(cc::same(&run.out[q + n_h - 1..end], &all_on.out[q + n_h - 1..end]), "{tag}: the return");
+                        } else {
+                            let settle = rr_dr60::output::settle_samples(rate).unwrap() as usize;
+                            let from = p + n_host as usize - 1 + settle;
+                            let worst = (from..q)
+                                .map(|i| (f64::from(run.out[i]) - f64::from(twin.out[i])).abs())
+                                .fold(0.0, f64::max);
+                            assert!(worst <= 1e-5, "{tag}: converges within -100 dBFS ({worst})");
+                        }
+                    }
+                }
+                entries.push(e);
+            }
+        }
+        // Two two-stage entries: 11 + 12 on the speaker route, 11 + 13 on the earphone route,
+        // at one position with one tag (the whole-output-path recipe).
+        for (route, other) in [(rr_dr60::Route::Speaker, 23u32), (rr_dr60::Route::Earphone, 24u32)] {
+            let cell = bp::Cell {
+                stage: 11,
+                control: bp::CONTROL_STAGE_11,
+                config: bp::DEFAULT_CHAIN,
+                route,
+                stream: rr_dr60::Stream::Playback,
+                exact: false,
+            };
+            let p = u64::from(rate) / 2;
+            let sched = vec![
+                rr_dr60_change(p, bp::CONTROL_STAGE_11, 0.0, 9),
+                rr_dr60_change(p, other, 0.0, 9),
+            ];
+            let s = bp::settings(cell.config, rate);
+            let run = bp::run_cell(make, s, &cell, &stored, &host, bp::neutral_position(route), &sched, Partition::Fixed(4096));
+            let name = format!("whole_path/11+{}/{:?}", if other == 23 { 12 } else { 13 }, route);
+            let mut e = entry(&name, bp::DEFAULT_CHAIN, rate, &run.out);
+            let log: Vec<(u64, u32, f64, f64, u64, u32)> = run
+                .log
+                .iter()
+                .filter(|c| c.control == bp::CONTROL_STAGE_11 || c.control == other)
+                .map(|c| (c.position, c.control, c.before, c.after, c.tag, c.stream))
+                .collect();
+            e.bypass = Some(BypassGolden {
+                stages: vec![11, if other == 23 { 12 } else { 13 }],
+                schedule: sched.iter().map(|c| (c.position, c.control, c.value, c.tag)).collect(),
+                stream: "playback".into(),
+                route: format!("{route:?}").to_lowercase(),
+                log,
+                produced: run.out.len() as u64,
+                exact: false,
+                reversal: false,
+            });
+            if bless {
+                let one = bp::run_cell(make, s, &cell, &stored, &host, bp::neutral_position(route), &sched, Partition::Fixed(1));
+                assert!(cc::same(&one.out, &run.out), "{name}/{rate} Hz: block size 1");
+            }
+            entries.push(e);
+        }
+    }
+    GoldenFile {
+        format: "rr_dr60-golden".into(),
+        version: 1,
+        library_version: rr_dr60::VERSION.into(),
+        entries,
+    }
+}
+
+fn rr_dr60_change(position: u64, control: u32, value: f64, tag: u64) -> crate::changes_checks::Change {
+    crate::changes_checks::Change {
+        stream: rr_dr60::Stream::Playback,
+        position,
+        control,
+        value,
+        tag,
+    }
+}
+
+/// The committed spec 021 bypass golden file.
+///
+/// # Panics
+///
+/// If the embedded file is not valid golden JSON.
+pub fn committed_bypass() -> GoldenFile {
+    serde_json::from_str(include_str!("../golden/golden-bypass-v1.json"))
+        .expect("valid embedded bypass golden file")
+}
+
+/// The path of the spec 021 bypass golden file.
+pub fn path_bypass() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("golden/golden-bypass-v1.json")
+}
+
 // ---- Spec 020: the processing-record golden (plan review, coach 11) ------------------------
 
 /// Normalizes a record's text for the golden: the version values replaced, the checksum line
@@ -2805,6 +3001,12 @@ pub fn normalize_record(text: &str) -> (Vec<String>, String, Vec<String>) {
             lines.push(format!("{name} = <current>"));
         } else if l.starts_with("record_checksum = ") {
             lines.push("record_checksum = <dropped>".to_string());
+        } else if l.starts_with("recording_digest = ") {
+            // Spec 021 (restated at implementation): the stored form's header carries the
+            // library version (contracts/recording-form.md), so the digest moves at every
+            // version bump; its consistency with the export is asserted by spec 020's story
+            // tests, not pinned here.
+            lines.push("recording_digest = <version-dependent>".to_string());
         } else {
             lines.push(l.to_string());
         }
@@ -2837,7 +3039,8 @@ pub fn generate_record_contract(make: Make<'_>) -> GoldenFile {
         let mut e = entry("matrix_voice", "record_contract", rate, &stored);
         e.record_contract = Some(RecordContractGolden {
             lines,
-            digest: format!("fnv1a64:{:016x}", run.digest),
+            digest: "<version-dependent>".into(), // 021: the header carries the library version
+            // (`run.digest` is asserted against the export by spec 020's story tests)
             event_count: r.event_count,
             change_count: r.change_count,
         });

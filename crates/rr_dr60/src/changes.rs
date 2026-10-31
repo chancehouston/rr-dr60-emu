@@ -16,8 +16,9 @@ pub const SCHEDULE_CAPACITY: usize = 64; // engineering target (015 D4)
 /// A change-log length that is always enough for one processing call (spec 015 FR-005; spec
 /// 017 FR-005, restated at the plan): the one-pass's two schedules (one per clock, spec 017 D2),
 /// one plain change per live control, and one cross-stream landing per record-side value (spec
-/// 017 D4). The one-pass attains 138 in one call, the recorder 72, the player 67. 67 in 0.16.
-pub const MAX_CHANGES_PER_CALL: usize = 2 * SCHEDULE_CAPACITY + 3 + 8; // 015 FR-005; 017 FR-005
+/// 017 D4), and one mirrored playback-stage switch per stage 11 – 13 (spec 021 research R-05).
+/// The one-pass attains 142 in one call, the recorder 72, the player 68. 67 in 0.16, 139 in 0.17.
+pub const MAX_CHANGES_PER_CALL: usize = 2 * SCHEDULE_CAPACITY + 3 + 8 + 3; // 015 FR-005; 017 FR-005; 021 FR-001
 
 /// The stream a change is scheduled on (spec 015 D2): each has its own clock and schedule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -397,7 +398,7 @@ mod tests {
                 stream: 0,
             }
         );
-        assert_eq!(MAX_CHANGES_PER_CALL, 139); // 017: 2 · 64 + 3 + 8
+        assert_eq!(MAX_CHANGES_PER_CALL, 142); // 021: 2 · 64 + 3 + 8 + 3
     }
 
     #[test]
@@ -417,6 +418,39 @@ pub(crate) const LIVE_SPEED: u32 = 2;
 /// The control manifest's index of `battery_volts` (spec 018: appended after the 0.14 entries,
 /// so no earlier index moves; pinned by a test against the manifest).
 pub(crate) const LIVE_BATTERY: u32 = 29;
+/// The control manifest's indices of the four playback-side stage switches (spec 021 FR-001;
+/// pinned by a test against the manifest): stage 10 `playback_stage_enabled`, stages 11 – 13
+/// `output.volume_amp_enabled`, `output.speaker_enabled`, `output.earphone_enabled`.
+pub(crate) const LIVE_STAGE_10: u32 = 5;
+pub(crate) const LIVE_STAGE_11: u32 = 22;
+pub(crate) const LIVE_STAGE_12: u32 = 23;
+pub(crate) const LIVE_STAGE_13: u32 = 24;
+
+/// The stage (10 … 13) of a playback-stage switch control, or `None` (spec 021 FR-001).
+pub(crate) fn stage_of(control: u32) -> Option<u8> {
+    match control {
+        LIVE_STAGE_10 => Some(10),
+        LIVE_STAGE_11 => Some(11),
+        LIVE_STAGE_12 => Some(12),
+        LIVE_STAGE_13 => Some(13),
+        _ => None,
+    }
+}
+
+/// The settings' switch values of stages 11 – 13 as bypass flags (spec 021 research R-05).
+pub(crate) fn bypassed_of(settings: &crate::Settings) -> [bool; 3] {
+    [
+        !settings.output.volume_amp_enabled,
+        !settings.output.speaker_enabled,
+        !settings.output.earphone_enabled,
+    ]
+}
+
+/// The switch value a bypass state logs (the setting's sense: 1 on, 0 bypassed).
+#[inline]
+fn switch_value(bypassed: bool) -> f64 {
+    if bypassed { 0.0 } else { 1.0 }
+}
 
 /// A stream's control state (data-model.md › Stream; research R-01): the clock, the schedule,
 /// the last applied values, the pending plain change, the landed readings and the staging log.
@@ -448,6 +482,15 @@ pub(crate) struct StreamState {
     pub(crate) landed_battery: Option<f32>,
     /// The stream word the entries carry (spec 020 D9); set after construction.
     stream: u32,
+    /// Spec 021 (research R-05): the last applied switch per stage 11 – 13 (true = bypassed),
+    /// the call's landings with their tags (read by the pipeline into the settings), the
+    /// cross-stream mirror pending for this call (the one-pass only), and stage 10's (the
+    /// player only, no mirror).
+    last_bypass: [bool; 3],
+    pub(crate) landed_bypass: [Option<(bool, u64)>; 3],
+    mirror: [Option<(bool, u64)>; 3],
+    last_stage10: bool,
+    pub(crate) landed_stage10: Option<(bool, u64)>,
     #[cfg(feature = "__test-hooks")]
     pub(crate) mutation: ChangeMutation,
     pub(crate) schedule: Schedule,
@@ -463,6 +506,9 @@ pub(crate) enum Apply {
     Level(u8),
     /// `chain.set_battery(volts)` (spec 018).
     Battery(f32),
+    /// Spec 021: a playback-stage switch (10 … 13) landing: `bypassed` the value 0, `at_once`
+    /// on the stream's first produced sample (spec 011's rule).
+    Bypass { stage: u8, bypassed: bool, at_once: bool },
 }
 
 impl StreamState {
@@ -485,6 +531,11 @@ impl StreamState {
             pending_battery: battery,
             landed_battery: None,
             stream: 0,
+            last_bypass: [false; 3],
+            landed_bypass: [None; 3],
+            mirror: [None; 3],
+            last_stage10: false,
+            landed_stage10: None,
             log: [ChangeEntry::default(); MAX_CHANGES_PER_CALL],
             log_len: 0,
             #[cfg(feature = "__test-hooks")]
@@ -504,6 +555,26 @@ impl StreamState {
         self.landed_volume = None;
         self.landed_level = None;
         self.landed_battery = None;
+        self.landed_bypass = [None; 3];
+        self.landed_stage10 = None;
+        self.mirror = [None; 3];
+    }
+
+    /// Spec 021 D2 (research R-05): the stream's switch values become `bypassed` (stages 11 –
+    /// 13) and `stage10`, no entry (`start_playback`'s adopt; the engine's `reset`).
+    pub(crate) fn set_start_bypass(&mut self, bypassed: [bool; 3], stage10: bool) {
+        self.last_bypass = bypassed;
+        self.last_stage10 = stage10;
+    }
+
+    /// Spec 021 research R-05 (the one-pass's mirror, spec 017's compare-at-call form): for each
+    /// stage 11 – 13 the stream reaches whose settings value differs from its last applied one,
+    /// a landing at the call's first sample with the stored tag.
+    pub(crate) fn begin_mirror(&mut self, settings_bypassed: [bool; 3], tags: [u64; 3], reach: [bool; 3]) {
+        for i in 0..3 {
+            self.mirror[i] = (reach[i] && settings_bypassed[i] != self.last_bypass[i])
+                .then_some((settings_bypassed[i], tags[i]));
+        }
     }
 
     /// The lifecycle rule (R-07): the stream starts with the engine's values, no entry.
@@ -568,6 +639,17 @@ impl StreamState {
     #[inline(never)]
     pub(crate) fn apply_due(&mut self, apply: &mut dyn FnMut(Apply)) {
         let pos = self.produced;
+        // Spec 021 research R-05: the cross-stream mirror first (the one-pass), in stage order.
+        for i in 0..3 {
+            if let Some((b, tag)) = self.mirror[i].take() {
+                let stage = 11 + i as u8;
+                apply(Apply::Bypass { stage, bypassed: b, at_once: pos == 0 });
+                let before = self.before(switch_value(self.last_bypass[i]), switch_value(b));
+                self.push(pos, LIVE_STAGE_11 + i as u32, before, switch_value(b), tag);
+                self.last_bypass[i] = b;
+                self.landed_bypass[i] = Some((b, tag));
+            }
+        }
         if self.plain_pending {
             self.plain_pending = false;
             let (r, v) = (self.pending_route, self.pending_volume);
@@ -641,7 +723,26 @@ impl StreamState {
                     self.last_battery = b;
                     self.landed_battery = Some(b);
                 }
-                // Validation at the schedule call admits only the three live controls.
+                // Spec 021 FR-001: the four playback-stage switches (the value 1 on, 0 bypassed);
+                // a landing of the value in force is a no-op entry (before == after).
+                LIVE_STAGE_10 => {
+                    let b = e.value == 0.0;
+                    apply(Apply::Bypass { stage: 10, bypassed: b, at_once: pos == 0 });
+                    let before = self.before(switch_value(self.last_stage10), e.value);
+                    self.push(pos, LIVE_STAGE_10, before, switch_value(b), e.tag);
+                    self.last_stage10 = b;
+                    self.landed_stage10 = Some((b, e.tag));
+                }
+                LIVE_STAGE_11 | LIVE_STAGE_12 | LIVE_STAGE_13 => {
+                    let i = (e.control - LIVE_STAGE_11) as usize;
+                    let b = e.value == 0.0;
+                    apply(Apply::Bypass { stage: 11 + i as u8, bypassed: b, at_once: pos == 0 });
+                    let before = self.before(switch_value(self.last_bypass[i]), e.value);
+                    self.push(pos, e.control, before, switch_value(b), e.tag);
+                    self.last_bypass[i] = b;
+                    self.landed_bypass[i] = Some((b, e.tag));
+                }
+                // Validation at the schedule call admits only the live controls.
                 _ => debug_assert!(false, "an unknown control in the schedule"),
             }
         }
@@ -734,6 +835,123 @@ mod index_tests {
         assert_eq!(c[LIVE_VOLUME as usize].identifier, "volume");
         assert_eq!(c[LIVE_SPEED as usize].identifier, "playback_speed");
         assert_eq!(c[LIVE_BATTERY as usize].identifier, "battery_volts"); // 018: appended
+        // Spec 021 FR-001: the four playback-stage switches.
+        assert_eq!(c[LIVE_STAGE_10 as usize].identifier, "playback_stage_enabled");
+        assert_eq!(c[LIVE_STAGE_11 as usize].identifier, "output.volume_amp_enabled");
+        assert_eq!(c[LIVE_STAGE_12 as usize].identifier, "output.speaker_enabled");
+        assert_eq!(c[LIVE_STAGE_13 as usize].identifier, "output.earphone_enabled");
+        assert_eq!(stage_of(LIVE_STAGE_10), Some(10));
+        assert_eq!(stage_of(LIVE_STAGE_13), Some(13));
+        assert_eq!(stage_of(LIVE_BATTERY), None);
+    }
+}
+
+#[cfg(test)]
+mod bypass_stream_tests {
+    //! Spec 021 T006: the stream state's switch landings (research R-02, R-05).
+    extern crate std;
+    use super::*;
+    use std::vec::Vec;
+
+    fn state() -> StreamState {
+        let mut st = StreamState::new(crate::Route::Speaker, 0.5, 3, 3.0);
+        st.set_stream(Stream::Playback);
+        st
+    }
+
+    fn run_to(st: &mut StreamState, pos: u64) -> Vec<Apply> {
+        let mut got = Vec::new();
+        st.produced = pos;
+        if st.due() {
+            st.apply_due(&mut |a| got.push(a));
+        }
+        got
+    }
+
+    #[test]
+    fn max_changes_per_call_is_142() {
+        assert_eq!(MAX_CHANGES_PER_CALL, 2 * 64 + 3 + 8 + 3);
+    }
+
+    #[test]
+    fn bypass_landings_are_logged() {
+        let mut st = state();
+        st.schedule.insert(5, LIVE_STAGE_12, 0.0, 9).unwrap();
+        st.rearm();
+        let got = run_to(&mut st, 5);
+        assert_eq!(
+            got,
+            [Apply::Bypass {
+                stage: 12,
+                bypassed: true,
+                at_once: false
+            }]
+        );
+        let mut log = [ChangeEntry::default(); 4];
+        assert_eq!(st.drain_log(&mut log), 1);
+        assert_eq!(
+            (log[0].position, log[0].control, log[0].before, log[0].after, log[0].tag, log[0].stream),
+            (5, LIVE_STAGE_12, 1.0, 0.0, 9, Stream::Playback.word())
+        );
+        assert_eq!(st.landed_bypass[1], Some((true, 9)));
+        // Stage 10 at position 0 of a fresh stream: at once.
+        let mut st = state();
+        st.schedule.insert(0, LIVE_STAGE_10, 0.0, 1).unwrap();
+        st.rearm();
+        let got = run_to(&mut st, 0);
+        assert!(got.contains(&Apply::Bypass {
+            stage: 10,
+            bypassed: true,
+            at_once: true
+        }));
+        assert_eq!(st.landed_stage10, Some((true, 1)));
+    }
+
+    #[test]
+    fn same_value_is_a_noop_entry_and_same_position_pair_logs_both() {
+        let mut st = state();
+        st.schedule.insert(3, LIVE_STAGE_13, 1.0, 2).unwrap(); // the value in force (on)
+        st.rearm();
+        run_to(&mut st, 3);
+        let mut log = [ChangeEntry::default(); 4];
+        assert_eq!(st.drain_log(&mut log), 1);
+        assert_eq!((log[0].before, log[0].after), (1.0, 1.0));
+        let mut st = state();
+        st.schedule.insert(7, LIVE_STAGE_12, 0.0, 4).unwrap();
+        st.schedule.insert(7, LIVE_STAGE_12, 1.0, 5).unwrap();
+        st.rearm();
+        let got = run_to(&mut st, 7);
+        assert_eq!(got.len(), 2);
+        let mut log = [ChangeEntry::default(); 4];
+        assert_eq!(st.drain_log(&mut log), 2);
+        assert_eq!((log[0].before, log[0].after, log[1].before, log[1].after), (1.0, 0.0, 0.0, 1.0));
+    }
+
+    #[test]
+    fn mirror_lands_first_with_the_tag_for_reached_stages() {
+        let mut st = state();
+        st.set_stream(Stream::OnePass);
+        st.begin_call(crate::Route::Speaker, 0.5, None, 3.0);
+        st.begin_mirror([true, true, false], [11, 22, 33], [true, false, true]);
+        let got = run_to(&mut st, 0);
+        assert_eq!(
+            got[0],
+            Apply::Bypass {
+                stage: 11,
+                bypassed: true,
+                at_once: true
+            }
+        );
+        assert!(!got.iter().any(|a| matches!(a, Apply::Bypass { stage: 12, .. })));
+        let mut log = [ChangeEntry::default(); 8];
+        let n = st.drain_log(&mut log);
+        assert!(n >= 1);
+        assert_eq!((log[0].control, log[0].after, log[0].tag), (LIVE_STAGE_11, 0.0, 11));
+        // A second call with the same settings: nothing pending.
+        st.begin_call(crate::Route::Speaker, 0.5, None, 3.0);
+        st.begin_mirror([true, true, false], [11, 22, 33], [true, false, true]);
+        let got = run_to(&mut st, 100);
+        assert!(!got.iter().any(|a| matches!(a, Apply::Bypass { .. })));
     }
 }
 
@@ -1226,8 +1444,8 @@ mod record_tests {
 
     #[test]
     fn record_ctl_bound() {
-        assert_eq!(MAX_CHANGES_PER_CALL, 139);
-        assert_eq!(MAX_CHANGES_PER_CALL, 2 * SCHEDULE_CAPACITY + 3 + 8);
+        assert_eq!(MAX_CHANGES_PER_CALL, 142); // 021
+        assert_eq!(MAX_CHANGES_PER_CALL, 2 * SCHEDULE_CAPACITY + 3 + 8 + 3); // 021: the three mirrored switches
         assert_eq!(RECORD_LOG, 72);
     }
 

@@ -76,7 +76,7 @@ description: Switches the codec's input band-pass filter off, passing the lows a
 [5] playback_stage_enabled
 name: Codec output filter
 kind: emulator option
-timing: idle
+timing: live
 paths: playback, one-pass
 stage: 10
 value: switch
@@ -329,7 +329,7 @@ description: Switches the speech coder off, removing its coding artifacts from r
 [22] output.volume_amp_enabled
 name: Volume and power amplifier
 kind: emulator option
-timing: idle
+timing: live
 paths: playback, one-pass
 stage: 11
 value: switch
@@ -342,7 +342,7 @@ description: Switches the volume control and speaker amplifier off: unity gain a
 [23] output.speaker_enabled
 name: Speaker
 kind: emulator option
-timing: idle
+timing: live
 paths: playback, one-pass
 stage: 12
 value: switch
@@ -355,7 +355,7 @@ description: Switches the small speaker's modeled tone off on the speaker route,
 [24] output.earphone_enabled
 name: Earphone output
 kind: emulator option
-timing: idle
+timing: live
 paths: playback, one-pass
 stage: 13
 value: switch

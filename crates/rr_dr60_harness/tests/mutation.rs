@@ -1799,3 +1799,143 @@ mod record_contract {
         assert_eq!(good.level, 5, "the wait: the first fade still runs");
     }
 }
+
+mod bypass {
+    //! Spec 021 (research R-09; tasks.md T017): six mutants of the live stage bypass, each
+    //! caught by its named oracle; the committed engine passes every one.
+    use rr_dr60::__test_hooks::BypassMutation;
+    use rr_dr60::{Pipeline, Settings};
+    use rr_dr60_harness::bypass_checks as bp;
+    use rr_dr60_harness::checks::{MeasurementResult, assert_all, standard};
+
+    fn failed(results: &[MeasurementResult]) -> Vec<&'static str> {
+        results
+            .iter()
+            .filter(|r| !r.passed)
+            .map(|r| r.property)
+            .collect()
+    }
+
+    fn mutant(m: BypassMutation) -> impl Fn(Settings) -> Pipeline {
+        move |s| Pipeline::__with_bypass_mutation(s, &m).unwrap()
+    }
+
+    fn exact_cell(stage: u8) -> bp::Cell {
+        bp::cells()
+            .into_iter()
+            .find(|c| c.stage == stage && c.exact && c.stream == rr_dr60::Stream::Playback)
+            .unwrap()
+    }
+
+    /// The inverted weight fails the blend identity (the first draft's labels).
+    #[test]
+    fn inverted_weight_is_caught() {
+        let m = mutant(BypassMutation {
+            weight_inverted: true,
+            ..BypassMutation::default()
+        });
+        let f = failed(&bp::blend_identity(&m, &exact_cell(12), 48_000));
+        assert!(f.contains(&"blend equals y + w(x - y) of the twins (worst, f32 LSBs)"), "{f:?}");
+        assert_all(&bp::blend_identity(&standard, &exact_cell(12), 48_000));
+    }
+
+    /// The switch at once fails the click table's 30 dB rows (it is the step reference).
+    #[test]
+    fn step_is_caught_by_the_click_table() {
+        let m = mutant(BypassMutation {
+            fade_step: true,
+            ..BypassMutation::default()
+        });
+        let f = failed(&bp::click_table(&m, 6000));
+        assert!(f.contains(&"crossfade click energy below the step's (dB)"), "{f:?}");
+        assert_all(&bp::click_table(&standard, 6000));
+    }
+
+    /// The linear weight fails the blend identity.
+    #[test]
+    fn linear_weight_is_caught() {
+        let m = mutant(BypassMutation {
+            fade_linear: true,
+            ..BypassMutation::default()
+        });
+        let f = failed(&bp::blend_identity(&m, &exact_cell(13), 48_000));
+        assert!(f.contains(&"blend equals y + w(x - y) of the twins (worst, f32 LSBs)"), "{f:?}");
+    }
+
+    /// A bypassed stage not kept warm fails the return identity. At 44.1 kHz: a 1 kHz tone's
+    /// period is not a whole number of samples there, so a filter state frozen at the landing
+    /// differs from the running one at the return (at 6 and 48 kHz the hold of the identity
+    /// check is a whole number of periods and the frozen state coincides with the running one:
+    /// a lesson, not an oracle).
+    #[test]
+    fn cold_stage_is_caught() {
+        let m = mutant(BypassMutation {
+            stage_cold: true,
+            ..BypassMutation::default()
+        });
+        let f = failed(&bp::endpoint_identity(&m, &exact_cell(12), 44_100));
+        assert!(f.contains(&"mismatches against the all-on run after the return"), "{f:?}");
+        assert_all(&bp::endpoint_identity(&standard, &exact_cell(12), 44_100));
+    }
+
+    /// The ungated clip count is caught by the meters' rule (US2 AS5's check): a bypassed
+    /// stage 11 at position 1 on a clipping tone counts nothing.
+    #[test]
+    fn ungated_count_is_caught() {
+        let s = bp::settings(bp::DEFAULT_CHAIN, 48_000);
+        let stored = rr_dr60_harness::stimulus::stored_tone(1000.0, 0.9, 6000);
+        let run = |make: &dyn Fn(Settings) -> Pipeline| -> u32 {
+            let mut p = bp::engine(make, s, &stored, rr_dr60::Route::Speaker, 1.0);
+            p.schedule_change(rr_dr60::Stream::Playback, 0, bp::CONTROL_STAGE_11, 0.0, 1)
+                .unwrap();
+            p.start_playback(1).unwrap();
+            let mut y = vec![0.0f32; 4096];
+            let _ = p.play(&mut y).unwrap();
+            p.meters().amp_clip_count
+        };
+        assert_eq!(run(&standard), 0);
+        let m = mutant(BypassMutation {
+            count_ungated: true,
+            ..BypassMutation::default()
+        });
+        assert!(run(&m) > 0);
+    }
+
+    /// A stage whose phase freezes off its route is caught by the inactive-route case: the
+    /// blend is not over when the route comes.
+    #[test]
+    fn frozen_phase_off_route_is_caught() {
+        use rr_dr60::{Route, Stream};
+        use rr_dr60_harness::changes_checks::{self as cc, Change, Partition, Source};
+        let rate = 48_000;
+        let s = bp::settings(bp::DEFAULT_CHAIN, rate);
+        let n = bp::n_fade(12, rate) as u64;
+        let stored = bp::stored_tone(1000.0, 1.0);
+        let sched = [
+            Change {
+                stream: Stream::Playback,
+                position: 200,
+                control: bp::CONTROL_STAGE_12,
+                value: 0.0,
+                tag: 1,
+            },
+            Change::route(Stream::Playback, 200 + 3 * n, Route::Speaker, 2),
+        ];
+        let cell = exact_cell(12);
+        let run = |make: &dyn Fn(Settings) -> Pipeline| {
+            let mut p = bp::engine(make, s, &stored, Route::Earphone, 0.5);
+            cc::run_scheduled(&mut p, Source::Playback(1), &sched, Partition::Fixed(256))
+        };
+        let good = run(&standard);
+        let m = mutant(BypassMutation {
+            phase_frozen_off_route: true,
+            ..BypassMutation::default()
+        });
+        let frozen = run(&m);
+        let at = (200 + 3 * n) as usize;
+        let end = good.out.len().min(frozen.out.len());
+        assert!(cc::same(&good.out[..at], &frozen.out[..at]), "inaudible before the route change either way");
+        assert!(!cc::same(&good.out[at..end], &frozen.out[at..end]), "the frozen fade blends after the route change");
+        let _ = cell;
+    }
+}

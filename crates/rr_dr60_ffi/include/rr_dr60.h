@@ -295,6 +295,11 @@ enum RrDr60Status
   // out of order, past the recording, from another stream, or more rows than the engine
   // counted (spec 020 D10, FR-001).
   RR_DR60_STATUS_INCONSISTENT_RUN = 35,
+  // A playback-stage switch scheduled for a stage that does not run on the stream: its
+  // setting was off at construction, or the one-pass's tap stops before it (spec 021 D4,
+  // FR-004). Build the engine with the stage on (and a tap at or after it) and switch it
+  // with `rr_dr60_schedule_change` instead; see the guide, "Live stage bypass".
+  RR_DR60_STATUS_STAGE_NOT_CONFIGURED = 36,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -1934,6 +1939,15 @@ float rr_dr60_speaker_gain_db(float position);
 // A-044): 0 dB at 1, about −9.4 dB at 0.5, about −19.2 dB at `RR_DR60_VOLUME_REFERENCE`, −∞ at
 // 0. Needs no handle; real-time safe.
 float rr_dr60_earphone_gain_db(float position);
+
+// Spec 021 D11: the level change when stage 11 (the volume control and power amplifier) is
+// bypassed live at `position` on `route` (`RR_DR60_ROUTE_SPEAKER` 0, `RR_DR60_ROUTE_EARPHONE`
+// 1; any other value reads as the speaker route), in dB, positive meaning louder when
+// bypassed: the earphone route +19.2 dB at `RR_DR60_VOLUME_REFERENCE` and 0 at position 1,
+// the speaker route −21.5 dB at position 1 and 0 at the reference position; +∞ at position 0.
+// Computed from the committed law (A-044, A-031, A-043), not measured; stated below the
+// amplifier's knee. Needs no handle; real-time safe.
+float rr_dr60_stage11_bypass_level_db(uint32_t route, float position);
 
 // Writes the engine's state (idle, recording or playing), the route, the current recording's
 // number and whether the speaker is muted to `*out_state` (spec 006 FR-003). Real-time safe.

@@ -402,6 +402,19 @@ pub fn click_energy_in<T: Copy + Into<f64>>(
     window_s: f64,
     exclusions_hz: &[f64],
 ) -> f64 {
+    click_energy_band(y, rate, centre, window_s, exclusions_hz, 2750.0)
+}
+
+/// Spec 021 research R-06: the spec 019 reader with the band's top as a parameter (2750 Hz at
+/// 6 kHz; 0.45 × rate for the 48 kHz rows, where a step's splatter extends past 2750 Hz).
+pub fn click_energy_band<T: Copy + Into<f64>>(
+    y: &[T],
+    rate: u32,
+    centre: f64,
+    window_s: f64,
+    exclusions_hz: &[f64],
+    top_hz: f64,
+) -> f64 {
     let fs = f64::from(rate);
     let len = (window_s * fs).round() as usize;
     let excl: Vec<f64> = exclusions_hz
@@ -427,7 +440,7 @@ pub fn click_energy_in<T: Copy + Into<f64>>(
     (0..=len / 2)
         .filter(|&k| {
             let f = k as f64 * fs / len as f64;
-            (20.0..=2750.0).contains(&f) && excl.iter().all(|&e| (f - e).abs() > 250.0)
+            (20.0..=top_hz).contains(&f) && excl.iter().all(|&e| (f - e).abs() > 250.0)
         })
         .map(|k| buf[k].norm_sqr())
         .sum()

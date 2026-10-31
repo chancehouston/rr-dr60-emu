@@ -161,6 +161,11 @@ pub enum RrDr60Status {
     /// out of order, past the recording, from another stream, or more rows than the engine
     /// counted (spec 020 D10, FR-001).
     InconsistentRun = 35,
+    /// A playback-stage switch scheduled for a stage that does not run on the stream: its
+    /// setting was off at construction, or the one-pass's tap stops before it (spec 021 D4,
+    /// FR-004). Build the engine with the stage on (and a tap at or after it) and switch it
+    /// with `rr_dr60_schedule_change` instead; see the guide, "Live stage bypass".
+    StageNotConfigured = 36,
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -823,6 +828,10 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
             RrDr60SettingField::None,
         ),
         Error::InconsistentRun { .. } => (RrDr60Status::InconsistentRun, RrDr60SettingField::None),
+        // Spec 021 contracts/api.md: status 36.
+        Error::StageNotConfigured { .. } => {
+            (RrDr60Status::StageNotConfigured, RrDr60SettingField::None)
+        }
         Error::NoSuchControl { .. } => (RrDr60Status::NoSuchControl, RrDr60SettingField::None),
         // Spec 013 contracts/c-api.md: status 25.
         Error::InvalidSpeedLevel { .. } => {
@@ -2937,6 +2946,19 @@ pub extern "C" fn rr_dr60_speaker_gain_db(position: f32) -> f32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn rr_dr60_earphone_gain_db(position: f32) -> f32 {
     rr_dr60::output::earphone_gain_db(position)
+}
+
+/// Spec 021 D11: the level change when stage 11 (the volume control and power amplifier) is
+/// bypassed live at `position` on `route` (`RR_DR60_ROUTE_SPEAKER` 0, `RR_DR60_ROUTE_EARPHONE`
+/// 1; any other value reads as the speaker route), in dB, positive meaning louder when
+/// bypassed: the earphone route +19.2 dB at `RR_DR60_VOLUME_REFERENCE` and 0 at position 1,
+/// the speaker route −21.5 dB at position 1 and 0 at the reference position; +∞ at position 0.
+/// Computed from the committed law (A-044, A-031, A-043), not measured; stated below the
+/// amplifier's knee. Needs no handle; real-time safe.
+#[unsafe(no_mangle)]
+pub extern "C" fn rr_dr60_stage11_bypass_level_db(route: u32, position: f32) -> f32 {
+    let r = route_from_c(route).unwrap_or(rr_dr60::Route::Speaker);
+    rr_dr60::output::stage11_bypass_level_db(r, position)
 }
 
 /// Writes the engine's state (idle, recording or playing), the route, the current recording's
