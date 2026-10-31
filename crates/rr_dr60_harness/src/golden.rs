@@ -2822,7 +2822,7 @@ fn bypass_scenarios() -> [&'static str; 2] {
     ["bypass_return", "reversal"]
 }
 
-/// Spec 021 (research R-09): 20 entries per rate (the cells' two scenarios and two two-stage
+/// Spec 021 (research R-09): 24 entries per rate (eleven cells' two scenarios and two two-stage
 /// entries), the output's digest with the schedule and the switch entries. At bless time the
 /// exact entries' endpoint identities (the all-on run before P, the configured-off twin from
 /// P + N − 1 to Q, the all-on run after Q + N − 1) and every entry's partition identity (block
@@ -2846,17 +2846,35 @@ pub fn generate_bypass(make: Make<'_>, bless: bool) -> GoldenFile {
             let volume = if cell.stage == 11 {
                 bp::neutral_position(cell.route)
             } else {
-                rr_dr60::output::VOLUME_REFERENCE as f32
+                rr_dr60::output::VOLUME_REFERENCE
             };
             let n = bp::n_fade(cell.stage, rate) as u64;
-            let n_host = if cell.stage == 10 { n * u64::from(rate) / 6000 } else { n };
+            let n_host = if cell.stage == 10 {
+                n * u64::from(rate) / 6000
+            } else {
+                n
+            };
             for scenario in bypass_scenarios() {
                 let sched = match scenario {
-                    "bypass_return" => vec![bp::change(cell, p, false, 1), bp::change(cell, q, true, 2)],
-                    _ => vec![bp::change(cell, p, false, 1), bp::change(cell, p + n_host / 2, true, 2)],
+                    "bypass_return" => {
+                        vec![bp::change(cell, p, false, 1), bp::change(cell, q, true, 2)]
+                    }
+                    _ => vec![
+                        bp::change(cell, p, false, 1),
+                        bp::change(cell, p + n_host / 2, true, 2),
+                    ],
                 };
                 let s = bp::settings(cell.config, rate);
-                let run = bp::run_cell(make, s, cell, &stored, &host, volume, &sched, Partition::Fixed(4096));
+                let run = bp::run_cell(
+                    make,
+                    s,
+                    cell,
+                    &stored,
+                    &host,
+                    volume,
+                    &sched,
+                    Partition::Fixed(4096),
+                );
                 let name = format!("{scenario}/stage{}/{:?}", cell.stage, cell.route);
                 let config = if cell.stream == rr_dr60::Stream::OnePass {
                     format!("{}@one_pass", cell.config)
@@ -2864,14 +2882,22 @@ pub fn generate_bypass(make: Make<'_>, bless: bool) -> GoldenFile {
                     cell.config.to_string()
                 };
                 let mut e = entry(&name, &config, rate, &run.out);
-                let log: Vec<(u64, u32, f64, f64, u64, u32)> = cc::entries_of(&run.log, cell.control)
-                    .iter()
-                    .map(|c| (c.position, c.control, c.before, c.after, c.tag, c.stream))
-                    .collect();
+                let log: Vec<(u64, u32, f64, f64, u64, u32)> =
+                    cc::entries_of(&run.log, cell.control)
+                        .iter()
+                        .map(|c| (c.position, c.control, c.before, c.after, c.tag, c.stream))
+                        .collect();
                 e.bypass = Some(BypassGolden {
                     stages: vec![cell.stage],
-                    schedule: sched.iter().map(|c| (c.position, c.control, c.value, c.tag)).collect(),
-                    stream: if cell.stream == rr_dr60::Stream::OnePass { "one_pass".into() } else { "playback".into() },
+                    schedule: sched
+                        .iter()
+                        .map(|c| (c.position, c.control, c.value, c.tag))
+                        .collect(),
+                    stream: if cell.stream == rr_dr60::Stream::OnePass {
+                        "one_pass".into()
+                    } else {
+                        "playback".into()
+                    },
                     route: format!("{:?}", cell.route).to_lowercase(),
                     log,
                     produced: run.out.len() as u64,
@@ -2881,18 +2907,63 @@ pub fn generate_bypass(make: Make<'_>, bless: bool) -> GoldenFile {
                 if bless {
                     let tag = format!("{name}/{config}/{rate} Hz");
                     // The partition identity.
-                    let one = bp::run_cell(make, s, cell, &stored, &host, volume, &sched, Partition::Fixed(1));
-                    assert!(cc::same(&one.out, &run.out) && one.log == run.log, "{tag}: block size 1");
+                    let one = bp::run_cell(
+                        make,
+                        s,
+                        cell,
+                        &stored,
+                        &host,
+                        volume,
+                        &sched,
+                        Partition::Fixed(1),
+                    );
+                    assert!(
+                        cc::same(&one.out, &run.out) && one.log == run.log,
+                        "{tag}: block size 1"
+                    );
                     if scenario == "bypass_return" {
-                        let all_on = bp::run_cell(make, s, cell, &stored, &host, volume, &[], Partition::Fixed(4096));
-                        let twin = bp::run_cell(make, bp::twin_settings(cell, rate), cell, &stored, &host, volume, &[], Partition::Fixed(4096));
+                        let all_on = bp::run_cell(
+                            make,
+                            s,
+                            cell,
+                            &stored,
+                            &host,
+                            volume,
+                            &[],
+                            Partition::Fixed(4096),
+                        );
+                        let twin = bp::run_cell(
+                            make,
+                            bp::twin_settings(cell, rate),
+                            cell,
+                            &stored,
+                            &host,
+                            volume,
+                            &[],
+                            Partition::Fixed(4096),
+                        );
                         let (p, q) = (p as usize, q as usize);
                         assert!(cc::same(&run.out[..p], &all_on.out[..p]), "{tag}: before P");
                         if cell.exact {
-                            let n_h = n_host as usize;
-                            assert!(cc::same(&run.out[p + n_h - 1..q], &twin.out[p + n_h - 1..q]), "{tag}: the twin");
+                            // Stage 10's blend reaches the host output through the rate
+                            // conversion: its identity holds from the bound P + N_host − 1 + 2D
+                            // (research R-03); the chain stages' from P + N − 1.
+                            let two_d = if cell.stage == 10 {
+                                2 * rr_dr60::__test_hooks::resampler_delay_host_samples(rate)
+                                    .unwrap_or(0) as usize
+                            } else {
+                                0
+                            };
+                            let n_h = n_host as usize + two_d;
+                            assert!(
+                                cc::same(&run.out[p + n_h - 1..q], &twin.out[p + n_h - 1..q]),
+                                "{tag}: the twin"
+                            );
                             let end = run.out.len().min(all_on.out.len());
-                            assert!(cc::same(&run.out[q + n_h - 1..end], &all_on.out[q + n_h - 1..end]), "{tag}: the return");
+                            assert!(
+                                cc::same(&run.out[q + n_h - 1..end], &all_on.out[q + n_h - 1..end]),
+                                "{tag}: the return"
+                            );
                         } else {
                             let settle = rr_dr60::output::settle_samples(rate).unwrap() as usize;
                             let from = p + n_host as usize - 1 + settle;
@@ -2908,7 +2979,10 @@ pub fn generate_bypass(make: Make<'_>, bless: bool) -> GoldenFile {
         }
         // Two two-stage entries: 11 + 12 on the speaker route, 11 + 13 on the earphone route,
         // at one position with one tag (the whole-output-path recipe).
-        for (route, other) in [(rr_dr60::Route::Speaker, 23u32), (rr_dr60::Route::Earphone, 24u32)] {
+        for (route, other) in [
+            (rr_dr60::Route::Speaker, 23u32),
+            (rr_dr60::Route::Earphone, 24u32),
+        ] {
             let cell = bp::Cell {
                 stage: 11,
                 control: bp::CONTROL_STAGE_11,
@@ -2923,8 +2997,21 @@ pub fn generate_bypass(make: Make<'_>, bless: bool) -> GoldenFile {
                 rr_dr60_change(p, other, 0.0, 9),
             ];
             let s = bp::settings(cell.config, rate);
-            let run = bp::run_cell(make, s, &cell, &stored, &host, bp::neutral_position(route), &sched, Partition::Fixed(4096));
-            let name = format!("whole_path/11+{}/{:?}", if other == 23 { 12 } else { 13 }, route);
+            let run = bp::run_cell(
+                make,
+                s,
+                &cell,
+                &stored,
+                &host,
+                bp::neutral_position(route),
+                &sched,
+                Partition::Fixed(4096),
+            );
+            let name = format!(
+                "whole_path/11+{}/{:?}",
+                if other == 23 { 12 } else { 13 },
+                route
+            );
             let mut e = entry(&name, bp::DEFAULT_CHAIN, rate, &run.out);
             let log: Vec<(u64, u32, f64, f64, u64, u32)> = run
                 .log
@@ -2934,7 +3021,10 @@ pub fn generate_bypass(make: Make<'_>, bless: bool) -> GoldenFile {
                 .collect();
             e.bypass = Some(BypassGolden {
                 stages: vec![11, if other == 23 { 12 } else { 13 }],
-                schedule: sched.iter().map(|c| (c.position, c.control, c.value, c.tag)).collect(),
+                schedule: sched
+                    .iter()
+                    .map(|c| (c.position, c.control, c.value, c.tag))
+                    .collect(),
                 stream: "playback".into(),
                 route: format!("{route:?}").to_lowercase(),
                 log,
@@ -2943,8 +3033,20 @@ pub fn generate_bypass(make: Make<'_>, bless: bool) -> GoldenFile {
                 reversal: false,
             });
             if bless {
-                let one = bp::run_cell(make, s, &cell, &stored, &host, bp::neutral_position(route), &sched, Partition::Fixed(1));
-                assert!(cc::same(&one.out, &run.out), "{name}/{rate} Hz: block size 1");
+                let one = bp::run_cell(
+                    make,
+                    s,
+                    &cell,
+                    &stored,
+                    &host,
+                    bp::neutral_position(route),
+                    &sched,
+                    Partition::Fixed(1),
+                );
+                assert!(
+                    cc::same(&one.out, &run.out),
+                    "{name}/{rate} Hz: block size 1"
+                );
             }
             entries.push(e);
         }
@@ -2957,7 +3059,12 @@ pub fn generate_bypass(make: Make<'_>, bless: bool) -> GoldenFile {
     }
 }
 
-fn rr_dr60_change(position: u64, control: u32, value: f64, tag: u64) -> crate::changes_checks::Change {
+fn rr_dr60_change(
+    position: u64,
+    control: u32,
+    value: f64,
+    tag: u64,
+) -> crate::changes_checks::Change {
     crate::changes_checks::Change {
         stream: rr_dr60::Stream::Playback,
         position,

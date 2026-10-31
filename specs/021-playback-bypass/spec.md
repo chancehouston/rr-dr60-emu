@@ -42,6 +42,15 @@ The owner reads this section first. Each decision gives the recommendation; the 
 - **The block-size-1 case is a partition**, not a setter oracle (the switches have no 0.20 setter) (coach 8).
 - **The hot path is one byte** (`bypass_state == 0` takes 0.20's path) in a `#[repr(C)]` chain; a cached `amp_counting` gates the clip count (hardware B10, coach 11).
 
+### Session 2026-10-31 (restated at implementation)
+
+- **D9(c), SC-002 (the harness's blend identity)**: within two f32 steps of the branches' magnitude on the narrowed host output (the core's 64-bit test is exact); the midpoint weight reads 0.5 exactly on every cell.
+- **D9(b), FR-003 (stage 10 on the host output)**: the exact comparison against the configured-off twin runs from P + N_host − 1 + 2D, the bound, at the conversion rates (the blend's last device sample reaches the output 2D later); the live-tail row is a playback-stream figure (the one-pass has no drain).
+- **R-07 (the level function)**: computed from the chain's own scalars, so no scale constant exists.
+- **R-09 (the cold-stage mutant)**: tested at 44.1 kHz, where a 1 kHz tone's period is not a whole number of samples; at 6 and 48 kHz the identity check's hold is a whole number of periods and a frozen filter state coincides with the running one.
+- **FR-006 (the record golden)**: `golden-record-v1.json` normalizes its `recording_digest` line (the stored form's header carries the library version) and was re-blessed once with its data lines unchanged; the thirteen audio guards and every smoke hash are unmoved.
+- **D9(b) (the converging cells)**: the live output becomes bit-identical to the twin's within the identity window at every rate (reported); the −100 dBFS bound stays the assertion.
+
 ### Session 2026-10-31 (plan sign-off)
 
 - The owner approved the plan (P1 – P8) with the eleven restatements above, including the one new function `stage11_bypass_level_db` and the app's loudness rule; the rest proceeds to the merge, stopping only on a failed check or a new decision.

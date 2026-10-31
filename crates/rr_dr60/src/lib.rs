@@ -579,7 +579,11 @@ pub mod __test_hooks {
     pub fn player_bypass_targets(pipeline: &crate::Pipeline) -> ([bool; 3], bool) {
         let c = &pipeline.player.chain;
         (
-            [c.bypass_target(11), c.bypass_target(12), c.bypass_target(13)],
+            [
+                c.bypass_target(11),
+                c.bypass_target(12),
+                c.bypass_target(13),
+            ],
             pipeline.player.half.bypass_target(),
         )
     }

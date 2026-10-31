@@ -727,7 +727,8 @@ impl OutputChain {
         // the fades running (FR-008).
         self.fade_amp.snap(self.fade_amp.target_bypassed());
         self.fade_speaker.snap(self.fade_speaker.target_bypassed());
-        self.fade_earphone.snap(self.fade_earphone.target_bypassed());
+        self.fade_earphone
+            .snap(self.fade_earphone.target_bypassed());
         self.refresh_bypass_state();
     }
 
@@ -740,9 +741,7 @@ impl OutputChain {
         match stage {
             11 => self.run_amp,
             12 => self.run_speaker && matches!(self.tap, Tap::RouteOutput | Tap::AfterSpeaker),
-            13 => {
-                self.run_earphone && matches!(self.tap, Tap::RouteOutput | Tap::AfterEarphone)
-            }
+            13 => self.run_earphone && matches!(self.tap, Tap::RouteOutput | Tap::AfterEarphone),
             _ => false,
         }
     }
@@ -997,8 +996,6 @@ impl OutputChain {
     }
 }
 
-/// 009 T008 (spec 009 FR-003 – FR-009; research R-03 – R-05, R-08; contracts/output-chain-
-/// design.md): the clipper, the loaded law, the chain's semantics and the pinned table.
 #[cfg(test)]
 mod bypass_tests {
     //! Spec 021 T004: the chain's live bypass (research R-04, R-08, R-10, R-11).
@@ -1101,11 +1098,23 @@ mod bypass_tests {
             let t = twin.process(x);
             let a = all_on.process(x);
             if i < land {
-                assert_eq!(y.to_bits(), a.to_bits(), "stage {stage} {route:?} {rate}: before");
+                assert_eq!(
+                    y.to_bits(),
+                    a.to_bits(),
+                    "stage {stage} {route:?} {rate}: before"
+                );
             } else if i >= land + n - 1 && i < back {
-                assert_eq!(y.to_bits(), t.to_bits(), "stage {stage} {route:?} {rate}: bypassed at {i}");
+                assert_eq!(
+                    y.to_bits(),
+                    t.to_bits(),
+                    "stage {stage} {route:?} {rate}: bypassed at {i}"
+                );
             } else if i >= back + n - 1 {
-                assert_eq!(y.to_bits(), a.to_bits(), "stage {stage} {route:?} {rate}: returned at {i}");
+                assert_eq!(
+                    y.to_bits(),
+                    a.to_bits(),
+                    "stage {stage} {route:?} {rate}: returned at {i}"
+                );
             }
         }
     }
@@ -1243,7 +1252,7 @@ mod bypass_tests {
     #[test]
     fn stage11_bypass_level_table() {
         use crate::output::{VOLUME_REFERENCE, speaker_gain_db, stage11_bypass_level_db};
-        let p_ref = VOLUME_REFERENCE as f32;
+        let p_ref = VOLUME_REFERENCE;
         let near = |got: f32, want: f32| (got - want).abs() < 0.01;
         assert!(near(stage11_bypass_level_db(Route::Earphone, p_ref), 19.21));
         assert!(near(stage11_bypass_level_db(Route::Earphone, 1.0), 0.0));
@@ -1252,7 +1261,8 @@ mod bypass_tests {
         assert!(stage11_bypass_level_db(Route::Speaker, 0.0).is_infinite());
         // The speaker route's scalar beyond the published gain law: 20·log10(1.0 / 1.15).
         let scale = -stage11_bypass_level_db(Route::Speaker, 1.0) - speaker_gain_db(1.0);
-        assert!((f64::from(scale) - 20.0 * (1.0f64 / 1.15).log10()).abs() < 1e-4, "{scale}");
+        // 20·log10(1.0 / 1.15) = −1.2140 dB (the ceiling A-031 over the codec's full scale A-030).
+        assert!((f64::from(scale) + 1.2140).abs() < 1e-3, "{scale}");
     }
 
     /// The `weight_inverted`, `fade_linear` and `fade_step` mutants change the blend.
@@ -1300,6 +1310,8 @@ mod bypass_tests {
     }
 }
 
+/// 009 T008 (spec 009 FR-003 – FR-009; research R-03 – R-05, R-08; contracts/output-chain-
+/// design.md): the clipper, the loaded law, the chain's semantics and the pinned table.
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // analysis in tests, not the DSP path (001 R-04)
 mod tests {

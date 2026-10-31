@@ -69,8 +69,14 @@ fn bypass_states() {
         let step = u64::from(rate) / 5; // every 200 ms
         for i in 0..64u64 {
             let on = i % 2 == 1;
-            p.schedule_change(Stream::Playback, i * step, 23, if on { 1.0 } else { 0.0 }, i + 1)
-                .unwrap();
+            p.schedule_change(
+                Stream::Playback,
+                i * step,
+                23,
+                if on { 1.0 } else { 0.0 },
+                i + 1,
+            )
+            .unwrap();
         }
     });
     let budget_us = 1000.0 * 4096.0 / 48.0;
@@ -79,5 +85,8 @@ fn bypass_states() {
         100.0 * (bypassed / all_on - 1.0),
         100.0 * (blending / all_on - 1.0)
     );
-    assert!(worst < budget_us, "the worst block {worst} us exceeds the budget {budget_us} us"); // 021 FR-010
+    assert!(
+        worst < budget_us,
+        "the worst block {worst} us exceeds the budget {budget_us} us"
+    ); // 021 FR-010
 }

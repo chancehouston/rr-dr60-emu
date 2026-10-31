@@ -1240,7 +1240,10 @@ fn guide_bypass() {
     let section = text[start..end].to_lowercase();
     assert!(section.contains("emulator convention") && section.contains("no stage switches"));
     assert!(section.contains("neutral position") && section.contains("stage11_bypass_level_db"));
-    assert!(!section.contains("tbd-021"), "a figure is still a placeholder");
+    assert!(
+        !section.contains("tbd-021"),
+        "a figure is still a placeholder"
+    );
     for word in [
         "verified",
         "authentic",

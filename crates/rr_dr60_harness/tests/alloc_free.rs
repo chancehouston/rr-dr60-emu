@@ -1284,7 +1284,9 @@ fn record_contract_allocate_nothing() {
 #[test]
 fn bypass_allocate_nothing() {
     use rr_dr60::Stream;
-    use rr_dr60_ffi::{RrDr60PlayInfo, rr_dr60_play, rr_dr60_schedule_change, rr_dr60_start_playback};
+    use rr_dr60_ffi::{
+        RrDr60PlayInfo, rr_dr60_play, rr_dr60_schedule_change, rr_dr60_start_playback,
+    };
     use rr_dr60_harness::bypass_checks as bp;
     let _turn = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let x = bp::stored_tone(1000.0, 0.5);
@@ -1315,13 +1317,19 @@ fn bypass_allocate_nothing() {
         let mut y = vec![0.0f32; host.len()];
         p.start_playback(1).unwrap();
         // SAFETY: a live handle.
-        assert_eq!(unsafe { rr_dr60_start_playback(handle, 1) }, RrDr60Status::Ok);
+        assert_eq!(
+            unsafe { rr_dr60_start_playback(handle, 1) },
+            RrDr60Status::Ok
+        );
         let mut info = RrDr60PlayInfo::default();
         MEASURING.with(|m| m.set(true));
         let before = counts();
-        p.schedule_change(Stream::Playback, 10, bp::CONTROL_STAGE_12, 0.0, 1).unwrap();
-        p.schedule_change(Stream::Playback, 100, bp::CONTROL_STAGE_12, 1.0, 2).unwrap(); // a reversal
-        p.schedule_change(Stream::Playback, 300, bp::CONTROL_STAGE_10, 0.0, 3).unwrap();
+        p.schedule_change(Stream::Playback, 10, bp::CONTROL_STAGE_12, 0.0, 1)
+            .unwrap();
+        p.schedule_change(Stream::Playback, 100, bp::CONTROL_STAGE_12, 1.0, 2)
+            .unwrap(); // a reversal
+        p.schedule_change(Stream::Playback, 300, bp::CONTROL_STAGE_10, 0.0, 3)
+            .unwrap();
         let refused = p.schedule_change(Stream::OnePass, 0, bp::CONTROL_STAGE_10, 0.0, 4);
         let _ = p.play(&mut output).unwrap();
         let _ = p.play(&mut output).unwrap();
@@ -1343,7 +1351,8 @@ fn bypass_allocate_nothing() {
         // The one-pass: the mirror landing at the call's first sample and a blend.
         MEASURING.with(|m| m.set(true));
         let before = counts();
-        p.schedule_change(Stream::OnePass, 5, bp::CONTROL_STAGE_13, 0.0, 5).unwrap();
+        p.schedule_change(Stream::OnePass, 5, bp::CONTROL_STAGE_13, 0.0, 5)
+            .unwrap();
         let _ = p.process(&host, &mut y).unwrap();
         let after = counts();
         MEASURING.with(|m| m.set(false));

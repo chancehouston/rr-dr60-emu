@@ -355,7 +355,7 @@ impl PlaybackHalf {
     /// so a return is seamless).
     #[inline]
     pub(crate) fn process(&mut self, d: f64) -> f64 {
-        use crate::stages::fade::{self, FadeOut};
+        use crate::stages::fade;
         if !self.run_playback {
             return d;
         }
@@ -363,12 +363,12 @@ impl PlaybackHalf {
         #[cfg(any(test, feature = "__test-hooks"))]
         {
             let m = self.bypass_mut;
-            let y = if m.stage_cold && out == FadeOut::Bypassed {
+            let y = if m.stage_cold && out == fade::FadeOut::Bypassed {
                 d
             } else {
                 self.playback.process(d)
             };
-            if let FadeOut::Blend(_) = out {
+            if let fade::FadeOut::Blend(_) = out {
                 let k = self.fade.phase();
                 let w = if m.fade_linear {
                     self.fade.weight_linear(k)
@@ -1413,8 +1413,6 @@ pub(crate) mod figures {
     pub(crate) const MAX_INTERPOLATOR_BRANCH_L1: f64 = 2.33;
 }
 
-/// 006 T013 (spec 006 FR-001, FR-002, FR-007, FR-016; research R-01, R-06; plan review P10):
-/// the halves and paths behind both engines.
 #[cfg(test)]
 mod half_bypass_tests {
     //! Spec 021 T005: stage 10's live bypass in the playback half (research R-03).
@@ -1445,7 +1443,11 @@ mod half_bypass_tests {
             let y = live.process(x);
             let a = all_on.process(x);
             if i >= 200 + n - 1 && i < 200 + n + 400 {
-                assert_eq!(y.to_bits(), x.to_bits(), "bypassed at {i}: the input itself");
+                assert_eq!(
+                    y.to_bits(),
+                    x.to_bits(),
+                    "bypassed at {i}: the input itself"
+                );
             }
             if i < 200 || i >= 200 + 2 * n + 400 - 1 {
                 assert_eq!(y.to_bits(), a.to_bits(), "all-on at {i}");
@@ -1490,6 +1492,8 @@ mod half_bypass_tests {
     }
 }
 
+/// 006 T013 (spec 006 FR-001, FR-002, FR-007, FR-016; research R-01, R-06; plan review P10):
+/// the halves and paths behind both engines.
 #[cfg(test)]
 mod tests {
     extern crate std;

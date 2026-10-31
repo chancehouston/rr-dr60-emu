@@ -25,9 +25,12 @@ fn main() {
     println!("bypass");
     let mut p = Pipeline::new(s).expect("settings");
     p.set_route(Route::Speaker);
-    p.schedule_change(Stream::OnePass, 20_000, 23, 0.0, 1).expect("schedule");
-    p.schedule_change(Stream::OnePass, 40_000, 23, 1.0, 2).expect("schedule");
-    p.schedule_change(Stream::OnePass, 60_000, 22, 0.0, 3).expect("schedule");
+    p.schedule_change(Stream::OnePass, 20_000, 23, 0.0, 1)
+        .expect("schedule");
+    p.schedule_change(Stream::OnePass, 40_000, 23, 1.0, 2)
+        .expect("schedule");
+    p.schedule_change(Stream::OnePass, 60_000, 22, 0.0, 3)
+        .expect("schedule");
     let mut out = Vec::new();
     for chunk in x.chunks(1024) {
         let mut y = vec![0.0f32; chunk.len()];
@@ -49,9 +52,9 @@ fn main() {
     println!("digest {:016x}", digest(&out));
     println!("level");
     for (route, pos) in [
-        (Route::Earphone, VOLUME_REFERENCE as f32),
+        (Route::Earphone, VOLUME_REFERENCE),
         (Route::Earphone, 1.0),
-        (Route::Speaker, VOLUME_REFERENCE as f32),
+        (Route::Speaker, VOLUME_REFERENCE),
         (Route::Speaker, 1.0),
     ] {
         println!(

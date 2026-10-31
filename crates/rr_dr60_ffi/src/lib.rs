@@ -374,7 +374,7 @@ pub const RR_DR60_SCHEDULE_CAPACITY: usize = 64; // 015 D4: equal to `rr_dr60::c
 
 /// A `changes_capacity` that is always enough for one call (spec 015 FR-005). Equal to the
 /// Rust `changes::MAX_CHANGES_PER_CALL`.
-pub const RR_DR60_MAX_CHANGES_PER_CALL: usize = 139; // 015 FR-005; 017 FR-005: equal to `rr_dr60::changes::MAX_CHANGES_PER_CALL` (a literal so cbindgen emits the define; the unit test pins it)
+pub const RR_DR60_MAX_CHANGES_PER_CALL: usize = 142; // 015 FR-005; 017 FR-005; 021 FR-001: equal to `rr_dr60::changes::MAX_CHANGES_PER_CALL` (a literal so cbindgen emits the define; the unit test pins it)
 
 /// The engine's state (spec 006 FR-003), in `RrDr60EngineState.state`.
 #[repr(u32)]
@@ -5571,8 +5571,10 @@ mod changes_tests {
             schedule(h, ONE_PASS, 0, SPEED, 3.0, 1),
             RrDr60Status::ControlNotOnStream
         );
+        // Spec 021: control 5 (`playback_stage_enabled`) is live since 0.21; control 4
+        // (`record_stage_enabled`) stays idle and is refused.
         assert_eq!(
-            schedule(h, PLAYBACK, 0, 5, 1.0, 1),
+            schedule(h, PLAYBACK, 0, 4, 1.0, 1),
             RrDr60Status::ControlNotOnStream
         );
         assert_eq!(
@@ -5852,7 +5854,7 @@ mod changes_tests {
         assert_eq!(RrDr60Status::ScheduleFull as u32, 27);
         assert_eq!(RrDr60Status::ControlNotOnStream as u32, 28);
         assert_eq!(RrDr60Status::NoSuchClock as u32, 29); // spec 017
-        assert_eq!(RR_DR60_MAX_CHANGES_PER_CALL, 139); // spec 017 FR-005
+        assert_eq!(RR_DR60_MAX_CHANGES_PER_CALL, 142); // spec 017 FR-005; spec 021 FR-001
         assert_eq!(
             status_from_error(Error::ReservedStream {
                 stream: Stream::Record

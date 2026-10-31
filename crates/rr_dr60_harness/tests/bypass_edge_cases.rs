@@ -34,11 +34,19 @@ fn n12() -> u64 {
 #[test]
 fn position_zero_switches_at_once() {
     let mut p = recorded(quiet(), Route::Speaker);
-    let live = cc::run_scheduled(&mut p, Source::Playback(1), &[change(0, 23, false, 1)], Partition::Fixed(256));
+    let live = cc::run_scheduled(
+        &mut p,
+        Source::Playback(1),
+        &[change(0, 23, false, 1)],
+        Partition::Fixed(256),
+    );
     let mut t = recorded(bp::twin_settings(&bp::cells()[8], RATE), Route::Speaker); // stage 12 off
     let twin = cc::run(&mut t, Source::Playback(1), Partition::Fixed(256));
     let n = twin.out.len();
-    assert!(cc::same(&live.out[..n], &twin.out), "at once: the twin from sample 0");
+    assert!(
+        cc::same(&live.out[..n], &twin.out),
+        "at once: the twin from sample 0"
+    );
     assert_eq!(cc::entries_of(&live.log, 23).len(), 1);
 }
 
@@ -54,7 +62,10 @@ fn same_position_pair_both_logged_no_blend() {
     );
     let e = cc::entries_of(&r.log, 23);
     assert_eq!(e.len(), 2);
-    assert_eq!((e[0].before, e[0].after, e[1].before, e[1].after), (1.0, 0.0, 0.0, 1.0));
+    assert_eq!(
+        (e[0].before, e[0].after, e[1].before, e[1].after),
+        (1.0, 0.0, 0.0, 1.0)
+    );
     let mut q = recorded(quiet(), Route::Speaker);
     let plain = cc::run(&mut q, Source::Playback(1), Partition::Fixed(256));
     assert!(cc::same(&r.out, &plain.out));
@@ -75,7 +86,12 @@ fn two_stages_same_position_two_blends() {
     assert_eq!(player_bypass_targets(&p).0, [true, true, false]);
     // Each alone differs from both together inside the blend.
     let mut a = recorded(quiet(), Route::Speaker);
-    let only = cc::run_scheduled(&mut a, Source::Playback(1), &[change(400, 22, false, 1)], Partition::Fixed(256));
+    let only = cc::run_scheduled(
+        &mut a,
+        Source::Playback(1),
+        &[change(400, 22, false, 1)],
+        Partition::Fixed(256),
+    );
     assert!(!cc::same(&r.out, &only.out));
 }
 
@@ -132,18 +148,27 @@ fn several_toggles_reverse_each_time() {
 #[test]
 fn stopped_during_blend_restarts_at_rest() {
     let mut p = recorded(quiet(), Route::Speaker);
-    p.schedule_change(Stream::Playback, 100, 23, 0.0, 1).unwrap();
-    p.schedule_change(Stream::Playback, 100_000, 24, 0.0, 2).unwrap();
+    p.schedule_change(Stream::Playback, 100, 23, 0.0, 1)
+        .unwrap();
+    p.schedule_change(Stream::Playback, 100_000, 24, 0.0, 2)
+        .unwrap();
     p.start_playback(1).unwrap();
     let mut y = vec![0.0f32; 100 + n12() as usize / 2];
     let _ = p.play(&mut y).unwrap();
     p.stop_playback().unwrap();
-    assert_eq!(p.pending_changes(Stream::Playback).unwrap(), 0, "cleared with the playback");
+    assert_eq!(
+        p.pending_changes(Stream::Playback).unwrap(),
+        0,
+        "cleared with the playback"
+    );
     assert_eq!(player_bypass_targets(&p).0, [false, true, false]);
     let r = cc::run(&mut p, Source::Playback(1), Partition::Fixed(256));
     let mut t = recorded(bp::twin_settings(&bp::cells()[8], RATE), Route::Speaker);
     let twin = cc::run(&mut t, Source::Playback(1), Partition::Fixed(256));
-    assert!(cc::same(&r.out[..twin.out.len()], &twin.out), "no blend: the twin from sample 0");
+    assert!(
+        cc::same(&r.out[..twin.out.len()], &twin.out),
+        "no blend: the twin from sample 0"
+    );
     assert!(cc::entries_of(&r.log, 23).is_empty());
 }
 
@@ -152,7 +177,12 @@ fn stopped_during_blend_restarts_at_rest() {
 #[test]
 fn reset_and_reconfigure_rules() {
     let mut p = recorded(quiet(), Route::Speaker);
-    cc::run_scheduled(&mut p, Source::Playback(1), &[change(100, 24, false, 1)], Partition::Fixed(256));
+    cc::run_scheduled(
+        &mut p,
+        Source::Playback(1),
+        &[change(100, 24, false, 1)],
+        Partition::Fixed(256),
+    );
     p.schedule_change(Stream::Playback, 5, 23, 0.0, 9).unwrap();
     p.reset();
     assert_eq!(p.pending_changes(Stream::Playback).unwrap(), 0);
@@ -171,7 +201,12 @@ fn landing_during_the_drain() {
     let mut p = recorded(quiet(), Route::Speaker);
     let own = (6000 * RATE as usize) / 6000; // the 1 s recording in host samples
     let pos = own as u64 + 100;
-    let r = cc::run_scheduled(&mut p, Source::Playback(1), &[change(pos, 23, false, 1)], Partition::Fixed(256));
+    let r = cc::run_scheduled(
+        &mut p,
+        Source::Playback(1),
+        &[change(pos, 23, false, 1)],
+        Partition::Fixed(256),
+    );
     let mut q = recorded(quiet(), Route::Speaker);
     let plain = cc::run(&mut q, Source::Playback(1), Partition::Fixed(256));
     assert_eq!(r.out.len(), plain.out.len());
@@ -193,15 +228,41 @@ fn inactive_route_stage_lands_and_phase_advances() {
     assert_eq!(cc::entries_of(&r.log, 23).len(), 1);
     // Before the route change: equal to the plain earphone run.
     let mut q = recorded(quiet(), Route::Earphone);
-    let plain = cc::run_scheduled(&mut q, Source::Playback(1), &[Change::route(Stream::Playback, 200 + 3 * n, Route::Speaker, 2)], Partition::Fixed(256));
+    let plain = cc::run_scheduled(
+        &mut q,
+        Source::Playback(1),
+        &[Change::route(
+            Stream::Playback,
+            200 + 3 * n,
+            Route::Speaker,
+            2,
+        )],
+        Partition::Fixed(256),
+    );
     let at = (200 + 3 * n) as usize;
-    assert!(cc::same(&r.out[..at], &plain.out[..at]), "inaudible on the earphone route");
+    assert!(
+        cc::same(&r.out[..at], &plain.out[..at]),
+        "inaudible on the earphone route"
+    );
     // After the route change the blend is over: the speaker route carries stage 12 bypassed
     // (the twin with stage 12 off, the same route change), bit for bit.
     let mut t = recorded(bp::twin_settings(&bp::cells()[8], RATE), Route::Earphone);
-    let twin = cc::run_scheduled(&mut t, Source::Playback(1), &[Change::route(Stream::Playback, 200 + 3 * n, Route::Speaker, 2)], Partition::Fixed(256));
+    let twin = cc::run_scheduled(
+        &mut t,
+        Source::Playback(1),
+        &[Change::route(
+            Stream::Playback,
+            200 + 3 * n,
+            Route::Speaker,
+            2,
+        )],
+        Partition::Fixed(256),
+    );
     let end = r.out.len().min(twin.out.len());
-    assert!(cc::same(&r.out[at..end], &twin.out[at..end]), "the blend was over when the route came");
+    assert!(
+        cc::same(&r.out[at..end], &twin.out[at..end]),
+        "the blend was over when the route came"
+    );
 }
 
 /// A route change during a blend keeps the weight and direction (the sections reset).
@@ -218,18 +279,41 @@ fn route_change_mid_blend_keeps_the_weight() {
     // After the blend: the twin with stage 11 off and the same route change, bit for bit on
     // the earphone route (stage 13 follows, so within the convergence bound).
     let mut t = recorded(bp::twin_settings(&bp::cells()[10], RATE), Route::Speaker);
-    let twin = cc::run_scheduled(&mut t, Source::Playback(1), &[Change::route(Stream::Playback, 300 + n / 2, Route::Earphone, 2)], Partition::Fixed(256));
+    let twin = cc::run_scheduled(
+        &mut t,
+        Source::Playback(1),
+        &[Change::route(
+            Stream::Playback,
+            300 + n / 2,
+            Route::Earphone,
+            2,
+        )],
+        Partition::Fixed(256),
+    );
     let settle = rr_dr60::output::settle_samples(RATE).unwrap() as usize;
     let from = (300 + n) as usize + settle;
     let end = r.out.len().min(twin.out.len());
-    let worst = (from..end).map(|i| (f64::from(r.out[i]) - f64::from(twin.out[i])).abs()).fold(0.0, f64::max);
+    let worst = (from..end)
+        .map(|i| (f64::from(r.out[i]) - f64::from(twin.out[i])).abs())
+        .fold(0.0, f64::max);
     assert!(worst < 1e-5, "{worst}");
     // The phase continued: at the switch the fade was at N/2, and the run differs from a run
     // whose bypass lands at the switch (a frozen or restarted fade).
     let mut f = recorded(quiet(), Route::Speaker);
-    let restarted = cc::run_scheduled(&mut f, Source::Playback(1), &[change(300 + n / 2, 22, false, 1), Change::route(Stream::Playback, 300 + n / 2, Route::Earphone, 2)], Partition::Fixed(256));
+    let restarted = cc::run_scheduled(
+        &mut f,
+        Source::Playback(1),
+        &[
+            change(300 + n / 2, 22, false, 1),
+            Change::route(Stream::Playback, 300 + n / 2, Route::Earphone, 2),
+        ],
+        Partition::Fixed(256),
+    );
     let mid = (300 + n / 2) as usize;
-    assert!(!cc::same(&r.out[mid..(300 + n) as usize], &restarted.out[mid..(300 + n) as usize]));
+    assert!(!cc::same(
+        &r.out[mid..(300 + n) as usize],
+        &restarted.out[mid..(300 + n) as usize]
+    ));
 }
 
 /// Stage 11 bypassed: the volume and the battery act on the warm branch with their own
@@ -248,19 +332,42 @@ fn stage11_bypassed_volume_and_battery_on_the_warm_branch() {
     // While bypassed the volume/battery changes are inaudible: equal to the twin (stage 11 off,
     // the chain's remaining stage 12 running) over the bypassed span.
     let mut t = recorded(bp::twin_settings(&bp::cells()[10], RATE), Route::Speaker);
-    let twin = cc::run_scheduled(&mut t, Source::Playback(1), &[Change::volume(Stream::Playback, 300 + 2 * n, 0.8, 2), Change::battery(Stream::Playback, 300 + 2 * n, 2.5, 3)], Partition::Fixed(256));
+    let twin = cc::run_scheduled(
+        &mut t,
+        Source::Playback(1),
+        &[
+            Change::volume(Stream::Playback, 300 + 2 * n, 0.8, 2),
+            Change::battery(Stream::Playback, 300 + 2 * n, 2.5, 3),
+        ],
+        Partition::Fixed(256),
+    );
     let settle = rr_dr60::output::settle_samples(RATE).unwrap() as usize;
     let (a, b) = ((300 + n) as usize + settle, (300 + 6 * n) as usize);
-    let worst = (a..b).map(|i| (f64::from(r.out[i]) - f64::from(twin.out[i])).abs()).fold(0.0, f64::max);
+    let worst = (a..b)
+        .map(|i| (f64::from(r.out[i]) - f64::from(twin.out[i])).abs())
+        .fold(0.0, f64::max);
     assert!(worst < 1e-5, "inaudible while bypassed: {worst}");
     // After the return: the all-on run with the same volume and battery schedule, whose
     // transitions ran on the warm branch (bit for bit once stage 12 has settled).
     let mut q = recorded(quiet(), Route::Speaker);
-    let all_on = cc::run_scheduled(&mut q, Source::Playback(1), &[Change::volume(Stream::Playback, 300 + 2 * n, 0.8, 2), Change::battery(Stream::Playback, 300 + 2 * n, 2.5, 3)], Partition::Fixed(256));
+    let all_on = cc::run_scheduled(
+        &mut q,
+        Source::Playback(1),
+        &[
+            Change::volume(Stream::Playback, 300 + 2 * n, 0.8, 2),
+            Change::battery(Stream::Playback, 300 + 2 * n, 2.5, 3),
+        ],
+        Partition::Fixed(256),
+    );
     let from = (300 + 7 * n) as usize + settle;
     let end = r.out.len().min(all_on.out.len());
-    let worst = (from..end).map(|i| (f64::from(r.out[i]) - f64::from(all_on.out[i])).abs()).fold(0.0, f64::max);
-    assert!(worst < 1e-5, "the settled new value heard after the return: {worst}");
+    let worst = (from..end)
+        .map(|i| (f64::from(r.out[i]) - f64::from(all_on.out[i])).abs())
+        .fold(0.0, f64::max);
+    assert!(
+        worst < 1e-5,
+        "the settled new value heard after the return: {worst}"
+    );
     assert_eq!(cc::entries_of(&r.log, 1).len(), 1);
     assert_eq!(cc::entries_of(&r.log, 29).len(), 1);
 }
@@ -286,9 +393,27 @@ fn one_pass_codec_on_lands_11_to_13() {
     ));
     let x = bp::host_tone(1000.0, 0.5, RATE);
     let sched = [
-        Change { stream: Stream::OnePass, position: 1000, control: 22, value: 0.0, tag: 1 },
-        Change { stream: Stream::OnePass, position: 1000, control: 23, value: 0.0, tag: 2 },
-        Change { stream: Stream::OnePass, position: 1000, control: 24, value: 0.0, tag: 3 },
+        Change {
+            stream: Stream::OnePass,
+            position: 1000,
+            control: 22,
+            value: 0.0,
+            tag: 1,
+        },
+        Change {
+            stream: Stream::OnePass,
+            position: 1000,
+            control: 23,
+            value: 0.0,
+            tag: 2,
+        },
+        Change {
+            stream: Stream::OnePass,
+            position: 1000,
+            control: 24,
+            value: 0.0,
+            tag: 3,
+        },
     ];
     let r = cc::run_scheduled(&mut p, Source::OnePass(&x), &sched, Partition::Fixed(512));
     for c in [22, 23, 24] {
@@ -301,13 +426,21 @@ fn one_pass_codec_on_lands_11_to_13() {
 /// reach.
 #[test]
 fn one_pass_front_tap_refuses_all() {
-    for tap in [Tap::AfterAgc, Tap::AfterRecord, Tap::AfterVas, Tap::AfterPlayback] {
+    for tap in [
+        Tap::AfterAgc,
+        Tap::AfterRecord,
+        Tap::AfterVas,
+        Tap::AfterPlayback,
+    ] {
         let mut s = quiet();
         s.tap = tap;
         let mut p = Pipeline::new(s).unwrap();
         for c in [22u32, 23, 24] {
             assert!(
-                matches!(p.schedule_change(Stream::OnePass, 0, c, 0.0, 1), Err(Error::StageNotConfigured { .. })),
+                matches!(
+                    p.schedule_change(Stream::OnePass, 0, c, 0.0, 1),
+                    Err(Error::StageNotConfigured { .. })
+                ),
                 "{tap:?} {c}"
             );
         }
@@ -347,7 +480,12 @@ fn landing_same_value_during_fade_is_a_noop() {
     assert_eq!(e.len(), 2);
     assert_eq!((e[1].before, e[1].after), (0.0, 0.0));
     let mut q = recorded(quiet(), Route::Speaker);
-    let one = cc::run_scheduled(&mut q, Source::Playback(1), &[change(300, 23, false, 1)], Partition::Fixed(256));
+    let one = cc::run_scheduled(
+        &mut q,
+        Source::Playback(1),
+        &[change(300, 23, false, 1)],
+        Partition::Fixed(256),
+    );
     assert!(cc::same(&r.out, &one.out), "the fade untouched");
     let _: Vec<ChangeEntry> = e;
 }

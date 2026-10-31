@@ -94,20 +94,104 @@ pub fn cells() -> Vec<Cell> {
     use Route::{Earphone, Speaker};
     use Stream::{OnePass, Playback};
     let mut v = vec![
-        Cell::new(10, CONTROL_STAGE_10, "playback_only", Speaker, Playback, true),
-        Cell::new(11, CONTROL_STAGE_11, "output_only_amp", Speaker, Playback, true),
-        Cell::new(11, CONTROL_STAGE_11, "output_only_amp", Earphone, Playback, true),
-        Cell::new(11, CONTROL_STAGE_11, "output_only_amp", Speaker, OnePass, true),
-        Cell::new(12, CONTROL_STAGE_12, "output_only_speaker", Speaker, Playback, true),
-        Cell::new(12, CONTROL_STAGE_12, "output_only_speaker", Speaker, OnePass, true),
-        Cell::new(13, CONTROL_STAGE_13, "output_only_earphone", Earphone, Playback, true),
-        Cell::new(13, CONTROL_STAGE_13, "output_only_earphone", Earphone, OnePass, true),
+        Cell::new(
+            10,
+            CONTROL_STAGE_10,
+            "playback_only",
+            Speaker,
+            Playback,
+            true,
+        ),
+        Cell::new(
+            11,
+            CONTROL_STAGE_11,
+            "output_only_amp",
+            Speaker,
+            Playback,
+            true,
+        ),
+        Cell::new(
+            11,
+            CONTROL_STAGE_11,
+            "output_only_amp",
+            Earphone,
+            Playback,
+            true,
+        ),
+        Cell::new(
+            11,
+            CONTROL_STAGE_11,
+            "output_only_amp",
+            Speaker,
+            OnePass,
+            true,
+        ),
+        Cell::new(
+            12,
+            CONTROL_STAGE_12,
+            "output_only_speaker",
+            Speaker,
+            Playback,
+            true,
+        ),
+        Cell::new(
+            12,
+            CONTROL_STAGE_12,
+            "output_only_speaker",
+            Speaker,
+            OnePass,
+            true,
+        ),
+        Cell::new(
+            13,
+            CONTROL_STAGE_13,
+            "output_only_earphone",
+            Earphone,
+            Playback,
+            true,
+        ),
+        Cell::new(
+            13,
+            CONTROL_STAGE_13,
+            "output_only_earphone",
+            Earphone,
+            OnePass,
+            true,
+        ),
         Cell::new(12, CONTROL_STAGE_12, DEFAULT_CHAIN, Speaker, Playback, true),
-        Cell::new(13, CONTROL_STAGE_13, DEFAULT_CHAIN, Earphone, Playback, true),
-        Cell::new(11, CONTROL_STAGE_11, DEFAULT_CHAIN, Speaker, Playback, false),
-        Cell::new(11, CONTROL_STAGE_11, DEFAULT_CHAIN, Earphone, Playback, false),
+        Cell::new(
+            13,
+            CONTROL_STAGE_13,
+            DEFAULT_CHAIN,
+            Earphone,
+            Playback,
+            true,
+        ),
+        Cell::new(
+            11,
+            CONTROL_STAGE_11,
+            DEFAULT_CHAIN,
+            Speaker,
+            Playback,
+            false,
+        ),
+        Cell::new(
+            11,
+            CONTROL_STAGE_11,
+            DEFAULT_CHAIN,
+            Earphone,
+            Playback,
+            false,
+        ),
         Cell::new(11, CONTROL_STAGE_11, DEFAULT_CHAIN, Speaker, OnePass, false),
-        Cell::new(10, CONTROL_STAGE_10, DEFAULT_CHAIN, Speaker, Playback, false),
+        Cell::new(
+            10,
+            CONTROL_STAGE_10,
+            DEFAULT_CHAIN,
+            Speaker,
+            Playback,
+            false,
+        ),
     ];
     v.dedup();
     v
@@ -177,7 +261,7 @@ pub fn weight(k: usize, n: usize) -> f64 {
 pub fn neutral_position(route: Route) -> f32 {
     match route {
         Route::Earphone => 1.0,
-        _ => output::VOLUME_REFERENCE as f32,
+        _ => output::VOLUME_REFERENCE,
     }
 }
 
@@ -198,6 +282,7 @@ pub fn engine(make: Make<'_>, s: Settings, x: &[f32], route: Route, volume: f32)
 
 /// One run of a cell: `stored` played back (the playback stream) or `host` processed one-pass,
 /// with `changes` scheduled, at `partition`.
+#[allow(clippy::too_many_arguments)] // the cell, its stimuli, the schedule and the partition
 pub fn run_cell(
     make: Make<'_>,
     s: Settings,
@@ -228,7 +313,12 @@ pub fn change(cell: &Cell, position: u64, on: bool, tag: u64) -> Change {
 
 /// The host-rate stimulus the one-pass cells feed: the same tone at the host rate.
 pub fn host_tone(freq_hz: f64, seconds: f64, rate: u32) -> Vec<f32> {
-    stimulus::tone(freq_hz, AMP, f64::from(rate), (f64::from(rate) * seconds) as usize)
+    stimulus::tone(
+        freq_hz,
+        AMP,
+        f64::from(rate),
+        (f64::from(rate) * seconds) as usize,
+    )
 }
 
 fn pass(b: bool) -> f64 {
@@ -322,12 +412,30 @@ pub fn endpoint_identity(make: Make<'_>, cell: &Cell, rate: u32) -> Vec<Measurem
     let volume = if cell.stage == 11 {
         neutral_position(cell.route)
     } else {
-        output::VOLUME_REFERENCE as f32
+        output::VOLUME_REFERENCE
     };
     let (p, q) = positions(cell.stage, rate);
     let sched = [change(cell, p, false, 1), change(cell, q, true, 2)];
-    let live = run_cell(make, s, cell, &stored, &host, volume, &sched, Partition::Fixed(256));
-    let all_on = run_cell(make, s, cell, &stored, &host, volume, &[], Partition::Fixed(256));
+    let live = run_cell(
+        make,
+        s,
+        cell,
+        &stored,
+        &host,
+        volume,
+        &sched,
+        Partition::Fixed(256),
+    );
+    let all_on = run_cell(
+        make,
+        s,
+        cell,
+        &stored,
+        &host,
+        volume,
+        &[],
+        Partition::Fixed(256),
+    );
     let twin = run_cell(
         make,
         twin_settings(cell, rate),
@@ -501,9 +609,36 @@ pub fn live_tail(make: Make<'_>, cell: &Cell, rate: u32) -> Vec<MeasurementResul
     let host = host_tone(1000.0, 1.0, rate);
     let (p, _) = positions(cell.stage, rate);
     let volume = neutral_position(cell.route);
-    let live = run_cell(make, s, cell, &stored, &host, volume, &[change(cell, p, false, 1)], Partition::Fixed(512));
-    let all_on = run_cell(make, s, cell, &stored, &host, volume, &[], Partition::Fixed(512));
-    let twin = run_cell(make, twin_settings(cell, rate), cell, &stored, &host, volume, &[], Partition::Fixed(512));
+    let live = run_cell(
+        make,
+        s,
+        cell,
+        &stored,
+        &host,
+        volume,
+        &[change(cell, p, false, 1)],
+        Partition::Fixed(512),
+    );
+    let all_on = run_cell(
+        make,
+        s,
+        cell,
+        &stored,
+        &host,
+        volume,
+        &[],
+        Partition::Fixed(512),
+    );
+    let twin = run_cell(
+        make,
+        twin_settings(cell, rate),
+        cell,
+        &stored,
+        &host,
+        volume,
+        &[],
+        Partition::Fixed(512),
+    );
     let extra = live.out.len().saturating_sub(twin.out.len());
     let tail_peak = live.out[twin.out.len().min(live.out.len())..]
         .iter()
@@ -553,20 +688,50 @@ pub fn live_tail(make: Make<'_>, cell: &Cell, rate: u32) -> Vec<MeasurementResul
 /// narrowed outputs; the core's f64 test is exact); w(N/2) read back from the engine's
 /// midpoint ratio.
 pub fn blend_identity(make: Make<'_>, cell: &Cell, rate: u32) -> Vec<MeasurementResult> {
-    assert!(cell.exact && cell.stage != 10, "the host-output identity: a last chain stage");
+    assert!(
+        cell.exact && cell.stage != 10,
+        "the host-output identity: a last chain stage"
+    );
     let s = settings(cell.config, rate);
     let stored = stored_tone(1000.0, 1.0);
     let host = host_tone(1000.0, 1.0, rate);
     let volume = if cell.stage == 11 {
         neutral_position(cell.route)
     } else {
-        output::VOLUME_REFERENCE as f32
+        output::VOLUME_REFERENCE
     };
     let (p, _) = positions(cell.stage, rate);
     let n = n_fade(cell.stage, rate);
-    let live = run_cell(make, s, cell, &stored, &host, volume, &[change(cell, p, false, 1)], Partition::Fixed(128));
-    let all_on = run_cell(make, s, cell, &stored, &host, volume, &[], Partition::Fixed(128));
-    let twin = run_cell(make, twin_settings(cell, rate), cell, &stored, &host, volume, &[], Partition::Fixed(128));
+    let live = run_cell(
+        make,
+        s,
+        cell,
+        &stored,
+        &host,
+        volume,
+        &[change(cell, p, false, 1)],
+        Partition::Fixed(128),
+    );
+    let all_on = run_cell(
+        make,
+        s,
+        cell,
+        &stored,
+        &host,
+        volume,
+        &[],
+        Partition::Fixed(128),
+    );
+    let twin = run_cell(
+        make,
+        twin_settings(cell, rate),
+        cell,
+        &stored,
+        &host,
+        volume,
+        &[],
+        Partition::Fixed(128),
+    );
     let p = p as usize;
     let mut worst = 0.0f64;
     for k in 1..n {
@@ -577,8 +742,16 @@ pub fn blend_identity(make: Make<'_>, cell: &Cell, rate: u32) -> Vec<Measurement
     }
     // The midpoint: (live − y) / (x − y) where the branches differ enough to read it.
     let mid = p + n / 2 - 1;
-    let (y, x, l) = (f64::from(all_on.out[mid]), f64::from(twin.out[mid]), f64::from(live.out[mid]));
-    let ratio = if (x - y).abs() > 1e-3 { (l - y) / (x - y) } else { 0.5 };
+    let (y, x, l) = (
+        f64::from(all_on.out[mid]),
+        f64::from(twin.out[mid]),
+        f64::from(live.out[mid]),
+    );
+    let ratio = if (x - y).abs() > 1e-3 {
+        (l - y) / (x - y)
+    } else {
+        0.5
+    };
     let stim = format!("{}: bypass at {p}", cell.label());
     vec![
         MeasurementResult::new(
@@ -615,7 +788,14 @@ pub fn blend_identity(make: Make<'_>, cell: &Cell, rate: u32) -> Vec<Measurement
 /// On the host output, with the chain off, the first bit-different and the first bit-identical
 /// sample against the twin are measured (P + ⌈119·rate ÷ 6000⌉ + 2D the bound).
 pub fn stage10_trace(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
-    let cell = Cell::new(10, CONTROL_STAGE_10, "playback_only", Route::Speaker, Stream::Playback, true);
+    let cell = Cell::new(
+        10,
+        CONTROL_STAGE_10,
+        "playback_only",
+        Route::Speaker,
+        Stream::Playback,
+        true,
+    );
     let s = settings(cell.config, rate);
     let stored = stored_tone(1000.0, 1.0);
     let (p, _) = positions(10, rate);
@@ -623,19 +803,26 @@ pub fn stage10_trace(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
     let n = 120usize;
     // One play call long enough for the whole recording (the trace holds 8192 device samples).
     let total_host = (stored.len() + 400) * rate as usize / 6000;
-    let mut live = engine(make, s, &stored, Route::Speaker, output::VOLUME_REFERENCE as f32);
-    live.schedule_change(Stream::Playback, p, CONTROL_STAGE_10, 0.0, 1).unwrap();
+    let mut live = engine(make, s, &stored, Route::Speaker, output::VOLUME_REFERENCE);
+    live.schedule_change(Stream::Playback, p, CONTROL_STAGE_10, 0.0, 1)
+        .unwrap();
     live.start_playback(1).unwrap();
     let mut out = vec![0.0f32; total_host];
     let info = live.play(&mut out).unwrap();
     let y_live = __test_hooks::stage10_trace(&live);
     let x_dev = __test_hooks::speed_device_outputs(&live);
-    let mut all_on = engine(make, s, &stored, Route::Speaker, output::VOLUME_REFERENCE as f32);
+    let mut all_on = engine(make, s, &stored, Route::Speaker, output::VOLUME_REFERENCE);
     all_on.start_playback(1).unwrap();
     let mut out_on = vec![0.0f32; total_host];
     let _ = all_on.play(&mut out_on).unwrap();
     let y_on = __test_hooks::stage10_trace(&all_on);
-    let mut twin = engine(make, twin_settings(&cell, rate), &stored, Route::Speaker, output::VOLUME_REFERENCE as f32);
+    let mut twin = engine(
+        make,
+        twin_settings(&cell, rate),
+        &stored,
+        Route::Speaker,
+        output::VOLUME_REFERENCE,
+    );
     twin.start_playback(1).unwrap();
     let mut out_tw = vec![0.0f32; total_host];
     let info_tw = twin.play(&mut out_tw).unwrap();
@@ -651,7 +838,9 @@ pub fn stage10_trace(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
             }
         }
     }
-    let after = (d_p + n - 1..len).filter(|&i| y_live[i].to_bits() != x_dev[i].to_bits()).count();
+    let after = (d_p + n - 1..len)
+        .filter(|&i| y_live[i].to_bits() != x_dev[i].to_bits())
+        .count();
     let host_live = &out[..info.produced];
     let host_twin = &out_tw[..info_tw.produced];
     let first_diff = cc::first_diff(host_live, &out_on[..info.produced]).map_or(-1.0, |i| i as f64);
@@ -755,11 +944,46 @@ pub struct ClickRow {
 /// stage 11 at the neutral positions.
 pub fn asserted_rows() -> Vec<ClickRow> {
     vec![
-        ClickRow { stage: 10, config: "playback_only", route: Route::Speaker, volume: output::VOLUME_REFERENCE as f32, f_tone: 1000.0, asserted: true },
-        ClickRow { stage: 11, config: "output_only_amp", route: Route::Speaker, volume: neutral_position(Route::Speaker), f_tone: 1000.0, asserted: true },
-        ClickRow { stage: 11, config: "output_only_amp", route: Route::Earphone, volume: neutral_position(Route::Earphone), f_tone: 1000.0, asserted: true },
-        ClickRow { stage: 12, config: "output_only_speaker", route: Route::Speaker, volume: output::VOLUME_REFERENCE as f32, f_tone: 1000.0, asserted: true },
-        ClickRow { stage: 13, config: "output_only_earphone", route: Route::Earphone, volume: output::VOLUME_REFERENCE as f32, f_tone: 1000.0, asserted: true },
+        ClickRow {
+            stage: 10,
+            config: "playback_only",
+            route: Route::Speaker,
+            volume: output::VOLUME_REFERENCE,
+            f_tone: 1000.0,
+            asserted: true,
+        },
+        ClickRow {
+            stage: 11,
+            config: "output_only_amp",
+            route: Route::Speaker,
+            volume: neutral_position(Route::Speaker),
+            f_tone: 1000.0,
+            asserted: true,
+        },
+        ClickRow {
+            stage: 11,
+            config: "output_only_amp",
+            route: Route::Earphone,
+            volume: neutral_position(Route::Earphone),
+            f_tone: 1000.0,
+            asserted: true,
+        },
+        ClickRow {
+            stage: 12,
+            config: "output_only_speaker",
+            route: Route::Speaker,
+            volume: output::VOLUME_REFERENCE,
+            f_tone: 1000.0,
+            asserted: true,
+        },
+        ClickRow {
+            stage: 13,
+            config: "output_only_earphone",
+            route: Route::Earphone,
+            volume: output::VOLUME_REFERENCE,
+            f_tone: 1000.0,
+            asserted: true,
+        },
     ]
 }
 
@@ -767,13 +991,62 @@ pub fn asserted_rows() -> Vec<ClickRow> {
 /// level-change rows.
 pub fn reported_rows() -> Vec<ClickRow> {
     vec![
-        ClickRow { stage: 10, config: "playback_only", route: Route::Speaker, volume: output::VOLUME_REFERENCE as f32, f_tone: 2600.0, asserted: false },
-        ClickRow { stage: 12, config: "output_only_speaker", route: Route::Speaker, volume: output::VOLUME_REFERENCE as f32, f_tone: 300.0, asserted: false },
-        ClickRow { stage: 13, config: "output_only_earphone", route: Route::Earphone, volume: output::VOLUME_REFERENCE as f32, f_tone: 100.0, asserted: false },
-        ClickRow { stage: 11, config: "output_only_amp", route: Route::Speaker, volume: neutral_position(Route::Speaker), f_tone: 100.0, asserted: false },
-        ClickRow { stage: 11, config: "output_only_amp", route: Route::Earphone, volume: neutral_position(Route::Earphone), f_tone: 100.0, asserted: false },
-        ClickRow { stage: 11, config: "output_only_amp", route: Route::Speaker, volume: 1.0, f_tone: 1000.0, asserted: false },
-        ClickRow { stage: 11, config: "output_only_amp", route: Route::Earphone, volume: output::VOLUME_REFERENCE as f32, f_tone: 1000.0, asserted: false },
+        ClickRow {
+            stage: 10,
+            config: "playback_only",
+            route: Route::Speaker,
+            volume: output::VOLUME_REFERENCE,
+            f_tone: 2600.0,
+            asserted: false,
+        },
+        ClickRow {
+            stage: 12,
+            config: "output_only_speaker",
+            route: Route::Speaker,
+            volume: output::VOLUME_REFERENCE,
+            f_tone: 300.0,
+            asserted: false,
+        },
+        ClickRow {
+            stage: 13,
+            config: "output_only_earphone",
+            route: Route::Earphone,
+            volume: output::VOLUME_REFERENCE,
+            f_tone: 100.0,
+            asserted: false,
+        },
+        ClickRow {
+            stage: 11,
+            config: "output_only_amp",
+            route: Route::Speaker,
+            volume: neutral_position(Route::Speaker),
+            f_tone: 100.0,
+            asserted: false,
+        },
+        ClickRow {
+            stage: 11,
+            config: "output_only_amp",
+            route: Route::Earphone,
+            volume: neutral_position(Route::Earphone),
+            f_tone: 100.0,
+            asserted: false,
+        },
+        ClickRow {
+            stage: 11,
+            config: "output_only_amp",
+            route: Route::Speaker,
+            volume: 1.0,
+            f_tone: 1000.0,
+            asserted: false,
+        },
+        ClickRow {
+            stage: 11,
+            config: "output_only_amp",
+            route: Route::Earphone,
+            volume: output::VOLUME_REFERENCE,
+            f_tone: 1000.0,
+            asserted: false,
+        },
     ]
 }
 
@@ -797,15 +1070,63 @@ pub fn click_row(make: Make<'_>, row: &ClickRow, rate: u32, top_hz: f64) -> Vec<
     } else {
         0.0
     };
-    let cell = Cell::new(row.stage, control_of(row.stage), row.config, row.route, Stream::Playback, true);
+    let cell = Cell::new(
+        row.stage,
+        control_of(row.stage),
+        row.config,
+        row.route,
+        Stream::Playback,
+        true,
+    );
     let sched = [change(&cell, p, false, 1)];
-    let fade = run_cell(make, s, &cell, &stored, &[], row.volume, &sched, Partition::Fixed(256));
-    let step = run_cell(&stepped, s, &cell, &stored, &[], row.volume, &sched, Partition::Fixed(256));
-    let held = run_cell(make, s, &cell, &stored, &[], row.volume, &[], Partition::Fixed(256));
+    let fade = run_cell(
+        make,
+        s,
+        &cell,
+        &stored,
+        &[],
+        row.volume,
+        &sched,
+        Partition::Fixed(256),
+    );
+    let step = run_cell(
+        &stepped,
+        s,
+        &cell,
+        &stored,
+        &[],
+        row.volume,
+        &sched,
+        Partition::Fixed(256),
+    );
+    let held = run_cell(
+        make,
+        s,
+        &cell,
+        &stored,
+        &[],
+        row.volume,
+        &[],
+        Partition::Fixed(256),
+    );
     let excl = [row.f_tone];
     let e_step = click_energy_band(&step.out, rate, p as f64 + d_host, 0.04, &excl, top_hz);
-    let e_fade = click_energy_band(&fade.out, rate, p as f64 + d_host + n_host / 2.0, 0.04, &excl, top_hz);
-    let e_floor = click_energy_band(&held.out, rate, p as f64 + d_host + n_host / 2.0, 0.04, &excl, top_hz);
+    let e_fade = click_energy_band(
+        &fade.out,
+        rate,
+        p as f64 + d_host + n_host / 2.0,
+        0.04,
+        &excl,
+        top_hz,
+    );
+    let e_floor = click_energy_band(
+        &held.out,
+        rate,
+        p as f64 + d_host + n_host / 2.0,
+        0.04,
+        &excl,
+        top_hz,
+    );
     // Power ratios: analysis::db is 20·log10, so half of it is the energy ratio in dB.
     let reduction = 0.5 * db(e_step / e_fade.max(1e-300));
     let step_over_floor = 0.5 * db(e_step / e_floor.max(1e-300));
@@ -863,7 +1184,11 @@ pub fn click_row(make: Make<'_>, row: &ClickRow, rate: u32, top_hz: f64) -> Vec<
 /// FR-007 at 6 kHz: the asserted and reported rows; at 48 kHz the asserted rows reported with the
 /// reader's top at 0.45 × rate.
 pub fn click_table(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
-    let top = if rate == 6000 { 2750.0 } else { 0.45 * f64::from(rate) };
+    let top = if rate == 6000 {
+        2750.0
+    } else {
+        0.45 * f64::from(rate)
+    };
     let mut rows = Vec::new();
     for r in asserted_rows() {
         rows.extend(click_row(make, &r, rate, top));
@@ -885,10 +1210,35 @@ pub fn voiced_click(make: Make<'_>) -> Vec<MeasurementResult> {
     let mut rows = Vec::new();
     for r in asserted_rows() {
         let s = settings(r.config, rate);
-        let cell = Cell::new(r.stage, control_of(r.stage), r.config, r.route, Stream::Playback, true);
+        let cell = Cell::new(
+            r.stage,
+            control_of(r.stage),
+            r.config,
+            r.route,
+            Stream::Playback,
+            true,
+        );
         let sched = [change(&cell, p, false, 1)];
-        let fade = run_cell(make, s, &cell, &x, &[], r.volume, &sched, Partition::Fixed(256));
-        let step = run_cell(&stepped, s, &cell, &x, &[], r.volume, &sched, Partition::Fixed(256));
+        let fade = run_cell(
+            make,
+            s,
+            &cell,
+            &x,
+            &[],
+            r.volume,
+            &sched,
+            Partition::Fixed(256),
+        );
+        let step = run_cell(
+            &stepped,
+            s,
+            &cell,
+            &x,
+            &[],
+            r.volume,
+            &sched,
+            Partition::Fixed(256),
+        );
         let n_host = blend_host_len(r.stage, rate) as f64;
         let e_step = click_energy_band(&step.out, rate, p as f64, 0.04, &[], 2750.0);
         let e_fade = click_energy_band(&fade.out, rate, p as f64 + n_host / 2.0, 0.04, &[], 2750.0);
@@ -913,7 +1263,7 @@ pub fn voiced_click(make: Make<'_>) -> Vec<MeasurementResult> {
 /// figures (within 0.01 dB): earphone +19.21 at the reference position, 0 at position 1; speaker
 /// 0 at the reference position, −21.46 at position 1.
 pub fn level_table() -> Vec<MeasurementResult> {
-    let p_ref = output::VOLUME_REFERENCE as f32;
+    let p_ref = output::VOLUME_REFERENCE;
     let rows = [
         (Route::Earphone, p_ref, 19.21),
         (Route::Earphone, 1.0f32, 0.0),
@@ -953,9 +1303,22 @@ pub fn partitions(make: Make<'_>, cell: &Cell, rate: u32) -> Vec<MeasurementResu
         change(cell, p + n / 2, true, 2), // a reversal inside the blend
         change(cell, p + 2 * n, false, 3),
     ];
-    let base = run_cell(make, s, cell, &stored, &host, volume, &sched, Partition::Fixed(4096));
+    let base = run_cell(
+        make,
+        s,
+        cell,
+        &stored,
+        &host,
+        volume,
+        &sched,
+        Partition::Fixed(4096),
+    );
     let mut rows = Vec::new();
-    for part in [Partition::Fixed(1), Partition::Fixed(64), Partition::Irregular] {
+    for part in [
+        Partition::Fixed(1),
+        Partition::Fixed(64),
+        Partition::Irregular,
+    ] {
         let r = run_cell(make, s, cell, &stored, &host, volume, &sched, part);
         let same = cc::same(&r.out, &base.out) && r.log == base.log;
         rows.push(MeasurementResult::new(
@@ -981,17 +1344,54 @@ pub fn partitions(make: Make<'_>, cell: &Cell, rate: u32) -> Vec<MeasurementResu
 /// P + N − 1, and it lies within one LSB of the two branches' interval; the reversal's click
 /// energy against a step reported.
 pub fn reversal(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
-    let cell = Cell::new(12, CONTROL_STAGE_12, "output_only_speaker", Route::Speaker, Stream::Playback, true);
+    let cell = Cell::new(
+        12,
+        CONTROL_STAGE_12,
+        "output_only_speaker",
+        Route::Speaker,
+        Stream::Playback,
+        true,
+    );
     let s = settings(cell.config, rate);
     let stored = stored_tone(1000.0, 1.0);
-    let volume = output::VOLUME_REFERENCE as f32;
+    let volume = output::VOLUME_REFERENCE;
     let (p, _) = positions(12, rate);
     let n = n_fade(12, rate);
     let half = n / 2;
-    let sched = [change(&cell, p, false, 1), change(&cell, p + half as u64, true, 2)];
-    let live = run_cell(make, s, &cell, &stored, &[], volume, &sched, Partition::Fixed(256));
-    let all_on = run_cell(make, s, &cell, &stored, &[], volume, &[], Partition::Fixed(256));
-    let twin = run_cell(make, twin_settings(&cell, rate), &cell, &stored, &[], volume, &[], Partition::Fixed(256));
+    let sched = [
+        change(&cell, p, false, 1),
+        change(&cell, p + half as u64, true, 2),
+    ];
+    let live = run_cell(
+        make,
+        s,
+        &cell,
+        &stored,
+        &[],
+        volume,
+        &sched,
+        Partition::Fixed(256),
+    );
+    let all_on = run_cell(
+        make,
+        s,
+        &cell,
+        &stored,
+        &[],
+        volume,
+        &[],
+        Partition::Fixed(256),
+    );
+    let twin = run_cell(
+        make,
+        twin_settings(&cell, rate),
+        &cell,
+        &stored,
+        &[],
+        volume,
+        &[],
+        Partition::Fixed(256),
+    );
     let p = p as usize;
     let mut worst = 0.0f64;
     let mut outside = 0usize;
@@ -1004,7 +1404,8 @@ pub fn reversal(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
         worst = worst.max(ulps_at(f64::from(live.out[i]) - want, y.abs().max(x.abs())));
         let (lo, hi) = (y.min(x), y.max(x));
         let v = f64::from(live.out[i]);
-        let spacing = hi.abs().max(lo.abs()).max(f64::from(f32::MIN_POSITIVE)) * f64::from(f32::EPSILON);
+        let spacing =
+            hi.abs().max(lo.abs()).max(f64::from(f32::MIN_POSITIVE)) * f64::from(f32::EPSILON);
         if v < lo - spacing || v > hi + spacing {
             outside += 1;
         }
@@ -1013,9 +1414,25 @@ pub fn reversal(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
     let mism = (from..all_on.out.len().min(live.out.len()))
         .filter(|&i| live.out[i].to_bits() != all_on.out[i].to_bits())
         .count();
-    let step = run_cell(&stepped, s, &cell, &stored, &[], volume, &[change(&cell, p as u64, false, 1)], Partition::Fixed(256));
+    let step = run_cell(
+        &stepped,
+        s,
+        &cell,
+        &stored,
+        &[],
+        volume,
+        &[change(&cell, p as u64, false, 1)],
+        Partition::Fixed(256),
+    );
     let e_step = click_energy_band(&step.out, rate, p as f64, 0.04, &[1000.0], 2750.0);
-    let e_rev = click_energy_band(&live.out, rate, p as f64 + half as f64, 0.04, &[1000.0], 2750.0);
+    let e_rev = click_energy_band(
+        &live.out,
+        rate,
+        p as f64 + half as f64,
+        0.04,
+        &[1000.0],
+        2750.0,
+    );
     let stim = format!("stage 12 speaker: bypass at {p}, reversed at {}", p + half);
     vec![
         MeasurementResult::new(
@@ -1072,12 +1489,41 @@ pub fn reversal(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
 pub fn stage10_third_octave_48k(make: Make<'_>) -> Vec<MeasurementResult> {
     let rate = 48_000;
     let x = stimulus::voiced(6000.0, 1.5, -20.0, 0x021);
-    let cell = Cell::new(10, CONTROL_STAGE_10, "playback_only", Route::Speaker, Stream::Playback, true);
-    let on = run_cell(make, settings(cell.config, rate), &cell, &x, &[], 0.5, &[], Partition::Fixed(4096));
-    let off = run_cell(make, twin_settings(&cell, rate), &cell, &x, &[], 0.5, &[], Partition::Fixed(4096));
+    let cell = Cell::new(
+        10,
+        CONTROL_STAGE_10,
+        "playback_only",
+        Route::Speaker,
+        Stream::Playback,
+        true,
+    );
+    let on = run_cell(
+        make,
+        settings(cell.config, rate),
+        &cell,
+        &x,
+        &[],
+        0.5,
+        &[],
+        Partition::Fixed(4096),
+    );
+    let off = run_cell(
+        make,
+        twin_settings(&cell, rate),
+        &cell,
+        &x,
+        &[],
+        0.5,
+        &[],
+        Partition::Fixed(4096),
+    );
     let a = analysis::third_octave_levels(&on.out, f64::from(rate));
     let b = analysis::third_octave_levels(&off.out, f64::from(rate));
-    let worst = a.iter().zip(&b).map(|(p, q)| (p - q).abs()).fold(0.0, f64::max);
+    let worst = a
+        .iter()
+        .zip(&b)
+        .map(|(p, q)| (p - q).abs())
+        .fold(0.0, f64::max);
     vec![MeasurementResult::new(
         "FR-011",
         "stage 10 on vs off at 48 kHz: largest third-octave difference (dB)",

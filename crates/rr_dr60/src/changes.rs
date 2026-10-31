@@ -508,7 +508,11 @@ pub(crate) enum Apply {
     Battery(f32),
     /// Spec 021: a playback-stage switch (10 … 13) landing: `bypassed` the value 0, `at_once`
     /// on the stream's first produced sample (spec 011's rule).
-    Bypass { stage: u8, bypassed: bool, at_once: bool },
+    Bypass {
+        stage: u8,
+        bypassed: bool,
+        at_once: bool,
+    },
 }
 
 impl StreamState {
@@ -570,7 +574,12 @@ impl StreamState {
     /// Spec 021 research R-05 (the one-pass's mirror, spec 017's compare-at-call form): for each
     /// stage 11 – 13 the stream reaches whose settings value differs from its last applied one,
     /// a landing at the call's first sample with the stored tag.
-    pub(crate) fn begin_mirror(&mut self, settings_bypassed: [bool; 3], tags: [u64; 3], reach: [bool; 3]) {
+    pub(crate) fn begin_mirror(
+        &mut self,
+        settings_bypassed: [bool; 3],
+        tags: [u64; 3],
+        reach: [bool; 3],
+    ) {
         for i in 0..3 {
             self.mirror[i] = (reach[i] && settings_bypassed[i] != self.last_bypass[i])
                 .then_some((settings_bypassed[i], tags[i]));
@@ -643,7 +652,11 @@ impl StreamState {
         for i in 0..3 {
             if let Some((b, tag)) = self.mirror[i].take() {
                 let stage = 11 + i as u8;
-                apply(Apply::Bypass { stage, bypassed: b, at_once: pos == 0 });
+                apply(Apply::Bypass {
+                    stage,
+                    bypassed: b,
+                    at_once: pos == 0,
+                });
                 let before = self.before(switch_value(self.last_bypass[i]), switch_value(b));
                 self.push(pos, LIVE_STAGE_11 + i as u32, before, switch_value(b), tag);
                 self.last_bypass[i] = b;
@@ -727,7 +740,11 @@ impl StreamState {
                 // a landing of the value in force is a no-op entry (before == after).
                 LIVE_STAGE_10 => {
                     let b = e.value == 0.0;
-                    apply(Apply::Bypass { stage: 10, bypassed: b, at_once: pos == 0 });
+                    apply(Apply::Bypass {
+                        stage: 10,
+                        bypassed: b,
+                        at_once: pos == 0,
+                    });
                     let before = self.before(switch_value(self.last_stage10), e.value);
                     self.push(pos, LIVE_STAGE_10, before, switch_value(b), e.tag);
                     self.last_stage10 = b;
@@ -736,7 +753,11 @@ impl StreamState {
                 LIVE_STAGE_11 | LIVE_STAGE_12 | LIVE_STAGE_13 => {
                     let i = (e.control - LIVE_STAGE_11) as usize;
                     let b = e.value == 0.0;
-                    apply(Apply::Bypass { stage: 11 + i as u8, bypassed: b, at_once: pos == 0 });
+                    apply(Apply::Bypass {
+                        stage: 11 + i as u8,
+                        bypassed: b,
+                        at_once: pos == 0,
+                    });
                     let before = self.before(switch_value(self.last_bypass[i]), e.value);
                     self.push(pos, e.control, before, switch_value(b), e.tag);
                     self.last_bypass[i] = b;
@@ -836,10 +857,22 @@ mod index_tests {
         assert_eq!(c[LIVE_SPEED as usize].identifier, "playback_speed");
         assert_eq!(c[LIVE_BATTERY as usize].identifier, "battery_volts"); // 018: appended
         // Spec 021 FR-001: the four playback-stage switches.
-        assert_eq!(c[LIVE_STAGE_10 as usize].identifier, "playback_stage_enabled");
-        assert_eq!(c[LIVE_STAGE_11 as usize].identifier, "output.volume_amp_enabled");
-        assert_eq!(c[LIVE_STAGE_12 as usize].identifier, "output.speaker_enabled");
-        assert_eq!(c[LIVE_STAGE_13 as usize].identifier, "output.earphone_enabled");
+        assert_eq!(
+            c[LIVE_STAGE_10 as usize].identifier,
+            "playback_stage_enabled"
+        );
+        assert_eq!(
+            c[LIVE_STAGE_11 as usize].identifier,
+            "output.volume_amp_enabled"
+        );
+        assert_eq!(
+            c[LIVE_STAGE_12 as usize].identifier,
+            "output.speaker_enabled"
+        );
+        assert_eq!(
+            c[LIVE_STAGE_13 as usize].identifier,
+            "output.earphone_enabled"
+        );
         assert_eq!(stage_of(LIVE_STAGE_10), Some(10));
         assert_eq!(stage_of(LIVE_STAGE_13), Some(13));
         assert_eq!(stage_of(LIVE_BATTERY), None);
@@ -890,7 +923,14 @@ mod bypass_stream_tests {
         let mut log = [ChangeEntry::default(); 4];
         assert_eq!(st.drain_log(&mut log), 1);
         assert_eq!(
-            (log[0].position, log[0].control, log[0].before, log[0].after, log[0].tag, log[0].stream),
+            (
+                log[0].position,
+                log[0].control,
+                log[0].before,
+                log[0].after,
+                log[0].tag,
+                log[0].stream
+            ),
             (5, LIVE_STAGE_12, 1.0, 0.0, 9, Stream::Playback.word())
         );
         assert_eq!(st.landed_bypass[1], Some((true, 9)));
@@ -924,7 +964,10 @@ mod bypass_stream_tests {
         assert_eq!(got.len(), 2);
         let mut log = [ChangeEntry::default(); 4];
         assert_eq!(st.drain_log(&mut log), 2);
-        assert_eq!((log[0].before, log[0].after, log[1].before, log[1].after), (1.0, 0.0, 0.0, 1.0));
+        assert_eq!(
+            (log[0].before, log[0].after, log[1].before, log[1].after),
+            (1.0, 0.0, 0.0, 1.0)
+        );
     }
 
     #[test]
@@ -942,11 +985,17 @@ mod bypass_stream_tests {
                 at_once: true
             }
         );
-        assert!(!got.iter().any(|a| matches!(a, Apply::Bypass { stage: 12, .. })));
+        assert!(
+            !got.iter()
+                .any(|a| matches!(a, Apply::Bypass { stage: 12, .. }))
+        );
         let mut log = [ChangeEntry::default(); 8];
         let n = st.drain_log(&mut log);
         assert!(n >= 1);
-        assert_eq!((log[0].control, log[0].after, log[0].tag), (LIVE_STAGE_11, 0.0, 11));
+        assert_eq!(
+            (log[0].control, log[0].after, log[0].tag),
+            (LIVE_STAGE_11, 0.0, 11)
+        );
         // A second call with the same settings: nothing pending.
         st.begin_call(crate::Route::Speaker, 0.5, None, 3.0);
         st.begin_mirror([true, true, false], [11, 22, 33], [true, false, true]);

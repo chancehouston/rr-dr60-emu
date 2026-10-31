@@ -298,7 +298,10 @@ mod tests {
     #[test]
     fn ends_are_selected() {
         assert_eq!(apply(FadeOut::On, -0.0, 1.0).to_bits(), (-0.0f64).to_bits());
-        assert_eq!(apply(FadeOut::Bypassed, 1.0, -0.0).to_bits(), (-0.0f64).to_bits());
+        assert_eq!(
+            apply(FadeOut::Bypassed, 1.0, -0.0).to_bits(),
+            (-0.0f64).to_bits()
+        );
         assert_eq!(apply(FadeOut::Blend(0.5), 1.0, 3.0), 2.0);
         let mut f = Fade::new(120);
         f.land(false, false);

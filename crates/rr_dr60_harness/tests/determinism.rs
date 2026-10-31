@@ -1001,12 +1001,42 @@ fn bypass_same_calls_same_log() {
         let n = bp::n_fade(12, rate) as u64;
         let p0 = u64::from(rate) / 4;
         let played = |_: ()| {
-            let mut p = bp::engine(&|s| Pipeline::new(s).unwrap(), s, &stored, Route::Speaker, 0.5);
+            let mut p = bp::engine(
+                &|s| Pipeline::new(s).unwrap(),
+                s,
+                &stored,
+                Route::Speaker,
+                0.5,
+            );
             let sched = [
-                Change { stream: Stream::Playback, position: p0, control: 23, value: 0.0, tag: 1 },
-                Change { stream: Stream::Playback, position: p0 + n / 2, control: 23, value: 1.0, tag: 2 },
-                Change { stream: Stream::Playback, position: p0 + 2 * n, control: 5, value: 0.0, tag: 3 },
-                Change { stream: Stream::Playback, position: p0 + 3 * n, control: 22, value: 0.0, tag: 4 },
+                Change {
+                    stream: Stream::Playback,
+                    position: p0,
+                    control: 23,
+                    value: 0.0,
+                    tag: 1,
+                },
+                Change {
+                    stream: Stream::Playback,
+                    position: p0 + n / 2,
+                    control: 23,
+                    value: 1.0,
+                    tag: 2,
+                },
+                Change {
+                    stream: Stream::Playback,
+                    position: p0 + 2 * n,
+                    control: 5,
+                    value: 0.0,
+                    tag: 3,
+                },
+                Change {
+                    stream: Stream::Playback,
+                    position: p0 + 3 * n,
+                    control: 22,
+                    value: 0.0,
+                    tag: 4,
+                },
             ];
             cc::run_scheduled(&mut p, Source::Playback(1), &sched, Partition::Irregular)
         };
@@ -1017,8 +1047,20 @@ fn bypass_same_calls_same_log() {
         let one_pass = |_: ()| {
             let mut p = Pipeline::new(s).unwrap();
             let sched = [
-                Change { stream: Stream::OnePass, position: p0, control: 22, value: 0.0, tag: 1 },
-                Change { stream: Stream::OnePass, position: p0 + n, control: 24, value: 0.0, tag: 2 },
+                Change {
+                    stream: Stream::OnePass,
+                    position: p0,
+                    control: 22,
+                    value: 0.0,
+                    tag: 1,
+                },
+                Change {
+                    stream: Stream::OnePass,
+                    position: p0 + n,
+                    control: 24,
+                    value: 0.0,
+                    tag: 2,
+                },
             ];
             cc::run_scheduled(&mut p, Source::OnePass(&host), &sched, Partition::Irregular)
         };

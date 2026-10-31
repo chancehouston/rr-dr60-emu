@@ -3718,7 +3718,9 @@ mod bypass_tests {
     }
 
     fn square(n: usize) -> Vec<f32> {
-        (0..n).map(|i| if (i / 3) % 2 == 0 { 0.25 } else { -0.25 }).collect()
+        (0..n)
+            .map(|i| if (i / 3) % 2 == 0 { 0.25 } else { -0.25 })
+            .collect()
     }
 
     fn recorded(s: Settings) -> Pipeline {
@@ -3786,14 +3788,29 @@ mod bypass_tests {
             let mut p = Pipeline::new(s).unwrap();
             p.schedule_change(Stream::OnePass, 0, control, 0.0, 0)
         };
-        assert!(matches!(at(Tap::AfterVolumeAmp, 23), Err(Error::StageNotConfigured { control: 23 })));
-        assert!(matches!(at(Tap::AfterVolumeAmp, 24), Err(Error::StageNotConfigured { control: 24 })));
+        assert!(matches!(
+            at(Tap::AfterVolumeAmp, 23),
+            Err(Error::StageNotConfigured { control: 23 })
+        ));
+        assert!(matches!(
+            at(Tap::AfterVolumeAmp, 24),
+            Err(Error::StageNotConfigured { control: 24 })
+        ));
         assert!(at(Tap::AfterVolumeAmp, 22).is_ok());
-        assert!(matches!(at(Tap::AfterSpeaker, 24), Err(Error::StageNotConfigured { .. })));
+        assert!(matches!(
+            at(Tap::AfterSpeaker, 24),
+            Err(Error::StageNotConfigured { .. })
+        ));
         assert!(at(Tap::AfterSpeaker, 23).is_ok());
-        assert!(matches!(at(Tap::AfterEarphone, 23), Err(Error::StageNotConfigured { .. })));
+        assert!(matches!(
+            at(Tap::AfterEarphone, 23),
+            Err(Error::StageNotConfigured { .. })
+        ));
         for c in [22, 23, 24] {
-            assert!(matches!(at(Tap::AfterPlayback, c), Err(Error::StageNotConfigured { .. })));
+            assert!(matches!(
+                at(Tap::AfterPlayback, c),
+                Err(Error::StageNotConfigured { .. })
+            ));
         }
     }
 
@@ -3811,12 +3828,18 @@ mod bypass_tests {
         p.schedule_change(Stream::Playback, 10, 23, 0.0, 7).unwrap();
         p.schedule_change(Stream::Playback, 20, 5, 0.0, 8).unwrap();
         let log = play_n(&mut p, 100);
-        assert!(p.settings().output.speaker_enabled == false);
-        assert!(p.settings().playback_stage_enabled == false);
+        assert!(!p.settings().output.speaker_enabled);
+        assert!(!p.settings().playback_stage_enabled);
         let e = log.iter().find(|e| e.control == 23).unwrap();
-        assert_eq!((e.position, e.before, e.after, e.tag, e.stream), (10, 1.0, 0.0, 7, 1));
+        assert_eq!(
+            (e.position, e.before, e.after, e.tag, e.stream),
+            (10, 1.0, 0.0, 7, 1)
+        );
         let e10 = log.iter().find(|e| e.control == 5).unwrap();
-        assert_eq!((e10.position, e10.before, e10.after, e10.tag), (20, 1.0, 0.0, 8));
+        assert_eq!(
+            (e10.position, e10.before, e10.after, e10.tag),
+            (20, 1.0, 0.0, 8)
+        );
         assert_eq!(player_bypass_targets(&p), ([false, true, false], true));
     }
 
@@ -3836,7 +3859,17 @@ mod bypass_tests {
             .unwrap();
         let first = ch[0];
         assert!(info.changes >= 1);
-        assert_eq!((first.position, first.control, first.before, first.after, first.tag, first.stream), (0, 23, 1.0, 0.0, 7, 2));
+        assert_eq!(
+            (
+                first.position,
+                first.control,
+                first.before,
+                first.after,
+                first.tag,
+                first.stream
+            ),
+            (0, 23, 1.0, 0.0, 7, 2)
+        );
         // A stage the one-pass's tap does not reach is skipped: settings still reflect it.
         let mut s = settings(6000);
         s.tap = Tap::AfterVolumeAmp;
@@ -3877,7 +3910,10 @@ mod bypass_tests {
         p.stop_playback().unwrap();
         p.reset();
         assert_eq!(player_bypass_targets(&p), ([false, false, true], true));
-        assert!(p.one_pass.play.half.bypass_target(), "the one-pass's stage 10 too");
+        assert!(
+            p.one_pass.play.half.bypass_target(),
+            "the one-pass's stage 10 too"
+        );
         assert!(p.one_pass.play.chain.bypass_target(13));
         assert_eq!(p.latency_samples(), fresh.latency_samples());
         // reconfigure(settings()) builds the stages off: the on-change is refused (the trap).

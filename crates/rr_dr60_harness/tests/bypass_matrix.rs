@@ -112,7 +112,8 @@ fn the_tight_bounds() {
     p.set_battery_volts(2.8).unwrap();
     for i in 0..64u64 {
         let on = i % 2 == 1;
-        p.schedule_change(Stream::Playback, 0, 23, if on { 1.0 } else { 0.0 }, i + 1).unwrap();
+        p.schedule_change(Stream::Playback, 0, 23, if on { 1.0 } else { 0.0 }, i + 1)
+            .unwrap();
     }
     let mut y = vec![0.0f32; 256];
     let mut log = vec![ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
@@ -131,7 +132,8 @@ fn the_tight_bounds() {
     q.set_volume(0.7).unwrap();
     q.set_battery_volts(2.8).unwrap();
     for (i, c) in [22u32, 23, 24].iter().enumerate() {
-        q.schedule_change(Stream::Playback, 0, *c, 0.0, 100 + i as u64).unwrap();
+        q.schedule_change(Stream::Playback, 0, *c, 0.0, 100 + i as u64)
+            .unwrap();
     }
     let _ = q.play_with_changes(&mut y, &mut log).unwrap();
     q.stop_playback().unwrap();
@@ -161,7 +163,8 @@ fn the_tight_bounds() {
             "agc.release_ms" => 1000.0,
             _ => 2.0,
         };
-        q.schedule_change(Stream::Record, 0, control, value, 200 + i as u64).unwrap();
+        q.schedule_change(Stream::Record, 0, control, value, 200 + i as u64)
+            .unwrap();
     }
     let x = bp::host_tone(1000.0, 0.05, rate);
     let mut ev = vec![VasEvent::default(); 64];
@@ -169,11 +172,19 @@ fn the_tight_bounds() {
     let _ = q.stop_recording(&mut ev).unwrap();
     // Now the one-pass call: 64 switch entries + 64 record-side entries scheduled at 0.
     for i in 0..64u64 {
-        q.schedule_change(Stream::OnePass, 0, 23, if i % 2 == 1 { 1.0 } else { 0.0 }, 300 + i).unwrap();
+        q.schedule_change(
+            Stream::OnePass,
+            0,
+            23,
+            if i % 2 == 1 { 1.0 } else { 0.0 },
+            300 + i,
+        )
+        .unwrap();
     }
     let knee = cc::control_index("agc.knee_dbfs");
     for i in 0..64u64 {
-        q.schedule_change(Stream::OnePass, 0, knee, -(1.0 + (i % 20) as f64), 400 + i).unwrap();
+        q.schedule_change(Stream::OnePass, 0, knee, -(1.0 + (i % 20) as f64), 400 + i)
+            .unwrap();
     }
     let n = 64;
     let mut yo = vec![0.0f32; n];
@@ -181,7 +192,11 @@ fn the_tight_bounds() {
     let info = q
         .process_with_events_and_changes(&x[..n], &mut yo, &mut evo, &mut log)
         .unwrap();
-    assert_eq!(info.changes, rr_dr60::changes::MAX_CHANGES_PER_CALL, "the one-pass attains the bound");
+    assert_eq!(
+        info.changes,
+        rr_dr60::changes::MAX_CHANGES_PER_CALL,
+        "the one-pass attains the bound"
+    );
     assert_eq!(rr_dr60::changes::MAX_CHANGES_PER_CALL, 142);
     let _ = Pipeline::new(s).unwrap();
     let _ = cc::run(&mut q, Source::OnePass(&x[..8]), Partition::Fixed(8));

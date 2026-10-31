@@ -9,7 +9,8 @@ use sha2::{Digest, Sha256};
 /// SHA-256 of `golden/golden-bypass-v1.json` as blessed once by spec 021 (T015). The golden
 /// window is closed for the feature: a moved hash is a defect, never a re-bless; a change to
 /// the blend is a convention change with a CHANGELOG entry.
-const GOLDEN_BYPASS_V1_SHA256: &str = "pending"; // blessed at T015
+const GOLDEN_BYPASS_V1_SHA256: &str =
+    "c2cb096231380ec29a0f2ca3c815e360bceee8d70164558398769214ce06b1e6"; // blessed 2026-10-31 (021 T015)
 
 #[test]
 fn golden_bypass_v1_unchanged() {
@@ -21,7 +22,7 @@ fn golden_bypass_v1_unchanged() {
     );
 }
 
-/// Spec 021 FR-006: 20 entries per rate (ten cells × two scenarios, the two whole-path entries),
+/// Spec 021 FR-006: 24 entries per rate (eleven cells × two scenarios, the two whole-path entries),
 /// each the output digest, the schedule and the switch entries at 4096-sample blocks, bit-exact
 /// on every target; blessing also asserts the endpoint identities (exact where the switched stage
 /// is last, the convergence bound elsewhere) and the block-size-1 partition. Bless on purpose
@@ -30,7 +31,7 @@ fn golden_bypass_v1_unchanged() {
 fn golden_bypass_matches() {
     let bless = std::env::var("RR_DR60_BLESS").as_deref() == Ok("bypass");
     let actual = golden::generate_bypass(&standard, bless);
-    assert_eq!(actual.entries.len(), (10 * 2 + 2) * 7);
+    assert_eq!(actual.entries.len(), (11 * 2 + 2) * 7); // eleven cells × two scenarios + the two whole-path entries
     assert!(actual.entries.iter().all(|e| {
         let b = e.bypass.as_ref().expect("bypass rows");
         !b.log.is_empty() && b.produced > 0

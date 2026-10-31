@@ -33,8 +33,26 @@ fn as1_pre_021_configurations_unmoved() {
             let s = bp::settings(cell.config, rate);
             let stored = bp::stored_tone(1000.0, 0.5);
             let host = bp::host_tone(1000.0, 0.5, rate);
-            let a = bp::run_cell(&standard, s, cell, &stored, &host, 0.5, &[], rr_dr60_harness::changes_checks::Partition::Fixed(256));
-            let b = bp::run_cell(&bp::stepped, s, cell, &stored, &host, 0.5, &[], rr_dr60_harness::changes_checks::Partition::Fixed(256));
+            let a = bp::run_cell(
+                &standard,
+                s,
+                cell,
+                &stored,
+                &host,
+                0.5,
+                &[],
+                rr_dr60_harness::changes_checks::Partition::Fixed(256),
+            );
+            let b = bp::run_cell(
+                &bp::stepped,
+                s,
+                cell,
+                &stored,
+                &host,
+                0.5,
+                &[],
+                rr_dr60_harness::changes_checks::Partition::Fixed(256),
+            );
             rows.push(MeasurementResult::new(
                 "FR-006",
                 "no landing: identical to the stepped build",
@@ -42,7 +60,11 @@ fn as1_pre_021_configurations_unmoved() {
                 rate,
                 cell.config,
                 cell.label(),
-                if rr_dr60_harness::changes_checks::same(&a.out, &b.out) { 1.0 } else { 0.0 },
+                if rr_dr60_harness::changes_checks::same(&a.out, &b.out) {
+                    1.0
+                } else {
+                    0.0
+                },
                 "",
                 rr_dr60_harness::checks::Tolerance::Exact(1.0), // 021 FR-006
             ));
@@ -131,14 +153,19 @@ fn as6_partitions() {
         let cells = bp::cells();
         let picks: Vec<&bp::Cell> = [
             cells.iter().find(|c| c.stage == 10 && c.exact),
-            cells.iter().find(|c| c.stage == 12 && c.exact && c.stream == rr_dr60::Stream::OnePass),
+            cells
+                .iter()
+                .find(|c| c.stage == 12 && c.exact && c.stream == rr_dr60::Stream::OnePass),
             cells.iter().find(|c| c.stage == 13 && c.exact),
             cells.iter().find(|c| c.stage == 11 && !c.exact),
         ]
         .into_iter()
         .flatten()
         .collect();
-        picks.iter().flat_map(|c| bp::partitions(&standard, c, r)).collect()
+        picks
+            .iter()
+            .flat_map(|c| bp::partitions(&standard, c, r))
+            .collect()
     }));
 }
 

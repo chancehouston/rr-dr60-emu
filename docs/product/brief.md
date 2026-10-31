@@ -70,7 +70,7 @@ Dossier concept 03 shows the back as a workbench of modules in a phone-sized "VS
 - **Needs engine support** for the proposed flow:
   - choose an insertion point and add a component;
   - inspect its controls;
-  - bypass it for comparison;
+  - bypass it for comparison; *(built for the device's own playback-side stages 10 – 13 as a live 20 ms blend, spec 021, engine 0.21.0, 2026-10-31; record-side stages compare through the offline re-render of spec 020; a Workbench feature)*
   - move or remove it where supported.
 - Placement before or after a stage can change the result, so **the supported insertion points must come from the engine contract**, not from the app.
 - **Proposed:** a front-panel indicator that shows when a custom chain is active.
@@ -274,7 +274,7 @@ The limiter's internal state is a test-only hook. Also not built: a scope copy a
 
 ### 3. Define extension points
 
-**The pipeline is fixed.** Stages can be bypassed through settings, applied by `reconfigure`. There is no insertion, reordering, removal or third-party module interface; that is the API-shape decision of spec 001.
+**The pipeline is fixed.** Stages can be bypassed through settings, applied by `reconfigure` *(the four playback-side switches also live, since 0.21.0)*. There is no insertion, reordering, removal or third-party module interface; that is the API-shape decision of spec 001.
 
 **Effects beyond the device** (reverb, EQ, flanger) do not exist in the engine. They could run in the app around the engine's input or output, or become engine stages. Where they live is an architecture decision for a later spec, not a fact today.
 
@@ -295,7 +295,7 @@ The limiter's internal state is a test-only hook. Also not built: a scope copy a
 
 **Recordings:** export and import as a versioned, checksummed byte sequence (stored form version 2).
 
-**Settings:** a fixed struct with a version-checked size in C. Since 0.20.0 (spec 020) the engine writes a versioned **processing record** per recording (settings at the start, identity, record-side entries, voice-activation gaps, a digest of the stored form) and re-renders a recording from the kept microphone audio and the record bit for bit at the record's library version. Since engine 0.16.0 (spec 015) the three live controls can be scheduled at an output-sample position and every change a stream applies is logged with its position, the values before and after and a caller tag. Since 0.17.0 (spec 017) eight record-side values (the sensitivity, the voice activation's threshold, hang and onset, the limiter's knee, attack and release, the hiss level) can be scheduled on the record stream and the one-pass in the stream's input clock and are logged the same way; a landed value shows in `settings()`. The switches, the codec, the memory and the host rate still change only through `reconfigure`.
+**Settings:** a fixed struct with a version-checked size in C. Since 0.20.0 (spec 020) the engine writes a versioned **processing record** per recording (settings at the start, identity, record-side entries, voice-activation gaps, a digest of the stored form) and re-renders a recording from the kept microphone audio and the record bit for bit at the record's library version. Since engine 0.16.0 (spec 015) the three live controls can be scheduled at an output-sample position and every change a stream applies is logged with its position, the values before and after and a caller tag. Since 0.17.0 (spec 017) eight record-side values (the sensitivity, the voice activation's threshold, hang and onset, the limiter's knee, attack and release, the hiss level) can be scheduled on the record stream and the one-pass in the stream's input clock and are logged the same way; a landed value shows in `settings()`. Since 0.21.0 (spec 021) the four playback-side stage switches (stages 10 – 13) can be scheduled live on the playback stream (11 – 13 on the one-pass too) and land as a 20 ms blend with the stage kept running; `settings()` reflects a landed switch, and an engine meant for live A/B is built with every playback stage on (a switch of a stage the engine does not run is refused). The record-side switches, the codec, the memory and the host rate still change only through `reconfigure`.
 
 ### 5. Ownership
 

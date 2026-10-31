@@ -1188,9 +1188,13 @@ impl Pipeline {
     /// Spec 021 research R-05: the settings follow the switches a stream landed, with their
     /// tags (the other stream lands them at its next call: the one-pass through its mirror, the
     /// player through `start_playback`'s adopt).
-    pub(crate) fn take_landed_bypass(ctl: &mut crate::changes::StreamState, settings: &mut Settings, tags: &mut [u64; 3]) {
-        for i in 0..3 {
-            if let Some((b, tag)) = ctl.landed_bypass[i].take() {
+    pub(crate) fn take_landed_bypass(
+        ctl: &mut crate::changes::StreamState,
+        settings: &mut Settings,
+        tags: &mut [u64; 3],
+    ) {
+        for (i, slot) in ctl.landed_bypass.iter_mut().enumerate() {
+            if let Some((b, tag)) = slot.take() {
                 match i {
                     0 => settings.output.volume_amp_enabled = !b,
                     1 => settings.output.speaker_enabled = !b,

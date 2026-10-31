@@ -1835,7 +1835,10 @@ mod bypass {
             ..BypassMutation::default()
         });
         let f = failed(&bp::blend_identity(&m, &exact_cell(12), 48_000));
-        assert!(f.contains(&"blend equals y + w(x - y) of the twins (worst, f32 LSBs)"), "{f:?}");
+        assert!(
+            f.contains(&"blend equals y + w(x - y) of the twins (worst, f32 LSBs)"),
+            "{f:?}"
+        );
         assert_all(&bp::blend_identity(&standard, &exact_cell(12), 48_000));
     }
 
@@ -1847,7 +1850,10 @@ mod bypass {
             ..BypassMutation::default()
         });
         let f = failed(&bp::click_table(&m, 6000));
-        assert!(f.contains(&"crossfade click energy below the step's (dB)"), "{f:?}");
+        assert!(
+            f.contains(&"crossfade click energy below the step's (dB)"),
+            "{f:?}"
+        );
         assert_all(&bp::click_table(&standard, 6000));
     }
 
@@ -1859,23 +1865,70 @@ mod bypass {
             ..BypassMutation::default()
         });
         let f = failed(&bp::blend_identity(&m, &exact_cell(13), 48_000));
-        assert!(f.contains(&"blend equals y + w(x - y) of the twins (worst, f32 LSBs)"), "{f:?}");
+        assert!(
+            f.contains(&"blend equals y + w(x - y) of the twins (worst, f32 LSBs)"),
+            "{f:?}"
+        );
     }
 
-    /// A bypassed stage not kept warm fails the return identity. At 44.1 kHz: a 1 kHz tone's
-    /// period is not a whole number of samples there, so a filter state frozen at the landing
-    /// differs from the running one at the return (at 6 and 48 kHz the hold of the identity
-    /// check is a whole number of periods and the frozen state coincides with the running one:
-    /// a lesson, not an oracle).
+    /// A bypassed stage not kept warm differs from the committed engine after the return: on
+    /// voice (a 1 kHz tone cannot catch it: the identity check's hold between the landing and
+    /// the return, 20 ms plus 0.4 s, is a whole number of 1 kHz periods at every rate, so a
+    /// filter state frozen at the landing equals the running state at the return; a lesson for
+    /// every warm-state oracle).
     #[test]
     fn cold_stage_is_caught() {
+        use rr_dr60::{Route, Stream};
+        use rr_dr60_harness::changes_checks::{self as cc, Change, Partition, Source};
+        let rate = 48_000;
+        let cell = exact_cell(12);
+        let s = bp::settings(cell.config, rate);
+        let x = rr_dr60_harness::stimulus::voiced(6000.0, 1.5, -20.0, 0x021);
+        let (p, q) = bp::positions(12, rate);
+        let sched = [
+            Change {
+                stream: Stream::Playback,
+                position: p,
+                control: bp::CONTROL_STAGE_12,
+                value: 0.0,
+                tag: 1,
+            },
+            Change {
+                stream: Stream::Playback,
+                position: q,
+                control: bp::CONTROL_STAGE_12,
+                value: 1.0,
+                tag: 2,
+            },
+        ];
+        let run = |make: &dyn Fn(Settings) -> Pipeline| {
+            let mut e = bp::engine(make, s, &x, Route::Speaker, 0.5);
+            cc::run_scheduled(&mut e, Source::Playback(1), &sched, Partition::Fixed(256))
+        };
+        let good = run(&standard);
         let m = mutant(BypassMutation {
             stage_cold: true,
             ..BypassMutation::default()
         });
-        let f = failed(&bp::endpoint_identity(&m, &exact_cell(12), 44_100));
-        assert!(f.contains(&"mismatches against the all-on run after the return"), "{f:?}");
-        assert_all(&bp::endpoint_identity(&standard, &exact_cell(12), 44_100));
+        let cold = run(&m);
+        let n = bp::n_fade(12, rate) as usize;
+        let (p, q) = (p as usize, q as usize);
+        assert!(
+            cc::same(&good.out[..p + n], &cold.out[..p + n]),
+            "identical through the bypass's landing"
+        );
+        assert!(
+            !cc::same(&good.out[q..], &cold.out[q..]),
+            "the cold stage's return differs"
+        );
+        // The committed engine's return equals the all-on run on voice too (the exact cell).
+        let mut e = bp::engine(&standard, s, &x, Route::Speaker, 0.5);
+        let all_on = cc::run(&mut e, Source::Playback(1), Partition::Fixed(256));
+        let end = good.out.len().min(all_on.out.len());
+        assert!(cc::same(
+            &good.out[q + n - 1..end],
+            &all_on.out[q + n - 1..end]
+        ));
     }
 
     /// The ungated clip count is caught by the meters' rule (US2 AS5's check): a bypassed
@@ -1934,8 +1987,14 @@ mod bypass {
         let frozen = run(&m);
         let at = (200 + 3 * n) as usize;
         let end = good.out.len().min(frozen.out.len());
-        assert!(cc::same(&good.out[..at], &frozen.out[..at]), "inaudible before the route change either way");
-        assert!(!cc::same(&good.out[at..end], &frozen.out[at..end]), "the frozen fade blends after the route change");
+        assert!(
+            cc::same(&good.out[..at], &frozen.out[..at]),
+            "inaudible before the route change either way"
+        );
+        assert!(
+            !cc::same(&good.out[at..end], &frozen.out[at..end]),
+            "the frozen fade blends after the route change"
+        );
         let _ = cell;
     }
 }
