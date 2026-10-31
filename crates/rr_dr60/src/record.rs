@@ -29,19 +29,19 @@ pub const STAGE_COUNT: usize = crate::manifest::STAGE_COUNT;
 /// The read-out's flags (spec 020 D4; data-model.md): differences reported, never refusals.
 pub mod flags {
     /// The record's library version differs from this library's.
-    pub const LIBRARY_DIFFERS: u32 = 1;
+    pub const LIBRARY_DIFFERS: u32 = 1; // FR-002: a reported difference (020 D4)
     /// A stage's model version differs (the stage mask names which).
-    pub const STAGE_MODEL_DIFFERS: u32 = 2;
+    pub const STAGE_MODEL_DIFFERS: u32 = 2; // FR-002: a reported difference (020 D4)
     /// The record's host rate differs from the reading engine's (set by the engine's reader).
-    pub const HOST_RATE_DIFFERS: u32 = 4;
+    pub const HOST_RATE_DIFFERS: u32 = 4; // FR-002: a reported difference (020 D4)
     /// Setting names or control identifiers this library does not know (counted and listed).
-    pub const UNKNOWN_SETTINGS: u32 = 8;
+    pub const UNKNOWN_SETTINGS: u32 = 8; // FR-002: a reported difference (020 D4)
     /// Fewer event or change rows than the engine counted.
-    pub const INCOMPLETE_RUN: u32 = 16;
+    pub const INCOMPLETE_RUN: u32 = 16; // FR-002: a reported difference (020 D4)
     /// The recording was imported: the record names the stored form and its digest only.
-    pub const IMPORTED_ORIGIN: u32 = 32;
+    pub const IMPORTED_ORIGIN: u32 = 32; // FR-002: a reported difference (020 D4)
     /// Checked against a recording in memory: the digests differ.
-    pub const DIGEST_MISMATCH: u32 = 64;
+    pub const DIGEST_MISMATCH: u32 = 64; // FR-002: a reported difference (020 D4)
 }
 
 /// How a recording ended (spec 020 D9; research R-07).
@@ -663,26 +663,26 @@ fn lines(bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
 
 /// The required fields' bits (data-model.md; contracts/record-form.md's Required column).
 mod req {
-    pub const LIBRARY: u32 = 1;
-    pub const ORIGIN: u32 = 2;
-    pub const HOST_RATE: u32 = 4;
-    pub const SEED: u32 = 8;
-    pub const COUNTER: u32 = 16;
-    pub const STORED_FORM: u32 = 32;
+    pub const LIBRARY: u32 = 1; // FR-002 (020 D2): a required line
+    pub const ORIGIN: u32 = 2; // FR-002 (020 D2): a required line
+    pub const HOST_RATE: u32 = 4; // FR-002 (020 D2): a required line
+    pub const SEED: u32 = 8; // FR-002 (020 D2): a required line
+    pub const COUNTER: u32 = 16; // FR-002 (020 D2): a required line
+    pub const STORED_FORM: u32 = 32; // FR-002 (020 D2): a required line
     pub const STORED_CODEC: u32 = 1 << 6; // engineering target (020 D2): one bit per required line
     pub const ENCODING: u32 = 1 << 7; // engineering target (020 D2)
     pub const UNITS: u32 = 1 << 8; // engineering target (020 D2)
     pub const DIGEST: u32 = 1 << 9; // engineering target (020 D2)
-    pub const REMAINING: u32 = 1 << 10;
-    pub const EVENTS_TOTAL: u32 = 1 << 11;
-    pub const CHANGES_TOTAL: u32 = 1 << 12;
-    pub const STOP: u32 = 1 << 13;
-    pub const STOP_POS: u32 = 1 << 14;
-    pub const PADDING: u32 = 1 << 15;
-    pub const INPUT_TOTAL: u32 = 1 << 16;
-    pub const SILENCE: u32 = 1 << 17;
-    pub const EVENT_FIELDS: u32 = 1 << 18;
-    pub const CHANGE_FIELDS: u32 = 1 << 19;
+    pub const REMAINING: u32 = 1 << 10; // FR-002 (020 D2): a required line
+    pub const EVENTS_TOTAL: u32 = 1 << 11; // FR-002 (020 D2): a required line
+    pub const CHANGES_TOTAL: u32 = 1 << 12; // FR-002 (020 D2): a required line
+    pub const STOP: u32 = 1 << 13; // FR-002 (020 D2): a required line
+    pub const STOP_POS: u32 = 1 << 14; // FR-002 (020 D2): a required line
+    pub const PADDING: u32 = 1 << 15; // FR-002 (020 D2): a required line
+    pub const INPUT_TOTAL: u32 = 1 << 16; // FR-002 (020 D2): a required line
+    pub const SILENCE: u32 = 1 << 17; // FR-002 (020 D2): a required line
+    pub const EVENT_FIELDS: u32 = 1 << 18; // FR-002 (020 D2): a required line
+    pub const CHANGE_FIELDS: u32 = 1 << 19; // FR-002 (020 D2): a required line
     pub const ALWAYS: u32 =
         LIBRARY | ORIGIN | STORED_FORM | STORED_CODEC | ENCODING | UNITS | DIGEST;
     pub const ENGINE: u32 = HOST_RATE
