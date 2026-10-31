@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-31
 
-**Status**: Draft (the three draft reviews applied 2026-10-31; awaiting the owner's sign-off on D1 – D11)
+**Status**: Spec approved by the owner 2026-10-31 (D1 – D11); planning
 
 **Input**: User description: "021 live playback-stage bypass with a crossfade (the owner's engine order 020 → 021, decisions.md 2026-10-29; controls-discussion.md § 2a row 6 'Stage bypass and A/B (with / without the speaker): playback-side stages live with a crossfade; record-side stages an offline re-render, not live', § 2b 'Playback-stage bypass, live (10, 11, 12, 13): both branches computed for a 20 ms crossfade; each bypassed branch keeps running to stay warm', § 4 item 8 '021: Live playback-stage bypass with a crossfade (M; Workbench A/B for stages 10 – 13)'). As a Workbench user listening to a playback, I want to switch each playback-side stage in and out while the recording plays, with no click, so that I can hear what each stage does to the same passage instead of stopping, reconfiguring and playing again."
 
@@ -27,6 +27,10 @@ The owner reads this section first. Each decision gives the recommendation; the 
 | D11 | **Stage 11's live bypass means what its construction switch means: the stage removed whole** (the two coupling corners, the gain law, the knee and the battery ceiling), so the bypassed branch is the stage's input at unity. That is a **level change** wherever the position's gain is not unity: on the earphone route +19.2 dB at the reference position (0 dB at position 1), on the speaker route −21.5 dB at position 1 and about 0 dB at the reference position, position 0 silence ↔ full scale; a smoothed 20 ms level change, not a click. The records state it with figures, name the **neutral positions** (speaker: the reference position; earphone: position 1), where the A/B is the corners and the knee alone, the app can show the delta from the published gain-law functions, and the Workbench defaults stage 11's A/B to a neutral position. **The alternative (product M1): a level-kept bypass** that removes the amplifier but keeps the volume control's loaded-law gain at the position, so the comparison is the amplifier's character at the same loudness and the earphone case never jumps; it breaks the "equals the configured-off engine" oracle (a new reference configuration), gives one setting two meanings (construction: unity; live: volume kept), and on the earphone route leaves nothing to bypass. | **Configured-off meaning with the figures and the neutral positions** (the coach and the hardware reviewer; alternative: the level-kept bypass, the product reviewer) |
 
 ## Clarifications
+
+### Session 2026-10-31 (owner sign-off)
+
+- The owner approved D1 – D10 as recommended and chose for **D11 the configured-off meaning** of stage 11's live bypass (the whole stage removed, the level change documented with its figures and the neutral positions, the app compensating in its UI); the level-kept bypass stays recorded as the alternative. The rest proceeds to the plan sign-off and then to the merge, stopping only on a failed check or a new decision.
 
 ### Session 2026-10-31 (the draft reviews: coach 1 – 14, hardware B1 – B12, product M1 – M7)
 
