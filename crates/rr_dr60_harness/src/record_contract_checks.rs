@@ -1139,9 +1139,9 @@ pub fn place_case_mismatches(rate: u32, start: u8, requests: &[(u64, u8)]) -> (u
             break;
         }
     }
-    // The stage emits silence after its final count without moving: compare up to the first
-    // repeated state (the walker has no final count and keeps advancing).
-    let own_and_tail = 1 + trace.windows(2).take_while(|w| w[0] != w[1]).count();
+    // The whole trace, the drain's silence included: the walker holds its state past the final
+    // count as the stage does (T029).
+    let own_and_tail = trace.len();
     let mut mismatches = 0;
     for (i, want) in trace.iter().enumerate().take(own_and_tail) {
         let got = timeline::place_at(i as u64, rate, start, 3000, &log).unwrap();

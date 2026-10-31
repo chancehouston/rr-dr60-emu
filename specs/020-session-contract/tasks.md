@@ -102,3 +102,7 @@ description: "Task list for the processing record (020)"
 ## Implementation strategy
 
 MVP = Phase 2 + US1 (the contract). US2 and US3 each add a test binary and a module. The one audio-path change is T018's factoring, guarded by two goldens and T024's A/B; its fallback is specified.
+
+## Phase 7: Convergence
+
+- [X] T029 Hold `timeline::place_at`'s state once the speed stage's final count is reached (the `latch` rule: the tail runs while i − D + (ph ≠ 0) ≤ K − 1, D the 28-sample look-ahead), compare the walker with the whole per-output trace including the silence past the end in `record_contract_checks::place_case_mismatches`, and document the rule on `place_at` per FR-006 / D8(c) (partial)

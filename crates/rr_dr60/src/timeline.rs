@@ -252,6 +252,14 @@ struct Walker {
     fade: Option<(u32, u64, u32)>, // (old k, old place in fifths, n)
     started: bool,
     stored: u64,
+    /// Outputs computed so far.
+    outputs: u64,
+    /// The outputs before the drain's silence, fixed at the latch (the stage's `final_count`).
+    final_count: Option<u64>,
+    /// The state held past the final count (the stage emits silence without moving).
+    held: Option<PlaceState>,
+    /// The last computed state.
+    last: PlaceState,
 }
 
 const K_IDENTITY: u32 = 5; // 013 FR-002: level 3's ratio 5/5 (A-054)
@@ -267,13 +275,35 @@ impl Walker {
             fade: None,
             started: false,
             stored,
+            outputs: 0,
+            final_count: None,
+            held: None,
+            last: PlaceState::default(),
         }
     }
 
+    /// The latch (spec 013 FR-005): the level is fixed and the final count known: the outputs
+    /// so far plus the tail still to play from the current place at the active level (at
+    /// level 3 no tail).
     fn latch(&mut self) {
-        if self.p5 >= 5 * self.stored {
-            self.latched = true;
+        if self.latched || self.p5 < 5 * self.stored {
+            return;
         }
+        self.latched = true;
+        let d = u64::from(crate::speed::LOOKAHEAD_SAMPLES);
+        let mut remaining = 0u64;
+        if self.active != K_IDENTITY {
+            let mut p5 = self.p5;
+            loop {
+                let (i, ph) = (p5 / 5, p5 % 5);
+                if i + u64::from(ph != 0) > self.stored.saturating_sub(1) + d {
+                    break;
+                }
+                remaining += 1;
+                p5 += u64::from(self.active);
+            }
+        }
+        self.final_count = Some(self.outputs + remaining);
     }
 
     fn apply_request(&mut self) {
@@ -290,9 +320,18 @@ impl Walker {
         }
     }
 
-    /// One output: the state it was computed under.
+    /// One output: the state it was computed under; past the final count the held state (the
+    /// stage emits the drain's silence without moving, spec 020 T029).
     fn step(&mut self) -> PlaceState {
+        if let Some(h) = self.held {
+            return h;
+        }
         self.latch();
+        if self.final_count.is_some_and(|f| self.outputs >= f) {
+            let h = self.last_state();
+            self.held = Some(h);
+            return h;
+        }
         self.apply_request();
         let mut st = PlaceState {
             place_fifths: self.p5,
@@ -313,9 +352,16 @@ impl Walker {
         }
         self.started = true;
         self.p5 += u64::from(self.active);
+        self.outputs += 1;
         self.latch();
         st.latched = self.latched;
+        self.last = st;
         st
+    }
+
+    /// The last computed state (held past the final count).
+    fn last_state(&self) -> PlaceState {
+        self.last
     }
 }
 
@@ -337,7 +383,8 @@ fn level_of(k: u32) -> u8 {
 /// entries of `entries` (the playback stream's change log, spec 015; other controls' entries
 /// are ignored) landing at `speed_landing(position, host_rate_hz)`: a replay of the speed
 /// stage's own rules (spec 013's deferred switch and latch, spec 019's crossfade and wait).
-/// Entries must be in position order.
+/// Past the stage's final count (the own part and the tail) the state is held: the drain's
+/// silence computes no place (T029). Entries must be in position order.
 ///
 /// # Errors
 ///
