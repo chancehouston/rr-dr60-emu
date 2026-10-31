@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-31
 
-**Status**: Draft (the three draft reviews applied; awaiting the owner's sign-off)
+**Status**: Spec approved by the owner (2026-10-31); planning
 
 **Input**: User description: "020 session contract (the owner's engine order 019 → 020, decisions.md 2026-10-29; controls-discussion.md § 4 item 7; investigation-mode.md § 5 "020, record side first"; the items specs 015 and 017 moved here). As an Investigation-mode app and as someone sharing a case file, I want a versioned record for each recording, exported beside the stored form, that says exactly how the recording was processed, so that a recipient with the kept microphone audio and the same library can re-render the recording bit for bit and confirm that the record and the recording belong together, and an app can place every logged change and every voice-activation gap on the microphone's timeline."
 
@@ -28,6 +28,10 @@ The owner reads this section first. Each decision gives the recommendation; the 
 | D12 | **The feed-point rule and a re-render recipe are published.** The engine publishes one conversion from 24-bit integer samples to its input (x ÷ 2²³, exactly representable) as a helper, so two apps re-rendering the same case file feed bit-identical samples; the harness ships a re-render example (build at the record, fill the memory, schedule the entries, feed, stop at the position, export, digest) and the Swift package its port; the guide documents both and states that the seed is drawn per recording from the system's random source, never from an identifier. | yes |
 
 ## Clarifications
+
+### Session 2026-10-31 (owner sign-off)
+
+- D1 – D12 approved as recommended ("Approve all twelve"); the plan follows with its three reviews and the plan sign-off.
 
 ### Session 2026-10-31 (the draft reviews: coach 1 – 19, hardware B1 – B13, product M1 – M6)
 
