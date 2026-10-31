@@ -159,6 +159,10 @@ pub struct Pipeline {
     /// grown, so the hooks build stays allocation-free in a call).
     #[cfg(feature = "__test-hooks")]
     pub(crate) speed_trace: alloc::vec::Vec<f64>,
+    /// Spec 020 (research R-04): the speed control's per-output place state of the last `play`
+    /// call, the first `SPEED_PLACE_TRACE_CAPACITY`; reserved at construction, never grown.
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) speed_place_trace: alloc::vec::Vec<crate::timeline::PlaceState>,
     /// Spec 016: the meter read-out of the last non-empty processing call (research R-01).
     pub(crate) meters: Meters,
     /// Spec 017 D4: the tag of the last landed change per record-side value (by slot), carried
@@ -448,6 +452,9 @@ impl OnePass {
 /// footprint (spec 006 FR-017); the checks read it in calls of one host sample.
 #[cfg(feature = "__test-hooks")]
 const SPEED_TRACE_CAPACITY: usize = 8192; // engineering target (019 R-06)
+/// The per-output place trace's capacity (spec 020 research R-04; a 1024-sample call at 6 kHz).
+#[cfg(feature = "__test-hooks")]
+const SPEED_PLACE_TRACE_CAPACITY: usize = 2048; // engineering target (020 R-04)
 
 /// The live controls' values a pipeline starts with (`new`: the defaults; `reconfigure`: the
 /// values kept, spec 013 FR-001 and spec 018 FR-001).
@@ -565,6 +572,8 @@ impl Pipeline {
             speed: SpeedStage::new(speed_level),
             #[cfg(feature = "__test-hooks")]
             speed_trace: alloc::vec::Vec::with_capacity(SPEED_TRACE_CAPACITY), // never grown: a play call pushes within it
+            #[cfg(feature = "__test-hooks")]
+            speed_place_trace: alloc::vec::Vec::with_capacity(SPEED_PLACE_TRACE_CAPACITY),
         }
     }
 

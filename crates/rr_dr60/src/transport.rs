@@ -620,6 +620,10 @@ impl Pipeline {
         let mut trace = core::mem::take(&mut self.speed_trace); // its capacity kept; no allocation
         #[cfg(feature = "__test-hooks")]
         trace.clear();
+        #[cfg(feature = "__test-hooks")]
+        let mut place_trace = core::mem::take(&mut self.speed_place_trace);
+        #[cfg(feature = "__test-hooks")]
+        place_trace.clear();
         let Pipeline {
             memory,
             player,
@@ -688,6 +692,10 @@ impl Pipeline {
                 if trace.len() < trace.capacity() {
                     trace.push(d); // within the reserved capacity: no allocation
                 }
+                #[cfg(feature = "__test-hooks")]
+                if place_trace.len() < place_trace.capacity() {
+                    place_trace.push(speed.last_state()); // 020 R-04: map (c)'s pin
+                }
                 // 013 research R-05: the total is fixed once the place reaches K; the host
                 // sample being produced needs this device sample, so it lies within the total.
                 if cursor.total == u64::MAX {
@@ -730,6 +738,7 @@ impl Pipeline {
         #[cfg(feature = "__test-hooks")]
         {
             self.speed_trace = trace; // 019 research R-06: the device-rate trace hook
+            self.speed_place_trace = place_trace;
         }
         Ok(info)
     }
