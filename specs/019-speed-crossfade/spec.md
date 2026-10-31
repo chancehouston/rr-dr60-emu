@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-30
 
-**Status**: Spec signed off (2026-10-30); planning
+**Status**: Spec signed off (2026-10-30); plan reviewed, owner plan sign-off pending
 
 **Input**: User description: "019 speed-change crossfade (spec 013's follow-up B2; the owner's engine order 018 → 019, decisions.md 2026-10-29; controls-discussion.md § 4 item 6 "removes the tick on a level change to or from levels 4 – 5; a constant level stays bit-identical", § 2b row "Speed crossfade"). As a listener and as an app developer, I want a playback speed-level change to blend from the old level into the new over a short fixed time instead of switching in one sample, so that a change to or from the fast levels no longer ticks on voice content above about 1.6 kHz, while a constant level stays bit-identical to 0.18. […] Out of scope: pitch-kept speed (c1), the live playback-stage bypass crossfade (spec 021), any change to the ratios or the banks' bands, record-side behavior."
 
@@ -25,6 +25,19 @@ The owner reads this section first. Each decision gives the recommendation; the 
 | D9 | **Cost.** At a constant level the per-sample cost within **3 %** of 0.18 (merge commit 13defc7) by the solo A/B (45 alternating runs; a **5 % runner ceiling** on the `ab-timing` label; one "blend running" test on the steady-identity and the general paths); during a blend two dots (at most 114 multiply-adds) per device sample for 120 samples, reported with the worst block, within the real-time budget; deterministic; real-time safe (no new bank; the ring of stored samples grows to hold the two branches' span, a plan figure). No C API change, no control manifest change; stage 9's manifest notes name "a 20 ms blend at a level change (engine convention)" at model version 0.19.0 and its coverage note names the change's own sound as not modeled; version 0.19.0. | Yes |
 
 ## Clarifications
+
+### Session 2026-10-30 (restated at the plan: coach 1 – 12, hardware B1 – B10, product M1 – M6)
+
+- **FR-001 / D8(b)**: blend sample N is the new branch's value itself (`a + 1.0·(b − a)` is not `b` in floating point), samples 1 … N − 1 the published blend; the splice identity from s + N − 1 holds by construction and the reference uses the identical rule (coach 1, hardware B1).
+- **SC-002**: bit-exact at 6 kHz (`speed_only`, `speed_only_codec`); at the other six rates the blend identity is checked on a device-rate trace of the speed stage's outputs (a test hook) and the partition identity on the host output (coach 3).
+- **FR-007 / SC-003**: the asserted cases are spec 013's thirteen step-table rows at 2 and 2.4 kHz; the seven 1 kHz rows (switch steps of −73 … −99 dB) are reported with both absolute energies; the fade reads at the reader's leakage floor, so the ratio is the switch against the floor with about 15 dB of margin; a floor row is printed; the voiced stimulus's two absolute energies are reported, not a ratio (coach 5, 7; hardware B6).
+- **FR-003 / FR-006**: the length rule is unchanged for a constant level and for the new branch; a schedule whose requests are under 20 ms apart plays longer than in 0.18 by the waits (the changes golden's `speed_inside` counts move, asserted as expected; the smoke's count unchanged, asserted) (hardware B3).
+- **D7's gate**: the step mutant is "no fade, the request applied at once" and reproduces 0.18 bit for bit, so it regenerates the committed speed golden and the `speed_inside` entries before the re-bless (hardware B2).
+- **D2 / Assumptions**: A-054's amendment reads as a hypothesis (no "plausible device behavior"): the device's behavior at a change is unknown; a frame-boundary switch, an instant step and a brief mute are candidates; capture P1 decides (product M2, hardware B10).
+- **D3**: the midpoint is "a brief beat, about −3 dB average power", not "a dip of about 6 dB" (hardware B10).
+- **D6**: "mostly silence" holds with the codec on; the end cut is reported as count, peak amplitude and energy in both configurations (hardware B9, coach 10).
+- **FR-010**: one C define, `RR_DR60_SPEED_CROSSFADE_MS 20` (product M1); stage 9's description carries the blend and its coverage note is rewritten whole within 120 characters (coach 2, product M4); the guide quotes the measured reduction, never "no longer ticks" (product M3); the CHANGELOG under Changed as "an audio change at level changes only, not an assumption change" (product M6); the records gain investigation-mode's bullet, brief's clause and monetization's parenthetical (product M5); A-054's phrases pinned by the registers cross-check (coach 11).
+- **The ring span is 153** (the kernel is centred), the pulls follow the leading branch, the fast path tests the fade explicitly (hardware B4, B5; coach 6); the weight expression is pinned (hardware B8); `fade_no_wait` is defined (hardware B7, coach 8); the cost A/B measures constant levels 3 and 5 and the fade test asserts its worst block (coach 4).
 
 ### Session 2026-10-30 (owner sign-off)
 
