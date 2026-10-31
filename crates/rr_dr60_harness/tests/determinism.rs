@@ -934,3 +934,33 @@ fn battery_same_calls_same_output() {
         );
     }
 }
+
+/// Spec 019 FR-009: the same calls give the same output and the same log, at two rates: two
+/// engines with a scheduled change and a waited request on the playback stream.
+#[test]
+fn crossfade_same_calls_same_output() {
+    use rr_dr60::Stream;
+    use rr_dr60_harness::changes_checks::{self as cc, Change, Partition, Source};
+    for rate in [6000u32, 48_000] {
+        let x = rr_dr60_harness::stimulus::voiced(f64::from(rate), 1.0, -20.0, 0x019);
+        let mut s = configs::settings("default_output", rate);
+        s.speech_codec_enabled = false;
+        let position = u64::from(rate) / 2;
+        let changes = [
+            Change::speed(position, 5, 1),
+            Change::speed(position + u64::from(rate) / 200, 1, 2), // 5 ms later: waited
+        ];
+        let played = |changes: &[Change]| {
+            let mut p = Pipeline::new(s).unwrap();
+            p.start_recording().unwrap();
+            let _ = p.record(&x, &mut []).unwrap();
+            let _ = p.stop_recording(&mut []).unwrap();
+            cc::run_scheduled(&mut p, Source::Playback(1), changes, Partition::Irregular)
+        };
+        let (a, b) = (played(&changes), played(&changes));
+        assert!(cc::same(&a.out, &b.out), "{rate}: the playback");
+        assert_eq!(a.log, b.log, "{rate}: the playback log");
+        assert_eq!(cc::entries_of(&a.log, cc::speed_control()).len(), 2);
+        let _ = Stream::Playback;
+    }
+}

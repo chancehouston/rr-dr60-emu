@@ -564,6 +564,10 @@ impl Pipeline {
         );
         let mut produced = 0;
         let mut frames = 0;
+        #[cfg(feature = "__test-hooks")]
+        let mut trace = core::mem::take(&mut self.speed_trace); // its capacity kept; no allocation
+        #[cfg(feature = "__test-hooks")]
+        trace.clear();
         let Pipeline {
             memory,
             player,
@@ -628,6 +632,10 @@ impl Pipeline {
                     SpeedOut::Own(v) | SpeedOut::Tail(v) => v,
                     SpeedOut::Silence => 0.0,
                 };
+                #[cfg(feature = "__test-hooks")]
+                if trace.len() < trace.capacity() {
+                    trace.push(d); // within the reserved capacity: no allocation
+                }
                 // 013 research R-05: the total is fixed once the place reaches K; the host
                 // sample being produced needs this device sample, so it lies within the total.
                 if cursor.total == u64::MAX {
@@ -666,6 +674,10 @@ impl Pipeline {
         self.take_landed_play();
         if finished {
             self.player.clear_schedule(); // 015 FR-002: the end of a playback
+        }
+        #[cfg(feature = "__test-hooks")]
+        {
+            self.speed_trace = trace; // 019 research R-06: the device-rate trace hook
         }
         Ok(info)
     }

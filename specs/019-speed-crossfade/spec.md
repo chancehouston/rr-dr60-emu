@@ -105,7 +105,7 @@ An app developer relies on the blend's timing and cost being fixed and documente
 ### Edge Cases
 
 - A change to the level already active: no blend, no change in output; the entry is logged as today (before == after).
-- A change requested in the same call as the playback's start, or scheduled at position 0 before `start_playback` (`speed_landing(0) = 0`; the schedule survives the start): the start value rule of spec 015 (no blend, no entry).
+- A change landing on the playback's **first output** (set between `start_playback` and the first play call, or scheduled at position 0; `speed_landing(0) = 0`) switches at once without a blend, spec 011's first-sample rule (nothing has sounded yet), and is logged as spec 015 logs it; a level set before `start_playback` is the start value (no blend, no entry). *(Restated at implementation, 2026-10-30: spec 013's `independent_of_route_volume_and_clamp` compares the two.)*
 - Consecutive-position requests (several levels one sample apart): the first starts a blend, the last of the rest waits and lands at the blend's end; each is logged.
 - The one-pass never carries the speed (spec 015 D1): bit-identical to 0.18 in every one-pass configuration.
 - A change at the last device sample of the own part, or during the tail: the new branch's length rule governs, both branches read zeros past K, the old branch's remainder is cut by the drain; nothing is added past the drain.

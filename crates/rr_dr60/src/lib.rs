@@ -493,6 +493,32 @@ pub mod __test_hooks {
         /// Level 3 reads 28 stored samples ahead like the other levels (the play reports' frame
         /// counts then differ from 0.12's; spec 013 FR-006).
         pub lookahead_at_level_3: bool,
+        /// Spec 019 (research R-05): no crossfade is created and a request applies at once:
+        /// version 0.18's switch, bit for bit (the click reader's switch reference and the
+        /// re-bless gate; false: as committed).
+        pub fade_step: bool,
+        /// Spec 019: a linear weight (u) in place of the smoothstep (false: as committed).
+        pub fade_linear: bool,
+        /// Spec 019: added to the crossfade's length N (0: as committed, 120).
+        pub fade_len_delta: i32,
+        /// Spec 019: a request during a crossfade applies at once, the running fade's new branch
+        /// becoming the old branch (D4's rejected alternative; false: as committed, the wait).
+        pub fade_no_wait: bool,
+    }
+
+    /// Spec 019 (research R-02): the crossfade's weight table as the stage holds it at `level`
+    /// (120 entries from the pinned expression).
+    pub fn crossfade_weights(level: u8) -> alloc::vec::Vec<f64> {
+        crate::stages::speed::SpeedStage::new(level)
+            .weights()
+            .to_vec()
+    }
+
+    /// Spec 019 (research R-06): the speed control's device outputs of the last `play` call
+    /// (own, tail and the drain's zeros), for the blend identity at the host rates whose output
+    /// passes stage 10 and the resampler.
+    pub fn speed_device_outputs(pipeline: &crate::Pipeline) -> alloc::vec::Vec<f64> {
+        pipeline.speed_trace.clone()
     }
 
     /// The speed control's bank for `level` as designed at construction: 5 phases × 57 taps,

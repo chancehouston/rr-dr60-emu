@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 /// defect, never a re-bless; a later change to the speed control is a model change with a
 /// CHANGELOG entry (FR-013).
 const GOLDEN_SPEED_V1_SHA256: &str =
-    "d36b0a75625e67b11cb513d6b80be29b8827e3f60ee737c084eebdbc6e28dce2"; // blessed 2026-10-17 (013 T035)
+    "1ae181fb80fcab0d57c95a5ee005e00521379c79795f9bdf90a4e1ab9523c432"; // re-blessed 2026-10-30 by spec 019 (T017: the schedule entries crossfade; the constant-level entries byte-identical; was d36b0a75…dce2, blessed 2026-10-17, 013 T035)
 
 #[test]
 fn golden_speed_v1_unchanged() {

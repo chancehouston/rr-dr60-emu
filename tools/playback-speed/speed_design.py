@@ -23,7 +23,7 @@ Per level the prototype's band edges, in the stored stream's frequencies (resear
   r > 1:  passband 2250 / r, stopband 3000 / r (the device Nyquist frequency after the move),
 the cutoff halfway between, 70 dB of design attenuation (FR-004's 60 dB with margin).
 
-Usage: uv run tools/playback-speed/speed_design.py [--check]
+Usage: uv run tools/playback-speed/speed_design.py [--check] [--crossfade]
 """
 
 import re
@@ -171,6 +171,113 @@ def stage10_db(f: float) -> float:
     return float(20 * np.log10(abs(hz)))
 
 
+# Spec 019: the crossfade at a level change (an engine convention; research R-02, R-06, R-09).
+FADE_N = 120  # 20 ms of device samples (A-045's length restated)
+XFADE_ROWS = tuple((f, a, b) for f in (1000.0, 2000.0, 2400.0) for a, b in STEP_PAIRS
+                   if (a, b) != (1, 3) and not (f == 2400.0 and (a, b) == (3, 1)))  # the 20 rows of speed_checks::SCRIPT_STEPS
+
+
+def fade_weights(n: int = FADE_N) -> np.ndarray:
+    """The pinned expression, entry i (1 … n): u * u * (3.0 - 2.0 * u), u = i / n (research R-02)."""
+    return np.array([(i / n) * (i / n) * (3.0 - 2.0 * (i / n)) for i in range(1, n + 1)])
+
+
+def click_in(y: np.ndarray, centre: float, excl, length: int) -> float:
+    """analysis::click_energy_in: a Hann window of `length` samples centred on `centre`, the power
+    of the bins in 20 – 2750 Hz, each exclusion ± 250 Hz (folded at the Nyquist; a union)."""
+    start = int(round(centre - length / 2))
+    n = np.arange(length)
+    w = 0.5 - 0.5 * np.cos(2 * np.pi * n / (length - 1))
+    idx = start + n
+    v = np.where((idx >= 0) & (idx < len(y)), y[np.clip(idx, 0, len(y) - 1)], 0.0) * w
+    spec = np.abs(np.fft.rfft(v)) ** 2
+    f = np.arange(len(spec)) * FS / length
+    m = (f >= 20) & (f <= 2750)
+    for e in excl:
+        e = e if e <= FS / 2 else FS - e
+        m &= np.abs(f - e) > 250
+    return float(spec[m].sum())
+
+
+def xfade_run(f: float, a: int, b: int, mode: str):
+    """The stored tone played at level a, a change to level b at output 1500's place (a change
+    into level 3 waits for a whole place): mode "step" switches (0.18), "xfade" blends with the
+    committed rule (n < N: y_old + w_n·(y_new − y_old); n = N: y_new), "hold" keeps level a.
+    Returns the outputs and the change's output index s."""
+    x = AMP * np.sin(2 * np.pi * f / FS * np.arange(4000))
+    ka, kb = a + 2, b + 2
+    w = fade_weights()
+    out = []
+    p5 = 0
+    while p5 < 5 * 1500:
+        out.append(value_at(x, ka, p5))
+        p5 += ka
+    if kb == 5:
+        while p5 % 5:
+            out.append(value_at(x, ka, p5))
+            p5 += ka
+    s = len(out)
+    pa = pb = p5
+    n = 0
+    while pb < 5 * 3900:
+        if mode == "hold":
+            out.append(value_at(x, ka, pa))
+        else:
+            yn = value_at(x, kb, pb)
+            if mode == "step" or n >= FADE_N:
+                y = yn
+            elif n == FADE_N - 1:
+                y = yn
+            else:
+                yo = value_at(x, ka, pa)
+                y = yo + w[n] * (yn - yo)
+            out.append(y)
+        pa += ka
+        pb += kb
+        n += 1
+    return np.array(out), s
+
+
+def crossfade_report(bound) -> None:
+    w = fade_weights()
+    print("crossfade (spec 019; research R-02): N = %d device samples; w[30] = %r, w[120] = %r, w[1] = %.6e,"
+          " strictly increasing: %s" % (FADE_N, float(w[29]), float(w[119]), w[0], bool(np.all(np.diff(w) > 0))))
+    bound(w[29] == 0.15625 and w[119] == 1.0, "crossfade weights: w[30] or w[120] not exact")
+    bound(bool(np.all(np.diff(w) > 0)), "crossfade weights: not strictly increasing")
+    print("crossfade click table (research R-06): step/crossfade click-energy ratio, dB; the 40 ms reader"
+          " (240 samples, both output tones ± 250 Hz excluded, the step centred on s, the crossfade on"
+          " s + 60) and the 0.5 s reader (3000 samples); absolute energies in dB; the floor = the held level")
+    print("    Hz  a->b   40 ms ratio   0.5 s ratio   step dB   fade dB   floor dB")
+    for f, a, b in XFADE_ROWS:
+        ys, s = xfade_run(f, a, b, "step")
+        yx, _ = xfade_run(f, a, b, "xfade")
+        yh, _ = xfade_run(f, a, b, "hold")
+        ex = (f * (a + 2) / 5, f * (b + 2) / 5)
+        e_step = click_in(ys, s, ex, 240)
+        e_fade = click_in(yx, s + 60, ex, 240)
+        e_floor = click_in(yh, s + 60, ex, 240)
+        r40 = 10 * np.log10(e_step / e_fade)
+        r500 = 10 * np.log10(click_in(ys, s, ex, 3000) / click_in(yx, s + 60, ex, 3000))
+        print("  %4.0f  %d->%d  %11.1f  %12.1f  %8.1f  %8.1f  %9.1f"
+              % (f, a, b, r40, r500, 10 * np.log10(e_step), 10 * np.log10(e_fade), 10 * np.log10(e_floor)))
+        if f >= 2000.0:
+            bound(r40 >= 30.0, f"crossfade {f:.0f} Hz {a}->{b}: 40 ms ratio {r40:.1f} dB < 30")
+    print("crossfade end cut (research R-04): a change at the new branch's last own output of a 4000-sample"
+          " recording: blend samples cut by the drain and the old branch's weight there")
+    for a, b in STEP_PAIRS:
+        kb = b + 2
+        tail = tail_len(kb) if kb != 5 else 0
+        produced = 1 + tail  # one own output from the landing, then the tail
+        cut = max(0, FADE_N - produced)
+        wt = 1.0 - w[produced - 1] if produced <= FADE_N else 0.0
+        print("  %d->%d: %3d blend samples cut, the old branch's weight at the cut %.3f (%.1f dB)"
+              % (a, b, cut, wt, 20 * np.log10(max(wt, 1e-300))))
+    span = 4 * FADE_N // 5 + PER_PHASE
+    print(f"crossfade ring span (research R-03): {span} stored samples (96 of divergence + the 57-tap kernel); ring 256")
+    bound(span <= 256, f"crossfade ring span {span} > 256")
+    print()
+
+
 def main() -> int:
     check = "--check" in sys.argv
     failures = []
@@ -305,6 +412,9 @@ def main() -> int:
             cells.append(f"{a}->{b} {db:6.1f}")
         print(f"  {f:6.0f} Hz: " + ", ".join(cells))
     print()
+
+    if check or "--crossfade" in sys.argv:
+        crossfade_report(bound)
 
     if check:
         if failures:

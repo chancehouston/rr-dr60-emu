@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 /// window is closed for the feature: a moved hash is a defect, never a re-bless; a later change
 /// to a landing rule is a model change with a CHANGELOG entry (FR-009).
 const GOLDEN_CHANGES_V1_SHA256: &str =
-    "e6f1565c425a068b5a51ad39d07d15cad994847318407a5e2e9f8566c94b88de"; // blessed 2026-10-30 (015 T017)
+    "4d6294d0d28dbbb144bec075d76e6ca3cd7a5f85f07a20310f5d6c9e1f07447d"; // re-blessed 2026-10-30 by spec 019 (T017: the entries with a speed change crossfade, speed_inside's wait; every other entry byte-identical; was e6f1565c…88de, blessed 2026-10-30, 015 T017)
 
 #[test]
 fn golden_changes_v1_unchanged() {

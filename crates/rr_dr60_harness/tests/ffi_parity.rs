@@ -3246,3 +3246,82 @@ fn battery_parity() {
         unsafe { rr_dr60_destroy(h) };
     }
 }
+
+/// Spec 019 US2 AS4 (FR-009): a playback with a level change and a second one inside the first's
+/// 20 ms blend (waited) is bit-identical between the Rust and C paths, at 6 and 48 kHz.
+#[test]
+fn speed_crossfade_parity() {
+    use rr_dr60_ffi::{
+        RrDr60Pipeline, RrDr60PlayInfo, RrDr60Status, rr_dr60_create, rr_dr60_destroy,
+        rr_dr60_play, rr_dr60_record, rr_dr60_set_playback_speed, rr_dr60_start_playback,
+        rr_dr60_start_recording, rr_dr60_stop_recording,
+    };
+    for rate in [6000u32, 48_000] {
+        let settings = configs::settings("speed_default", rate);
+        let x = stimulus::voiced(f64::from(rate), 1.0, -20.0, 0x019);
+        let call = (rate / 100) as usize; // 10 ms calls: calls 7 and 8 are inside one blend
+        let schedule = [(7usize, 5u8), (8, 1), (30, 3)];
+        let mut p = rr_dr60::Pipeline::new(settings).unwrap();
+        p.start_recording().unwrap();
+        let _ = p.record(&x, &mut []).unwrap();
+        let _ = p.stop_recording(&mut []).unwrap();
+        let mut rust = Vec::new();
+        p.start_playback(1).unwrap();
+        let mut buf = vec![0.0f32; call];
+        for c in 0.. {
+            for &(at, l) in &schedule {
+                if at == c {
+                    p.set_playback_speed(l).unwrap();
+                }
+            }
+            let info = p.play(&mut buf).unwrap();
+            rust.extend(buf[..info.produced].iter().map(|v| v.to_bits()));
+            if info.finished {
+                break;
+            }
+        }
+        let cs = configs::c_settings(&settings);
+        let mut h: *mut RrDr60Pipeline = std::ptr::null_mut();
+        let mut c_out = Vec::new();
+        // SAFETY: valid pointers throughout; `h` is a live handle until destroyed.
+        unsafe {
+            assert_eq!(rr_dr60_create(&cs, &mut h), RrDr60Status::Ok);
+            assert_eq!(rr_dr60_start_recording(h), RrDr60Status::Ok);
+            assert_eq!(
+                rr_dr60_record(
+                    h,
+                    x.as_ptr(),
+                    x.len(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    0
+                ),
+                RrDr60Status::Ok
+            );
+            assert_eq!(
+                rr_dr60_stop_recording(h, std::ptr::null_mut(), std::ptr::null_mut(), 0),
+                RrDr60Status::Ok
+            );
+            assert_eq!(rr_dr60_start_playback(h, 1), RrDr60Status::Ok);
+            let mut cbuf = vec![0.0f32; call];
+            for c in 0.. {
+                for &(at, l) in &schedule {
+                    if at == c {
+                        assert_eq!(rr_dr60_set_playback_speed(h, l), RrDr60Status::Ok);
+                    }
+                }
+                let mut info = RrDr60PlayInfo::default();
+                assert_eq!(
+                    rr_dr60_play(h, cbuf.as_mut_ptr(), call, &mut info),
+                    RrDr60Status::Ok
+                );
+                c_out.extend(cbuf[..info.produced].iter().map(|v| v.to_bits()));
+                if info.finished {
+                    break;
+                }
+            }
+            rr_dr60_destroy(h);
+        }
+        assert_eq!(rust, c_out, "{rate}: the crossfade through C");
+    }
+}

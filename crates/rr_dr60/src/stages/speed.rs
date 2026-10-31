@@ -16,6 +16,14 @@
 //! outputs whose kernel still reaches a stored sample), then returns silence; the player plays
 //! the unchanged drain after the tail (FR-005; research R-04). The level latches when the place
 //! reaches K; a change into level 3 waits until the place is whole (FR-007; research R-02).
+//! **A level change crossfades** (spec 019; research R-01): from the output the change lands on,
+//! for N = `speed::CROSSFADE_SAMPLES` outputs the **old branch** (the old level's computation
+//! at its own place, advancing at the old ratio) fades out while the **new branch** (the new
+//! level's at the common place) fades in: outputs n = 1 … N − 1 are y_old + w_n·(y_new − y_old)
+//! with the smoothstep weights, output N is y_new itself (a + 1.0·(b − a) is not b in floating
+//! point); the place that governs the length, the latch and the tail is the new branch's. A
+//! request during a fade waits for the fade's end (the latest wins). An engine convention, not
+//! a device behavior (A-054).
 //! Every figure is pinned to `tools/playback-speed/speed_design.py`; modeled on the documents,
 //! not measured on a unit.
 
@@ -37,9 +45,33 @@ pub(crate) const PER_PHASE: usize = 2 * D + 1;
 const PROTO_RATE_HZ: f64 = 30_000.0;
 /// The Kaiser design attenuation, dB: FR-004's 60 dB with margin (engineering target, 013 R-03).
 const ATTEN_DB: f64 = 70.0;
-/// The ring of stored samples: a power of two above the 57-tap window and the two samples an
-/// output advances at most (research R-04).
-const RING: usize = 128; // engineering target (013 R-04)
+/// The ring of stored samples: a power of two above the two branches' span during a crossfade
+/// (96 stored samples of divergence over 120 outputs at 1 ↔ 5, plus the 57-tap centred kernel:
+/// 153; spec 019 research R-03; 128 before spec 019).
+const RING: usize = 256; // engineering target (019 R-03)
+/// The crossfade's length in outputs (spec 019 FR-002).
+const FADE_N: u32 = crate::speed::CROSSFADE_SAMPLES;
+
+/// The weights of a crossfade of `n` outputs: entry i − 1 (i = 1 … n) is the smoothstep
+/// `u * u * (3.0 - 2.0 * u)` at u = i ÷ n, the pinned expression (spec 019 research R-02:
+/// exactly 0.15625 at i = n ÷ 4 and 1.0 at i = n).
+fn fade_weights(n: u32) -> Box<[f64]> {
+    (1..=n)
+        .map(|i| {
+            let u = f64::from(i) / f64::from(n);
+            u * u * (3.0 - 2.0 * u)
+        })
+        .collect()
+}
+
+/// A crossfade in progress (spec 019 research R-01; data-model.md): the old branch's numerator
+/// and place, and the blend outputs produced so far.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Fade {
+    old_k: u32,
+    old_p5: u64,
+    n: u32,
+}
 /// The level whose ratio is 1 (k = 5): the identity.
 const K_IDENTITY: u32 = 5; // 013 FR-002: ratio 5/5
 
@@ -131,6 +163,10 @@ pub(crate) struct SpeedStage {
     requested: u32,
     /// The place reached K: no level change applies (FR-005, FR-007).
     latched: bool,
+    /// The crossfade in progress (spec 019): `None` at a constant level.
+    fade: Option<Fade>,
+    /// The crossfade's weights (research R-02; `fade_len_delta` changes the length).
+    weights: Box<[f64]>,
     /// The place of the last output computed, in fifths.
     last_p5: Option<u64>,
     /// `Own` outputs so far (K′).
@@ -158,6 +194,8 @@ impl SpeedStage {
             active: k,
             requested: k,
             latched: false,
+            fade: None,
+            weights: fade_weights(FADE_N),
             last_p5: None,
             own: 0,
             tail: 0,
@@ -165,6 +203,18 @@ impl SpeedStage {
             #[cfg(feature = "__test-hooks")]
             mutation: crate::__test_hooks::SpeedMutation::default(),
         }
+    }
+
+    /// The crossfade's weights (the test hook `crossfade_weights`).
+    #[cfg(any(test, feature = "__test-hooks"))]
+    pub(crate) fn weights(&self) -> &[f64] {
+        &self.weights
+    }
+
+    /// Whether a crossfade is running (the tests).
+    #[cfg(test)]
+    fn fading(&self) -> bool {
+        self.fade.is_some()
     }
 
     /// Back to rest at the start of a recording of `stored` device samples, at `level` (FR-007:
@@ -178,6 +228,16 @@ impl SpeedStage {
         self.active = k;
         self.requested = k;
         self.latched = false;
+        self.fade = None;
+        #[cfg(feature = "__test-hooks")]
+        {
+            // The length mutant (research R-05): the table rebuilt at a playback start when the
+            // mutant moved the length (never in production: the delta is 0).
+            let n = (i64::from(FADE_N) + i64::from(self.mutation.fade_len_delta)).max(1) as u32;
+            if self.weights.len() != n as usize {
+                self.weights = fade_weights(n);
+            }
+        }
         self.last_p5 = None;
         self.own = 0;
         self.tail = 0;
@@ -243,20 +303,30 @@ impl SpeedStage {
         if j < 0 || (j as u64) >= self.pulled {
             0.0
         } else {
+            debug_assert!(
+                (j as u64) + RING as u64 > self.pulled,
+                "the ring no longer holds stored sample {j} (pulled {})",
+                self.pulled
+            ); // 019 R-03
             f64::from(self.ring[j as usize & (RING - 1)])
         }
     }
 
-    /// The dot product of phase `ph` of the active bank with x[base − m], m = 0 … 56, as four
+    /// The dot product of phase `ph` of `bank` with x[base − m], m = 0 … 56, as four
     /// partial sums in a fixed order (research R-03): s_q over m ≡ q (mod 4), m ascending, then
     /// (s₀ + s₁) + (s₂ + s₃). Inside the stored samples it reads the ring without bounds tests;
     /// at the edges, through `x` (zeros outside 0 … K − 1). Both paths add the same terms in the
     /// same order, so they are bit-identical.
     #[inline]
-    fn dot(&self, ph: usize, base: i64) -> f64 {
-        let c = &self.bank(self.active)[ph * PER_PHASE..(ph + 1) * PER_PHASE];
+    fn dot(&self, bank: &[f64], ph: usize, base: i64) -> f64 {
+        let c = &bank[ph * PER_PHASE..(ph + 1) * PER_PHASE];
         let (mut s0, mut s1, mut s2, mut s3) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
         if base >= (PER_PHASE - 1) as i64 && (base as u64) < self.pulled {
+            debug_assert!(
+                (base as u64) + RING as u64 > self.pulled + PER_PHASE as u64,
+                "the ring no longer holds the kernel at base {base} (pulled {})",
+                self.pulled
+            ); // 019 R-03
             let b = base as usize;
             let r = &self.ring;
             let at = |m: usize| f64::from(r[(b - m) & (RING - 1)]);
@@ -329,22 +399,41 @@ impl SpeedStage {
         self.final_count = Some(self.own + self.tail + remaining);
     }
 
-    /// Applies the requested level under the deferred-switch rule (FR-007).
+    /// Applies the requested level under the deferred-switch rule (FR-007) and the wait (spec
+    /// 019 FR-005: not while a crossfade runs); a change starts a crossfade (research R-01).
     #[inline]
     fn apply_request(&mut self) {
         if self.latched || self.requested == self.active {
             return;
+        }
+        #[cfg(feature = "__test-hooks")]
+        let (step, no_wait) = (self.mutation.fade_step, self.mutation.fade_no_wait);
+        #[cfg(not(feature = "__test-hooks"))]
+        let (step, no_wait) = (false, false);
+        if self.fade.is_some() && !no_wait {
+            return; // the wait: the latest request applies when the fade ends
         }
         if self.requested == K_IDENTITY {
             #[cfg(feature = "__test-hooks")]
             if self.mutation.snap_into_level_3 && self.p5 % 5 != 0 {
                 self.p5 = self.p5.div_ceil(5) * 5; // the mutant: a forward snap
             }
-            if self.p5 % 5 == 0 {
-                self.active = K_IDENTITY;
+            if self.p5 % 5 != 0 {
+                return; // the deferred switch into level 3 (013 FR-007)
             }
-        } else {
-            self.active = self.requested;
+        }
+        let old = self.active;
+        self.active = self.requested;
+        // Spec 019 (spec 011's first-sample rule): a change landing on the playback's first
+        // output switches at once, no fade (nothing has sounded yet).
+        if !step && self.last_p5.is_some() {
+            // The old branch keeps its place and ratio from here; `fade_no_wait` restarts with
+            // the running fade's new branch as the old one (research R-05).
+            self.fade = Some(Fade {
+                old_k: old,
+                old_p5: self.p5,
+                n: 0,
+            });
         }
     }
 
@@ -364,6 +453,7 @@ impl SpeedStage {
             && self.active == K_IDENTITY
             && self.requested == K_IDENTITY
             && !self.latched
+            && self.fade.is_none() // 019 R-01: never inside a crossfade
             && self.pulled == i
             && i < self.stored
         {
@@ -399,16 +489,61 @@ impl SpeedStage {
         if !own && self.final_count.is_some_and(|f| self.own + self.tail >= f) {
             return SpeedOut::Silence;
         }
-        let y = if self.active == K_IDENTITY {
-            #[cfg(feature = "__test-hooks")]
-            if self.mutation.lookahead_at_level_3 {
-                self.pull_through(i + D as i64, src); // the mutant: look-ahead at level 3
-            }
+        // The pulls follow the leading branch (019 R-03): the new branch's base, or the old
+        // branch's when the old level is faster.
+        let base_new = if self.active == K_IDENTITY {
+            i
+        } else {
+            i + self.lookahead()
+        };
+        #[cfg(feature = "__test-hooks")]
+        if self.active == K_IDENTITY && self.mutation.lookahead_at_level_3 {
+            self.pull_through(i + D as i64, src); // the mutant: look-ahead at level 3
+        }
+        let old = self.fade.map(|f| {
+            let io = (f.old_p5 / 5) as i64;
+            let base_old = if f.old_k == K_IDENTITY {
+                io
+            } else {
+                io + self.lookahead()
+            };
+            (f, io, base_old)
+        });
+        let base_pull = old.map_or(base_new, |(_, _, b)| b.max(base_new));
+        self.pull_through(base_pull, src);
+        let y_new = if self.active == K_IDENTITY {
             self.x(i)
         } else {
-            let base = i + self.lookahead();
-            self.pull_through(base, src);
-            self.dot(ph, base)
+            self.dot(self.bank(self.active), ph, base_new)
+        };
+        let y = match old {
+            None => y_new,
+            Some((mut f, io, base_old)) => {
+                // Spec 019 FR-001: blend outputs 1 … N − 1, the new branch itself at N.
+                f.n += 1;
+                let len = self.weights.len() as u32;
+                let y = if f.n >= len {
+                    y_new
+                } else {
+                    let y_old = if f.old_k == K_IDENTITY {
+                        self.x(io)
+                    } else {
+                        self.dot(self.bank(f.old_k), (f.old_p5 % 5) as usize, base_old)
+                    };
+                    #[cfg(feature = "__test-hooks")]
+                    let w = if self.mutation.fade_linear {
+                        f64::from(f.n) / f64::from(len) // the mutant: a linear weight
+                    } else {
+                        self.weights[(f.n - 1) as usize]
+                    };
+                    #[cfg(not(feature = "__test-hooks"))]
+                    let w = self.weights[(f.n - 1) as usize];
+                    y_old + w * (y_new - y_old)
+                };
+                f.old_p5 += self.step(f.old_k);
+                self.fade = (f.n < len).then_some(f);
+                y
+            }
         };
         self.last_p5 = Some(self.p5);
         self.p5 += self.step(self.active);
@@ -585,6 +720,370 @@ mod tests {
                 assert_eq!(st.p5 % 5, 0);
             }
         }
+    }
+
+    // ---- Spec 019 (T004): the crossfade ----------------------------------------------------
+
+    /// A stage at `level` over `x` with the requests `(output index, level)`; every output
+    /// (own and tail) and the final count.
+    fn run_with(level: u8, x: &[f32], requests: &[(usize, u8)]) -> (Vec<f64>, Option<u64>) {
+        run_mutated(
+            level,
+            x,
+            requests,
+            crate::__test_hooks::SpeedMutation::default(),
+        )
+    }
+
+    fn run_mutated(
+        level: u8,
+        x: &[f32],
+        requests: &[(usize, u8)],
+        m: crate::__test_hooks::SpeedMutation,
+    ) -> (Vec<f64>, Option<u64>) {
+        let mut st = SpeedStage::new(level);
+        st.mutation = m;
+        st.reset(level, x.len() as u64);
+        let mut it = x.iter().copied();
+        let mut src = || it.next();
+        let mut out = Vec::new();
+        loop {
+            for &(at, l) in requests {
+                if at == out.len() {
+                    st.request(l);
+                }
+            }
+            match st.next(&mut src) {
+                SpeedOut::Own(v) | SpeedOut::Tail(v) => out.push(v),
+                SpeedOut::Silence => break,
+            }
+        }
+        (out, st.final_count())
+    }
+
+    fn step_mutation() -> crate::__test_hooks::SpeedMutation {
+        crate::__test_hooks::SpeedMutation {
+            fade_step: true,
+            ..Default::default()
+        }
+    }
+
+    fn tone(len: usize) -> Vec<f32> {
+        (0..len)
+            .map(|n| {
+                0.5 * rr_dr60_detmath::sin(2.0 * core::f64::consts::PI * 2000.0 * n as f64 / 6000.0)
+                    as f32
+            })
+            .collect()
+    }
+
+    /// Spec 019 research R-02 (SC-002): the weight table's pins.
+    #[test]
+    fn weights_are_the_smoothstep() {
+        let st = SpeedStage::new(3);
+        let w = st.weights();
+        assert_eq!(w.len(), 120);
+        assert_eq!(w[29].to_bits(), 0.15625f64.to_bits()); // u = 1/4
+        assert_eq!(w[119].to_bits(), 1.0f64.to_bits());
+        assert!(w[0] > 0.0);
+        assert!(w.windows(2).all(|p| p[1] > p[0]), "strictly increasing");
+        for (i, &v) in w.iter().enumerate() {
+            let u = (i + 1) as f64 / 120.0;
+            assert_eq!(v.to_bits(), (u * u * (3.0 - 2.0 * u)).to_bits());
+        }
+    }
+
+    /// Spec 019 FR-001: a change a → b landing at output s: outputs s … s + N − 2 equal
+    /// y_old + w·(y_new − y_old) of two constant-level stages at the two places, output s + N − 1
+    /// equals the level-b stage's value, and the rest the level-b computation from the common
+    /// place. s is chosen so that the common place is a multiple of k_b (the level-b stage's
+    /// outputs pass through it).
+    #[test]
+    fn fade_starts_at_the_request_and_ends_at_n() {
+        let x = tone(4000);
+        for (a, b) in [
+            (3u8, 5u8),
+            (5, 3),
+            (1, 5),
+            (5, 1),
+            (2, 4),
+            (4, 2),
+            (3, 1),
+            (1, 3),
+        ] {
+            let (ka, kb) = (u64::from(numerator(a)), u64::from(numerator(b)));
+            // The landing output: s outputs at level a reach place s·k_a; make it a multiple
+            // of k_b (and whole for a change into 3).
+            let mut s = 300usize;
+            while (s as u64 * ka) % kb != 0 {
+                s += 1;
+            }
+            let (y, _) = run_with(a, &x, &[(s, b)]);
+            let (ya, _) = run_with(a, &x, &[]);
+            let (yb, _) = run_with(b, &x, &[]);
+            let st = SpeedStage::new(a);
+            let w = st.weights();
+            let ps = s as u64 * ka;
+            let jb = (ps / kb) as usize; // the level-b output at the common place
+            let n_fade = w.len();
+            for n in 1..n_fade {
+                let want = ya[s + n - 1] + w[n - 1] * (yb[jb + n - 1] - ya[s + n - 1]);
+                assert_eq!(y[s + n - 1].to_bits(), want.to_bits(), "{a}->{b} blend {n}");
+            }
+            assert_eq!(
+                y[s + n_fade - 1].to_bits(),
+                yb[jb + n_fade - 1].to_bits(),
+                "{a}->{b} at N"
+            );
+            for n in n_fade..n_fade + 300 {
+                assert_eq!(
+                    y[s + n].to_bits(),
+                    yb[jb + n].to_bits(),
+                    "{a}->{b} after {n}"
+                );
+            }
+            assert!(
+                y[..s]
+                    .iter()
+                    .zip(&ya)
+                    .all(|(p, q)| p.to_bits() == q.to_bits()),
+                "{a}->{b} before"
+            );
+        }
+    }
+
+    /// Spec 019 FR-004: a change into level 3 waits for a whole place, then blends; level 3's
+    /// branch reads whole places (its ratio 1).
+    #[test]
+    fn fade_into_level_3_waits_for_a_whole_place_then_blends() {
+        let x = tone(3000);
+        for level in [1u8, 2, 4, 5] {
+            for s in 301..306usize {
+                let mut st = SpeedStage::new(level);
+                st.reset(level, x.len() as u64);
+                let mut it = x.iter().copied();
+                let mut src = || it.next();
+                for _ in 0..s {
+                    let _ = st.next(&mut src);
+                }
+                st.request(3);
+                let mut waited = 0;
+                while !st.fading() {
+                    let _ = st.next(&mut src);
+                    waited += 1;
+                    assert!(waited <= 5);
+                }
+                assert_eq!(st.active, K_IDENTITY);
+                // The first blend output was computed at the (whole) place of the switch; the
+                // old branch has since advanced by one step of its own ratio.
+                assert_eq!(
+                    st.last_p5.unwrap() % 5,
+                    0,
+                    "the blend started at a whole place"
+                );
+                assert_eq!(
+                    st.fade.unwrap().old_p5,
+                    st.last_p5.unwrap() + u64::from(numerator(level))
+                );
+            }
+        }
+    }
+
+    /// Spec 019 FR-005: a request during a fade waits for its end; the latest wins; an equal
+    /// request starts nothing; a request at the latch is dropped.
+    #[test]
+    fn request_during_a_fade_waits() {
+        let x = tone(4000);
+        // 1 → 5 at 300, then 2 at 310 and 4 at 320: the fade to 5 runs to 300 + 120, then a fade
+        // to 4 (the latest) starts; the 2 never sounds.
+        let (y, _) = run_with(1, &x, &[(300, 5), (310, 2), (320, 4)]);
+        let (y_wait, _) = run_with(1, &x, &[(300, 5), (420, 4)]);
+        assert!(
+            y.iter()
+                .zip(&y_wait)
+                .all(|(p, q)| p.to_bits() == q.to_bits()),
+            "the latest waits to the end"
+        );
+        // A request equal to the running target: nothing.
+        let (y_eq, _) = run_with(1, &x, &[(300, 5), (310, 5)]);
+        let (y_one, _) = run_with(1, &x, &[(300, 5)]);
+        assert!(
+            y_eq.iter()
+                .zip(&y_one)
+                .all(|(p, q)| p.to_bits() == q.to_bits())
+        );
+        // A request at the latch is dropped: the output equals the run without it.
+        let k = u64::from(numerator(5));
+        let latch_at = (5 * x.len() as u64).div_ceil(k) as usize; // the first output at or past K
+        let (y_late, f_late) = run_with(5, &x, &[(latch_at, 1)]);
+        let (y_none, f_none) = run_with(5, &x, &[]);
+        assert_eq!(y_late.len(), y_none.len());
+        assert!(
+            y_late
+                .iter()
+                .zip(&y_none)
+                .all(|(p, q)| p.to_bits() == q.to_bits())
+        );
+        assert_eq!(f_late, f_none);
+    }
+
+    /// Spec 019 FR-006: a fade across the recording's end continues through the tail with
+    /// zeros past K; the final count equals the stepped run's (the new branch's trajectory).
+    #[test]
+    fn fade_continues_through_the_tail() {
+        let x = tone(500);
+        for (a, b) in [(3u8, 5u8), (5, 1), (1, 5), (2, 4)] {
+            let k = u64::from(numerator(a));
+            let s = ((5 * x.len() as u64) / k) as usize - 10; // ten outputs before K
+            let (y, f) = run_with(a, &x, &[(s, b)]);
+            let (ys, fs) = run_mutated(a, &x, &[(s, b)], step_mutation());
+            assert_eq!(f, fs, "{a}->{b} final count");
+            assert_eq!(y.len(), ys.len(), "{a}->{b} outputs");
+            assert!(y.iter().all(|v| v.is_finite()));
+        }
+    }
+
+    /// Spec 019 FR-003: at a constant level the outputs equal the stepped build's (no fade
+    /// state is entered): every level, own part and tail.
+    #[test]
+    fn constant_level_is_untouched() {
+        let x = tone(1000);
+        for level in [1u8, 2, 3, 4, 5] {
+            let (y, f) = run_with(level, &x, &[]);
+            let (ys, fs) = run_mutated(level, &x, &[], step_mutation());
+            assert_eq!(f, fs);
+            assert_eq!(y.len(), ys.len());
+            assert!(
+                y.iter().zip(&ys).all(|(p, q)| p.to_bits() == q.to_bits()),
+                "level {level}"
+            );
+        }
+        // Level 3 is the stored samples exactly.
+        let (y, _, _) = run(3, &x);
+        assert!(y.iter().zip(&x).all(|(&a, &b)| a == f64::from(b)));
+    }
+
+    /// Spec 019 research R-03: 1 ↔ 5 fades back and forth with the ring's debug assertions live.
+    #[test]
+    fn ring_span_is_within_256() {
+        let x = tone(6000);
+        let requests: Vec<(usize, u8)> = (1..30)
+            .map(|i| (i * 150, if i % 2 == 1 { 5 } else { 1 }))
+            .collect();
+        let (y, _) = run_with(1, &x, &requests);
+        assert!(y.iter().all(|v| v.is_finite()));
+        let (y2, _) = run_with(
+            5,
+            &x,
+            &requests
+                .iter()
+                .map(|&(s, l)| (s, 6 - l))
+                .collect::<Vec<_>>(),
+        );
+        assert!(y2.iter().all(|v| v.is_finite()));
+    }
+
+    /// Spec 019 (spec 011's first-sample rule): a request landing on the first output switches
+    /// at once without a fade: the outputs equal the run started at that level.
+    #[test]
+    fn first_output_switches_without_a_fade() {
+        let x = tone(1000);
+        for (a, b) in [(3u8, 4u8), (5, 1), (1, 3)] {
+            let (y, _) = run_with(a, &x, &[(0, b)]);
+            let (yb, _) = run_with(b, &x, &[]);
+            assert_eq!(y.len(), yb.len(), "{a}->{b}");
+            assert!(
+                y.iter().zip(&yb).all(|(p, q)| p.to_bits() == q.to_bits()),
+                "{a}->{b}"
+            );
+        }
+    }
+
+    /// Spec 019 research R-05: `fade_step` creates no fade and applies a request at once (0.18),
+    /// also inside 20 ms of a previous one.
+    #[test]
+    fn fade_step_is_0_18() {
+        let x = tone(2000);
+        let mut st = SpeedStage::new(1);
+        st.mutation = step_mutation();
+        st.reset(1, x.len() as u64);
+        let mut it = x.iter().copied();
+        let mut src = || it.next();
+        for _ in 0..300 {
+            let _ = st.next(&mut src);
+        }
+        st.request(5);
+        let _ = st.next(&mut src);
+        assert_eq!(st.active, 7);
+        assert!(!st.fading());
+        st.request(2);
+        let _ = st.next(&mut src);
+        assert_eq!(st.active, 4, "a request inside 20 ms applies at once");
+    }
+
+    /// Spec 019 research R-05: `fade_no_wait` applies a request during a fade at once, the
+    /// running fade's new branch becoming the old branch.
+    #[test]
+    fn fade_no_wait_restarts() {
+        let x = tone(2000);
+        let m = crate::__test_hooks::SpeedMutation {
+            fade_no_wait: true,
+            ..Default::default()
+        };
+        let mut st = SpeedStage::new(1);
+        st.mutation = m;
+        st.reset(1, x.len() as u64);
+        let mut it = x.iter().copied();
+        let mut src = || it.next();
+        for _ in 0..300 {
+            let _ = st.next(&mut src);
+        }
+        st.request(5);
+        let _ = st.next(&mut src);
+        let f1 = st.fade.unwrap();
+        assert_eq!((f1.old_k, f1.n), (3, 1));
+        st.request(2);
+        let _ = st.next(&mut src);
+        let f2 = st.fade.unwrap();
+        assert_eq!(
+            (f2.old_k, f2.n),
+            (7, 1),
+            "restarted from the level-5 branch"
+        );
+        assert_eq!(st.active, 4);
+    }
+
+    /// Spec 019 research R-05: `fade_len_delta` moves the fade's end; `fade_linear` reads 0.25
+    /// at output 30 (the committed 0.15625).
+    #[test]
+    fn fade_len_delta_and_linear_mutants() {
+        let x = tone(3000);
+        let longer = crate::__test_hooks::SpeedMutation {
+            fade_len_delta: 1,
+            ..Default::default()
+        };
+        let mut st = SpeedStage::new(3);
+        st.mutation = longer;
+        st.reset(3, x.len() as u64);
+        assert_eq!(st.weights().len(), 121);
+        let (y, _) = run_mutated(3, &x, &[(300, 5)], longer);
+        let (yd, _) = run_with(3, &x, &[(300, 5)]);
+        // The 120th blend output differs (still a blend under the mutant), the 121st equal.
+        assert_ne!(y[300 + 119].to_bits(), yd[300 + 119].to_bits());
+        let linear = crate::__test_hooks::SpeedMutation {
+            fade_linear: true,
+            ..Default::default()
+        };
+        let (ya, _) = run_with(3, &x, &[]);
+        let (yb, _) = run_with(5, &x, &[]);
+        // At output 30 of the fade: s = 300 at level 3 is place 1500 = 7 · 214 + 2: pick s = 301
+        // → place 1505 = 7 · 215 (a multiple of 7).
+        let s = 301usize;
+        let (yl, _) = run_mutated(3, &x, &[(s, 5)], linear);
+        let jb = 215usize;
+        let n = 30usize;
+        let want = ya[s + n - 1] + 0.25 * (yb[jb + n - 1] - ya[s + n - 1]);
+        assert_eq!(yl[s + n - 1].to_bits(), want.to_bits());
     }
 
     /// 013 T012 (FR-003): DC passes every level within 1e-15 once the kernel is filled.
