@@ -1946,7 +1946,7 @@ float rr_dr60_earphone_gain_db(float position);
 // bypassed: the earphone route +19.2 dB at `RR_DR60_VOLUME_REFERENCE` and 0 at position 1,
 // the speaker route −21.5 dB at position 1 and 0 at the reference position; +∞ at position 0.
 // Computed from the committed law (A-044, A-031, A-043), not measured; stated below the
-// amplifier's knee. Needs no handle; real-time safe.
+// amplifier's knee, for 0 ≤ position ≤ 1. Needs no handle; real-time safe.
 float rr_dr60_stage11_bypass_level_db(uint32_t route, float position);
 
 // Writes the engine's state (idle, recording or playing), the route, the current recording's
