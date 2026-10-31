@@ -37,7 +37,7 @@ The owner reads this section first. Each decision gives the recommendation; the 
 - **D8(b)**: the one-pass map takes the engine's latency figure and whether the gate drops, not the settings. **Mute mode** (hardware B1 at implementation): a muted region is stored, so the maps add nothing for it; `input_to_kept` reports a position inside one as `Muted { kept, event_index }`; map (a)'s end clamp is at the stop's input position (the audio the app holds).
 - **D4**: the host-rate flag is the engine reader's; the pure reader cannot set it.
 - **FR-009**: twenty-one C functions and five structs (the pure writer, the rewrite, the batch reads, the unknown-name cursor, the counter reader and the pre-encoder latency added).
-- **D11**: the A/B read −0.18 % (record path), +0.22 % (one-pass), −0.02 % / +0.87 % (playback 3 / 5) on this machine.
+- **D11**: the A/B read −0.18 % (record path), +0.22 % (one-pass), −0.02 % / +0.87 % (playback 3 / 5) on this machine, and −0.80 % / +0.15 % / −1.68 % / −1.44 % on the CI runner (the `ab-timing` label on PR #51; ceiling 5 %).
 
 ### Session 2026-10-31 (restated at the plan: coach 1 – 23, hardware B1 – B16, product M1 – M12)
 
