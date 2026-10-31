@@ -29,6 +29,16 @@ The owner reads this section first. Each decision gives the recommendation; the 
 
 ## Clarifications
 
+### Session 2026-10-31 (restated at implementation; research.md › Figures and restatements)
+
+- **D8(c) / FR-006**: map (c) is the plan's fallback walker, pinned against the speed stage's per-output place trace on ten schedules at seven rates (the factoring was not made: no hot-path risk).
+- **FR-006 / SC-005**: the codec-on alignment is asserted within 1 ms (6 device samples; the envelope correlation of decoded voiced bursts reads 1 – 5 by rate; the kept-domain rule is pinned by the exact 180-sample miss of the full-latency reading); the tone-burst markers hold within one device sample; a burst's first 20 ms are the gate's onset and read as removed.
+- **FR-005**: the knee delta moves the knee to −30 dBFS (a 1 dB move of a −1 dBFS knee is never reached by −20 dBFS voice); the one-device-sample entry move is the hiss entry's with the codec bypassed, a 0.1 s knee-entry move with the codec on.
+- **D8(b)**: the one-pass map takes the engine's latency figure, not the settings.
+- **D4**: the host-rate flag is the engine reader's; the pure reader cannot set it.
+- **FR-009**: twenty C functions and five structs (the pure writer, the rewrite and the batch reads added).
+- **D11**: the A/B read −0.18 % (record path), +0.22 % (one-pass), −0.02 % / +0.87 % (playback 3 / 5) on this machine.
+
 ### Session 2026-10-31 (restated at the plan: coach 1 – 23, hardware B1 – B16, product M1 – M12)
 
 - **D8(a)**: the alignment is c(k) = ⌊(k + R(k)) · m ÷ l⌋ − L_pre with L_pre the record path's latency to the encoder's input (not `record_latency_samples()`, which carries the codec's 180); the window is ± the decimator's `delay_host_samples()`; the codec widening reads −40 … +30 ms re the frame start (hardware B1, B2, B4, B10).

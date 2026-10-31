@@ -18,7 +18,7 @@ use crate::transport::{RecordInfo, StopOutcome, StopResult};
 
 /// The record form's version this library writes (spec 020 D2); it reads every earlier one
 /// (none yet) and refuses 0 and any later one.
-pub const FORM_VERSION: u32 = 1; // 020 D2: the form's first version
+pub const FORM_VERSION: u32 = 1; // engineering target (020 D2): the form's first version
 
 /// The first line of every record.
 pub const VERSION_LINE_NAME: &str = "rr_dr60_processing_record_version";
