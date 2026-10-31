@@ -15,8 +15,8 @@ description: "Task list for the pre-1.0 C ABI pass (022)"
 
 ## Phase 1: Setup
 
-- [ ] T001 Bump the workspace to 0.22.0: `version = "0.22.0"` in `[workspace.package]` and the internal dependency entries of `Cargo.toml`; `RR_DR60_VERSION_MINOR = 22` and its test in `crates/rr_dr60_ffi/src/lib.rs`; regenerate `crates/rr_dr60_ffi/include/rr_dr60.h`; re-bless the stage manifest's version line (`RR_DR60_BLESS=manifest cargo test -p rr_dr60_harness --test us2_cross_check canonical`, then `RR_DR60_BLESS=readme … readme -- --test-threads=1`); the Swift version test if it pins the minor.
-- [ ] T002 [P] Record the baseline in a scratch note: the fifteen golden SHA guards (`crates/rr_dr60_harness/tests/golden*.rs`), every smoke hash in `crates/rr_dr60_ffi/tests/c/smoke.c`, the 1259-test count of `cargo test --all-features`, coverage 96.64 % locally (0.21), the A/B baseline 81f14dd, `git rev-parse 81f14dd:crates/rr_dr60` and `:crates/rr_dr60_detmath` (the core trees). They must all be unmoved at the end (FR-006, SC-003).
+- [x] T001 Bump the workspace to 0.22.0: `version = "0.22.0"` in `[workspace.package]` and the internal dependency entries of `Cargo.toml`; `RR_DR60_VERSION_MINOR = 22` and its test in `crates/rr_dr60_ffi/src/lib.rs`; regenerate `crates/rr_dr60_ffi/include/rr_dr60.h`; re-bless the stage manifest's version line (`RR_DR60_BLESS=manifest cargo test -p rr_dr60_harness --test us2_cross_check canonical`, then `RR_DR60_BLESS=readme … readme -- --test-threads=1`); the Swift version test if it pins the minor.
+- [x] T002 [P] Record the baseline in a scratch note: the fifteen golden SHA guards (`crates/rr_dr60_harness/tests/golden*.rs`), every smoke hash in `crates/rr_dr60_ffi/tests/c/smoke.c`, the 1259-test count of `cargo test --all-features`, coverage 96.64 % locally (0.21), the A/B baseline 81f14dd, `git rev-parse 81f14dd:crates/rr_dr60` and `:crates/rr_dr60_detmath` (the core trees). They must all be unmoved at the end (FR-006, SC-003).
 
 ## Phase 2: Foundational (the helper, the sizes, the check; `crates/rr_dr60_ffi/src/lib.rs` throughout)
 
