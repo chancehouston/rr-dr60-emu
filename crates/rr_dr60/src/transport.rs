@@ -3131,7 +3131,9 @@ mod record_block_tests {
         let mut dirty = Pipeline::new(settings(77)).unwrap();
         for i in 0..3u64 {
             if i == 1 {
-                dirty.schedule_change(Stream::Record, 100, KNEE, -4.0, 5).unwrap();
+                dirty
+                    .schedule_change(Stream::Record, 100, KNEE, -4.0, 5)
+                    .unwrap();
             }
             let mut tail = x.clone();
             tail.extend((0..600).map(|k| 0.9 * (k as f32 * 1.3).sin())); // a burst at the end
@@ -3148,7 +3150,11 @@ mod record_block_tests {
         let _ = record_one(&mut dirty, &x);
         let _ = record_one(&mut fresh, &x);
         assert_eq!(fresh.recording_counter(), 4);
-        assert_eq!(export(&dirty, 4), export(&fresh, 1), "the recording at counter 3");
+        assert_eq!(
+            export(&dirty, 4),
+            export(&fresh, 1),
+            "the recording at counter 3"
+        );
         // The one-pass: equal after the original's reset (rekeyed at construction, reset and
         // reconfigure only; hardware review B6).
         dirty.reset();
@@ -3169,7 +3175,10 @@ mod record_block_tests {
             let mut s = Settings::new(rate);
             s.speech_codec_enabled = false;
             let p = Pipeline::new(s).unwrap();
-            assert_eq!(p.record_latency_pre_encoder_samples(), p.record_latency_samples());
+            assert_eq!(
+                p.record_latency_pre_encoder_samples(),
+                p.record_latency_samples()
+            );
             s.speech_codec_enabled = true;
             let p = Pipeline::new(s).unwrap();
             assert_eq!(
@@ -3186,13 +3195,19 @@ mod record_block_tests {
     fn block_holds_the_start_configuration_and_totals() {
         let x = stimulus(9000);
         let mut p = Pipeline::new(settings(1)).unwrap();
-        p.schedule_change(Stream::Record, 100, KNEE, -4.0, 5).unwrap();
-        p.schedule_change(Stream::Record, 8000, KNEE, -6.0, 6).unwrap();
+        p.schedule_change(Stream::Record, 100, KNEE, -4.0, 5)
+            .unwrap();
+        p.schedule_change(Stream::Record, 8000, KNEE, -6.0, 6)
+            .unwrap();
         let (info, out) = record_one(&mut p, &x);
         assert_eq!(info.changes, 2);
         let b = p.memory.block(1).unwrap().unwrap();
         assert_eq!(b.counter, 0);
-        assert_eq!(b.settings.agc.knee_dbfs, settings(1).agc.knee_dbfs, "the start knee");
+        assert_eq!(
+            b.settings.agc.knee_dbfs,
+            settings(1).agc.knee_dbfs,
+            "the start knee"
+        );
         assert_eq!(b.remaining_samples, 120_000);
         assert_eq!(b.changes_total, 2);
         assert_eq!(b.events_total, (info.events + out.flush.events) as u64);
@@ -3214,7 +3229,10 @@ mod record_block_tests {
         let bytes = export(&p, 1);
         let n = p.import(&bytes).unwrap();
         assert_eq!(p.recording_counter_of(n).unwrap(), None);
-        assert_eq!(p.recording_counter_of(9).unwrap_err(), Error::NoSuchRecording { number: 9 });
+        assert_eq!(
+            p.recording_counter_of(9).unwrap_err(),
+            Error::NoSuchRecording { number: 9 }
+        );
         // Erase moves the blocks with their recordings.
         p.erase(1).unwrap();
         assert_eq!(p.recording_counter_of(1).unwrap(), None);
@@ -3229,7 +3247,8 @@ mod record_block_tests {
         // The flush feeds the pre-encoder latency of zeros (1 at 6 kHz): position 3000 is the
         // flush's first sample.
         assert!(p.record_latency_pre_encoder_samples() >= 1);
-        p.schedule_change(Stream::Record, 3000, KNEE, -4.0, 5).unwrap();
+        p.schedule_change(Stream::Record, 3000, KNEE, -4.0, 5)
+            .unwrap();
         p.start_recording().unwrap();
         let mut ev = [VasEvent::default(); 64];
         let info = p.record(&x, &mut ev).unwrap();
@@ -3271,7 +3290,10 @@ mod record_block_tests {
         assert!(out.padding_start_sample < length);
         // The padding runs to the frame boundary plus the 60-sample look-ahead, which is not
         // stored (spec 008 FR-013): fed = length + 60 − represented.
-        assert_eq!(out.padding_start_sample + out.silence_fed_samples, length + 60);
+        assert_eq!(
+            out.padding_start_sample + out.silence_fed_samples,
+            length + 60
+        );
         assert_eq!(length, out.padding_start_sample.div_ceil(120) * 120);
         // A self-stop: the fields from the `RecordInfo`.
         let mut s = settings(3);
@@ -3303,7 +3325,11 @@ mod record_block_tests {
         let StopResult::Kept { length, .. } = out.result else {
             panic!()
         };
-        assert_eq!(out.flush.stopped, Some(StopReason::MemoryFull), "the flush filled it");
+        assert_eq!(
+            out.flush.stopped,
+            Some(StopReason::MemoryFull),
+            "the flush filled it"
+        );
         assert_eq!(StopFields::from(&out).how, StopHow::StopCall);
         assert_eq!(out.padding_start_sample, length);
         assert_eq!(length, 6000);
@@ -3317,7 +3343,8 @@ mod record_block_tests {
         assert_eq!(Stream::OnePass.word(), STREAM_ONE_PASS);
         assert_eq!(Stream::Record.word(), STREAM_RECORD);
         let mut p = Pipeline::new(settings(4)).unwrap();
-        p.schedule_change(Stream::OnePass, 10, KNEE, -4.0, 1).unwrap();
+        p.schedule_change(Stream::OnePass, 10, KNEE, -4.0, 1)
+            .unwrap();
         p.schedule_change(Stream::OnePass, 10, 1, 0.5, 2).unwrap(); // the volume
         let x = stimulus(600);
         let mut y = std::vec![0.0f32; 600];
@@ -3377,7 +3404,8 @@ mod record_tests {
 
     /// A recording with one landed change, the run collected; `(events, changes, stop)`.
     fn record_run(p: &mut Pipeline, x: &[f32]) -> (Vec<VasEvent>, Vec<ChangeEntry>, StopFields) {
-        p.schedule_change(Stream::Record, 1000, KNEE, -4.0, 7).unwrap();
+        p.schedule_change(Stream::Record, 1000, KNEE, -4.0, 7)
+            .unwrap();
         p.start_recording().unwrap();
         let mut ev = [VasEvent::default(); 64];
         let mut ch = [ChangeEntry::default(); 16];
@@ -3426,7 +3454,10 @@ mod record_tests {
             r.recording_digest ^= 1;
             assert!(!p.recording_digest_matches(1, &mut r).unwrap());
             assert_ne!(r.flags & flags::DIGEST_MISMATCH, 0);
-            assert_eq!(p.recording_digest(2).unwrap_err(), Error::NoSuchRecording { number: 2 });
+            assert_eq!(
+                p.recording_digest(2).unwrap_err(),
+                Error::NoSuchRecording { number: 2 }
+            );
         }
     }
 
@@ -3445,7 +3476,10 @@ mod record_tests {
         assert!(text.contains("\norigin = engine\nhost_rate_hz = 6000\n"));
         assert!(text.contains("\nseed = 5\nrecording_counter = 0\n"));
         assert!(text.contains("\nencoding = frames\n"));
-        assert!(text.contains("\nsetting.agc.knee_dbfs = -1\n"), "the start knee: {text}");
+        assert!(
+            text.contains("\nsetting.agc.knee_dbfs = -1\n"),
+            "the start knee: {text}"
+        );
         assert!(text.contains("\nchange.0 = 1000 agc.knee_dbfs -1 -4 7 record\n"));
         assert!(text.contains(&std::format!("\nrun.events_total = {}\n", events.len())));
         // The pure writer on the read-out gives the same bytes.
@@ -3466,7 +3500,10 @@ mod record_tests {
         let mut removed = 0;
         for (row, e) in rows.iter().zip(&events) {
             assert_eq!(row.event, *e);
-            assert_eq!(row.host_input_position, (e.output_position + removed).saturating_sub(1));
+            assert_eq!(
+                row.host_input_position,
+                (e.output_position + removed).saturating_sub(1)
+            );
             removed += e.input_length;
         }
         // The host-rate flag is the engine reader's.
@@ -3483,11 +3520,17 @@ mod record_tests {
         let mut p = Pipeline::new(settings(true)).unwrap();
         let (events, changes, stop) = record_run(&mut p, &stimulus(9000));
         let length = p.recording_length(1).unwrap();
-        let reason = |events: &[VasEvent], changes: &[ChangeEntry], stop: StopFields| {
-            match p.processing_record_len(1, &RunData { events, changes, stop }) {
-                Err(Error::InconsistentRun { reason }) => reason,
-                other => panic!("{other:?}"),
-            }
+        let reason = |events: &[VasEvent], changes: &[ChangeEntry], stop: StopFields| match p
+            .processing_record_len(
+                1,
+                &RunData {
+                    events,
+                    changes,
+                    stop,
+                },
+            ) {
+            Err(Error::InconsistentRun { reason }) => reason,
+            other => panic!("{other:?}"),
         };
         let mut ev = events.clone();
         ev.reverse();
@@ -3508,7 +3551,10 @@ mod record_tests {
         assert_eq!(reason(&events, &ch, stop), "more entries than counted");
         let mut ch = changes.clone();
         ch[0].position = stop.input_samples_total;
-        assert_eq!(reason(&events, &ch, stop), "an entry at or past the final input position");
+        assert_eq!(
+            reason(&events, &ch, stop),
+            "an entry at or past the final input position"
+        );
         let mut ch = changes.clone();
         ch[0].stream = 0;
         assert_eq!(reason(&events, &ch, stop), "no stream");
@@ -3516,16 +3562,40 @@ mod record_tests {
         assert_eq!(reason(&events, &ch, stop), "not the record stream");
         let mut bad = stop;
         bad.stop_input_position = stop.input_samples_total + 1;
-        assert_eq!(reason(&events, &changes, bad), "the stop position past the input total");
+        assert_eq!(
+            reason(&events, &changes, bad),
+            "the stop position past the input total"
+        );
         let mut bad = stop;
         bad.padding_start_sample = length + 1;
-        assert_eq!(reason(&events, &changes, bad), "the padding start past the length");
+        assert_eq!(
+            reason(&events, &changes, bad),
+            "the padding start past the length"
+        );
         // A flush entry (between the stop position and the total) is consistent.
         let mut ch = changes.clone();
         ch[0].position = stop.stop_input_position;
-        assert!(p.processing_record_len(1, &RunData { events: &events, changes: &ch, stop }).is_ok());
+        assert!(
+            p.processing_record_len(
+                1,
+                &RunData {
+                    events: &events,
+                    changes: &ch,
+                    stop
+                }
+            )
+            .is_ok()
+        );
         // A short run is accepted and flagged on reading.
-        let bytes = write(&p, 1, &RunData { events: &[], changes: &[], stop });
+        let bytes = write(
+            &p,
+            1,
+            &RunData {
+                events: &[],
+                changes: &[],
+                stop,
+            },
+        );
         let mut r = RecordReadout::default();
         p.processing_record_read(&bytes, &mut r).unwrap();
         assert_eq!(r.flags, flags::INCOMPLETE_RUN);
@@ -3537,7 +3607,15 @@ mod record_tests {
         };
         let sf = StopFields::from(&info);
         assert_eq!(sf.how, StopHow::MemoryFull);
-        let bytes = write(&p, 1, &RunData { events: &events, changes: &[], stop: sf });
+        let bytes = write(
+            &p,
+            1,
+            &RunData {
+                events: &events,
+                changes: &[],
+                stop: sf,
+            },
+        );
         p.processing_record_read(&bytes, &mut r).unwrap();
         assert_eq!(r.stop.padding_start_sample, length);
         assert_eq!(r.stop.how, StopHow::MemoryFull);
@@ -3557,13 +3635,21 @@ mod record_tests {
         let rec = write(&p, n, &run);
         let text = String::from_utf8(rec.clone()).unwrap();
         assert!(text.contains("\norigin = imported\n"));
-        assert!(!text.contains("host_rate_hz") && !text.contains("run.") && !text.contains("setting."));
+        assert!(
+            !text.contains("host_rate_hz") && !text.contains("run.") && !text.contains("setting.")
+        );
         let mut r = RecordReadout::default();
         p.processing_record_read(&rec, &mut r).unwrap();
         assert_eq!(r.flags, flags::IMPORTED_ORIGIN);
         assert_eq!(r.recording_digest, p.recording_digest(1).unwrap());
-        assert_eq!(p.processing_record_len(9, &run).unwrap_err(), Error::NoSuchRecording { number: 9 });
+        assert_eq!(
+            p.processing_record_len(9, &run).unwrap_err(),
+            Error::NoSuchRecording { number: 9 }
+        );
         p.start_recording().unwrap();
-        assert_eq!(p.processing_record_len(1, &run).unwrap_err(), Error::RecordingInProgress);
+        assert_eq!(
+            p.processing_record_len(1, &run).unwrap_err(),
+            Error::RecordingInProgress
+        );
     }
 }

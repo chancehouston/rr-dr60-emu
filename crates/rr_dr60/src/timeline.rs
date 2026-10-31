@@ -65,7 +65,7 @@ pub struct PlaceState {
 /// memory).
 const CODEC_WINDOW_BEFORE: u64 = 240;
 const CODEC_WINDOW_AFTER: u64 = 179;
-const FRAME: u64 = 120;
+const FRAME: u64 = 120; // A-040: the codec's 20 ms frame at 6 kHz
 
 /// The removed device samples at or before kept sample `k` (drop mode; 0 in mute mode where
 /// nothing is removed).
@@ -204,7 +204,7 @@ struct Walker {
     stored: u64,
 }
 
-const K_IDENTITY: u32 = 5;
+const K_IDENTITY: u32 = 5; // 013 FR-002: level 3's ratio 5/5 (A-054)
 
 impl Walker {
     fn new(level: u8, stored: u64) -> Self {
@@ -375,7 +375,11 @@ mod tests {
                 assert_eq!(a.centre, want, "{rate} Hz k {k}");
                 assert_eq!(a.first, want.saturating_sub(half));
                 assert_eq!(a.last, want + half);
-                assert_eq!(a.clamped, (k + r) * m / l < lat || want < half, "{rate} Hz k {k}");
+                assert_eq!(
+                    a.clamped,
+                    (k + r) * m / l < lat || want < half,
+                    "{rate} Hz k {k}"
+                );
             }
             // The identity rate's half-length is 0; the others' positive.
             assert_eq!(half == 0, rate == 6000);
@@ -449,7 +453,10 @@ mod tests {
         let e = |pos: u64, level: f64| ChangeEntry::new(pos, speed, 3.0, level, 0, 1);
         // A constant level 3: place i·5.
         let st = place_at(10, 6000, 3, 1000, &[]).unwrap();
-        assert_eq!((st.place_fifths, st.level, st.fading, st.latched), (50, 3, false, false));
+        assert_eq!(
+            (st.place_fifths, st.level, st.fading, st.latched),
+            (50, 3, false, false)
+        );
         // A request on the first output: switches at once, no fade.
         let st = place_at(0, 6000, 3, 1000, &[e(0, 5.0)]).unwrap();
         assert_eq!((st.place_fifths, st.level, st.fading), (0, 5, false));
@@ -458,9 +465,15 @@ mod tests {
         // A change at output 10 (position 10 at 6 kHz): a fade of 119 blend samples, then the
         // new branch alone.
         let st = place_at(10, 6000, 3, 1000, &[e(10, 5.0)]).unwrap();
-        assert_eq!((st.place_fifths, st.level, st.fading, st.old_place_fifths), (50, 5, true, 50));
+        assert_eq!(
+            (st.place_fifths, st.level, st.fading, st.old_place_fifths),
+            (50, 5, true, 50)
+        );
         let st = place_at(11, 6000, 3, 1000, &[e(10, 5.0)]).unwrap();
-        assert_eq!((st.place_fifths, st.fading, st.old_place_fifths), (57, true, 55));
+        assert_eq!(
+            (st.place_fifths, st.fading, st.old_place_fifths),
+            (57, true, 55)
+        );
         let st = place_at(10 + 118, 6000, 3, 1000, &[e(10, 5.0)]).unwrap();
         assert!(st.fading);
         let st = place_at(10 + 119, 6000, 3, 1000, &[e(10, 5.0)]).unwrap();
@@ -468,7 +481,14 @@ mod tests {
         // A request during the fade waits for its end (the latest wins), then fades.
         let st = place_at(20, 6000, 3, 1000, &[e(10, 5.0), e(20, 1.0)]).unwrap();
         assert_eq!(st.level, 5);
-        let st = place_at(10 + 120, 6000, 3, 1000, &[e(10, 5.0), e(20, 4.0), e(30, 1.0)]).unwrap();
+        let st = place_at(
+            10 + 120,
+            6000,
+            3,
+            1000,
+            &[e(10, 5.0), e(20, 4.0), e(30, 1.0)],
+        )
+        .unwrap();
         assert_eq!((st.level, st.fading), (1, true));
         // A request into level 3 at a non-whole place waits for a whole place.
         let st = place_at(0, 6000, 5, 1000, &[]).unwrap();

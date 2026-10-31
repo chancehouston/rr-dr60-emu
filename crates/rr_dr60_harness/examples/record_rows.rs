@@ -29,33 +29,53 @@ fn main() {
             }
         })
         .collect();
-    let knee = rr_dr60::controls().iter().position(|e| e.identifier == "agc.knee_dbfs").unwrap() as u32;
-    let hiss = rr_dr60::controls().iter().position(|e| e.identifier == "mic.hiss_offset_db").unwrap() as u32;
+    let knee = rr_dr60::controls()
+        .iter()
+        .position(|e| e.identifier == "agc.knee_dbfs")
+        .unwrap() as u32;
+    let hiss = rr_dr60::controls()
+        .iter()
+        .position(|e| e.identifier == "mic.hiss_offset_db")
+        .unwrap() as u32;
     let mut s = Settings::new(rate);
     s.speech_codec_enabled = false;
     s.vas.hang_ms = 100.0;
     let mut p = Pipeline::new(s).expect("settings");
-    p.schedule_change(Stream::Record, 10_000, knee, -30.0, 7).expect("schedule");
-    p.schedule_change(Stream::Record, 30_000, hiss, 3.0, 8).expect("schedule");
+    p.schedule_change(Stream::Record, 10_000, knee, -30.0, 7)
+        .expect("schedule");
+    p.schedule_change(Stream::Record, 30_000, hiss, 3.0, 8)
+        .expect("schedule");
     p.start_recording().expect("start");
     let (mut events, mut changes) = (Vec::new(), Vec::new());
     let mut ev = vec![VasEvent::default(); 64];
     let mut ch = vec![ChangeEntry::default(); MAX_CHANGES_PER_CALL];
     for chunk in x.chunks(1024) {
-        let info = p.record_with_changes(chunk, &mut ev, &mut ch).expect("record");
+        let info = p
+            .record_with_changes(chunk, &mut ev, &mut ch)
+            .expect("record");
         assert!(info.events <= 64 && info.stopped.is_none());
         events.extend_from_slice(&ev[..info.events]);
         changes.extend_from_slice(&ch[..info.changes]);
     }
-    let out = p.stop_recording_with_changes(&mut ev, &mut ch).expect("stop");
+    let out = p
+        .stop_recording_with_changes(&mut ev, &mut ch)
+        .expect("stop");
     assert!(StopFields::kept(&out) && out.flush.events <= 64);
     events.extend_from_slice(&ev[..out.flush.events]);
     changes.extend_from_slice(&ch[..out.changes]);
     let number = p.memory_status().count;
-    let run = RunData { events: &events, changes: &changes, stop: StopFields::from(&out) };
+    let run = RunData {
+        events: &events,
+        changes: &changes,
+        stop: StopFields::from(&out),
+    };
     let len = p.processing_record_len(number, &run).expect("len");
     let mut rec = vec![0u8; len];
-    assert_eq!(p.processing_record_write(number, &run, &mut rec).expect("write"), len);
+    assert_eq!(
+        p.processing_record_write(number, &run, &mut rec)
+            .expect("write"),
+        len
+    );
     println!("record {len}");
     std::io::stdout().write_all(&rec).expect("stdout");
     let mut r = RecordReadout::default();
@@ -64,15 +84,28 @@ fn main() {
         "flags {} unknown {} events {} changes {} counter {}",
         r.flags, r.unknown_setting_count, r.event_count, r.change_count, r.recording_counter
     );
-    let rows: Vec<_> = (0..r.event_count).map(|i| record::record_event(&rec, i).unwrap()).collect();
+    let rows: Vec<_> = (0..r.event_count)
+        .map(|i| record::record_event(&rec, i).unwrap())
+        .collect();
     let mut again = vec![0u8; record::len(&r, &rows, &changes)];
     record::write(&r, &rows, &changes, &mut again).expect("rewrite");
     println!("rewrite_identical {}", u8::from(again == rec));
     let matches = p.recording_digest_matches(number, &mut r).expect("digest");
-    println!("matches {} digest {:016x}", u8::from(matches), p.recording_digest(number).unwrap());
+    println!(
+        "matches {} digest {:016x}",
+        u8::from(matches),
+        p.recording_digest(number).unwrap()
+    );
     let a = timeline::kept_to_input(0, &r.settings, &events, &run.stop).expect("rate");
-    println!("kept_to_input 0: {} {} {} {}", a.centre, a.first, a.last, u8::from(a.clamped));
-    let (kept, removed) = match timeline::input_to_kept(24_000, &r.settings, &events).expect("rate") {
+    println!(
+        "kept_to_input 0: {} {} {} {}",
+        a.centre,
+        a.first,
+        a.last,
+        u8::from(a.clamped)
+    );
+    let (kept, removed) = match timeline::input_to_kept(24_000, &r.settings, &events).expect("rate")
+    {
         KeptOrRemoved::Kept(k) => (k, u64::MAX),
         KeptOrRemoved::Removed { event_index } => (0, event_index),
     };
@@ -80,7 +113,11 @@ fn main() {
     let ps = timeline::place_at(10, rate, 3, 1500, &[]).expect("level");
     println!(
         "place_at 10: {} {} {} {} {}",
-        ps.place_fifths, ps.level, u8::from(ps.fading), u8::from(ps.latched), ps.old_place_fifths
+        ps.place_fifths,
+        ps.level,
+        u8::from(ps.fading),
+        u8::from(ps.latched),
+        ps.old_place_fifths
     );
     let codes = [-8_388_608i32, 0, 8_388_607];
     let mut conv = [0.0f32; 3];

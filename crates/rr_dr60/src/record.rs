@@ -18,7 +18,7 @@ use crate::transport::{RecordInfo, StopOutcome, StopResult};
 
 /// The record form's version this library writes (spec 020 D2); it reads every earlier one
 /// (none yet) and refuses 0 and any later one.
-pub const FORM_VERSION: u32 = 1;
+pub const FORM_VERSION: u32 = 1; // 020 D2: the form's first version
 
 /// The first line of every record.
 pub const VERSION_LINE_NAME: &str = "rr_dr60_processing_record_version";
@@ -509,7 +509,11 @@ fn emit<I: Iterator<Item = RecordEvent>>(
             let v = get(id, &r.settings).expect("a table identifier");
             writeln!(s, "setting.{id} = {v}")?;
         }
-        writeln!(s, "run.remaining_samples_at_start = {}", r.remaining_samples_at_start)?;
+        writeln!(
+            s,
+            "run.remaining_samples_at_start = {}",
+            r.remaining_samples_at_start
+        )?;
         writeln!(s, "run.events_total = {}", r.events_total)?;
         writeln!(s, "run.changes_total = {}", r.changes_total)?;
         writeln!(
@@ -520,11 +524,30 @@ fn emit<I: Iterator<Item = RecordEvent>>(
                 StopHow::MemoryFull => "memory_full",
             }
         )?;
-        writeln!(s, "run.stop_input_position = {}", r.stop.stop_input_position)?;
-        writeln!(s, "run.padding_start_sample = {}", r.stop.padding_start_sample)?;
-        writeln!(s, "run.input_samples_total = {}", r.stop.input_samples_total)?;
-        writeln!(s, "run.silence_fed_samples = {}", r.stop.silence_fed_samples)?;
-        writeln!(s, "event.fields = kept_position input_length host_input_position")?;
+        writeln!(
+            s,
+            "run.stop_input_position = {}",
+            r.stop.stop_input_position
+        )?;
+        writeln!(
+            s,
+            "run.padding_start_sample = {}",
+            r.stop.padding_start_sample
+        )?;
+        writeln!(
+            s,
+            "run.input_samples_total = {}",
+            r.stop.input_samples_total
+        )?;
+        writeln!(
+            s,
+            "run.silence_fed_samples = {}",
+            r.stop.silence_fed_samples
+        )?;
+        writeln!(
+            s,
+            "event.fields = kept_position input_length host_input_position"
+        )?;
         for (i, e) in events.enumerate() {
             writeln!(
                 s,
@@ -532,7 +555,10 @@ fn emit<I: Iterator<Item = RecordEvent>>(
                 e.event.output_position, e.event.input_length, e.host_input_position
             )?;
         }
-        writeln!(s, "change.fields = position control before after tag stream")?;
+        writeln!(
+            s,
+            "change.fields = position control before after tag stream"
+        )?;
         for (i, c) in changes.iter().enumerate() {
             let id = controls()
                 .get(c.control as usize)
@@ -1122,7 +1148,12 @@ pub fn record_changes(bytes: &[u8], first: u64, out: &mut [ChangeEntry]) -> usiz
 
 /// The host-input centre a pre-gate device index aligns with (spec 020 D8 (a), research
 /// R-01): ⌊k · m ÷ l⌋ − L_pre, clamped at 0 (`clamped` then true).
-pub(crate) const fn host_centre(pre_gate_device: u64, l: u64, m: u64, latency_pre: u64) -> (u64, bool) {
+pub(crate) const fn host_centre(
+    pre_gate_device: u64,
+    l: u64,
+    m: u64,
+    latency_pre: u64,
+) -> (u64, bool) {
     let host = pre_gate_device.saturating_mul(m) / l;
     if host < latency_pre {
         (0, true)
@@ -1159,8 +1190,12 @@ impl Iterator for EventRows<'_> {
     type Item = RecordEvent;
     fn next(&mut self) -> Option<RecordEvent> {
         let e = *self.events.next()?;
-        let (host_input_position, _) =
-            host_centre(e.output_position + self.removed, self.l, self.m, self.latency_pre);
+        let (host_input_position, _) = host_centre(
+            e.output_position + self.removed,
+            self.l,
+            self.m,
+            self.latency_pre,
+        );
         self.removed += e.input_length;
         Some(RecordEvent {
             event: e,
@@ -1279,7 +1314,12 @@ mod tests {
         assert_eq!(text.matches("\nsetting.").count(), 24);
         // A short buffer is refused with the needed length; the counting pass is exact.
         let mut short = std::vec![0u8; bytes.len() - 1];
-        assert_eq!(write(&r, &ev, &ch, &mut short), Err(Error::BufferTooSmall { needed: bytes.len() }));
+        assert_eq!(
+            write(&r, &ev, &ch, &mut short),
+            Err(Error::BufferTooSmall {
+                needed: bytes.len()
+            })
+        );
         // Deterministic.
         assert_eq!(written(&r, &ev, &ch), bytes);
     }
@@ -1308,7 +1348,14 @@ mod tests {
         let mut c2 = [ChangeEntry::default(); 2];
         assert_eq!(record_changes(&bytes, 0, &mut c2), 1);
         assert_eq!(c2[0], ch[0]);
-        let again = written(&got, &[record_event(&bytes, 0).unwrap(), record_event(&bytes, 1).unwrap()], &c2[..1]);
+        let again = written(
+            &got,
+            &[
+                record_event(&bytes, 0).unwrap(),
+                record_event(&bytes, 1).unwrap(),
+            ],
+            &c2[..1],
+        );
         assert_eq!(again, bytes, "the round trip");
     }
 
@@ -1320,7 +1367,11 @@ mod tests {
 
     /// A record re-signed after an edit (the checksum line recomputed).
     fn resign(bytes: Vec<u8>) -> Vec<u8> {
-        let body_end = bytes[..bytes.len() - 1].iter().rposition(|&b| b == b'\n').unwrap() + 1;
+        let body_end = bytes[..bytes.len() - 1]
+            .iter()
+            .rposition(|&b| b == b'\n')
+            .unwrap()
+            + 1;
         let h = crate::digest::fnv1a64(&bytes[..body_end]);
         let mut v = bytes[..body_end].to_vec();
         v.extend_from_slice(std::format!("record_checksum = fnv1a64:{h:016x}\n").as_bytes());
@@ -1336,28 +1387,84 @@ mod tests {
         let r = readout();
         let (ev, ch) = rows();
         let bytes = written(&r, &ev, &ch);
-        assert_eq!(read_err(&doctor(&bytes, "version = 1", "version = 0")), Error::UnknownRecordVersion { version: 0 });
-        assert_eq!(read_err(&doctor(&bytes, "version = 1", "version = 2")), Error::UnknownRecordVersion { version: 2 });
-        assert_eq!(read_err(&doctor(&bytes, "rr_dr60_processing_record_version", "rr_dr60_record_version")), Error::MalformedRecord { line: 1 });
+        assert_eq!(
+            read_err(&doctor(&bytes, "version = 1", "version = 0")),
+            Error::UnknownRecordVersion { version: 0 }
+        );
+        assert_eq!(
+            read_err(&doctor(&bytes, "version = 1", "version = 2")),
+            Error::UnknownRecordVersion { version: 2 }
+        );
+        assert_eq!(
+            read_err(&doctor(
+                &bytes,
+                "rr_dr60_processing_record_version",
+                "rr_dr60_record_version"
+            )),
+            Error::MalformedRecord { line: 1 }
+        );
         // A flipped byte anywhere above the last line.
         let mut flipped = bytes.clone();
         flipped[60] ^= 1;
         assert_eq!(read_err(&flipped), Error::RecordChecksumMismatch);
         // Truncated: the checksum line is gone, or cut.
-        assert_eq!(read_err(&bytes[..bytes.len() - 1]), Error::MalformedRecord { line: 0 });
+        assert_eq!(
+            read_err(&bytes[..bytes.len() - 1]),
+            Error::MalformedRecord { line: 0 }
+        );
         let cut = bytes[..bytes.len() - 10].to_vec();
         let mut cut_lf = cut.clone();
         cut_lf.push(b'\n');
-        assert!(matches!(read_err(&cut_lf), Error::MalformedRecord { .. } | Error::MissingRecordField { .. }));
+        assert!(matches!(
+            read_err(&cut_lf),
+            Error::MalformedRecord { .. } | Error::MissingRecordField { .. }
+        ));
         // A comment line, an undefined name, a bad value, a NaN: malformed at their line.
-        assert!(matches!(read_err(&resign(doctor(&bytes, "seed = 9\n", "seed = 9\n# a note\n"))), Error::MalformedRecord { .. }));
-        assert!(matches!(read_err(&resign(doctor(&bytes, "seed = 9\n", "seed = 9\nmood = calm\n"))), Error::MalformedRecord { .. }));
-        assert!(matches!(read_err(&resign(doctor(&bytes, "seed = 9", "seed = nine"))), Error::MalformedRecord { .. }));
-        assert!(matches!(read_err(&resign(doctor(&bytes, "knee_dbfs = -1.5", "knee_dbfs = NaN"))), Error::MalformedRecord { .. }));
-        assert!(matches!(read_err(&resign(doctor(&bytes, "knee_dbfs = -1.5", "knee_dbfs = inf"))), Error::MalformedRecord { .. }));
+        assert!(matches!(
+            read_err(&resign(doctor(
+                &bytes,
+                "seed = 9\n",
+                "seed = 9\n# a note\n"
+            ))),
+            Error::MalformedRecord { .. }
+        ));
+        assert!(matches!(
+            read_err(&resign(doctor(
+                &bytes,
+                "seed = 9\n",
+                "seed = 9\nmood = calm\n"
+            ))),
+            Error::MalformedRecord { .. }
+        ));
+        assert!(matches!(
+            read_err(&resign(doctor(&bytes, "seed = 9", "seed = nine"))),
+            Error::MalformedRecord { .. }
+        ));
+        assert!(matches!(
+            read_err(&resign(doctor(
+                &bytes,
+                "knee_dbfs = -1.5",
+                "knee_dbfs = NaN"
+            ))),
+            Error::MalformedRecord { .. }
+        ));
+        assert!(matches!(
+            read_err(&resign(doctor(
+                &bytes,
+                "knee_dbfs = -1.5",
+                "knee_dbfs = inf"
+            ))),
+            Error::MalformedRecord { .. }
+        ));
         // A missing required field per origin.
-        assert_eq!(read_err(&resign(doctor(&bytes, "seed = 9\n", ""))), Error::MissingRecordField { field: "seed" });
-        assert_eq!(read_err(&resign(doctor(&bytes, "run.stop = stop_call\n", ""))), Error::MissingRecordField { field: "run.stop" });
+        assert_eq!(
+            read_err(&resign(doctor(&bytes, "seed = 9\n", ""))),
+            Error::MissingRecordField { field: "seed" }
+        );
+        assert_eq!(
+            read_err(&resign(doctor(&bytes, "run.stop = stop_call\n", ""))),
+            Error::MissingRecordField { field: "run.stop" }
+        );
         // An imported record needs only the always lines.
         let mut imp = readout();
         imp.origin = Origin::Imported;
@@ -1367,7 +1474,12 @@ mod tests {
         assert_eq!(got.flags, flags::IMPORTED_ORIGIN);
         assert_eq!(got.host_rate_hz, 0);
         assert!(!String::from_utf8(ib.clone()).unwrap().contains("run."));
-        assert_eq!(read_err(&resign(doctor(&ib, "stored_unit_count = 25\n", ""))), Error::MissingRecordField { field: "stored_unit_count" });
+        assert_eq!(
+            read_err(&resign(doctor(&ib, "stored_unit_count = 25\n", ""))),
+            Error::MissingRecordField {
+                field: "stored_unit_count"
+            }
+        );
     }
 
     #[test]
@@ -1376,17 +1488,45 @@ mod tests {
         let (ev, ch) = rows();
         let bytes = written(&r, &ev, &ch);
         let mut got = RecordReadout::default();
-        read(&resign(doctor(&bytes, "library_version = 0.", "library_version = 9.")), &mut got).unwrap();
+        read(
+            &resign(doctor(
+                &bytes,
+                "library_version = 0.",
+                "library_version = 9.",
+            )),
+            &mut got,
+        )
+        .unwrap();
         assert_eq!(got.flags, flags::LIBRARY_DIFFERS);
-        read(&resign(doctor(&bytes, "stage.5.model_version = 0.", "stage.5.model_version = 9.")), &mut got).unwrap();
+        read(
+            &resign(doctor(
+                &bytes,
+                "stage.5.model_version = 0.",
+                "stage.5.model_version = 9.",
+            )),
+            &mut got,
+        )
+        .unwrap();
         assert_eq!(got.flags, flags::STAGE_MODEL_DIFFERS);
         assert_eq!(got.stage_mask, 1 << 4);
         // An absent stage line for a modeled stage differs too.
-        read(&resign(doctor(&bytes, "stage.3.model_version = 0.5.0\n", "")), &mut got).unwrap();
+        read(
+            &resign(doctor(&bytes, "stage.3.model_version = 0.5.0\n", "")),
+            &mut got,
+        )
+        .unwrap();
         assert_eq!(got.stage_mask, 1 << 2);
         // Unknown names: a setting and a control identifier, counted and listed.
-        let b2 = resign(doctor(&bytes, "setting.tap = 5\n", "setting.tap = 5\nsetting.future.knob = 1\n"));
-        let b2 = resign(doctor(&b2, "change.0 = 12000 agc.knee_dbfs", "change.0 = 12000 agc.future"));
+        let b2 = resign(doctor(
+            &bytes,
+            "setting.tap = 5\n",
+            "setting.tap = 5\nsetting.future.knob = 1\n",
+        ));
+        let b2 = resign(doctor(
+            &b2,
+            "change.0 = 12000 agc.knee_dbfs",
+            "change.0 = 12000 agc.future",
+        ));
         read(&b2, &mut got).unwrap();
         assert_eq!(got.flags, flags::UNKNOWN_SETTINGS);
         assert_eq!(got.unknown_setting_count, 2);
@@ -1396,18 +1536,29 @@ mod tests {
         assert_eq!(record_change(&b2, 0), None);
         assert_eq!(got.change_count, 1);
         // Fewer rows than the totals.
-        read(&resign(doctor(&bytes, "event.1 = 1800 120 16558\n", "")), &mut got).unwrap();
+        read(
+            &resign(doctor(&bytes, "event.1 = 1800 120 16558\n", "")),
+            &mut got,
+        )
+        .unwrap();
         assert_eq!(got.flags, flags::INCOMPLETE_RUN);
         assert_eq!(got.event_count, 1);
         // A row out of sequence is malformed.
-        assert!(matches!(read_err(&resign(doctor(&bytes, "event.1 = ", "event.2 = "))), Error::MalformedRecord { .. }));
+        assert!(matches!(
+            read_err(&resign(doctor(&bytes, "event.1 = ", "event.2 = "))),
+            Error::MalformedRecord { .. }
+        ));
     }
 
     #[test]
     fn checksum_covers_the_lf_before_it() {
         let r = readout();
         let bytes = written(&r, &[], &[]);
-        let body_end = bytes[..bytes.len() - 1].iter().rposition(|&b| b == b'\n').unwrap() + 1;
+        let body_end = bytes[..bytes.len() - 1]
+            .iter()
+            .rposition(|&b| b == b'\n')
+            .unwrap()
+            + 1;
         assert_eq!(bytes[body_end - 1], b'\n');
         let h = crate::digest::fnv1a64(&bytes[..body_end]);
         let want = std::format!("record_checksum = fnv1a64:{h:016x}\n");

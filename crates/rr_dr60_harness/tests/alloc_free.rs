@@ -1185,7 +1185,6 @@ fn crossfade_allocate_nothing() {
     }
 }
 
-
 /// Spec 020 FR-001 – FR-003, FR-006, FR-008 (tasks.md T023): the writer, the reader, the maps
 /// and the record path with its block allocate nothing per call.
 #[test]
@@ -1204,10 +1203,16 @@ fn record_contract_allocate_nothing() {
     for &rate in configs::measurement_rates() {
         let raw = rc::raw_stimulus(rate);
         let x = rc::samples(&raw);
-        let cell = Cell { codec: false, changes: true, mute: false, self_stop: false };
+        let cell = Cell {
+            codec: false,
+            changes: true,
+            mute: false,
+            self_stop: false,
+        };
         let mut p = Pipeline::new(rc::settings(cell, rate)).unwrap();
         for (pos, control, value, tag) in rc::cell_changes(rate) {
-            p.schedule_change(Stream::Record, pos, control, value, tag).unwrap();
+            p.schedule_change(Stream::Record, pos, control, value, tag)
+                .unwrap();
         }
         let mut ev = vec![VasEvent::default(); p.max_record_events(1024)];
         let mut ch = vec![ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
@@ -1229,7 +1234,11 @@ fn record_contract_allocate_nothing() {
         assert_eq!(allocations_since(before), 0, "{rate} Hz: the stop");
         events.extend_from_slice(&ev[..out.flush.events]);
         changes.extend_from_slice(&ch[..out.changes]);
-        let run = RunData { events: &events, changes: &changes, stop: StopFields::from(&out) };
+        let run = RunData {
+            events: &events,
+            changes: &changes,
+            stop: StopFields::from(&out),
+        };
         // The writer: counting and writing into a caller buffer.
         let before = snapshot();
         let n = p.processing_record_len(1, &run).unwrap();
@@ -1238,7 +1247,11 @@ fn record_contract_allocate_nothing() {
         let before = snapshot();
         p.processing_record_write(1, &run, &mut rec).unwrap();
         let _ = p.recording_digest(1).unwrap();
-        assert_eq!(allocations_since(before), 0, "{rate} Hz: the writer and the digest");
+        assert_eq!(
+            allocations_since(before),
+            0,
+            "{rate} Hz: the writer and the digest"
+        );
         // The reader, the cursors and the batch reads.
         let mut r = RecordReadout::default();
         let mut ev2 = vec![VasEvent::default(); 64];
@@ -1258,7 +1271,10 @@ fn record_contract_allocate_nothing() {
         assert_eq!(allocations_since(before), 0, "{rate} Hz: maps (a) and (b)");
         let before = snapshot();
         let _ = timeline::place_at(50, rate, 3, 3000, &[]).unwrap();
-        assert!(allocations_since(before) <= 1, "{rate} Hz: map (c) allocates its request list once");
+        assert!(
+            allocations_since(before) <= 1,
+            "{rate} Hz: map (c) allocates its request list once"
+        );
     }
     MEASURING.with(|m| m.set(false));
 }

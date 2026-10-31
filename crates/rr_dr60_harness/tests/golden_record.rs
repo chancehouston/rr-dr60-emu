@@ -40,7 +40,15 @@ fn golden_record_matches() {
     assert_eq!(committed.entries.len(), actual.entries.len());
     for (c, a) in committed.entries.iter().zip(&actual.entries) {
         assert_eq!((&c.config, c.host_rate_hz), (&a.config, a.host_rate_hz));
-        assert_eq!(c.sha256, a.sha256, "{} Hz: the stored samples", c.host_rate_hz);
-        assert_eq!(c.record_contract, a.record_contract, "{} Hz: the record", c.host_rate_hz);
+        assert_eq!(
+            c.sha256, a.sha256,
+            "{} Hz: the stored samples",
+            c.host_rate_hz
+        );
+        assert_eq!(
+            c.record_contract, a.record_contract,
+            "{} Hz: the record",
+            c.host_rate_hz
+        );
     }
 }

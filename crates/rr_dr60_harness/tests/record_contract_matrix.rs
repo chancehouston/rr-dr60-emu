@@ -21,7 +21,16 @@ fn re_render_every_cell_at_every_rate() {
         for cell in Cell::all() {
             let (_, run) = rc::record_run(&standard, rate, cell, &raw);
             let got = rc::re_render(&run.record, &raw, 4096, Delta::None);
-            println!("{rate:6}   {:28} {:016x} {}", cell.name(), run.digest, if got == run.digest { "equal" } else { "DIFFERS" });
+            println!(
+                "{rate:6}   {:28} {:016x} {}",
+                cell.name(),
+                run.digest,
+                if got == run.digest {
+                    "equal"
+                } else {
+                    "DIFFERS"
+                }
+            );
             assert_eq!(got, run.digest, "{rate} Hz {}", cell.name());
         }
     }
@@ -31,13 +40,26 @@ fn re_render_every_cell_at_every_rate() {
 fn deltas_at_every_rate() {
     for rate in rates() {
         let raw = rc::raw_stimulus(rate);
-        let cell = Cell { codec: true, changes: true, mute: false, self_stop: false };
+        let cell = Cell {
+            codec: true,
+            changes: true,
+            mute: false,
+            self_stop: false,
+        };
         let (_, run) = rc::record_run(&standard, rate, cell, &raw);
         for d in Delta::effective(cell.codec) {
-            assert_ne!(rc::re_render(&run.record, &raw, 4096, d), run.digest, "{rate} Hz {d:?}");
+            assert_ne!(
+                rc::re_render(&run.record, &raw, 4096, d),
+                run.digest,
+                "{rate} Hz {d:?}"
+            );
         }
         for d in Delta::TWINS {
-            assert_eq!(rc::re_render(&run.record, &raw, 4096, d), run.digest, "{rate} Hz {d:?}");
+            assert_eq!(
+                rc::re_render(&run.record, &raw, 4096, d),
+                run.digest,
+                "{rate} Hz {d:?}"
+            );
         }
     }
 }
@@ -51,7 +73,10 @@ fn maps_at_every_rate() {
         let (c, miss) = rc::codec_markers_check(rate);
         let o = rc::onepass_check(rate);
         println!("{rate:6}   {a:5.2}   {b:5.2}   {ib:5.2}      {ia:5.2}      {c:5.2}  {o:5.2}");
-        assert!(a <= 1.0 && b <= 1.0 && ib <= 1.0 && ia <= 1.0 && c <= 6.0 && o <= 2.0 && miss >= 100.0, "{rate} Hz");
+        assert!(
+            a <= 1.0 && b <= 1.0 && ib <= 1.0 && ia <= 1.0 && c <= 6.0 && o <= 2.0 && miss >= 100.0,
+            "{rate} Hz"
+        );
         for (name, start, requests) in rc::place_cases() {
             let (m, _) = rc::place_case_mismatches(rate, start, &requests);
             assert_eq!(m, 0, "{rate} Hz: {name}");

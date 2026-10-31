@@ -29,17 +29,32 @@ fn as1_record_written_from_the_block() {
         let raw = rc::raw_stimulus(rate);
         let (mut p, run) = rc::record_run(&standard, rate, cell, &raw);
         let tag = format!("{rate} Hz");
-        assert_eq!(run.digest, rr_dr60::digest::fnv1a64(&run.export), "{tag}: the digest");
+        assert_eq!(
+            run.digest,
+            rr_dr60::digest::fnv1a64(&run.export),
+            "{tag}: the digest"
+        );
         let r = rc::readout(&run.record);
         assert_eq!(r.flags, 0, "{tag}: no flag");
-        assert_eq!(r.settings, rc::settings(cell, rate), "{tag}: the start configuration");
+        assert_eq!(
+            r.settings,
+            rc::settings(cell, rate),
+            "{tag}: the start configuration"
+        );
         assert_eq!(r.recording_counter, run.counter);
-        assert_eq!((r.event_count, r.change_count), (run.events.len() as u64, 2));
-        assert_eq!((r.events_total, r.changes_total), (run.events.len() as u64, 2));
+        assert_eq!(
+            (r.event_count, r.change_count),
+            (run.events.len() as u64, 2)
+        );
+        assert_eq!(
+            (r.events_total, r.changes_total),
+            (run.events.len() as u64, 2)
+        );
         assert!(!run.events.is_empty(), "{tag}: the gaps paused the gate");
         assert!(!run.flush_paused, "{tag}: the gate was open at the stop");
         // The rows' host positions by the harness's own rule.
-        let want = rc::event_host_positions(&run.events, rate, p.record_latency_pre_encoder_samples());
+        let want =
+            rc::event_host_positions(&run.events, rate, p.record_latency_pre_encoder_samples());
         for (i, w) in want.iter().enumerate() {
             let row = record::record_event(&run.record, i as u64).unwrap();
             assert_eq!(row.event, run.events[i]);
@@ -57,11 +72,16 @@ fn as1_record_written_from_the_block() {
             stop: run.stop,
         };
         let mut again = vec![0u8; p.processing_record_len(run.number, &run_data).unwrap()];
-        p.processing_record_write(run.number, &run_data, &mut again).unwrap();
+        p.processing_record_write(run.number, &run_data, &mut again)
+            .unwrap();
         assert_eq!(again, run.record, "{tag}: the record after a reconfigure");
         let mut r2 = RecordReadout::default();
         p.processing_record_read(&run.record, &mut r2).unwrap();
-        assert_eq!(r2.flags, flags::HOST_RATE_DIFFERS, "{tag}: the engine's rate moved");
+        assert_eq!(
+            r2.flags,
+            flags::HOST_RATE_DIFFERS,
+            "{tag}: the engine's rate moved"
+        );
     });
 }
 
@@ -85,8 +105,18 @@ fn as3_effective_deltas_fail_and_twins_hold() {
     at(|rate| {
         let raw = rc::raw_stimulus(rate);
         for cell in [
-            Cell { codec: false, changes: true, mute: false, self_stop: false },
-            Cell { codec: true, changes: true, mute: false, self_stop: false },
+            Cell {
+                codec: false,
+                changes: true,
+                mute: false,
+                self_stop: false,
+            },
+            Cell {
+                codec: true,
+                changes: true,
+                mute: false,
+                self_stop: false,
+            },
         ] {
             let (_, run) = rc::record_run(&standard, rate, cell, &raw);
             for d in Delta::effective(cell.codec) {
@@ -98,11 +128,27 @@ fn as3_effective_deltas_fail_and_twins_hold() {
                 assert_eq!(got, run.digest, "{rate} Hz {} {d:?} must hold", cell.name());
             }
         }
-        let cell = Cell { codec: true, changes: false, mute: false, self_stop: true };
+        let cell = Cell {
+            codec: true,
+            changes: false,
+            mute: false,
+            self_stop: true,
+        };
         let (_, run) = rc::record_run(&standard, rate, cell, &raw);
-        assert_ne!(rc::re_render(&run.record, &raw, 1024, Delta::Capacity), run.digest, "{rate} Hz capacity");
-        assert_ne!(rc::re_render(&run.record, &raw, 1024, Delta::RecordedFiller), run.digest, "{rate} Hz recorded filler");
-        assert_eq!(rc::re_render(&run.record, &raw, 1024, Delta::None), run.digest);
+        assert_ne!(
+            rc::re_render(&run.record, &raw, 1024, Delta::Capacity),
+            run.digest,
+            "{rate} Hz capacity"
+        );
+        assert_ne!(
+            rc::re_render(&run.record, &raw, 1024, Delta::RecordedFiller),
+            run.digest,
+            "{rate} Hz recorded filler"
+        );
+        assert_eq!(
+            rc::re_render(&run.record, &raw, 1024, Delta::None),
+            run.digest
+        );
     });
 }
 
@@ -111,14 +157,24 @@ fn as3_effective_deltas_fail_and_twins_hold() {
 fn as4_round_trip() {
     at(|rate| {
         let raw = rc::raw_stimulus(rate);
-        let cell = Cell { codec: false, changes: true, mute: true, self_stop: false };
+        let cell = Cell {
+            codec: false,
+            changes: true,
+            mute: true,
+            self_stop: false,
+        };
         let (_, run) = rc::record_run(&standard, rate, cell, &raw);
         let r = rc::readout(&run.record);
         assert_eq!(r.stop, run.stop);
         assert_eq!(r.recording_digest, run.digest);
-        let rows: Vec<_> = (0..r.event_count).map(|i| record::record_event(&run.record, i).unwrap()).collect();
+        let rows: Vec<_> = (0..r.event_count)
+            .map(|i| record::record_event(&run.record, i).unwrap())
+            .collect();
         let mut changes = vec![ChangeEntry::default(); r.change_count as usize];
-        assert_eq!(record::record_changes(&run.record, 0, &mut changes), changes.len());
+        assert_eq!(
+            record::record_changes(&run.record, 0, &mut changes),
+            changes.len()
+        );
         assert_eq!(changes, run.changes);
         let mut again = vec![0u8; record::len(&r, &rows, &changes)];
         record::write(&r, &rows, &changes, &mut again).unwrap();
@@ -130,7 +186,11 @@ fn as4_round_trip() {
 #[test]
 fn as5_dirty_engine_counter_identity() {
     at(|rate| {
-        assert_eq!(rc::dirty_engine_identity(&standard, rate, 3), 0, "{rate} Hz");
+        assert_eq!(
+            rc::dirty_engine_identity(&standard, rate, 3),
+            0,
+            "{rate} Hz"
+        );
         let p = Pipeline::new_at_counter(rr_dr60::Settings::new(rate), 7).unwrap();
         assert_eq!(p.recording_counter(), 7);
     });

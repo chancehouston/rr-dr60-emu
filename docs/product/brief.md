@@ -82,7 +82,7 @@ A recording becomes a documented session. The whole session design is **Agreed**
 - **One elapsed timeline.** Audio, sensor samples, event markers and setting changes map to one session clock. Voice-activated recording may skip silence; the gaps are kept as explicit timing metadata, not by compressing the session history.
 - **Captured and processed sound.**
   - The original microphone audio is kept alongside the emulated or effect-processed result.
-  - The active chain and settings are saved, and changes during a session are timestamped, so a later listener knows what processing was applied.
+  - The active chain and settings are saved, and changes during a session are timestamped, so a later listener knows what processing was applied (the engine's processing record, spec 020; the app's session file carries the rest).
 - **Context.**
   - Candidate tracks: magnetic field, motion and pressure, where the phone supports them.
   - *2026-10-21, the owner's idea, part of Investigation mode's feature set:* a **vibration track** from the accelerometer, active only while the phone lies still (investigation-mode.md › Vibration track).
@@ -295,7 +295,7 @@ The limiter's internal state is a test-only hook. Also not built: a scope copy a
 
 **Recordings:** export and import as a versioned, checksummed byte sequence (stored form version 2).
 
-**Settings:** a fixed struct with a version-checked size in C. There is no serialization format for settings or for a chain, and no versioned session contract (spec 020). Since engine 0.16.0 (spec 015) the three live controls can be scheduled at an output-sample position and every change a stream applies is logged with its position, the values before and after and a caller tag. Since 0.17.0 (spec 017) eight record-side values (the sensitivity, the voice activation's threshold, hang and onset, the limiter's knee, attack and release, the hiss level) can be scheduled on the record stream and the one-pass in the stream's input clock and are logged the same way; a landed value shows in `settings()`. The switches, the codec, the memory and the host rate still change only through `reconfigure`.
+**Settings:** a fixed struct with a version-checked size in C. Since 0.20.0 (spec 020) the engine writes a versioned **processing record** per recording (settings at the start, identity, record-side entries, voice-activation gaps, a digest of the stored form) and re-renders a recording from the kept microphone audio and the record bit for bit at the record's library version. Since engine 0.16.0 (spec 015) the three live controls can be scheduled at an output-sample position and every change a stream applies is logged with its position, the values before and after and a caller tag. Since 0.17.0 (spec 017) eight record-side values (the sensitivity, the voice activation's threshold, hang and onset, the limiter's knee, attack and release, the hiss level) can be scheduled on the record stream and the one-pass in the stream's input clock and are logged the same way; a landed value shows in `settings()`. The switches, the codec, the memory and the host rate still change only through `reconfigure`.
 
 ### 5. Ownership
 

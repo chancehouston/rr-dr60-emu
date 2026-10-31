@@ -577,10 +577,28 @@ mod tests {
         let volts = Error::InvalidBatteryVolts { volts: 3.1 }.to_string();
         assert!(volts.contains("3.1") && volts.contains("2.2"), "{volts}");
         // Spec 020: the five record statuses name their reason.
-        assert!(Error::UnknownRecordVersion { version: 2 }.to_string().contains('2'));
+        assert!(
+            Error::UnknownRecordVersion { version: 2 }
+                .to_string()
+                .contains('2')
+        );
         assert!(Error::MalformedRecord { line: 7 }.to_string().contains('7'));
-        assert!(Error::MissingRecordField { field: "seed" }.to_string().contains("seed"));
-        assert!(Error::RecordChecksumMismatch.to_string().contains("checksum"));
-        assert!(Error::InconsistentRun { reason: "no stream" }.to_string().contains("no stream"));
+        assert!(
+            Error::MissingRecordField { field: "seed" }
+                .to_string()
+                .contains("seed")
+        );
+        assert!(
+            Error::RecordChecksumMismatch
+                .to_string()
+                .contains("checksum")
+        );
+        assert!(
+            Error::InconsistentRun {
+                reason: "no stream"
+            }
+            .to_string()
+            .contains("no stream")
+        );
     }
 }

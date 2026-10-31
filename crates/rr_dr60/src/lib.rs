@@ -211,8 +211,8 @@ mod codec;
 pub mod controls;
 pub mod digest;
 mod error;
-pub mod input;
 mod form;
+pub mod input;
 pub mod manifest;
 mod memory;
 pub mod mic;
@@ -528,7 +528,9 @@ pub mod __test_hooks {
     /// Spec 020 (research R-04): the speed control's per-output place state of the last `play`
     /// call (the own part, the tail and the drain's silence, where the state no longer moves),
     /// the first 2048 outputs: map (c)'s pin.
-    pub fn speed_place_trace(pipeline: &crate::Pipeline) -> alloc::vec::Vec<crate::timeline::PlaceState> {
+    pub fn speed_place_trace(
+        pipeline: &crate::Pipeline,
+    ) -> alloc::vec::Vec<crate::timeline::PlaceState> {
         pipeline.speed_place_trace.clone()
     }
 

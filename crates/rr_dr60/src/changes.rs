@@ -1113,7 +1113,14 @@ impl RecordCtl {
         values.set(slot, value);
         apply(&values, slot);
         if let Some(e) = self.log.get_mut(self.log_len) {
-            *e = ChangeEntry::new(pos, LIVE_RECORD[slot], before, values.get(slot), tag, self.stream);
+            *e = ChangeEntry::new(
+                pos,
+                LIVE_RECORD[slot],
+                before,
+                values.get(slot),
+                tag,
+                self.stream,
+            );
         }
         self.log_len += 1;
         self.last = values;

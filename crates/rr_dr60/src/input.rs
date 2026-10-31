@@ -21,7 +21,11 @@ pub fn i24_from_sample(x: f32) -> i32 {
     // Round half away from zero without `f32::round` (the core is `no_std`): `as i32`
     // truncates toward zero, so offsetting by ±0.5 first rounds.
     let v = (x * FULL_SCALE).clamp(-FULL_SCALE, FULL_SCALE - 1.0);
-    if v >= 0.0 { (v + 0.5) as i32 } else { (v - 0.5) as i32 }
+    if v >= 0.0 {
+        (v + 0.5) as i32
+    } else {
+        (v - 0.5) as i32
+    }
 }
 
 #[cfg(test)]

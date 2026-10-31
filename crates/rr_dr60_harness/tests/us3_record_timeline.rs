@@ -16,7 +16,9 @@ fn at(f: impl Fn(u32)) {
 fn as1_markers_and_splice_oracle() {
     at(|rate| {
         let (a, b, bursts) = rc::markers_check(rate);
-        println!("{rate} Hz: {bursts} bursts, map (a) within {a:.2} and map (b) within {b:.2} device samples");
+        println!(
+            "{rate} Hz: {bursts} bursts, map (a) within {a:.2} and map (b) within {b:.2} device samples"
+        );
         assert!(a <= 1.0, "{rate} Hz: map (a) {a}");
         assert!(b <= 1.0, "{rate} Hz: map (b) {b}");
     });
@@ -35,9 +37,14 @@ fn as1_impulse_latency() {
 fn as1_codec_on_within_two_and_fails_under_full_latency() {
     at(|rate| {
         let (dev, miss) = rc::codec_markers_check(rate);
-        println!("{rate} Hz: codec on: within {dev:.2} device samples; with the full latency the alignment misses by {miss:.0}");
+        println!(
+            "{rate} Hz: codec on: within {dev:.2} device samples; with the full latency the alignment misses by {miss:.0}"
+        );
         assert!(dev <= 6.0, "{rate} Hz: {dev}"); // restated at implementation: the envelope correlation of CELP-decoded voiced bursts reads 1 – 5 device samples by rate (a 1 ms tolerance; 008's ±2 was a waveform correlation on continuous speech); the kept-domain rule is pinned by the 180-sample miss
-        assert!(miss >= 100.0, "{rate} Hz: the codec's 180 must show: {miss}");
+        assert!(
+            miss >= 100.0,
+            "{rate} Hz: the codec's 180 must show: {miss}"
+        );
     });
 }
 

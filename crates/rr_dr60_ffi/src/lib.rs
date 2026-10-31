@@ -818,9 +818,10 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
         Error::MissingRecordField { .. } => {
             (RrDr60Status::MissingRecordField, RrDr60SettingField::None)
         }
-        Error::RecordChecksumMismatch => {
-            (RrDr60Status::RecordChecksumMismatch, RrDr60SettingField::None)
-        }
+        Error::RecordChecksumMismatch => (
+            RrDr60Status::RecordChecksumMismatch,
+            RrDr60SettingField::None,
+        ),
         Error::InconsistentRun { .. } => (RrDr60Status::InconsistentRun, RrDr60SettingField::None),
         Error::NoSuchControl { .. } => (RrDr60Status::NoSuchControl, RrDr60SettingField::None),
         // Spec 013 contracts/c-api.md: status 25.
@@ -6566,9 +6567,17 @@ unsafe fn fill_prefix<T: Copy>(out: *mut T, value: &T, size: u32, full: u32) -> 
     }
     // SAFETY: the caller's contract; `full` bytes of `value` are initialized.
     unsafe {
-        core::ptr::copy_nonoverlapping((value as *const T).cast::<u8>(), out.cast::<u8>(), full as usize);
+        core::ptr::copy_nonoverlapping(
+            (value as *const T).cast::<u8>(),
+            out.cast::<u8>(),
+            full as usize,
+        );
         if size > full {
-            core::ptr::write_bytes(out.cast::<u8>().add(full as usize), 0, (size - full) as usize);
+            core::ptr::write_bytes(
+                out.cast::<u8>().add(full as usize),
+                0,
+                (size - full) as usize,
+            );
         }
     }
     RrDr60Status::Ok
@@ -6739,7 +6748,11 @@ impl RrDr60RecordReadout {
 /// `bytes` is NULL or `len` readable bytes.
 unsafe fn bytes_in<'a>(bytes: *const u8, len: usize) -> Result<&'a [u8], RrDr60Status> {
     if bytes.is_null() {
-        return if len == 0 { Ok(&[]) } else { Err(RrDr60Status::NullPointer) };
+        return if len == 0 {
+            Ok(&[])
+        } else {
+            Err(RrDr60Status::NullPointer)
+        };
     }
     // SAFETY: the caller's contract.
     Ok(unsafe { std::slice::from_raw_parts(bytes, len) })
@@ -6953,7 +6966,9 @@ pub unsafe extern "C" fn rr_dr60_processing_record_len(
         Ok(r) => r,
         Err(status) => return status,
     };
-    match catch_unwind(AssertUnwindSafe(|| p.inner.processing_record_len(number, &run))) {
+    match catch_unwind(AssertUnwindSafe(|| {
+        p.inner.processing_record_len(number, &run)
+    })) {
         // SAFETY: `out_len` is writable (caller contract).
         Ok(Ok(n)) => unsafe {
             *out_len = n;
@@ -6994,8 +7009,14 @@ pub unsafe extern "C" fn rr_dr60_processing_record_write(
         Err(status) => return status,
     };
     // SAFETY: `out` is writable for `out_len` bytes (caller contract); an empty slice for NULL.
-    let buf: &mut [u8] = if out.is_null() { &mut [] } else { unsafe { std::slice::from_raw_parts_mut(out, out_len) } };
-    match catch_unwind(AssertUnwindSafe(|| p.inner.processing_record_write(number, &run, buf))) {
+    let buf: &mut [u8] = if out.is_null() {
+        &mut []
+    } else {
+        unsafe { std::slice::from_raw_parts_mut(out, out_len) }
+    };
+    match catch_unwind(AssertUnwindSafe(|| {
+        p.inner.processing_record_write(number, &run, buf)
+    })) {
         // SAFETY: `out_written` is writable (caller contract).
         Ok(Ok(n)) => unsafe {
             *out_written = n;
@@ -7044,7 +7065,9 @@ pub unsafe extern "C" fn rr_dr60_processing_record_read(
             Ok(p) => p,
             Err(status) => return status,
         };
-        catch_unwind(AssertUnwindSafe(|| p.inner.processing_record_read(bytes, &mut r)))
+        catch_unwind(AssertUnwindSafe(|| {
+            p.inner.processing_record_read(bytes, &mut r)
+        }))
     };
     match result {
         Ok(Ok(())) => {
@@ -7095,7 +7118,15 @@ pub unsafe extern "C" fn rr_dr60_processing_record_rewrite(
         let got = record::record_changes(bytes, 0, &mut changes);
         changes.truncate(got);
         let needed = record::len(&r, &events, &changes);
-        Ok::<(usize, RecordReadout, Vec<record::RecordEvent>, Vec<ChangeEntry>), Error>((needed, r, events, changes))
+        Ok::<
+            (
+                usize,
+                RecordReadout,
+                Vec<record::RecordEvent>,
+                Vec<ChangeEntry>,
+            ),
+            Error,
+        >((needed, r, events, changes))
     });
     let (needed, r, events, changes) = match result {
         Ok(Ok(v)) => v,
@@ -7325,7 +7356,11 @@ pub unsafe extern "C" fn rr_dr60_record_events(
         return 0;
     };
     // SAFETY: `out` is writable for `capacity` events; the layouts match (the const assert).
-    let slice: &mut [VasEvent] = if capacity == 0 { &mut [] } else { unsafe { std::slice::from_raw_parts_mut(out.cast::<VasEvent>(), capacity) } };
+    let slice: &mut [VasEvent] = if capacity == 0 {
+        &mut []
+    } else {
+        unsafe { std::slice::from_raw_parts_mut(out.cast::<VasEvent>(), capacity) }
+    };
     record::record_events(bytes, first, slice)
 }
 
@@ -7351,7 +7386,11 @@ pub unsafe extern "C" fn rr_dr60_record_changes(
         return 0;
     };
     // SAFETY: `out` is writable for `capacity` entries; the layouts match (the const assert).
-    let slice: &mut [ChangeEntry] = if capacity == 0 { &mut [] } else { unsafe { std::slice::from_raw_parts_mut(out.cast::<ChangeEntry>(), capacity) } };
+    let slice: &mut [ChangeEntry] = if capacity == 0 {
+        &mut []
+    } else {
+        unsafe { std::slice::from_raw_parts_mut(out.cast::<ChangeEntry>(), capacity) }
+    };
     record::record_changes(bytes, first, slice)
 }
 
@@ -7576,7 +7615,8 @@ pub unsafe extern "C" fn rr_dr60_place_at(
     }
     // SAFETY: `out` non-null, its size readable (caller contract).
     let size = unsafe { struct_size_at(out) };
-    match catch_unwind(|| timeline::place_at(index, host_rate_hz, start_level, unit_count, entries)) {
+    match catch_unwind(|| timeline::place_at(index, host_rate_hz, start_level, unit_count, entries))
+    {
         Ok(Ok(st)) => {
             let c = RrDr60PlaceState {
                 struct_size: PLACE_STATE_SIZE,
@@ -7606,7 +7646,12 @@ pub unsafe extern "C" fn rr_dr60_samples_from_i24(src: *const i32, dst: *mut f32
         return;
     }
     // SAFETY: the caller's contract.
-    let (s, d) = unsafe { (std::slice::from_raw_parts(src, count), std::slice::from_raw_parts_mut(dst, count)) };
+    let (s, d) = unsafe {
+        (
+            std::slice::from_raw_parts(src, count),
+            std::slice::from_raw_parts_mut(dst, count),
+        )
+    };
     rr_dr60::input::samples_from_i24(s, d);
 }
 
@@ -7618,13 +7663,34 @@ mod record_contract_tests {
     #[test]
     fn constants_pin_the_core() {
         assert_eq!(RR_DR60_PROCESSING_RECORD_VERSION, record::FORM_VERSION);
-        assert_eq!(RR_DR60_RECORD_FLAG_LIBRARY_DIFFERS, record::flags::LIBRARY_DIFFERS);
-        assert_eq!(RR_DR60_RECORD_FLAG_STAGE_MODEL_DIFFERS, record::flags::STAGE_MODEL_DIFFERS);
-        assert_eq!(RR_DR60_RECORD_FLAG_HOST_RATE_DIFFERS, record::flags::HOST_RATE_DIFFERS);
-        assert_eq!(RR_DR60_RECORD_FLAG_UNKNOWN_SETTINGS, record::flags::UNKNOWN_SETTINGS);
-        assert_eq!(RR_DR60_RECORD_FLAG_INCOMPLETE_RUN, record::flags::INCOMPLETE_RUN);
-        assert_eq!(RR_DR60_RECORD_FLAG_IMPORTED_ORIGIN, record::flags::IMPORTED_ORIGIN);
-        assert_eq!(RR_DR60_RECORD_FLAG_DIGEST_MISMATCH, record::flags::DIGEST_MISMATCH);
+        assert_eq!(
+            RR_DR60_RECORD_FLAG_LIBRARY_DIFFERS,
+            record::flags::LIBRARY_DIFFERS
+        );
+        assert_eq!(
+            RR_DR60_RECORD_FLAG_STAGE_MODEL_DIFFERS,
+            record::flags::STAGE_MODEL_DIFFERS
+        );
+        assert_eq!(
+            RR_DR60_RECORD_FLAG_HOST_RATE_DIFFERS,
+            record::flags::HOST_RATE_DIFFERS
+        );
+        assert_eq!(
+            RR_DR60_RECORD_FLAG_UNKNOWN_SETTINGS,
+            record::flags::UNKNOWN_SETTINGS
+        );
+        assert_eq!(
+            RR_DR60_RECORD_FLAG_INCOMPLETE_RUN,
+            record::flags::INCOMPLETE_RUN
+        );
+        assert_eq!(
+            RR_DR60_RECORD_FLAG_IMPORTED_ORIGIN,
+            record::flags::IMPORTED_ORIGIN
+        );
+        assert_eq!(
+            RR_DR60_RECORD_FLAG_DIGEST_MISMATCH,
+            record::flags::DIGEST_MISMATCH
+        );
         assert_eq!(RR_DR60_STREAM_WORD_PLAYBACK, rr_dr60::STREAM_PLAYBACK);
         assert_eq!(RR_DR60_STREAM_WORD_ONE_PASS, rr_dr60::STREAM_ONE_PASS);
         assert_eq!(RR_DR60_STREAM_WORD_RECORD, rr_dr60::STREAM_RECORD);
@@ -7651,12 +7717,26 @@ mod record_contract_tests {
         let mut big = vec![0xAAu8; READOUT_SIZE as usize + 16];
         big[..4].copy_from_slice(&(READOUT_SIZE + 16).to_le_bytes());
         // SAFETY: a writable buffer of the declared size.
-        let st = unsafe { fill_prefix(big.as_mut_ptr().cast::<RrDr60RecordReadout>(), &c, READOUT_SIZE + 16, READOUT_SIZE) };
+        let st = unsafe {
+            fill_prefix(
+                big.as_mut_ptr().cast::<RrDr60RecordReadout>(),
+                &c,
+                READOUT_SIZE + 16,
+                READOUT_SIZE,
+            )
+        };
         assert_eq!(st, RrDr60Status::Ok);
         assert!(big[READOUT_SIZE as usize..].iter().all(|&b| b == 0));
         let mut small = vec![0u8; READOUT_SIZE as usize];
         // SAFETY: a writable buffer.
-        let st = unsafe { fill_prefix(small.as_mut_ptr().cast::<RrDr60RecordReadout>(), &c, READOUT_SIZE - 1, READOUT_SIZE) };
+        let st = unsafe {
+            fill_prefix(
+                small.as_mut_ptr().cast::<RrDr60RecordReadout>(),
+                &c,
+                READOUT_SIZE - 1,
+                READOUT_SIZE,
+            )
+        };
         assert_eq!(st, RrDr60Status::InvalidArgument);
         assert_eq!(c.to_core().unwrap().form_version, 1);
     }

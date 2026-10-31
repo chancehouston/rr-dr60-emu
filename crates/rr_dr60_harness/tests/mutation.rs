@@ -1651,7 +1651,6 @@ mod crossfade {
     }
 }
 
-
 /// Spec 020 SC-003, SC-005 (tasks.md T023): six mutants of the record contract, each rejected by
 /// its named oracle.
 mod record_contract {
@@ -1666,8 +1665,21 @@ mod record_contract {
     #[test]
     fn digest_without_last_byte_is_caught() {
         let raw = rc::raw_stimulus(RATE);
-        let (p, run) = rc::record_run(&standard, RATE, Cell { codec: false, changes: false, mute: false, self_stop: false }, &raw);
-        assert_ne!(mutants::digest_without_last_byte(&p, run.number), run.digest);
+        let (p, run) = rc::record_run(
+            &standard,
+            RATE,
+            Cell {
+                codec: false,
+                changes: false,
+                mute: false,
+                self_stop: false,
+            },
+            &raw,
+        );
+        assert_ne!(
+            mutants::digest_without_last_byte(&p, run.number),
+            run.digest
+        );
         assert_eq!(p.recording_digest(run.number).unwrap(), run.digest);
     }
 
@@ -1675,9 +1687,22 @@ mod record_contract {
     #[test]
     fn checksum_wrong_span_is_caught() {
         let raw = rc::raw_stimulus(RATE);
-        let (_, run) = rc::record_run(&standard, RATE, Cell { codec: false, changes: true, mute: false, self_stop: false }, &raw);
+        let (_, run) = rc::record_run(
+            &standard,
+            RATE,
+            Cell {
+                codec: false,
+                changes: true,
+                mute: false,
+                self_stop: false,
+            },
+            &raw,
+        );
         let bad = mutants::checksum_wrong_span(&run.record);
-        assert_eq!(record::read(&bad, &mut RecordReadout::default()).unwrap_err(), rr_dr60::Error::RecordChecksumMismatch);
+        assert_eq!(
+            record::read(&bad, &mut RecordReadout::default()).unwrap_err(),
+            rr_dr60::Error::RecordChecksumMismatch
+        );
         assert!(record::read(&run.record, &mut RecordReadout::default()).is_ok());
     }
 
@@ -1686,20 +1711,49 @@ mod record_contract {
     #[test]
     fn settings_from_engine_is_caught() {
         let raw = rc::raw_stimulus(RATE);
-        let (p, run) = rc::record_run(&standard, RATE, Cell { codec: false, changes: true, mute: false, self_stop: false }, &raw);
+        let (p, run) = rc::record_run(
+            &standard,
+            RATE,
+            Cell {
+                codec: false,
+                changes: true,
+                mute: false,
+                self_stop: false,
+            },
+            &raw,
+        );
         let bad = mutants::settings_from_engine(&p, &run.record);
         assert_ne!(bad, run.record);
         assert_ne!(rc::re_render(&bad, &raw, 1024, Delta::None), run.digest);
-        assert_eq!(rc::re_render(&run.record, &raw, 1024, Delta::None), run.digest);
+        assert_eq!(
+            rc::re_render(&run.record, &raw, 1024, Delta::None),
+            run.digest
+        );
     }
 
     /// The self-stop cell: a re-render without the capacity precondition fails the digest.
     #[test]
     fn self_stop_without_capacity_is_caught() {
         let raw = rc::raw_stimulus(RATE);
-        let (_, run) = rc::record_run(&standard, RATE, Cell { codec: true, changes: false, mute: false, self_stop: true }, &raw);
-        assert_ne!(rc::re_render(&run.record, &raw, 1024, Delta::NoFill), run.digest);
-        assert_eq!(rc::re_render(&run.record, &raw, 1024, Delta::None), run.digest);
+        let (_, run) = rc::record_run(
+            &standard,
+            RATE,
+            Cell {
+                codec: true,
+                changes: false,
+                mute: false,
+                self_stop: true,
+            },
+            &raw,
+        );
+        assert_ne!(
+            rc::re_render(&run.record, &raw, 1024, Delta::NoFill),
+            run.digest
+        );
+        assert_eq!(
+            rc::re_render(&run.record, &raw, 1024, Delta::None),
+            run.digest
+        );
     }
 
     /// The markers: map (a) with the codec's delay moves the centre by 180 device samples.
@@ -1709,7 +1763,9 @@ mod record_contract {
         let s = rc::marker_settings(RATE, true, true);
         let (_, _, events, stop) = rc::record_samples(s, &x);
         let k = events[1].output_position;
-        let good = timeline::kept_to_input(k, &s, &events, &stop).unwrap().centre;
+        let good = timeline::kept_to_input(k, &s, &events, &stop)
+            .unwrap()
+            .centre;
         let bad = mutants::alignment_with_codec_delay(k, &s, &events, &stop);
         assert_eq!(good - bad, 180 * u64::from(RATE) / 6000);
     }
@@ -1725,7 +1781,16 @@ mod record_contract {
         let entries: Vec<_> = requests
             .iter()
             .enumerate()
-            .map(|(i, (d, level))| rr_dr60::ChangeEntry::new(rc::host_position_for(*d, RATE), 2, 3.0, f64::from(*level), i as u64, 1))
+            .map(|(i, (d, level))| {
+                rr_dr60::ChangeEntry::new(
+                    rc::host_position_for(*d, RATE),
+                    2,
+                    3.0,
+                    f64::from(*level),
+                    i as u64,
+                    1,
+                )
+            })
             .collect();
         let at = 100 + n / 2;
         let good = timeline::place_at(at, RATE, 3, 3000, &entries).unwrap();

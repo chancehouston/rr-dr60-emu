@@ -58,7 +58,11 @@ impl Cell {
             if self.codec { "codec" } else { "samples" },
             if self.changes { "changes" } else { "constant" },
             if self.mute { "mute" } else { "drop" },
-            if self.self_stop { "self_stop" } else { "stop_call" }
+            if self.self_stop {
+                "self_stop"
+            } else {
+                "stop_call"
+            }
         )
     }
 }
@@ -75,7 +79,11 @@ pub const SELF_STOP_REMAINING: u64 = 7200;
 pub fn settings(cell: Cell, rate: u32) -> Settings {
     let mut s = Settings::new(rate);
     s.speech_codec_enabled = cell.codec;
-    s.vas.mode = if cell.mute { VasMode::Mute } else { VasMode::Drop };
+    s.vas.mode = if cell.mute {
+        VasMode::Mute
+    } else {
+        VasMode::Drop
+    };
     s.vas.hang_ms = 100.0;
     s.seed = 0x20;
     s.memory.capacity_s = if cell.self_stop { CAPACITY_S } else { 20 };
@@ -128,10 +136,15 @@ pub fn filler(encoding: Encoding, units: u64) -> Vec<u8> {
 /// samples.
 pub fn fill_to_remaining(p: &mut Pipeline, remaining: u64) {
     let st = p.memory_status();
-    assert!(st.remaining_samples >= remaining, "already fuller than asked");
+    assert!(
+        st.remaining_samples >= remaining,
+        "already fuller than asked"
+    );
     let units = (st.remaining_samples - remaining) / p.encoding().unit_samples() as u64;
     if units > 0 {
-        let _ = p.import(&filler(p.encoding(), units)).expect("the filler fits");
+        let _ = p
+            .import(&filler(p.encoding(), units))
+            .expect("the filler fits");
     }
     assert_eq!(p.memory_status().remaining_samples, remaining);
 }
@@ -141,10 +154,7 @@ pub fn cell_changes(rate: u32) -> [(u64, u32, f64, u64); 2] {
     let fs = u64::from(rate);
     // The knee lands below the −20 dBFS voice's peaks, so the entry is effective (the
     // limiter engages from it on); the hiss change rides on the second voiced segment.
-    [
-        (fs * 3 / 10, KNEE, -30.0, 7),
-        (fs * 9 / 10, HISS, 3.0, 8),
-    ]
+    [(fs * 3 / 10, KNEE, -30.0, 7), (fs * 9 / 10, HISS, 3.0, 8)]
 }
 
 /// A recording made and its record written: everything the re-render needs and the digest
@@ -201,7 +211,9 @@ pub fn record_run_in(p: &mut Pipeline, cell: Cell, raw: &[i32]) -> (Pipeline, Ru
     let mut flush_paused = false;
     for block in x.chunks(1024) {
         let mut ev = vec![VasEvent::default(); p.max_record_events(block.len())];
-        let info = p.record_with_changes(block, &mut ev, &mut log).expect("record");
+        let info = p
+            .record_with_changes(block, &mut ev, &mut log)
+            .expect("record");
         events.extend_from_slice(&ev[..info.events]);
         changes.extend_from_slice(&log[..info.changes]);
         if info.stopped.is_some() {
@@ -233,7 +245,11 @@ pub fn record_run_in(p: &mut Pipeline, cell: Cell, raw: &[i32]) -> (Pipeline, Ru
     };
     let n = p.processing_record_len(number, &run).expect("len");
     let mut record = vec![0u8; n];
-    assert_eq!(p.processing_record_write(number, &run, &mut record).expect("write"), n);
+    assert_eq!(
+        p.processing_record_write(number, &run, &mut record)
+            .expect("write"),
+        n
+    );
     let mut export = vec![0u8; p.export_len(number).expect("len")];
     let _ = p.export(number, &mut export).expect("export");
     let digest = p.recording_digest(number).expect("digest");
@@ -314,7 +330,11 @@ impl Delta {
             Delta::Threshold,
             Delta::Codec,
             Delta::Burst,
-            if codec { Delta::EntryMovedFar } else { Delta::EntryMoved },
+            if codec {
+                Delta::EntryMovedFar
+            } else {
+                Delta::EntryMoved
+            },
             Delta::StopEarlier,
         ]
     }
@@ -347,7 +367,10 @@ pub fn re_render(record: &[u8], raw: &[i32], block: usize, delta: Delta) -> u64 
     let mut raw = raw.to_vec();
     let mut stop = r.stop;
     let mut changes = vec![ChangeEntry::default(); r.change_count as usize];
-    assert_eq!(record::record_changes(record, 0, &mut changes), changes.len());
+    assert_eq!(
+        record::record_changes(record, 0, &mut changes),
+        changes.len()
+    );
     match delta {
         Delta::None => {}
         Delta::Seed => s.seed = s.seed.wrapping_add(1),
@@ -401,7 +424,10 @@ pub fn re_render(record: &[u8], raw: &[i32], block: usize, delta: Delta) -> u64 
             / p.encoding().unit_samples() as u64;
         p.start_recording().unwrap();
         let _ = p
-            .record(&vec![0.0f32; units as usize * p.encoding().unit_samples()], &mut [])
+            .record(
+                &vec![0.0f32; units as usize * p.encoding().unit_samples()],
+                &mut [],
+            )
             .unwrap();
         let _ = p.stop_recording(&mut []).unwrap();
     } else if delta == Delta::NoFill {
@@ -509,7 +535,11 @@ pub fn dirty_engine_identity(make: Make<'_>, rate: u32, c: u64) -> usize {
     let mut yf = vec![0.0f32; 4096];
     let _ = dirty.process(&x[..4096], &mut yd).unwrap();
     let _ = fresh.process(&x[..4096], &mut yf).unwrap();
-    mismatches += yd.iter().zip(&yf).filter(|(a, b)| a.to_bits() != b.to_bits()).count();
+    mismatches += yd
+        .iter()
+        .zip(&yf)
+        .filter(|(a, b)| a.to_bits() != b.to_bits())
+        .count();
     mismatches
 }
 
@@ -573,7 +603,9 @@ pub fn marker_stimulus_of(rate: u32, voiced: bool) -> Vec<f32> {
             x[*b as usize + i] = *v;
         }
     }
-    x.iter().map(|&v| samples(&[i24_from_sample(v)])[0]).collect()
+    x.iter()
+        .map(|&v| samples(&[i24_from_sample(v)])[0])
+        .collect()
 }
 
 /// The bursts' host positions: 0.3, 0.8, 1.3 and 1.8 s.
@@ -664,7 +696,11 @@ pub fn markers_check(rate: u32) -> (f64, f64, usize) {
             ei += 1;
         }
         let t = k as u64 + removed;
-        assert_eq!(v.to_bits(), twin[t as usize].to_bits(), "{rate} Hz: drop sample {k} == twin sample {t}");
+        assert_eq!(
+            v.to_bits(),
+            twin[t as usize].to_bits(),
+            "{rate} Hz: drop sample {k} == twin sample {t}"
+        );
     }
     let per_device = f64::from(rate) / 6000.0;
     let latency = u64::from(p.record_latency_pre_encoder_samples());
@@ -677,26 +713,43 @@ pub fn markers_check(rate: u32) -> (f64, f64, usize) {
         let t = twin_onsets[j] as u64;
         let a = timeline::kept_to_input(t, &twin_s, &[], &twin_stop).expect("rate");
         max_a = max_a.max((a.centre as f64 - *b as f64).abs() / per_device);
-        let KeptOrRemoved::Kept(tb) = timeline::input_to_kept(*b, &twin_s, &[]).expect("rate") else {
+        let KeptOrRemoved::Kept(tb) = timeline::input_to_kept(*b, &twin_s, &[]).expect("rate")
+        else {
             panic!("{rate} Hz: the twin keeps everything")
         };
         max_b = max_b.max((tb as f64 - t as f64).abs());
         // (iii) through the gaps: a position 40 ms into the burst (inside its kept part).
         let h = b + u64::from(rate) * 4 / 100;
-        let KeptOrRemoved::Kept(k) = timeline::input_to_kept(h, &drop_s, &events).expect("rate") else {
+        let KeptOrRemoved::Kept(k) = timeline::input_to_kept(h, &drop_s, &events).expect("rate")
+        else {
             panic!("{rate} Hz burst {j}: 40 ms in is kept")
         };
         let pre_gate = rr_dr60::changes::record_landing(h + latency, rate).unwrap();
-        let r: u64 = events.iter().take_while(|e| e.output_position <= k).map(|e| e.input_length).sum();
-        assert_eq!(k + r, pre_gate, "{rate} Hz burst {j}: the kept sample's pre-gate index");
-        assert_eq!(drop[k as usize].to_bits(), twin[pre_gate as usize].to_bits(), "{rate} Hz burst {j}");
+        let r: u64 = events
+            .iter()
+            .take_while(|e| e.output_position <= k)
+            .map(|e| e.input_length)
+            .sum();
+        assert_eq!(
+            k + r,
+            pre_gate,
+            "{rate} Hz burst {j}: the kept sample's pre-gate index"
+        );
+        assert_eq!(
+            drop[k as usize].to_bits(),
+            twin[pre_gate as usize].to_bits(),
+            "{rate} Hz burst {j}"
+        );
         let a = timeline::kept_to_input(k, &drop_s, &events, &stop).expect("rate");
         assert!(!a.clamped);
         max_a = max_a.max((a.centre as f64 - h as f64).abs() / per_device);
         // Inside the gate's onset (5 ms into the burst): removed.
         let inside = b + u64::from(rate) * 5 / 1000;
         assert!(
-            matches!(timeline::input_to_kept(inside, &drop_s, &events).expect("rate"), KeptOrRemoved::Removed { .. }),
+            matches!(
+                timeline::input_to_kept(inside, &drop_s, &events).expect("rate"),
+                KeptOrRemoved::Removed { .. }
+            ),
             "{rate} Hz burst {j}: the onset's samples are removed"
         );
         // The kept onset sits one gate onset after the burst (the detector reads the event).
@@ -721,7 +774,9 @@ pub fn impulse_check(rate: u32) -> (f64, f64) {
     let (peak, _) = stored
         .iter()
         .enumerate()
-        .fold((0usize, 0.0f32), |(bi, bv), (i, &v)| if v.abs() > bv { (i, v.abs()) } else { (bi, bv) });
+        .fold((0usize, 0.0f32), |(bi, bv), (i, &v)| {
+            if v.abs() > bv { (i, v.abs()) } else { (bi, bv) }
+        });
     let got = match timeline::input_to_kept(n0 as u64, &s, &events).expect("rate") {
         KeptOrRemoved::Kept(k) => k,
         other => panic!("{other:?}"),
@@ -766,7 +821,11 @@ fn best_lag(reference: &[f32], probe: &[f32], at: usize, span: usize) -> i64 {
             e1 += f64::from(*a) * f64::from(*a);
             e2 += f64::from(*b) * f64::from(*b);
         }
-        let c = if e1 > 0.0 && e2 > 0.0 { dot / rr_dr60_detmath::sqrt(e1 * e2) } else { 0.0 };
+        let c = if e1 > 0.0 && e2 > 0.0 {
+            dot / rr_dr60_detmath::sqrt(e1 * e2)
+        } else {
+            0.0
+        };
         if c > best.0 {
             best = (c, lag);
         }
@@ -803,7 +862,11 @@ pub fn codec_markers_check(rate: u32) -> (f64, f64) {
     for (j, b) in marker_positions(rate).iter().enumerate() {
         // The kept onset the events predict, and its pre-gate twin index.
         let k = events[j].output_position;
-        let r: u64 = events.iter().take_while(|e| e.output_position <= k).map(|e| e.input_length).sum();
+        let r: u64 = events
+            .iter()
+            .take_while(|e| e.output_position <= k)
+            .map(|e| e.input_length)
+            .sum();
         let t = (k + r) as usize;
         // The envelopes' probe spans the burst's kept part from well after the onset (the
         // twin's envelope is already high before `t`, the decoded one rises at `k`) through
@@ -837,17 +900,25 @@ pub fn onepass_check(rate: u32) -> f64 {
     let mut out = vec![0.0f32; 1024];
     for block in x.chunks(1024) {
         let mut ev = vec![VasEvent::default(); p.max_events(block.len())];
-        let info = p.process_with_events(block, &mut out[..block.len()], &mut ev).unwrap();
+        let info = p
+            .process_with_events(block, &mut out[..block.len()], &mut ev)
+            .unwrap();
         events.extend_from_slice(&ev[..info.events]);
         y.extend_from_slice(&out[..info.produced]);
     }
     let quiet = (0.03 * f64::from(rate)) as usize;
     let out_onsets = onsets(&y, quiet);
-    assert_eq!(out_onsets.len(), 4, "{rate} Hz: four bursts out ({})", out_onsets.len());
+    assert_eq!(
+        out_onsets.len(),
+        4,
+        "{rate} Hz: four bursts out ({})",
+        out_onsets.len()
+    );
     let per_device = f64::from(rate) / 6000.0;
     let mut max_dev = 0.0f64;
     for (j, b) in marker_positions(rate).iter().enumerate() {
-        let (input, clamped) = timeline::onepass_output_to_input(out_onsets[j] as u64, p.latency_samples(), &events);
+        let (input, clamped) =
+            timeline::onepass_output_to_input(out_onsets[j] as u64, p.latency_samples(), &events);
         assert!(!clamped);
         let want = b + GATE_ONSET_DEVICE * u64::from(rate) / 6000;
         max_dev = max_dev.max((input as f64 - want as f64).abs() / per_device);
@@ -862,14 +933,38 @@ pub fn place_cases() -> Vec<(&'static str, u8, Vec<(u64, u8)>)> {
     let n = u64::from(rr_dr60::speed::CROSSFADE_SAMPLES);
     vec![
         ("first output", 3, vec![(0, 5)]),
-        ("landing on the fade's last output", 3, vec![(100, 5), (100 + n - 1, 1)]),
-        ("waiting request equal to the active level", 3, vec![(100, 5), (120, 5)]),
+        (
+            "landing on the fade's last output",
+            3,
+            vec![(100, 5), (100 + n - 1, 1)],
+        ),
+        (
+            "waiting request equal to the active level",
+            3,
+            vec![(100, 5), (120, 5)],
+        ),
         ("level 3 during a wait", 5, vec![(100, 1), (120, 3)]),
         ("request after the latch", 3, vec![(2990, 5)]),
-        ("two requests inside one fade", 3, vec![(100, 5), (130, 1), (160, 4)]),
-        ("deferred level 3 overtaken by the latch", 5, vec![(2990, 3)]),
-        ("waited request equal to the old level", 3, vec![(100, 5), (130, 3)]),
-        ("two entries on one device output", 3, vec![(100, 5), (100, 1)]),
+        (
+            "two requests inside one fade",
+            3,
+            vec![(100, 5), (130, 1), (160, 4)],
+        ),
+        (
+            "deferred level 3 overtaken by the latch",
+            5,
+            vec![(2990, 3)],
+        ),
+        (
+            "waited request equal to the old level",
+            3,
+            vec![(100, 5), (130, 3)],
+        ),
+        (
+            "two entries on one device output",
+            3,
+            vec![(100, 5), (100, 1)],
+        ),
         ("request in the tail", 1, vec![(2995, 5)]),
     ]
 }
@@ -890,11 +985,21 @@ pub fn host_position_for(d: u64, rate: u32) -> u64 {
 /// of outputs at which [`timeline::place_at`] disagrees with the trace, and the outputs.
 pub fn place_case_mismatches(rate: u32, start: u8, requests: &[(u64, u8)]) -> (usize, usize) {
     let x = stimulus::stored_tone(1000.0, 0.5, 3000);
-    let (mut p, number) = crate::configs::stored_recording(&crate::checks::standard, crate::configs::settings("speed_only", rate), &x);
+    let (mut p, number) = crate::configs::stored_recording(
+        &crate::checks::standard,
+        crate::configs::settings("speed_only", rate),
+        &x,
+    );
     p.set_playback_speed(start).unwrap();
     for (i, (d, level)) in requests.iter().enumerate() {
-        let pos = host_position_for(*d, rate) + if i > 0 && requests[i - 1].0 == *d { 1 } else { 0 };
-        p.schedule_change(Stream::Playback, pos, 2, f64::from(*level), i as u64 + 1).unwrap();
+        let pos = host_position_for(*d, rate)
+            + if i > 0 && requests[i - 1].0 == *d {
+                1
+            } else {
+                0
+            };
+        p.schedule_change(Stream::Playback, pos, 2, f64::from(*level), i as u64 + 1)
+            .unwrap();
     }
     p.start_playback(number).unwrap();
     let mut trace: Vec<PlaceState> = Vec::new();
@@ -926,7 +1031,6 @@ pub fn place_case_mismatches(rate: u32, start: u8, requests: &[(u64, u8)]) -> (u
     (mismatches, own_and_tail)
 }
 
-
 // ---- The six mutants (spec 020 SC-003, SC-005; tasks.md T023), each an alternative
 // implementation that its named oracle must reject.
 
@@ -945,7 +1049,11 @@ pub mod mutants {
     /// The record's checksum over the bytes without the line end before the checksum line:
     /// the reader rejects it (the round trip's read).
     pub fn checksum_wrong_span(record: &[u8]) -> Vec<u8> {
-        let body_end = record[..record.len() - 1].iter().rposition(|&b| b == b'\n').unwrap() + 1;
+        let body_end = record[..record.len() - 1]
+            .iter()
+            .rposition(|&b| b == b'\n')
+            .unwrap()
+            + 1;
         let h = rr_dr60::digest::fnv1a64(&record[..body_end - 1]);
         let mut v = record[..body_end].to_vec();
         v.extend_from_slice(format!("record_checksum = fnv1a64:{h:016x}\n").as_bytes());
@@ -957,7 +1065,9 @@ pub mod mutants {
     pub fn settings_from_engine(p: &Pipeline, record: &[u8]) -> Vec<u8> {
         let mut r = readout(record);
         r.settings = *p.settings();
-        let rows: Vec<_> = (0..r.event_count).map(|i| record::record_event(record, i).unwrap()).collect();
+        let rows: Vec<_> = (0..r.event_count)
+            .map(|i| record::record_event(record, i).unwrap())
+            .collect();
         let mut changes = vec![ChangeEntry::default(); r.change_count as usize];
         let n = record::record_changes(record, 0, &mut changes);
         changes.truncate(n);
@@ -968,7 +1078,12 @@ pub mod mutants {
 
     /// Map (a) with the codec's 180 kept samples added to the latency (the draft's error):
     /// the markers reject it (the centre moves by 180 device samples).
-    pub fn alignment_with_codec_delay(k: u64, s: &Settings, events: &[VasEvent], stop: &StopFields) -> u64 {
+    pub fn alignment_with_codec_delay(
+        k: u64,
+        s: &Settings,
+        events: &[VasEvent],
+        stop: &StopFields,
+    ) -> u64 {
         let a = timeline::kept_to_input(k, s, events, stop).unwrap();
         let (l, m) = l_m(s.host_rate_hz);
         a.centre.saturating_sub(180 * m / l)
@@ -976,7 +1091,13 @@ pub mod mutants {
 
     /// Map (c) without the wait: a request during a crossfade applies at once (spec 019's
     /// rejected alternative); the corner case "two requests inside one fade" rejects it.
-    pub fn place_at_without_wait(index: u64, rate: u32, start: u8, unit_count: u64, entries: &[ChangeEntry]) -> PlaceState {
+    pub fn place_at_without_wait(
+        index: u64,
+        rate: u32,
+        start: u8,
+        unit_count: u64,
+        entries: &[ChangeEntry],
+    ) -> PlaceState {
         let numerator = |level: u8| -> u64 { [3u64, 4, 5, 6, 7][(level - 1) as usize] };
         let level_of = |k: u64| -> u8 { [1u8, 2, 3, 4, 5][(k - 3) as usize] };
         let mut p5 = 0u64;
@@ -989,7 +1110,12 @@ pub mod mutants {
         let mut pending: Vec<(u64, u8)> = entries
             .iter()
             .filter(|e| e.control == 2)
-            .map(|e| (rr_dr60::changes::speed_landing(e.position, rate).unwrap(), e.after as u8))
+            .map(|e| {
+                (
+                    rr_dr60::changes::speed_landing(e.position, rate).unwrap(),
+                    e.after as u8,
+                )
+            })
             .collect();
         pending.reverse();
         let mut st = PlaceState::default();
@@ -1012,7 +1138,13 @@ pub mod mutants {
                     fade = Some((old, p5, 0));
                 }
             }
-            st = PlaceState { place_fifths: p5, level: level_of(active), fading: false, old_place_fifths: 0, latched };
+            st = PlaceState {
+                place_fifths: p5,
+                level: level_of(active),
+                fading: false,
+                old_place_fifths: 0,
+                latched,
+            };
             if let Some((ok, op5, k)) = fade {
                 let k = k + 1;
                 if u64::from(k) < n {
