@@ -109,7 +109,7 @@ fn codec_stages_us3_scenario_1() {
         assert_eq!(e.confidence, Confidence::Low, "stage {n}");
         // Restated 2026-10-17 by spec 013 (/speckit-analyze F2): stage 9 carries the playback
         // speed control (A-054) at model version 0.13.0; stage 7 stays at 0.8.0.
-        let version = if n == 9 { "0.13.0" } else { "0.8.0" };
+        let version = if n == 9 { "0.19.0" } else { "0.8.0" }; // spec 019: the crossfade moved stage 9
         assert_eq!(e.model_version, version, "stage {n}");
         assert!(
             !e.coverage.is_empty() && !e.controls.is_empty(),

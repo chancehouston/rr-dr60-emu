@@ -51,7 +51,7 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 18
+#define RR_DR60_VERSION_MINOR 19
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
@@ -97,6 +97,14 @@
 // The rows of the alkaline reference trajectory `rr_dr60_battery_trajectory_row` reads (spec
 // 018 FR-006; A-056, S-017). Equal to the Rust `battery::ALKALINE_TRAJECTORY.len()`.
 #define RR_DR60_BATTERY_TRAJECTORY_ROWS 7
+
+// The crossfade at a playback speed-level change, in milliseconds (spec 019 FR-002): from the
+// device sample a change lands on, the old level fades out at its own place and pitch while the
+// new level fades in, over 20 ms (120 device samples); a request made during a blend lands when
+// the blend ends, at most this much later (plus at most four device samples for a change into
+// level 3) and before `rr_dr60_playback_latency_samples`. **An engine convention, not a device
+// behavior** (A-054). Equal to the Rust `speed::CROSSFADE_MS`.
+#define RR_DR60_SPEED_CROSSFADE_MS 20
 
 // The number of playback speed levels (spec 013 FR-001; S-001). Equal to the Rust
 // `speed::LEVEL_COUNT`.

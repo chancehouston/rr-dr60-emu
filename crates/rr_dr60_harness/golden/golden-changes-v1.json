@@ -1,7 +1,7 @@
 {
   "format": "rr_dr60-golden",
   "version": 1,
-  "library_version": "0.16.0",
+  "library_version": "0.19.0",
   "entries": [
     {
       "stimulus": "volume_inside/one_pass",
@@ -2653,8 +2653,8 @@
       "stimulus": "speed_inside/playback",
       "config": "default_output",
       "host_rate_hz": 6000,
-      "n_samples": 5989,
-      "sha256": "7bf24533994d2cf87606561af08ca897da50292440e247843394fe18f9b0971c",
+      "n_samples": 6035,
+      "sha256": "fbc8040868ba1fe12a8f26697a94e93c9b2877aafe3285b2c8bb586721ee91d1",
       "head": [
         "00000000",
         "00000000",
@@ -2673,7 +2673,7 @@
         "3a81bcb5",
         "3915905e"
       ],
-      "rms_dbfs": -33.39,
+      "rms_dbfs": -33.43,
       "timed_changes": {
         "stream": "playback",
         "partition": "Fixed(64)",
@@ -2694,8 +2694,8 @@
       "stimulus": "speed_inside/playback",
       "config": "default_output",
       "host_rate_hz": 8000,
-      "n_samples": 8066,
-      "sha256": "e64ae0f2dd1ee6eb98ee231b3ed447d30546e8ee550f407060de003a3aaeafca",
+      "n_samples": 8127,
+      "sha256": "1854530c3f4b7ea0549570643c7d5f6e58594177b418e363bd3156e4382ce7e8",
       "head": [
         "00000000",
         "00000000",
@@ -2714,7 +2714,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -33.42,
+      "rms_dbfs": -33.5,
       "timed_changes": {
         "stream": "playback",
         "partition": "Fixed(64)",
@@ -2735,8 +2735,8 @@
       "stimulus": "speed_inside/playback",
       "config": "default_output",
       "host_rate_hz": 16000,
-      "n_samples": 16131,
-      "sha256": "04d9991f290be290774cb5a2d12ac09fda6231d711df8332355d1fb5ff0638d4",
+      "n_samples": 16253,
+      "sha256": "15f4dedd08783eb9761a21f1c6ac22c815ffa242f5e560c1d5276090cbe5c49f",
       "head": [
         "00000000",
         "00000000",
@@ -2755,7 +2755,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -33.81,
+      "rms_dbfs": -33.98,
       "timed_changes": {
         "stream": "playback",
         "partition": "Fixed(64)",
@@ -2776,8 +2776,8 @@
       "stimulus": "speed_inside/playback",
       "config": "default_output",
       "host_rate_hz": 44100,
-      "n_samples": 44454,
-      "sha256": "ad9bfd36a7aad96b90629498e1a7bc016ba1c7021ebc4d009e883785f06f6d90",
+      "n_samples": 44792,
+      "sha256": "4fdd04a1bdc663a90098e9f1f6253dae3298f6e0e6b8026f2930a6ef8b2476fd",
       "head": [
         "00000000",
         "00000000",
@@ -2796,7 +2796,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -33.68,
+      "rms_dbfs": -33.78,
       "timed_changes": {
         "stream": "playback",
         "partition": "Fixed(64)",
@@ -2817,8 +2817,90 @@
       "stimulus": "speed_inside/playback",
       "config": "default_output",
       "host_rate_hz": 48000,
-      "n_samples": 48384,
-      "sha256": "60bcacb01249818fa7d1c9077377f75f095310d343f23587add55ed65f3c8916",
+      "n_samples": 48752,
+      "sha256": "2513323f5d92344858fa11408de251c26a14c9acc39c549b1c7bffda7c5a07a9",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -33.83,
+      "timed_changes": {
+        "stream": "playback",
+        "partition": "Fixed(64)",
+        "schedule": [
+          "12007 2 5.0 1",
+          "24007 2 1.0 2",
+          "24009 2 3.0 3"
+        ],
+        "log": [
+          "12007 2 3.0 5.0 1",
+          "24007 2 5.0 1.0 2",
+          "24009 2 1.0 3.0 3"
+        ],
+        "max_per_call": 2
+      }
+    },
+    {
+      "stimulus": "speed_inside/playback",
+      "config": "default_output",
+      "host_rate_hz": 88200,
+      "n_samples": 88875,
+      "sha256": "6fff8fa36aace1f3602258f8437d2a8573601069befd19865f19c47a498a1a7f",
+      "head": [
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000",
+        "00000000"
+      ],
+      "rms_dbfs": -33.6,
+      "timed_changes": {
+        "stream": "playback",
+        "partition": "Fixed(64)",
+        "schedule": [
+          "22057 2 5.0 1",
+          "44107 2 1.0 2",
+          "44109 2 3.0 3"
+        ],
+        "log": [
+          "22057 2 3.0 5.0 1",
+          "44107 2 5.0 1.0 2",
+          "44109 2 1.0 3.0 3"
+        ],
+        "max_per_call": 2
+      }
+    },
+    {
+      "stimulus": "speed_inside/playback",
+      "config": "default_output",
+      "host_rate_hz": 96000,
+      "n_samples": 96735,
+      "sha256": "3a4383fb117538471dcea5a5ba3c6fb5b9669bf047965c91ee75a0a4563056c9",
       "head": [
         "00000000",
         "00000000",
@@ -2842,88 +2924,6 @@
         "stream": "playback",
         "partition": "Fixed(64)",
         "schedule": [
-          "12007 2 5.0 1",
-          "24007 2 1.0 2",
-          "24009 2 3.0 3"
-        ],
-        "log": [
-          "12007 2 3.0 5.0 1",
-          "24007 2 5.0 1.0 2",
-          "24009 2 1.0 3.0 3"
-        ],
-        "max_per_call": 2
-      }
-    },
-    {
-      "stimulus": "speed_inside/playback",
-      "config": "default_output",
-      "host_rate_hz": 88200,
-      "n_samples": 88875,
-      "sha256": "f3823cd976dd15f6f21bd7cae25a837995e1342c2858c2ac07d12bc70ac1170d",
-      "head": [
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000"
-      ],
-      "rms_dbfs": -33.58,
-      "timed_changes": {
-        "stream": "playback",
-        "partition": "Fixed(64)",
-        "schedule": [
-          "22057 2 5.0 1",
-          "44107 2 1.0 2",
-          "44109 2 3.0 3"
-        ],
-        "log": [
-          "22057 2 3.0 5.0 1",
-          "44107 2 5.0 1.0 2",
-          "44109 2 1.0 3.0 3"
-        ],
-        "max_per_call": 2
-      }
-    },
-    {
-      "stimulus": "speed_inside/playback",
-      "config": "default_output",
-      "host_rate_hz": 96000,
-      "n_samples": 96735,
-      "sha256": "de07509f83ee8de12140ad4e6df0eaf63d1c096e5ef83a44cb1be82bcd748e4d",
-      "head": [
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000",
-        "00000000"
-      ],
-      "rms_dbfs": -33.65,
-      "timed_changes": {
-        "stream": "playback",
-        "partition": "Fixed(64)",
-        "schedule": [
           "24007 2 5.0 1",
           "48007 2 1.0 2",
           "48009 2 3.0 3"
@@ -2940,8 +2940,8 @@
       "stimulus": "speed_inside/playback",
       "config": "default_codec",
       "host_rate_hz": 6000,
-      "n_samples": 5643,
-      "sha256": "942cdea2abe7a1524598bbc7db166f9a1c7adc0cf2863c9c7287519bdb3d72c2",
+      "n_samples": 5689,
+      "sha256": "1dfff5c2f2edf378708af885c1048584c02a91dad0c700fcb9f29994bafceecb",
       "head": [
         "00000000",
         "00000000",
@@ -2960,7 +2960,7 @@
         "b91835ee",
         "b957f04a"
       ],
-      "rms_dbfs": -25.0,
+      "rms_dbfs": -25.1,
       "timed_changes": {
         "stream": "playback",
         "partition": "Fixed(64)",
@@ -2981,8 +2981,8 @@
       "stimulus": "speed_inside/playback",
       "config": "default_codec",
       "host_rate_hz": 8000,
-      "n_samples": 7605,
-      "sha256": "c2de8dd09f76fd26a67d7795f5567b1441dbad919cfd1c1459f0fedfd634d795",
+      "n_samples": 7666,
+      "sha256": "fa17db4e691c2590dfc3a8ca8ed0020aec43c9980aa379e08eff4dc5627e0794",
       "head": [
         "00000000",
         "00000000",
@@ -3001,7 +3001,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -24.62,
+      "rms_dbfs": -24.71,
       "timed_changes": {
         "stream": "playback",
         "partition": "Fixed(64)",
@@ -3022,8 +3022,8 @@
       "stimulus": "speed_inside/playback",
       "config": "default_codec",
       "host_rate_hz": 16000,
-      "n_samples": 15209,
-      "sha256": "e7416616fbd69044799a88cc5c014ac4a5a245a42a8b9f4e40f06e34748e1bc8",
+      "n_samples": 15331,
+      "sha256": "cff731a5161adcf5c1cc0926934964963e4ed0a40d31ba7d3dda651c4143c6de",
       "head": [
         "00000000",
         "00000000",
@@ -3042,7 +3042,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -24.54,
+      "rms_dbfs": -24.64,
       "timed_changes": {
         "stream": "playback",
         "partition": "Fixed(64)",
@@ -3063,8 +3063,8 @@
       "stimulus": "speed_inside/playback",
       "config": "default_codec",
       "host_rate_hz": 44100,
-      "n_samples": 41915,
-      "sha256": "c397d464c37146c45a8ea78b3456db4d5caf5c2714d13d3acffff3e626d123c3",
+      "n_samples": 42253,
+      "sha256": "fb6e9e26c34ca9b7e0c96ffe4c7692f2ae143624643dfaf9130ad6006e5b360c",
       "head": [
         "00000000",
         "00000000",
@@ -3083,7 +3083,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -24.68,
+      "rms_dbfs": -24.79,
       "timed_changes": {
         "stream": "playback",
         "partition": "Fixed(64)",
@@ -3104,8 +3104,8 @@
       "stimulus": "speed_inside/playback",
       "config": "default_codec",
       "host_rate_hz": 48000,
-      "n_samples": 45620,
-      "sha256": "53ca976ba5db81198aaea14d5c954a004ba7f5b67ce5b2b656a8381f02e43d13",
+      "n_samples": 45988,
+      "sha256": "b446d9ec35ca438efc2fa3a011892ddd42fc85409ad819675e32421a2a50158e",
       "head": [
         "00000000",
         "00000000",
@@ -3124,7 +3124,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -24.5,
+      "rms_dbfs": -24.6,
       "timed_changes": {
         "stream": "playback",
         "partition": "Fixed(64)",
@@ -3146,7 +3146,7 @@
       "config": "default_codec",
       "host_rate_hz": 88200,
       "n_samples": 83797,
-      "sha256": "f18b50983d9f4c9cbd646ddf28186fe3bbb1cf5f75efa6f732719e07a00057d9",
+      "sha256": "02a6ccf17b091c7dc6c1e7974c7de048b087d5b0bcbce0bb0b27cb237d1c7239",
       "head": [
         "00000000",
         "00000000",
@@ -3165,7 +3165,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -24.72,
+      "rms_dbfs": -24.8,
       "timed_changes": {
         "stream": "playback",
         "partition": "Fixed(64)",
@@ -3187,7 +3187,7 @@
       "config": "default_codec",
       "host_rate_hz": 96000,
       "n_samples": 91208,
-      "sha256": "8ce1a4ef509cdb3b7bd7fcf7c7d0d74335cbf4384c5603dd1330006bae713524",
+      "sha256": "3e12397dbb3830c53c8af0e297c5f8772b81c3499abb0ddec32748d86b4a7ffe",
       "head": [
         "00000000",
         "00000000",
@@ -3206,7 +3206,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -24.7,
+      "rms_dbfs": -24.78,
       "timed_changes": {
         "stream": "playback",
         "partition": "Fixed(64)",
@@ -3228,7 +3228,7 @@
       "config": "default_output",
       "host_rate_hz": 6000,
       "n_samples": 4861,
-      "sha256": "a291887d5aeac77d049339fa91a984acdb0930f7c3c598ff1f150352114a15f6",
+      "sha256": "3bbb1346bd33ecfe7d54fa8398acd2078fe4fbae10c65559c9af552b709313c2",
       "head": [
         "00000000",
         "00000000",
@@ -3240,14 +3240,14 @@
         "397ea21f",
         "babdb6a0",
         "ba041f5e",
-        "b9d52bdf",
-        "b95a2056",
-        "3a4e3e1a",
-        "3a2f52c4",
-        "3ac57807",
-        "3a5b7af6"
+        "ba13141f",
+        "388c2c01",
+        "3a80f662",
+        "391e731c",
+        "3a821a47",
+        "391beb8f"
       ],
-      "rms_dbfs": -31.98,
+      "rms_dbfs": -31.99,
       "timed_changes": {
         "stream": "playback",
         "partition": "Fixed(64)",
@@ -3268,7 +3268,7 @@
       "config": "default_output",
       "host_rate_hz": 8000,
       "n_samples": 6561,
-      "sha256": "182ecf8c2c339c954f86db31bc97a2a406eb5b3524550d35e2052b0918d2a60e",
+      "sha256": "4967bce801df7d387b96b822da771cd538dc2e8403c3e3670bdf5dc27abffc06",
       "head": [
         "00000000",
         "00000000",
@@ -3287,7 +3287,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -31.22,
+      "rms_dbfs": -31.23,
       "timed_changes": {
         "stream": "playback",
         "partition": "Fixed(64)",
@@ -3308,7 +3308,7 @@
       "config": "default_output",
       "host_rate_hz": 16000,
       "n_samples": 13117,
-      "sha256": "04d3f05425151f66aa3f08ce88eb8682eaa9dddb86bb48c8271c081fd1018512",
+      "sha256": "a378a6098181d665055c3773d43e1cc2cf108e1a8faa9c012300ffd0c65e73b4",
       "head": [
         "00000000",
         "00000000",
@@ -3327,7 +3327,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -31.62,
+      "rms_dbfs": -31.64,
       "timed_changes": {
         "stream": "playback",
         "partition": "Fixed(64)",
@@ -3348,7 +3348,7 @@
       "config": "default_output",
       "host_rate_hz": 44100,
       "n_samples": 36149,
-      "sha256": "78ad2337ca7e2864f1e1c0b14436f24e450a613529547800a86290de81f3ff77",
+      "sha256": "ec4675e48ac4d15f2289251d41ede4702e495833321edbf86f82f3f0705111d5",
       "head": [
         "00000000",
         "00000000",
@@ -3367,7 +3367,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -31.38,
+      "rms_dbfs": -31.39,
       "timed_changes": {
         "stream": "playback",
         "partition": "Fixed(64)",
@@ -3388,7 +3388,7 @@
       "config": "default_output",
       "host_rate_hz": 48000,
       "n_samples": 39344,
-      "sha256": "dddb7b92072dfe1b94827f5617d2f0fe8d2ccdc7aa8c118fcd9a4d7f709ce4fc",
+      "sha256": "c06764c7004d417d0918392ed5d82af36441c6c2f7e94e2dba3c1332dcab35b6",
       "head": [
         "00000000",
         "00000000",
@@ -3407,7 +3407,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -31.36,
+      "rms_dbfs": -31.37,
       "timed_changes": {
         "stream": "playback",
         "partition": "Fixed(64)",
@@ -3428,7 +3428,7 @@
       "config": "default_output",
       "host_rate_hz": 88200,
       "n_samples": 72294,
-      "sha256": "87080e15da023211623532adacdad9d35e55c4cf986211876ee3d8e244f2e076",
+      "sha256": "a0ca46de9eb6968377fb6e1a4c176feafde14993b698adc5680bb46d8710ce98",
       "head": [
         "00000000",
         "00000000",
@@ -3447,7 +3447,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -31.33,
+      "rms_dbfs": -31.34,
       "timed_changes": {
         "stream": "playback",
         "partition": "Fixed(64)",
@@ -3468,7 +3468,7 @@
       "config": "default_output",
       "host_rate_hz": 96000,
       "n_samples": 78687,
-      "sha256": "d71d8129f8b0c3f16dba9b67df1df45edd1e0c7631ecf25f52dd55f622d2f8ff",
+      "sha256": "8d3c67ddd1443f2405016b0e59eff28ebea66dbcf4f8adda856763d342d60719",
       "head": [
         "00000000",
         "00000000",
@@ -3487,7 +3487,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -31.36,
+      "rms_dbfs": -31.37,
       "timed_changes": {
         "stream": "playback",
         "partition": "Fixed(64)",

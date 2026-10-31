@@ -23,6 +23,9 @@
 #     record path and the one-pass with the record schedule empty, 3 %;
 #     RR_DR60_RECORD_COST_CEILING on the runner; one knee change per block and the worst block
 #     reported).
+#   HEAD_TEST = crossfade: spec 019's speed-change crossfade against the baseline (019 FR-009: the
+#     playback at constant levels 3 and 5, 3 %; RR_DR60_CROSSFADE_COST_CEILING on the runner; the
+#     fade-every-200-ms figure and its worst block reported, the block asserted by its test).
 #   HEAD_TEST = battery: spec 018's battery value against the baseline (018 FR-007: the default
 #     front on the speaker route at the default value, 3 %; RR_DR60_BATTERY_COST_CEILING on the
 #     runner; the chain at 2.4 V on a full-scale square reported beside 3.0 V).
@@ -133,6 +136,64 @@ print(f"A/B meters vs {rev}, 48 kHz, 4096 blocks, speaker route, codec bypassed 
 print(f"  default front (stages 1 – 2 on): {rev} {bf:.2f} ns, working tree {hf:.2f} ns per host sample, {hf - bf:+.2f} ns ({100 * (hf / bf - 1):+.2f} %; ceiling {100 * ceiling:.0f} %) {'PASS' if front_ok else 'FAIL'}")
 print(f"  every stage off: {rev} {bo:.2f} ns, working tree {ho:.2f} ns per host sample, {ho - bo:+.2f} ns (budget {budget_ns:.2f} ns, the same absolute nanoseconds) {'PASS' if off_ok else 'FAIL'}")
 sys.exit(0 if front_ok and off_ok else 1)
+PY
+  exit $?
+fi
+
+if [ "$head_test" = "crossfade" ]; then
+  # Spec 019 FR-009 (research R-08): the crossfade's idle cost. `tests/crossfade_timing.rs` is
+  # written against 0.18's public API and copied into the baseline worktree; each build prints
+  # the fastest-of-45 figure of the codec-bypassed playback at a constant level 3 and at a
+  # constant level 5. Asserted: both within the ceiling (3 % by default,
+  # RR_DR60_CROSSFADE_COST_CEILING on the CI runner: 0.05); exits 1 when over. Then the head's
+  # `crossfade_fades_timing` (a change every 200 ms; its worst block asserted by the test) is run
+  # alone and reported.
+  cp "$root/crates/rr_dr60_harness/tests/crossfade_timing.rs" "$work/base/crates/rr_dr60_harness/tests/"
+  xbin_of() {
+    (cd "$1" && cargo test -q -p rr_dr60_harness --release --test "$2" --no-run --message-format=json 2>/dev/null) |
+      python3 -c 'import json,sys
+name = sys.argv[1]
+for l in sys.stdin:
+    try: m = json.loads(l)
+    except ValueError: continue
+    if m.get("reason") == "compiler-artifact" and m.get("target", {}).get("name") == name and m.get("executable"):
+        print(m["executable"])' "$2" | tail -1
+  }
+  echo "building the baseline ($baseline) and the working tree (crossfade) ..." >&2
+  base_bin="$(xbin_of "$work/base" crossfade_timing)"
+  head_bin="$(xbin_of "$root" crossfade_timing)"
+  fades_bin="$(xbin_of "$root" crossfade_fades_timing)"
+  [ -x "$base_bin" ] && [ -x "$head_bin" ] && [ -x "$fades_bin" ] || { echo "ab-timing: a build failed" >&2; exit 1; }
+  : >"$work/base.txt"
+  : >"$work/head.txt"
+  for i in 1 2 3; do
+    echo "round $i of 3" >&2
+    "$base_bin" --ignored --exact crossfade_cost --nocapture --test-threads=1 2>/dev/null | grep -oE 'level[35]_ns=[0-9.]+' >>"$work/base.txt"
+    "$head_bin" --ignored --exact crossfade_cost --nocapture --test-threads=1 2>/dev/null | grep -oE 'level[35]_ns=[0-9.]+' >>"$work/head.txt"
+  done
+  fades="$("$fades_bin" --ignored --exact crossfade_fades_cost --nocapture --test-threads=1 2>/dev/null | grep -oE '(fades_ns|worst_block_us)=[0-9.]+' | tr '\n' ' ')"
+  python3 - "$work/base.txt" "$work/head.txt" "$baseline" "${RR_DR60_CROSSFADE_COST_CEILING:-0.03}" "$fades" <<'PY'
+import re, sys
+def best(path):
+    out = {}
+    for line in open(path):
+        m = re.search(r"(\w+)=([\d.]+)", line.strip())
+        if m:
+            out[m.group(1)] = min(out.get(m.group(1), float("inf")), float(m.group(2)))
+    return out
+b, h, rev, ceiling, fades = best(sys.argv[1]), best(sys.argv[2]), sys.argv[3], float(sys.argv[4]), sys.argv[5]
+b3, h3 = b["level3_ns"], h["level3_ns"]
+b5, h5 = b["level5_ns"], h["level5_ns"]
+ok3 = h3 / b3 - 1 <= ceiling
+ok5 = h5 / b5 - 1 <= ceiling
+f = dict(re.findall(r"(\w+)=([\d.]+)", fades))
+fn = float(f.get("fades_ns", "nan"))
+wb = float(f.get("worst_block_us", "nan"))
+print(f"A/B crossfade vs {rev}, 48 kHz, 4096 blocks, speaker route, codec bypassed (019 FR-009; fastest of 45 runs × 3 alternations):")
+print(f"  level 3: {rev} {b3:.2f} ns, working tree {h3:.2f} ns per host sample, {h3 - b3:+.2f} ns ({100 * (h3 / b3 - 1):+.2f} %; ceiling {100 * ceiling:.0f} %) {'PASS' if ok3 else 'FAIL'}")
+print(f"  level 5: {rev} {b5:.2f} ns, working tree {h5:.2f} ns per host sample, {h5 - b5:+.2f} ns ({100 * (h5 / b5 - 1):+.2f} %; ceiling {100 * ceiling:.0f} %) {'PASS' if ok5 else 'FAIL'}")
+print(f"  a level change every 200 ms (reported): {fn:.2f} ns per host sample ({fn - h3:+.2f} ns, {100 * (fn / h3 - 1):+.2f} % against level 3); worst 4096-sample block {wb:.1f} µs of 85333")
+sys.exit(0 if ok3 and ok5 else 1)
 PY
   exit $?
 fi

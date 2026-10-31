@@ -1118,3 +1118,69 @@ fn battery_allocate_nothing() {
         unsafe { rr_dr60_destroy(handle) };
     }
 }
+
+/// Spec 019 FR-009: a level change during a playback (a crossfade starting, a request waiting)
+/// and the producing calls allocate nothing, in Rust and through the C API.
+#[test]
+fn crossfade_allocate_nothing() {
+    use rr_dr60_ffi::{
+        RrDr60PlayInfo, rr_dr60_play, rr_dr60_set_playback_speed, rr_dr60_start_playback,
+    };
+    let _turn = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let x = stimulus::voiced(6000.0, 0.5, -20.0, 0x019);
+    let mut output = vec![0.0f32; 256];
+    for &rate in configs::measurement_rates() {
+        let mut s = rr_dr60::Settings::new(rate);
+        s.speech_codec_enabled = false;
+        let (mut p, _) = configs::stored_recording(&|s| Pipeline::new(s).unwrap(), s, &x);
+        let c = configs::c_settings(&s);
+        let (q, _) = configs::stored_recording(&|s| Pipeline::new(s).unwrap(), s, &x);
+        let mut bytes = vec![0u8; q.export_len(1).unwrap()];
+        let _ = q.export(1, &mut bytes).unwrap();
+        let mut handle: *mut RrDr60Pipeline = core::ptr::null_mut();
+        // SAFETY: a valid settings struct and an out-pointer.
+        assert_eq!(unsafe { rr_dr60_create(&c, &mut handle) }, RrDr60Status::Ok);
+        // SAFETY: a live handle and the exported bytes.
+        assert_eq!(
+            unsafe {
+                rr_dr60_ffi::rr_dr60_import(
+                    handle,
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    core::ptr::null_mut(),
+                )
+            },
+            RrDr60Status::Ok
+        );
+        p.start_playback(1).unwrap();
+        // SAFETY: a live handle.
+        assert_eq!(
+            unsafe { rr_dr60_start_playback(handle, 1) },
+            RrDr60Status::Ok
+        );
+        let mut info = RrDr60PlayInfo::default();
+        MEASURING.with(|m| m.set(true));
+        let before = counts();
+        let _ = p.play(&mut output).unwrap();
+        p.set_playback_speed(5).unwrap(); // a fade starts at the next call
+        let _ = p.play(&mut output).unwrap();
+        p.set_playback_speed(1).unwrap(); // waits
+        let _ = p.play(&mut output).unwrap();
+        // SAFETY: the handle is live; the buffer is 256 samples.
+        let st = unsafe {
+            [
+                rr_dr60_play(handle, output.as_mut_ptr(), 256, &mut info),
+                rr_dr60_set_playback_speed(handle, 5),
+                rr_dr60_play(handle, output.as_mut_ptr(), 256, &mut info),
+                rr_dr60_set_playback_speed(handle, 1),
+                rr_dr60_play(handle, output.as_mut_ptr(), 256, &mut info),
+            ]
+        };
+        let after = counts();
+        MEASURING.with(|m| m.set(false));
+        assert!(st.iter().all(|&s| s == RrDr60Status::Ok), "{st:?}");
+        assert_eq!(after, before, "{rate} Hz: the crossfade allocated");
+        // SAFETY: destroying the handle once.
+        unsafe { rr_dr60_destroy(handle) };
+    }
+}

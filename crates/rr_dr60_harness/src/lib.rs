@@ -14,6 +14,7 @@ pub mod checks;
 pub mod codec_checks;
 pub mod configs;
 pub mod controls_checks;
+pub mod crossfade_checks;
 pub mod golden;
 pub mod manifest_checks;
 pub mod meters_checks;

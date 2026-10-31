@@ -254,7 +254,7 @@ pub fn rust_ramp_reference() -> (u64, usize) {
 /// played on the speaker route at volume 0.1 at speed level 5, the level set to 1 before play
 /// block 10 (480-sample blocks): a live change between two non-3 levels. Pinned once from the
 /// Rust path (`rust_speed_reference`); `ffi_parity::smoke_reference_hash_is_pinned` checks it.
-pub const SMOKE_SPEED_HASH: u64 = 0x0dd9_0285_502e_dcc3; // measured 2026-10-17 from the Rust path (79 776 samples; 013 T029)
+pub const SMOKE_SPEED_HASH: u64 = 0x5aa9_807e_28fa_9a5b; // re-pinned 2026-10-30 from the Rust path (spec 019: the level change at block 10 crossfades; 79 776 samples unchanged, one change; was 0x0dd9_0285_502e_dcc3, measured 2026-10-17, 013 T029)
 
 /// The speed case's length in host samples (the level-5 stretch, then level 1 to the end).
 pub const SMOKE_SPEED_SAMPLES: usize = 79_776; // measured 2026-10-17 (013 T029)

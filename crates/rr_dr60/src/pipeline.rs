@@ -154,6 +154,11 @@ pub struct Pipeline {
     /// The player's speed control (spec 013; A-054), between the decoder and stage 10; reset at
     /// every `start_playback`.
     pub(crate) speed: SpeedStage,
+    /// Spec 019 (test hooks): the speed control's device outputs of the last `play` call (the
+    /// first `SPEED_TRACE_CAPACITY` of them; the buffer is reserved at construction and never
+    /// grown, so the hooks build stays allocation-free in a call).
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) speed_trace: alloc::vec::Vec<f64>,
     /// Spec 016: the meter read-out of the last non-empty processing call (research R-01).
     pub(crate) meters: Meters,
     /// Spec 017 D4: the tag of the last landed change per record-side value (by slot), carried
@@ -426,6 +431,12 @@ impl OnePass {
 }
 
 /// Spec 018 FR-001: within `BATTERY_VOLTS_RANGE`, inclusive.
+/// The device-rate trace's fixed capacity (spec 019 test hooks): the device samples one play
+/// call of 8192 host samples pulls at the identity rate, 64 KiB, within the one-mebibyte
+/// footprint (spec 006 FR-017); the checks read it in calls of one host sample.
+#[cfg(feature = "__test-hooks")]
+const SPEED_TRACE_CAPACITY: usize = 8192; // engineering target (019 R-06)
+
 /// The live controls' values a pipeline starts with (`new`: the defaults; `reconfigure`: the
 /// values kept, spec 013 FR-001 and spec 018 FR-001).
 struct LiveStart {
@@ -522,6 +533,8 @@ impl Pipeline {
             decoder: settings.speech_codec_enabled.then(SpeechDecoder::new),
             speed_level,
             speed: SpeedStage::new(speed_level),
+            #[cfg(feature = "__test-hooks")]
+            speed_trace: alloc::vec::Vec::with_capacity(SPEED_TRACE_CAPACITY), // never grown: a play call pushes within it
         }
     }
 

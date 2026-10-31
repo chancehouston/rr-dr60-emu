@@ -110,7 +110,7 @@ pub fn play(p: &mut Pipeline, number: u32, call: usize, schedule: &[(usize, u8)]
 
 /// `narrow_out`: the engine's narrowing of a 64-bit sample for output (round to nearest, `f32`
 /// subnormals flushed to 0.0).
-fn narrow(y: f64) -> f32 {
+pub fn narrow(y: f64) -> f32 {
     let v = y as f32;
     if v.is_subnormal() { 0.0 } else { v }
 }
@@ -137,10 +137,28 @@ pub fn reference_output(x: &[f32], call: usize, schedule: &[(usize, u8)]) -> (Ve
     reference_output_at(x, call, start, &dev)
 }
 
+/// The crossfade's weights from the pinned expression (spec 019 research R-02): entry i − 1 is
+/// `u * u * (3.0 - 2.0 * u)` at u = i ÷ N, N = `speed::CROSSFADE_SAMPLES`; equal to the engine's
+/// table bit for bit (`us1_crossfade` asserts it against the hook).
+pub fn fade_weights() -> Vec<f64> {
+    let n = speed::CROSSFADE_SAMPLES;
+    (1..=n)
+        .map(|i| {
+            let u = f64::from(i) / f64::from(n);
+            u * u * (3.0 - 2.0 * u)
+        })
+        .collect()
+}
+
 /// [`reference_output`] with the level changes keyed by the **device-output index** n at which
 /// the request is made (spec 015 research R-08: a change scheduled at host position P is a
 /// request at n = d(P), `rr_dr60::changes::speed_landing`), `start` the level before output 0.
-/// Several requests at one index apply in order (the last wins).
+/// Several requests at one index apply in order (the last wins). Since spec 019 a change
+/// **crossfades** (research R-01, R-06): the request is applied only while no fade runs (the
+/// wait; the latest request held), a change into level 3 at a whole place; from the output it
+/// applies at, for N outputs the old level's value at its own place (advancing at the old
+/// ratio) and the new level's at the common place are blended as y_old + w_n·(y_new − y_old)
+/// for n < N and the new value itself at n = N.
 pub fn reference_output_at(
     x: &[f32],
     call: usize,
@@ -158,9 +176,13 @@ pub fn reference_output_at(
         .collect();
     let bank = |k: u32| &banks.iter().find(|(kk, _)| *kk == k).expect("k").1;
     let kk = x.len() as u64;
+    let weights = fade_weights();
+    let n_fade = weights.len() as u32;
     let mut active = numerator(start);
     let mut requested = active;
     let mut p5: u64 = 0;
+    // The running crossfade: (the old numerator, the old branch's place, outputs blended).
+    let mut fade: Option<(u32, u64, u32)> = None;
     let (mut out, mut place_after) = (Vec::new(), Vec::new());
     loop {
         let n = out.len() as u64;
@@ -170,14 +192,12 @@ pub fn reference_output_at(
             }
         }
         let latched = p5 >= 5 * kk;
-        if !latched && requested != active {
-            if requested == 5 {
-                if p5 % 5 == 0 {
-                    active = 5;
-                }
-            } else {
-                active = requested;
+        if !latched && requested != active && fade.is_none() && (requested != 5 || p5 % 5 == 0) {
+            // A change on the first output switches at once (spec 011's first-sample rule).
+            if n > 0 {
+                fade = Some((active, p5, 0));
             }
+            active = requested;
         }
         let i = (p5 / 5) as i64;
         let ph = (p5 % 5) as usize;
@@ -187,12 +207,31 @@ pub fn reference_output_at(
                 break;
             }
         }
-        let y = value_at(
+        let y_new = value_at(
             x,
             (active != 5).then(|| bank(active).as_slice()),
             active,
             p5,
         );
+        let y = match fade {
+            None => y_new,
+            Some((old_k, old_p5, m)) => {
+                let m = m + 1;
+                let y = if m >= n_fade {
+                    y_new
+                } else {
+                    let y_old = value_at(
+                        x,
+                        (old_k != 5).then(|| bank(old_k).as_slice()),
+                        old_k,
+                        old_p5,
+                    );
+                    y_old + weights[(m - 1) as usize] * (y_new - y_old)
+                };
+                fade = (m < n_fade).then_some((old_k, old_p5 + u64::from(old_k), m));
+                y
+            }
+        };
         out.push(narrow(y));
         let here = p5 / 5;
         p5 += u64::from(active);

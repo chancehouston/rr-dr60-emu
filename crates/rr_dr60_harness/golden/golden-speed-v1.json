@@ -1,7 +1,7 @@
 {
   "format": "rr_dr60-golden",
   "version": 1,
-  "library_version": "0.13.0",
+  "library_version": "0.19.0",
   "entries": [
     {
       "stimulus": "stored_tone_1k",
@@ -124,7 +124,7 @@
       "config": "speed_only_sched_a",
       "host_rate_hz": 6000,
       "n_samples": 11823,
-      "sha256": "f84f13ea5a9a3b84f675dbf4fd2ba3606ed1fcfc2e3c234e72ba8d65fa261840",
+      "sha256": "0752e832db14e52d4d074fd693b5c95e9fa14638ce97aaf59b8b2b410491cc9c",
       "head": [
         "00000000",
         "3eddb3d7",
@@ -143,7 +143,7 @@
         "3eddb3d7",
         "248d3132"
       ],
-      "rms_dbfs": -9.04,
+      "rms_dbfs": -9.09,
       "speed_level": 3,
       "speed_changes": [
         [
@@ -175,7 +175,7 @@
       "config": "speed_only_sched_b",
       "host_rate_hz": 6000,
       "n_samples": 14846,
-      "sha256": "54be6d7ef088bd7d1d7c3af5c37ee905182e593b691981f4a7e93485361c3a5a",
+      "sha256": "45edae7e328a1ee64fd45e94ff4e4b60572421ba31c606270aa147e98b40d0db",
       "head": [
         "3c0aa668",
         "3eaf48a1",
@@ -194,7 +194,7 @@
         "bebf7f3b",
         "3ad9fa78"
       ],
-      "rms_dbfs": -9.04,
+      "rms_dbfs": -9.06,
       "speed_level": 2,
       "speed_changes": [
         [
@@ -218,7 +218,7 @@
       "config": "speed_only_sched_c",
       "host_rate_hz": 6000,
       "n_samples": 12000,
-      "sha256": "17c6d30d93543f1cf140c445c0f1d9c502adb60cd1331cc2ce8851bcadf9df14",
+      "sha256": "4a6c0096205a73e6b0b8489b941015c4c1db2c9084d338115deed555abf6cd5e",
       "head": [
         "3c0aa668",
         "3e7eb427",
@@ -237,7 +237,7 @@
         "3e971bca",
         "bb6e403d"
       ],
-      "rms_dbfs": -9.03,
+      "rms_dbfs": -9.06,
       "speed_level": 1,
       "speed_changes": [
         [
@@ -381,7 +381,7 @@
       "config": "speed_only_sched_a",
       "host_rate_hz": 6000,
       "n_samples": 11823,
-      "sha256": "0ce216caad548f174f4ba8766dfa221e8e4dc63fc08ad486eaafffbf65ddc403",
+      "sha256": "28974a7043eef37d3ffded3c1da713184453a37d6e055c2b48f8a2a5f62f882e",
       "head": [
         "39d7cbb7",
         "bb2b3098",
@@ -400,7 +400,7 @@
         "bc154bd0",
         "3a058745"
       ],
-      "rms_dbfs": -22.68,
+      "rms_dbfs": -22.72,
       "speed_level": 3,
       "speed_changes": [
         [
@@ -432,7 +432,7 @@
       "config": "speed_only_sched_b",
       "host_rate_hz": 6000,
       "n_samples": 14846,
-      "sha256": "03a2b089a026c365f8d5ca91fc8da0908e5a9db973759b468081d0e93b96966f",
+      "sha256": "6f36349dd5b65bae29c22f6c3ac2801a5ef0041f17c76b50779f95aca6a42c30",
       "head": [
         "39de2454",
         "bb181f45",
@@ -451,7 +451,7 @@
         "bb98b640",
         "3aa914d8"
       ],
-      "rms_dbfs": -23.52,
+      "rms_dbfs": -23.54,
       "speed_level": 2,
       "speed_changes": [
         [
@@ -475,7 +475,7 @@
       "config": "speed_only_sched_c",
       "host_rate_hz": 6000,
       "n_samples": 12000,
-      "sha256": "1e6555595da68d98bb98b4d3deeab3e55d4862b4bf454f91b9979198264f83b3",
+      "sha256": "04710798e7f46995f35af856a653f38f816481d4cd9e6e8d0fae4f207d4c10af",
       "head": [
         "39de2454",
         "badcabeb",
@@ -494,7 +494,7 @@
         "bb0c8fac",
         "baa1fa1a"
       ],
-      "rms_dbfs": -23.03,
+      "rms_dbfs": -23.1,
       "speed_level": 1,
       "speed_changes": [
         [
@@ -5842,7 +5842,7 @@
       "config": "speed_sched_a",
       "host_rate_hz": 6000,
       "n_samples": 12390,
-      "sha256": "5268f412253489153155e0490a715d04ce0a6052d1570bc1e7048e4ebeae0fb3",
+      "sha256": "7dc02f5a106bda9c04c0830e06f9c7fbd7be5ba5c829ca11faf5e66397aa1652",
       "head": [
         "00000000",
         "00000000",
@@ -5861,7 +5861,7 @@
         "ba258864",
         "387c1032"
       ],
-      "rms_dbfs": -34.3,
+      "rms_dbfs": -34.34,
       "frames": 101,
       "seed": 0,
       "counter": 0,
@@ -5896,7 +5896,7 @@
       "config": "speed_sched_a",
       "host_rate_hz": 8000,
       "n_samples": 16601,
-      "sha256": "f34af0fac6d4f5b83b0788b6a5931d77d0e7ce765967996ceeaae0847639c9f3",
+      "sha256": "410964739871b89520a963cdf68b8e9f83a5fe474d3179d9f5f743d5f7039db7",
       "head": [
         "00000000",
         "00000000",
@@ -5915,7 +5915,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -35.47,
+      "rms_dbfs": -35.54,
       "frames": 101,
       "seed": 0,
       "counter": 0,
@@ -5950,7 +5950,7 @@
       "config": "speed_sched_a",
       "host_rate_hz": 16000,
       "n_samples": 33200,
-      "sha256": "9bfd23142e4a08e30f9d4252d27dabafd7c392a0b548f559467a7bab39c48768",
+      "sha256": "404c2afcbdf979eaf481c8d646c573359ec945e8ef473ae59691d7c303c764ed",
       "head": [
         "00000000",
         "00000000",
@@ -5969,7 +5969,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -36.09,
+      "rms_dbfs": -36.16,
       "frames": 101,
       "seed": 0,
       "counter": 0,
@@ -6004,7 +6004,7 @@
       "config": "speed_sched_a",
       "host_rate_hz": 44100,
       "n_samples": 91502,
-      "sha256": "d2448ccb8f7ab28fb95b6562234c520b41937766171cf64d98881c3c1d05239a",
+      "sha256": "cae776085566a84670e9436b13698b4eb3adce6f8ad8c19653206302d88cebb5",
       "head": [
         "00000000",
         "00000000",
@@ -6023,7 +6023,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -36.28,
+      "rms_dbfs": -36.36,
       "frames": 101,
       "seed": 0,
       "counter": 0,
@@ -6058,7 +6058,7 @@
       "config": "speed_sched_a",
       "host_rate_hz": 48000,
       "n_samples": 99592,
-      "sha256": "8a06007e1871766703c306850b4f01a1413ed9d09db1533b5ca95b826ad23e48",
+      "sha256": "73bc6abcdba1a2f44d14c94bebf498697be2c25aa9947e477e0e3b1f361efdfe",
       "head": [
         "00000000",
         "00000000",
@@ -6077,7 +6077,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -36.13,
+      "rms_dbfs": -36.2,
       "frames": 101,
       "seed": 0,
       "counter": 0,
@@ -6112,7 +6112,7 @@
       "config": "speed_sched_a",
       "host_rate_hz": 88200,
       "n_samples": 183000,
-      "sha256": "c2e1db66c7c27a90ae4fd8cb7ec1a31a93b94f2c3992c1172e8df66fb5e40a56",
+      "sha256": "c30586d7d6a3189afbee4b1c599fb17ae31d0eee642d659b531516d11658d0df",
       "head": [
         "00000000",
         "00000000",
@@ -6131,7 +6131,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -36.03,
+      "rms_dbfs": -36.1,
       "frames": 101,
       "seed": 0,
       "counter": 0,
@@ -6166,7 +6166,7 @@
       "config": "speed_sched_a",
       "host_rate_hz": 96000,
       "n_samples": 199183,
-      "sha256": "62599dedc28eb50dd49ce463448f86058701d7e2b33414dfdfc64cd0e729bc2e",
+      "sha256": "d7d3b216e18d12b78b8976b1993548352d1faec4263c278db66d6e19d197575b",
       "head": [
         "00000000",
         "00000000",
@@ -6185,7 +6185,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -36.25,
+      "rms_dbfs": -36.33,
       "frames": 101,
       "seed": 0,
       "counter": 0,
@@ -6220,7 +6220,7 @@
       "config": "speed_sched_b",
       "host_rate_hz": 6000,
       "n_samples": 15513,
-      "sha256": "67042f5126adecb5d801beddf4a49d31f002e3832288591b219fb5cdf4134998",
+      "sha256": "dca28887d0fbb56bc1170dea809a041551efc1838ad9bf075938e8ecbc5b2024",
       "head": [
         "37b59bb7",
         "b776031e",
@@ -6239,7 +6239,7 @@
         "39b89667",
         "3ab5ca00"
       ],
-      "rms_dbfs": -35.44,
+      "rms_dbfs": -35.39,
       "frames": 101,
       "seed": 0,
       "counter": 0,
@@ -6270,7 +6270,7 @@
       "config": "speed_sched_b",
       "host_rate_hz": 8000,
       "n_samples": 20765,
-      "sha256": "dd4307b3aeb42072f2a4591af0f93abdec6778137eaa9d9febbd74623565fb9b",
+      "sha256": "412923db5b59fa3e964fb7fb3433a3217c7e8e77d7410985deab3c61c1ee860d",
       "head": [
         "00000000",
         "00000000",
@@ -6289,7 +6289,7 @@
         "ae73fb42",
         "2f03c6e7"
       ],
-      "rms_dbfs": -37.31,
+      "rms_dbfs": -37.25,
       "frames": 101,
       "seed": 0,
       "counter": 0,
@@ -6320,7 +6320,7 @@
       "config": "speed_sched_b",
       "host_rate_hz": 16000,
       "n_samples": 41528,
-      "sha256": "ac85e2f1714cabb7e9ee7cb119f9ed16a1b72e3bc4d6a9b7f68ba6037d2727a2",
+      "sha256": "1e099889bab74a514743880af4f4457664847b72c97ab6dff4557e9fcaec67c9",
       "head": [
         "00000000",
         "00000000",
@@ -6339,7 +6339,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -38.01,
+      "rms_dbfs": -37.95,
       "frames": 101,
       "seed": 0,
       "counter": 0,
@@ -6370,7 +6370,7 @@
       "config": "speed_sched_b",
       "host_rate_hz": 44100,
       "n_samples": 114456,
-      "sha256": "99fe9fc45682e866c86734a384d0e08979358e7828e4715eb8c12f53a157a5ce",
+      "sha256": "879451980b21c4351d870676b55b388489d9d555dbfbbad0397d0c0033c5fc19",
       "head": [
         "00000000",
         "00000000",
@@ -6389,7 +6389,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -38.19,
+      "rms_dbfs": -38.14,
       "frames": 101,
       "seed": 0,
       "counter": 0,
@@ -6420,7 +6420,7 @@
       "config": "speed_sched_b",
       "host_rate_hz": 48000,
       "n_samples": 124576,
-      "sha256": "9b88fc4f47b0acbb904c62357962a6d2194b09dcc837219b6b2b3540afe28cc3",
+      "sha256": "2f81d11c39e521528416be101a750187789183f24035da23db3844a43af8fe25",
       "head": [
         "00000000",
         "00000000",
@@ -6439,7 +6439,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -38.24,
+      "rms_dbfs": -38.2,
       "frames": 101,
       "seed": 0,
       "counter": 0,
@@ -6470,7 +6470,7 @@
       "config": "speed_sched_b",
       "host_rate_hz": 88200,
       "n_samples": 228908,
-      "sha256": "3c3be6962712f36fe32c8ff02b2900a846f13294db60775ddb005af21e12232d",
+      "sha256": "1dba2e281e30ceb5abfcef7679a835581878d2f0991948072a387e20cf430261",
       "head": [
         "00000000",
         "00000000",
@@ -6489,7 +6489,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -38.22,
+      "rms_dbfs": -38.16,
       "frames": 101,
       "seed": 0,
       "counter": 0,
@@ -6520,7 +6520,7 @@
       "config": "speed_sched_b",
       "host_rate_hz": 96000,
       "n_samples": 249151,
-      "sha256": "57b1c1e7c1b3363351c3ac6c0db3e5439391982a62a734d02f1b153c662eeb6c",
+      "sha256": "1c9fcdf2171b88daf5fdcaa254a00f7290a6d5cd9bf9b6c080815fdb1bdac5a6",
       "head": [
         "00000000",
         "00000000",
@@ -6539,7 +6539,7 @@
         "00000000",
         "00000000"
       ],
-      "rms_dbfs": -38.31,
+      "rms_dbfs": -38.27,
       "frames": 101,
       "seed": 0,
       "counter": 0,

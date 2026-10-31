@@ -56,3 +56,7 @@ jobs:
         run: scripts/ab-timing.sh 24ffab9 battery
         env:
           RR_DR60_BATTERY_COST_CEILING: "0.05"
+      - name: Speed-change crossfade A/B (019 FR-009, ceiling 5 %)
+        run: scripts/ab-timing.sh 13defc7 crossfade
+        env:
+          RR_DR60_CROSSFADE_COST_CEILING: "0.05"

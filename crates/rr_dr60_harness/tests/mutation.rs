@@ -1564,3 +1564,89 @@ mod battery {
         assert_eq!(count_of(&mut with(g, true), x).0, 1, "the mutant counts it");
     }
 }
+
+mod crossfade {
+    use rr_dr60::__test_hooks::SpeedMutation;
+    use rr_dr60::{Pipeline, Settings};
+    use rr_dr60_harness::checks::{MeasurementResult, assert_all, standard};
+    use rr_dr60_harness::crossfade_checks as xf;
+
+    fn failed(results: &[MeasurementResult]) -> Vec<&'static str> {
+        results
+            .iter()
+            .filter(|r| !r.passed)
+            .map(|r| r.property)
+            .collect()
+    }
+
+    fn mutant(m: SpeedMutation) -> impl Fn(Settings) -> Pipeline {
+        move |s| Pipeline::__with_speed_mutation(s, &m).unwrap()
+    }
+
+    /// The instantaneous switch (0.18) fails the blend identity and the click table's 30 dB
+    /// rows; the committed crossfade passes both.
+    #[test]
+    fn step_is_caught_by_the_identity_and_the_click_table() {
+        let m = mutant(SpeedMutation {
+            fade_step: true,
+            ..SpeedMutation::default()
+        });
+        let failed_id = failed(&xf::blend_identity(&m, 6000, (3, 5)));
+        assert!(
+            failed_id.contains(&"engine equals the reference bit for bit (mismatches)"),
+            "the step was not caught: {failed_id:?}"
+        );
+        // The click table against itself: a stepped "crossfade" reads 0 dB below the switch.
+        let failed_click = failed(&xf::click_table(&m));
+        assert!(
+            failed_click.contains(&"crossfade click energy below the switch's, the 40 ms reader"),
+            "the step was not caught by the click table: {failed_click:?}"
+        );
+        assert_all(&xf::blend_identity(&standard, 6000, (3, 5)));
+    }
+
+    /// A linear weight fails the blend identity (0.25 against 0.15625 at n = 30).
+    #[test]
+    fn linear_weight_is_caught() {
+        let m = mutant(SpeedMutation {
+            fade_linear: true,
+            ..SpeedMutation::default()
+        });
+        let failed = failed(&xf::blend_identity(&m, 6000, (1, 5)));
+        assert!(
+            failed.contains(&"engine equals the reference bit for bit (mismatches)"),
+            "the linear weight was not caught: {failed:?}"
+        );
+    }
+
+    /// A fade one sample longer or shorter fails the splice from s + N − 1 and the identity.
+    #[test]
+    fn length_mutants_are_caught() {
+        for delta in [1i32, -1] {
+            let m = mutant(SpeedMutation {
+                fade_len_delta: delta,
+                ..SpeedMutation::default()
+            });
+            let failed = failed(&xf::blend_identity(&m, 6000, (5, 1)));
+            assert!(
+                failed.contains(&"engine equals the reference bit for bit (mismatches)"),
+                "delta {delta} was not caught: {failed:?}"
+            );
+        }
+    }
+
+    /// Applying a request at once during a fade fails the wait cases; the committed wait passes.
+    #[test]
+    fn no_wait_is_caught_by_the_wait_cases() {
+        let m = mutant(SpeedMutation {
+            fade_no_wait: true,
+            ..SpeedMutation::default()
+        });
+        let failed = failed(&xf::wait_cases(&m, 6000));
+        assert!(
+            failed.contains(&"the wait: engine equals the reference bit for bit (mismatches)"),
+            "no-wait was not caught: {failed:?}"
+        );
+        assert_all(&xf::wait_cases(&standard, 6000));
+    }
+}

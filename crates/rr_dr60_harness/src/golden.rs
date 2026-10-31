@@ -1168,6 +1168,9 @@ fn speed_play(
 /// having no effect, and the speed-only entries against the independent reference.
 pub fn generate_speed(make: Make<'_>, bless: bool) -> GoldenFile {
     use crate::speed_checks::{mismatches, reference_output, stored_stream};
+    if bless {
+        speed_re_bless_gate();
+    }
     let mut entries = Vec::new();
     let mut push = |stim: &str,
                     config: String,
@@ -1256,10 +1259,12 @@ pub fn generate_speed(make: Make<'_>, bless: bool) -> GoldenFile {
                         let (y, applied, place, frames, reached) =
                             speed_play(&mut p, call, &schedule, after, k);
                         if bless {
-                            // Every scheduled change lands before the place reaches K (review B1).
+                            // Every scheduled change lands before the place reaches K (review B1)
+                            // and its 20 ms blend completes before it (spec 019 research R-07:
+                            // a call is 20 ms, so the next call is still before K).
                             assert!(
-                                schedule.iter().all(|&(c, _)| c < reached),
-                                "{rate} {sched}: a change after the end"
+                                schedule.iter().all(|&(c, _)| c + 1 < reached),
+                                "{rate} {sched}: a change or its blend after the end"
                             );
                         }
                         if bless && after.is_some() {
@@ -1312,9 +1317,10 @@ pub fn generate_speed(make: Make<'_>, bless: bool) -> GoldenFile {
         for (name, schedule, after, call) in runs {
             let (y, applied, place, _, reached) = speed_play(&mut p, call, &schedule, after, k);
             if bless {
+                // The blend of 120 outputs is one call of 120 (or 121): the next call before K.
                 assert!(
-                    schedule.iter().all(|&(c, _)| c < reached),
-                    "{stim} {name}: a change after the end (review B1)"
+                    schedule.iter().all(|&(c, _)| c + 1 < reached),
+                    "{stim} {name}: a change or its blend after the end (review B1; 019 R-07)"
                 );
                 let sched: Vec<(usize, u8)> =
                     applied.iter().map(|&(c, l)| (c as usize, l)).collect();
@@ -1360,6 +1366,65 @@ pub fn generate_speed(make: Make<'_>, bless: bool) -> GoldenFile {
 /// # Panics
 ///
 /// If the file is missing or unreadable.
+/// The SHA-256 of `golden-speed-v1.json` as version 0.18 committed it (spec 013's bless): the
+/// 0.18 gate runs while the committed file is still that one and skips itself afterwards.
+const GOLDEN_SPEED_0_18_SHA256: &str =
+    "d36b0a75625e67b11cb513d6b80be29b8827e3f60ee737c084eebdbc6e28dce2";
+/// The SHA-256 of `golden-changes-v1.json` as version 0.18 committed it (spec 015's bless).
+const GOLDEN_CHANGES_0_18_SHA256: &str =
+    "e6f1565c425a068b5a51ad39d07d15cad994847318407a5e2e9f8566c94b88de";
+
+/// Whether the committed golden `name` is still version 0.18's (its SHA-256 equals `sha`).
+fn committed_is_0_18(name: &str, sha: &str) -> bool {
+    let bytes = std::fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("golden")
+            .join(name),
+    )
+    .expect("the committed golden");
+    let hex: String = Sha256::digest(&bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    hex == sha
+}
+
+/// Spec 019 research R-07, the re-bless gate (hardware B2): with `fade_step` on (no fade, the
+/// request applied at once: version 0.18's switch) the generator regenerates the committed
+/// `golden-speed-v1.json` bit for bit, entry by entry, before the file is re-blessed for the
+/// crossfade; afterwards every entry without a schedule must still equal the committed one
+/// (the constant-level identity, FR-003). The 0.18 check runs only while the committed file is
+/// still 0.18's (its SHA-256) and skips itself on a later re-bless.
+pub fn speed_re_bless_gate() {
+    let committed = committed_speed();
+    if committed_is_0_18("golden-speed-v1.json", GOLDEN_SPEED_0_18_SHA256) {
+        let stepped = generate_speed(&crate::crossfade_checks::stepped, false);
+        assert_eq!(stepped.entries.len(), committed.entries.len());
+        for (c, a) in committed.entries.iter().zip(&stepped.entries) {
+            assert_eq!(
+                (&c.stimulus, &c.config, c.host_rate_hz, &c.sha256),
+                (&a.stimulus, &a.config, a.host_rate_hz, &a.sha256),
+                "the 0.18 gate: the stepped build does not regenerate the committed entry"
+            );
+        }
+    }
+    let actual = generate_speed(&crate::checks::standard, false);
+    for (c, a) in committed.entries.iter().zip(&actual.entries) {
+        if c.speed_changes.is_none() {
+            assert_eq!(
+                c, a,
+                "{}/{}/{} Hz: a constant-level entry moved (019 FR-003)",
+                c.stimulus, c.config, c.host_rate_hz
+            );
+        }
+    }
+}
+
+/// The committed spec 013 speed golden file (re-blessed once by spec 019).
+///
+/// # Panics
+///
+/// If the embedded file is not valid golden JSON.
 pub fn committed_speed() -> GoldenFile {
     load(&path_speed()).expect("golden-speed-v1.json")
 }
@@ -1927,6 +1992,9 @@ fn log_row(e: &rr_dr60::ChangeEntry) -> String {
 /// cross-stream and passed-position ones, which schedule after a prefix run).
 pub fn generate_changes(make: Make<'_>, bless: bool) -> GoldenFile {
     use crate::changes_checks::{self as cc, Partition, Source};
+    if bless {
+        changes_re_bless_gate();
+    }
     let mut entries = Vec::new();
     for &(scenario, stream) in &CHANGES_SCENARIOS {
         let configs_for: &[&str] = if scenario == "speed_inside" {
@@ -2015,6 +2083,69 @@ pub fn generate_changes(make: Make<'_>, bless: bool) -> GoldenFile {
         version: 1,
         library_version: rr_dr60::VERSION.into(),
         entries,
+    }
+}
+
+/// Spec 019 research R-07 (hardware B2, B3): before `golden-changes-v1.json` is re-blessed for
+/// the crossfade, the stepped build regenerates the committed entries with a speed change bit
+/// for bit (while the committed file is still 0.18's, by its SHA-256), every other entry equals the
+/// committed one, and the `speed_inside` entries' produced counts moved by the wait (longer: the
+/// request into level 3 lands at the fade's end instead of a few outputs after the request).
+pub fn changes_re_bless_gate() {
+    let committed = committed_changes();
+    let actual = generate_changes(&crate::checks::standard, false);
+    assert_eq!(committed.entries.len(), actual.entries.len());
+    let run_gate = committed_is_0_18("golden-changes-v1.json", GOLDEN_CHANGES_0_18_SHA256);
+    // An entry carries a speed change when a schedule row names the speed control
+    // (`position control value tag`; `speed_inside` and the drain / post-latch scenarios).
+    let speed = crate::changes_checks::speed_control().to_string();
+    let has_speed = |e: &GoldenEntry| {
+        e.timed_changes.as_ref().is_some_and(|g| {
+            g.schedule
+                .iter()
+                .any(|row| row.split(' ').nth(1) == Some(speed.as_str()))
+        })
+    };
+    if run_gate {
+        let stepped = generate_changes(&crate::crossfade_checks::stepped, false);
+        for (c, a) in committed.entries.iter().zip(&stepped.entries) {
+            if has_speed(c) {
+                assert_eq!(
+                    (&c.sha256, c.n_samples),
+                    (&a.sha256, a.n_samples),
+                    "the 0.18 gate: {}/{}/{} Hz",
+                    c.stimulus,
+                    c.config,
+                    c.host_rate_hz
+                );
+            }
+        }
+    }
+    for (c, a) in committed.entries.iter().zip(&actual.entries) {
+        if has_speed(c) {
+            if c.stimulus.starts_with("speed_inside") {
+                // Two requests one device sample apart: the second waits (hardware B3).
+                assert!(
+                    a.n_samples >= c.n_samples,
+                    "{}/{}/{} Hz: the wait shortened the playback (019 R-07)",
+                    c.stimulus,
+                    c.config,
+                    c.host_rate_hz
+                );
+            } else {
+                assert_eq!(
+                    c.n_samples, a.n_samples,
+                    "{}/{}/{} Hz: a lone speed change moved the length (019 FR-006)",
+                    c.stimulus, c.config, c.host_rate_hz
+                );
+            }
+        } else {
+            assert_eq!(
+                c, a,
+                "{}/{}/{} Hz: an entry without a speed change moved (019 FR-003)",
+                c.stimulus, c.config, c.host_rate_hz
+            );
+        }
     }
 }
 

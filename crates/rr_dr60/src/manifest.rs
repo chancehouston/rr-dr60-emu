@@ -422,13 +422,13 @@ stage_table! {
     },
     {
         number: 9, identifier: "decoder", name: "Speech decoder (CELP)",
-        description: "Rebuilds the voice-band stream from the stored CELP frames for playback, at one of five playback speeds (level 3 is normal).",
+        description: "Rebuilds the voice-band stream from the stored CELP frames at one of five speeds (level 3 is normal); a level change blends over 20 ms, an engine convention.",
         status: Assumed, path: Playback, confidence: Low,
         sources: ["S-001", "S-002", "S-003", "S-008", "S-009", "S-010", "S-011", "S-012", "S-018"],
         assumptions: ["A-004", "A-040", "A-041", "A-054"],
-        coverage: "the device's own decoder (frame length, look-ahead, codebooks, postfilter); its speed method (A-054); pitch-kept speeds",
+        coverage: "the device's own decoder (frame length, look-ahead, codebooks); its speed method and the sound of a level change (A-054)",
         controls: "speech_codec_enabled; set_playback_speed; Tap::AfterDecoder; PlayInfo.frames, PlayInfo.frame_index, PlayInfo.place",
-        model_version: "0.13.0",
+        model_version: "0.19.0",
     },
     {
         number: 10, identifier: "codec_output", name: "Codec output: DAC and reconstruction filter",

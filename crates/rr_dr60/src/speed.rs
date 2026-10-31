@@ -31,6 +31,16 @@ pub const LOOKAHEAD_SAMPLES: u32 = 28; // engineering target (013 R-03: 281-tap 
 /// the drain (level 1; 0 at level 3; spec 013 FR-005, research R-04).
 pub const MAX_TAIL_SAMPLES: u32 = 46; // 013 R-04 (speed_design.py)
 
+/// The crossfade at a level change, in device samples (spec 019 FR-002): from the device sample
+/// a change lands on, the old level fades out at its own place and ratio while the new level
+/// fades in from the common place, over this many outputs (20 ms; an **engine convention**,
+/// A-045's length restated, A-054: the device's behavior at a change is unknown).
+pub const CROSSFADE_SAMPLES: u32 = 120; // 019 FR-002: an engine convention (A-045's length)
+
+/// The crossfade's length in milliseconds (`CROSSFADE_SAMPLES` ÷ 6, at the device rate A-026),
+/// beside [`output::VOLUME_TRANSITION_MS`](crate::output::VOLUME_TRANSITION_MS).
+pub const CROSSFADE_MS: u32 = 20; // 019 FR-002
+
 /// The speed ratio of `level` (1 … 5) as a number, for display only; `None` for any other
 /// level. The engine counts places in exact fifths and never uses this value.
 pub fn ratio(level: u8) -> Option<f64> {

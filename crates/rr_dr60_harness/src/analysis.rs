@@ -386,8 +386,28 @@ pub const THIRD_OCTAVE_CENTRES_HZ: [f64; 10] = [
 /// instantaneous step is `db(step / transition)` with the step's window centred on the step
 /// and the transition's on its midpoint (research R-02, R-05). Samples outside `y` read as 0.
 pub fn click_energy<T: Copy + Into<f64>>(y: &[T], rate: u32, centre: f64) -> f64 {
+    click_energy_in(y, rate, centre, 0.5, &[1000.0])
+}
+
+/// Spec 019 research R-06: spec 011's click reader with its window length and exclusions as
+/// parameters: a Hann window of `round(window_s · rate)` samples centred on `centre` (a host-
+/// or device-sample index, fractional allowed), the summed power of the bins at 20 Hz ≤ f ≤
+/// 2750 Hz outside every `exclusions_hz[i]` ± 250 Hz (an exclusion above the Nyquist frequency
+/// folds to `rate − f`; overlapping exclusions are a union). `click_energy` is this reader at
+/// 0.5 s and `[1000.0]`.
+pub fn click_energy_in<T: Copy + Into<f64>>(
+    y: &[T],
+    rate: u32,
+    centre: f64,
+    window_s: f64,
+    exclusions_hz: &[f64],
+) -> f64 {
     let fs = f64::from(rate);
-    let len = (0.5 * fs).round() as usize;
+    let len = (window_s * fs).round() as usize;
+    let excl: Vec<f64> = exclusions_hz
+        .iter()
+        .map(|&e| if e > fs / 2.0 { fs - e } else { e })
+        .collect();
     let start = (centre - len as f64 / 2.0).round() as i64;
     let mut buf: Vec<Complex64> = (0..len)
         .map(|n| {
@@ -407,7 +427,7 @@ pub fn click_energy<T: Copy + Into<f64>>(y: &[T], rate: u32, centre: f64) -> f64
     (0..=len / 2)
         .filter(|&k| {
             let f = k as f64 * fs / len as f64;
-            (20.0..=2750.0).contains(&f) && (f - 1000.0).abs() > 250.0
+            (20.0..=2750.0).contains(&f) && excl.iter().all(|&e| (f - e).abs() > 250.0)
         })
         .map(|k| buf[k].norm_sqr())
         .sum()

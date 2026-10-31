@@ -47,7 +47,7 @@ static RrDr60Settings settings_011(uint32_t host_rate_hz) {
 /* Spec 011 T035: the volume-transition case (the square at 0.1 on the speaker route, 1.0 before
    play block 10, 0.4 before block 11), pinned from the Rust path (smoke_reference.rs). */
 #define RR_DR60_SMOKE_SPEAKER_RAMP_HASH 0xcc0133ffc64ac96eULL
-#define RR_DR60_SMOKE_SPEED_HASH 0x0dd90285502edcc3ULL /* spec 013 T029: smoke_reference::SMOKE_SPEED_HASH */
+#define RR_DR60_SMOKE_SPEED_HASH 0x5aa9807e28fa9a5bULL /* smoke_reference::SMOKE_SPEED_HASH; re-pinned by spec 019 (the crossfade), was 0x0dd90285502edcc3 (013 T029) */
 #define RR_DR60_SMOKE_SPEED_SAMPLES 79776
 /* Spec 012 T048 (contracts/c-api.md › Smoke loop): the microphone cases, pinned from the Rust
    path (smoke_reference.rs): the 0.12 default one-pass on the square plus silence, and two
