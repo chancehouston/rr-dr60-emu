@@ -31,4 +31,4 @@
 
 ## Notes
 
-- The three draft reviews (coach, hardware, product) run before the owner's sign-off, per the house cadence.
+- The three draft reviews (coach 1 – 18, hardware B1 – B10, product M1 – M8) are applied at their defaults; D11 (the tier) is new from the product review; the owner's sign-off is next.
