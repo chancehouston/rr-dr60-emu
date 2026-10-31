@@ -2,64 +2,71 @@
 
 ## Entities
 
-### Fade (per stage; `stages/output.rs` for 11 – 13, `paths.rs::PlaybackHalf` for 10)
+### Fade (per stage; `stages/fade.rs`, used by `stages/output.rs` for 11 – 13 and `paths.rs::PlaybackHalf` for 10)
 
 | Field | Type | Meaning | Rules |
 |---|---|---|---|
-| `k` | u32 | The phase index, 0 … N. 0 = at rest on, N = at rest bypassed. | Landing sample computes k = 1 (or N − 1 for a return from rest). |
-| `dir` | i8 | −1 toward on, 0 at rest, +1 toward bypassed. | A landing from rest sets it; a landing during a fade flips it (R-02); clamped at 0 and N. |
-| `n` | u32 | N = 0.02 × rate (host) or 120 (device). | Fixed at construction. |
-| `inv_n` | f64 | 1 / N. | Fixed at construction. |
+| `k` | u32 | The phase index, 0 … N. 0 = at rest on, N = at rest bypassed. | The landing sample computes k = 1 (a return from rest N − 1); the step clamps to [0, N] first, then tests the ends (R-02). |
+| `dir` | i8 | −1 toward on, 0 at rest, +1 toward bypassed. | A landing from rest sets it; a landing during a fade flips it (k kept). |
+| `n` | u32 | N = `volume_transition_samples(rate)` (host) or `speed::CROSSFADE_SAMPLES` (device). | Fixed at construction. |
+| `inv_n` | f64 | 1 / N. | Fixed at construction; (N/2)·inv_n = 0.5 exactly at the seven rates (R-01). |
 
-The stage's contribution at a sample: at rest on → y (selected); at rest bypassed → x (selected); fading → y + w·(x − y), w = u·u·(3 − 2u), u = k · inv_n (R-01). "y" is the stage's processed output (the stage runs every sample while configured on), "x" its input.
+The stage's contribution at a sample: k = 0 → y (selected); k = N → x (selected); otherwise y + w·(x − y), w = u·u·(3 − 2u), u = k · inv_n. "y" is the stage's processed output (the stage runs every sample while configured on), "x" its input. `land(bypassed, at_once)`: `at_once` snaps (k = N or 0, dir = 0); otherwise sets or flips `dir`.
 
-### OutputChain additions
+### OutputChain additions (`#[repr(C)]`, the hot fields first)
 
 | Field | Type | Meaning |
 |---|---|---|
-| `fading` | bool | Any of the three fades has `dir != 0` (the hot-path gate, R-08). |
+| `bypass_state` | u8 | Bit 0: any fade running; bits 1 – 3: stages 11, 12, 13 at rest bypassed. 0 = 0.20's path (R-08). |
+| `amp_counting` | bool | Stage 11's clip count runs (k < N); updated at the fade step and the snaps (D7). |
 | `fade_amp`, `fade_speaker`, `fade_earphone` | Fade | Stages 11, 12, 13. |
 
-`reset_sections` (a route switch) keeps the fades; `reset` (the engine's) sets each fade to its rest state from `settings()` (R-11: the landed values persist). The clip count is incremented only when `fade_amp.k < n` (D7, per sample at the count).
+`reaches(stage) -> bool`: the construction switch on and the tap reaching the stage (`RouteOutput`: 11, 12, 13; `AfterVolumeAmp`: 11; `AfterSpeaker`: 11, 12; `AfterEarphone`: 11, 13; the taps before the chain: none) (R-04). `reset_sections` (a route switch) keeps the fades; the engine's `reset` snaps each fade to `settings()`'s value (R-11).
 
 ### PlaybackHalf additions
 
 | Field | Type | Meaning |
 |---|---|---|
-| `fade` | Fade | Stage 10's (N = 120). |
+| `fade` | Fade | Stage 10's (N = 120). `land(bypassed, at_once)` from the player's pre-pull apply; `runs()` is the reach predicate. |
 
 ### StreamState additions (`changes.rs`)
 
 | Field | Type | Meaning |
 |---|---|---|
-| `last_bypass` | [bool; 3] | The last applied value per stage 11 – 13 (true = bypassed). |
-| `landed_bypass` | [Option<bool>; 3] | The call's landings, read by the pipeline for the mirror (R-05). |
-| `xpend` | [Option<(bool, u64)>; 3] | The cross-stream pending value and tag per stage; `next_apply` armed at the stream's next sample while any is set. |
+| `last_bypass` | [bool; 3] | The last applied value per stage 11 – 13 (true = bypassed); the one-pass compares `settings` to it at `begin_call` and lands the differences first (R-05). |
+| `landed_bypass` | [Option<bool>; 3] | The call's landings, read by the pipeline into `settings` and `bypass_tags`. |
 | `last_stage10` | bool | The player's stage-10 value (no mirror). |
 
-`Apply` gains `Bypass { stage: u8, on: bool }` (stage 10 … 13; `on` = false means bypassed... **convention**: `Apply::Bypass(stage, bypassed)` with `bypassed: bool` to avoid the double negative).
+`Apply` gains `Bypass { stage: u8, bypassed: bool, at_once: bool }` (stage 10 … 13; `at_once` = the stream's first produced sample).
 
-### Settings reflection
+### Pipeline additions
 
-The engine's `settings` copy is written at each landing (`playback_stage_enabled`, `output.volume_amp_enabled`, `output.speaker_enabled`, `output.earphone_enabled` = !bypassed), as spec 017 does for the record-side values; `reset` re-applies them to the fades' rest states; `reconfigure(s)` takes `s`.
+`bypass_tags: [u64; 3]` (the tags a mirrored landing carries); the landed switches written into `settings` after every call (`playback_stage_enabled`, `output.volume_amp_enabled`, `output.speaker_enabled`, `output.earphone_enabled` = !bypassed).
 
 ### Error
 
-`Error::StageNotConfigured { control: u32 }` → C `RR_DR60_STATUS_STAGE_NOT_CONFIGURED = 36`. Text: "control {n}: its stage does not run on this stream (configured off at construction, or not reached by the one-pass's tap); construct with the stage on and bypass it live".
+`Error::StageNotConfigured { control: u32 }` → C `RR_DR60_STATUS_STAGE_NOT_CONFIGURED = 36`. `Display`: "control {n} ({identifier}, stage {k}) does not run on this stream: its setting was off at construction or the one-pass's tap stops before it; build the engine with the stage on (and a tap at or after it) and switch it with schedule_change instead".
+
+### Public function
+
+`output::stage11_bypass_level_db(route: Route, position: f32) -> f32` / C `rr_dr60_stage11_bypass_level_db(route, position)`: the level change when stage 11 is bypassed, dB, positive = louder; speaker −(speaker_gain_db(p) + SCALE), SCALE ≈ −1.214 dB private; earphone −earphone_gain_db(p); +∞ at position 0; stated for levels below the knee (R-07).
 
 ### Constants
 
-`MAX_CHANGES_PER_CALL` = 142 (2·64 + 3 + 8 + 3). `output::SPEAKER_SCALE_DB` (new, public): 20·log10(CODEC_FULL_SCALE_V / V_CLIP_V), so an app computes stage 11's bypass level change on the speaker route as −(speaker_gain_db(p) − SPEAKER_SCALE_DB) and on the earphone route as −earphone_gain_db(p).
+`MAX_CHANGES_PER_CALL` = 142 (2·64 + 3 + 8 + 3; the one-pass attains it, the player at most 68).
 
 ## State transitions (one stage)
 
 ```
-rest on (k = 0) --landing bypassed--> fading +1 --k = N--> rest bypassed (k = N)
-rest bypassed   --landing on-------> fading −1 --k = 0--> rest on
-fading ±1       --landing opposite-> fading ∓1 (k kept)      (reverse from phase)
-fading ±1       --landing same-----> no change, logged as a no-op entry
-any             --route switch-----> unchanged (sections reset, fade kept)
-any             --reset------------> rest at settings()'s value
+rest on (k = 0)    --landing bypassed----------> fading +1 --k = N--> rest bypassed (k = N)
+rest bypassed      --landing on----------------> fading −1 --k = 0--> rest on
+fading ±1          --landing opposite----------> fading ∓1 (k kept; reverse from phase)
+fading ±1          --landing same (stream's last value)--> unchanged; a no-op entry
+rest, stream's first produced sample --landing--> rest at the value at once (no blend; the trigger is produced == 0, never the chain's fresh flag)
+any                --route switch--------------> unchanged (the sections reset, the fade kept)
+any                --start_playback------------> rest at settings()'s values (the adopt; no entry, no blend)
+any                --reset---------------------> rest at settings()'s values (all four fades, the one-pass's stage 10 included)
+any                --reconfigure(s)------------> rebuilt: a switch on in s → rest on (k = 0); off → the stage does not run (not a fade state; its changes refused)
 ```
 
 ## Control manifest
@@ -68,4 +75,4 @@ Entries 5, 22, 23, 24: `timing: Live`; everything else unchanged. The canonical 
 
 ## Golden (`golden-bypass-v1.json`)
 
-Entry: `{ config, route, stream, rate, stage(s), schedule: [{position, stage, value, tag}], produced, changes: [...], digest, reversal: bool }`; 140 entries (R-09).
+Entry: `{ config, route, stream, rate, stages, schedule: [{position, stage, value, tag}], produced, changes: [...], digest, exact: bool }`; 140 entries; `exact` marks the entries whose endpoint identities are bit-exact (R-10), the others carrying the convergence bound (R-09).
