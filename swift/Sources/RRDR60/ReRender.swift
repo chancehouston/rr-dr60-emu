@@ -18,18 +18,22 @@ public enum ProcessingRecord {
         return out
     }
 
-    /// Reads a record; `nil` when the library refuses it. A `pipeline` adds the host-rate flag.
-    public static func read(_ record: [UInt8], pipeline: OpaquePointer? = nil) -> RrDr60RecordReadout? {
-        var r = RrDr60RecordReadout()
-        r.struct_size = UInt32(MemoryLayout<RrDr60RecordReadout>.size)
+    /// Reads a record; `nil` when the library refuses it; throws `RRDR60Error.abiMismatch` when
+    /// the header does not match the library (spec 022: a build error of the app, told apart
+    /// from an unreadable record). A `pipeline` adds the host-rate flag.
+    public static func read(_ record: [UInt8], pipeline: OpaquePointer? = nil) throws -> RrDr60RecordReadout? {
+        try RRDR60.checkABI()
+        var r = RrDr60RecordReadout.sized
         let status = record.withUnsafeBufferPointer { bytes in
             rr_dr60_processing_record_read(pipeline, bytes.baseAddress, UInt(record.count), &r)
         }
         return status == Int32(RR_DR60_STATUS_OK.rawValue) ? r : nil
     }
 
-    /// The record's change rows (the control's manifest index, the stream word in `reserved`).
-    public static func changes(of record: [UInt8], count: UInt64) -> [RrDr60ChangeEntry] {
+    /// The record's change rows (the control's manifest index, the stream word in `stream`);
+    /// throws `RRDR60Error.abiMismatch` when the header does not match the library.
+    public static func changes(of record: [UInt8], count: UInt64) throws -> [RrDr60ChangeEntry] {
+        try RRDR60.checkABI()
         var rows = [RrDr60ChangeEntry](repeating: RrDr60ChangeEntry(), count: Int(count))
         let got = record.withUnsafeBufferPointer { bytes in
             rows.withUnsafeMutableBufferPointer { out in
@@ -40,10 +44,11 @@ public enum ProcessingRecord {
     }
 
     /// Re-renders `raw` (24-bit samples) from `record` and returns the stored form's digest, or
-    /// `nil` when a step is refused. The caller compares it with the read-out's
+    /// `nil` when a step is refused; throws `RRDR60Error.abiMismatch` on a header mismatch. The caller compares it with the read-out's
     /// `recording_digest`.
-    public static func reRender(record: [UInt8], raw: [Int32], block: Int = 4096) -> UInt64? {
-        guard let r = read(record), r.origin == RR_DR60_ORIGIN_ENGINE else { return nil }
+    public static func reRender(record: [UInt8], raw: [Int32], block: Int = 4096) throws -> UInt64? {
+        try RRDR60.checkABI()
+        guard let r = try read(record), r.origin == RR_DR60_ORIGIN_ENGINE else { return nil }
         var settings = r.settings
         var handle: OpaquePointer?
         guard rr_dr60_create_at_counter(&settings, r.recording_counter, &handle) == Int32(RR_DR60_STATUS_OK.rawValue),
@@ -52,13 +57,13 @@ public enum ProcessingRecord {
         defer { rr_dr60_destroy(p) }
         // The fill by import: a throwaway 6 kHz engine with every record stage off and the
         // same codec setting records zeros, exports, this engine imports.
-        var status = RrDr60MemoryStatus()
+        var status = RrDr60MemoryStatus.sized
         guard rr_dr60_memory_status(p, &status) == Int32(RR_DR60_STATUS_OK.rawValue) else { return nil }
         if status.remaining_samples > r.remaining_samples_at_start {
             let missing = status.remaining_samples - r.remaining_samples_at_start
             guard fill(p, samples: missing, codec: settings.speech_codec_enabled) else { return nil }
         }
-        let entries = changes(of: record, count: r.change_count)
+        let entries = try changes(of: record, count: r.change_count)
         var next = 0
         func schedule() -> Bool {
             while next < entries.count {
@@ -81,7 +86,7 @@ public enum ProcessingRecord {
         var stopped = false
         while pos < fed {
             let n = min(block, fed - pos)
-            var info = RrDr60RecordInfo()
+            var info = RrDr60RecordInfo.sized
             let st = x.withUnsafeBufferPointer { buf in
                 rr_dr60_record(p, buf.baseAddress! + pos, UInt(n), &info, nil, 0)
             }
@@ -91,7 +96,7 @@ public enum ProcessingRecord {
             if info.stopped { stopped = true; break }
         }
         if !stopped {
-            var outcome = RrDr60StopOutcome()
+            var outcome = RrDr60StopOutcome.sized
             guard rr_dr60_stop_recording(p, &outcome, nil, 0) == Int32(RR_DR60_STATUS_OK.rawValue) else { return nil }
         }
         guard rr_dr60_memory_status(p, &status) == Int32(RR_DR60_STATUS_OK.rawValue) else { return nil }
@@ -115,8 +120,8 @@ public enum ProcessingRecord {
         guard rr_dr60_create(&s, &handle) == Int32(RR_DR60_STATUS_OK.rawValue), let q = handle else { return false }
         defer { rr_dr60_destroy(q) }
         let zeros = [Float](repeating: 0, count: Int(samples))
-        var info = RrDr60RecordInfo()
-        var outcome = RrDr60StopOutcome()
+        var info = RrDr60RecordInfo.sized
+        var outcome = RrDr60StopOutcome.sized
         guard rr_dr60_start_recording(q) == Int32(RR_DR60_STATUS_OK.rawValue),
             zeros.withUnsafeBufferPointer({ rr_dr60_record(q, $0.baseAddress, UInt(zeros.count), &info, nil, 0) })
                 == Int32(RR_DR60_STATUS_OK.rawValue),

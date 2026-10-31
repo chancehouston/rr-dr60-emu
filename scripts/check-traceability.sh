@@ -42,6 +42,10 @@ check_file crates/rr_dr60_harness/src/split_checks.rs 'Tolerance::(Range|AtLeast
 check_file crates/rr_dr60_harness/src/volume_ramp_checks.rs 'Tolerance::(Range|AtLeast|AtMost|Exact)[(][-0-9]' # spec 011
 check_file crates/rr_dr60_harness/src/mic_checks.rs 'Tolerance::(Range|AtLeast|AtMost|Exact)[(][-0-9]' # spec 012
 
+# Spec 022 (the pre-1.0 C ABI pass): the C API's literal defines and the appended status cite
+# their requirements (the other FFI constants are `size_of` pins, not literals).
+check_file crates/rr_dr60_ffi/src/lib.rs '^pub const RR_DR60_(ABI_VERSION|MAX_STRUCT_SIZE|VAS_EVENT_SIZE|CHANGE_ENTRY_SIZE): u32 = [0-9]|^    AbiMismatch = 37' # spec 022
+
 # Spec 007 FR-014 and spec 014 FR-011: every S-/A-ID the stage manifest and the control
 # manifest cite must be a row of its register. (The harness tests `us2_cross_check` and
 # `us2_controls` check the rest: supersession, completeness, statuses, default lines.)

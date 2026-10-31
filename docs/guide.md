@@ -45,16 +45,36 @@ let out = &buffer[..info.produced];                  // VAS drops pauses: output
 ```c
 #include "rr_dr60.h"
 
+if (rr_dr60_abi_check(RR_DR60_ABI_VERSION, sizeof(void *), sizeof(RrDr60Settings), sizeof(RrDr60VasEvent),
+                      sizeof(RrDr60ChangeEntry)) != RR_DR60_STATUS_OK) { /* this build of the app is broken */ }
 RrDr60Settings s = rr_dr60_settings_default(48000);
 RrDr60Pipeline *p = NULL;
 if (rr_dr60_create(&s, &p) != RR_DR60_STATUS_OK) { /* handle the error */ }
-RrDr60BlockInfo info;
+RrDr60BlockInfo info = { .struct_size = sizeof info };   /* every struct the library fills starts like this (0.22) */
 rr_dr60_process(p, in, out, frames, &info);          /* real-time safe; in == out is allowed */
 /* only out[0 .. info.produced) is output: the VAS drops pauses by default */
 rr_dr60_destroy(p);
 ```
 
-Build the static library with `cargo build -p rr_dr60_ffi --release`. `crates/rr_dr60_ffi/tests/c/run_smoke.sh` shows a complete build and link. From Swift, use the [Swift package](../swift/README.md) (`scripts/build-xcframework.sh`, then `import RRDR60C`); it exposes the C API as is, with no Swift-native wrapper yet.
+Build the static library with `cargo build -p rr_dr60_ffi --release`. `crates/rr_dr60_ffi/tests/c/run_smoke.sh` shows a complete build and link. From Swift, use the [Swift package](../swift/README.md) (`scripts/build-xcframework.sh`, then `import RRDR60` for the helpers `.sized` and `RRDR60.checkABI()` and the processing record's re-render; `import RRDR60C` alone is the bare C API).
+
+**The C ABI since 0.22 (the pre-1.0 ABI pass, spec 022).** The C ABI is 64-bit pointer width only (iOS; Android `arm64-v8a` and `x86_64`): the FFI crate does not build for a 32-bit target (a const assertion), and the check's pointer-size argument guards a header/compiler mismatch.
+
+- **Every struct the library fills starts with `uint32_t struct_size`**: the eleven reports and reads that lacked it (`RrDr60BlockInfo` 40 bytes, `RrDr60RecordInfo` 48, `RrDr60StopOutcome` 88, `RrDr60PlayInfo` 48, `RrDr60EngineState` 20, `RrDr60MemoryStatus` 48, `RrDr60SpeechCodecInfo` 28, `RrDr60ManifestHeader` 72, `RrDr60StageEntry` 80, `RrDr60Control` 120, `RrDr60ControlOption` 24) and the four that had it (`RrDr60Meters`, `RrDr60RecordReadout`, `RrDr60InputAlignment`, `RrDr60PlaceState`), under one rule: set it to `sizeof` before the call; below the smallest layout ever published for the struct, or above `RR_DR60_MAX_STRUCT_SIZE` (4096), the call returns `RR_DR60_STATUS_INVALID_ARGUMENT` and writes nothing; a known smaller layout receives exactly its prefix; a larger size receives the whole struct with the tail zeroed; `struct_size` reads back as the size the library filled, so a caller newer than the library sees which fields are meaningful and reads zeros beyond as "unknown to this library"; every padding byte is zero. A report with `struct_size` 0 or uninitialized is refused **at run time, not at compile time**; Swift's `RrDr60BlockInfo()` zero-initializes it, so use `.sized`. In a prefix fill of `RrDr60RecordReadout` the embedded `settings.struct_size` is the settings bytes the prefix holds.
+- **The per-call reports** (`rr_dr60_process*`, `rr_dr60_record*`, `rr_dr60_stop_recording*`, `rr_dr60_play*`): a non-NULL report's size is checked first; with a NULL or poisoned handle the handle's status is returned and the idle report written only when the size is valid; otherwise a refused size processes nothing (the stream's position, the memory and the meters are untouched); with an accepted size the report is always written, on every error as before. The handle-taking status reads (`rr_dr60_get_state`, `rr_dr60_memory_status`, `rr_dr60_meters`) check the handle, then NULL, then the size; the constant-data reads check NULL, then the size, then the index.
+- **The inputs.** `RrDr60Settings` is validated whole: a `struct_size` different from `sizeof(RrDr60Settings)` is refused at `rr_dr60_create`, `rr_dr60_reconfigure` and `rr_dr60_settings_validate` (before 0.22 a larger one was accepted and its tail ignored). It is the one exception to the growth promise below: appending a setting is a rebuild for earlier callers and moves `RR_DR60_ABI_VERSION`. `RrDr60RunData`, and the read-out as an input: below their size or above the cap refused on read. `RrDr60StopFields`: frozen in layout; its size is written as 40 and ignored on read. `rr_dr60_processing_record_read` checks NULL out, NULL bytes, the size, then the handle.
+- **Frozen**: `RrDr60VasEvent` (`RR_DR60_VAS_EVENT_SIZE`, 16) and `RrDr60ChangeEntry` (`RR_DR60_CHANGE_ENTRY_SIZE`, 40; its last field is `stream`, named `reserved` from 0.16 to 0.21: the same offset and meaning). A different layout would be a new type with new functions, never a change to these.
+- **The check.** `RR_DR60_ABI_VERSION` (1), `rr_dr60_abi_version()` and `rr_dr60_abi_check(abi_version, pointer_size, settings_size, vas_event_size, change_entry_size)`: `RR_DR60_STATUS_OK` for this library's version, pointer width 8, the settings size equal to the library's and the two frozen sizes, else `RR_DR60_STATUS_ABI_MISMATCH` (37); pure, no handle. Call it once at start as the example does. The library ships inside the app, so a mismatch is a build error of the app (a stale XCFramework, a mixed build), never a user condition: stop in a debug build; in a release build show that the app's build is broken and must be updated, and do not create an engine. The version moves on a change no size field can express (a frozen struct's bytes, a function's signature or removal, an enum value's meaning, a field reorder, a settings growth or a change of its input rule) and never on an appended status, control, tap, define, function or a field appended to a struct the library fills.
+- **The promise from 0.22.** A struct the library fills only grows under its size field, the frozen pair does not change, new statuses, controls, taps, defines and functions are appended; `RrDr60Settings` is the one exception. Anything else moves `RR_DR60_ABI_VERSION`, is announced as breaking, and none is planned before 1.0.
+
+**Migrating a 0.21 caller** (0.22 is breaking for every C and Swift caller: rebuild once and initialize every report):
+
+1. Rebuild against `rr_dr60.h` 0.22 (the XCFramework: `scripts/build-xcframework.sh`).
+2. Every struct the library fills starts as `{ .struct_size = sizeof x }` (Swift: `.sized`); grep for the eleven names above. The structs that already had a size field are unchanged in use.
+3. `outcome.flush.<x>` → `outcome.flush_<x>` (the stop outcome's flush is inline: `flush_stored`, `flush_events`, `flush_paused`, `flush_stopped`, `flush_stop_reason`, `flush_frames`, `flush_frames_total`); `entry.reserved` → `entry.stream`.
+4. Arrays of `RrDr60VasEvent` and `RrDr60ChangeEntry` need no change (frozen).
+5. Call `rr_dr60_abi_check(...)` once at start (Swift: `try RRDR60.checkABI()`); treat a failure as a build error of your app, not a user condition.
+6. A `RrDr60Meters` caller that passed a `struct_size` above 4096 (none known) is now refused; the read-back is the filled size (56 or 64). A settings struct larger than the library's is now refused at `rr_dr60_create`.
 
 ## Recording and playback
 
@@ -219,7 +239,7 @@ static void manifest_line(const char *key, const char *value) {
 }
 
 static void print_manifest(void) {
-  RrDr60ManifestHeader h;
+  RrDr60ManifestHeader h = { .struct_size = sizeof h }; /* every struct the library fills starts like this (0.22) */
   if (rr_dr60_manifest_header(&h) != RR_DR60_STATUS_OK) return;
   printf("rr_dr60 manifest\n");
   manifest_line("library_version", h.library_version);
@@ -232,7 +252,7 @@ static void print_manifest(void) {
   manifest_line("assumptions_link", h.assumptions_link);
   manifest_line("sources_link", h.sources_link);
   for (uint32_t n = 1; n <= rr_dr60_manifest_stage_count(); n++) {
-    RrDr60StageEntry e;
+    RrDr60StageEntry e = { .struct_size = sizeof e };
     if (rr_dr60_manifest_stage(n, &e) != RR_DR60_STATUS_OK) return;
     printf("\nstage %u %s\n", e.number, e.identifier);
     manifest_line("name", e.name);
@@ -263,7 +283,7 @@ C names derive from the Rust names: `RrDr60Settings` fields are the Rust field p
 
 ## The controls the engine accepts
 
-Since [spec 014](../specs/014-control-manifest/spec.md) the library also carries a **control manifest**: constant data describing every adjustable setting and live control, 29 today (the three live controls, then every field of `Settings` in declaration order). An app builds its sliders, switches and pickers from it instead of copying ranges and defaults by hand. Each entry gives a stable identifier (the setting's path, `vas.sensitivity`, or the live control's name, `volume`; the key for localization), a name, its **kind**, its **timing**, the paths it applies to, its signal-chain stage (0 for none), its value (a switch; an integer with exact `u64` bounds; a continuous `f32` range; or a choice whose options carry the value the engine takes), its default, its unit, the source and assumption IDs it rests on, and one sentence on what changing it does to the sound. Each sentence describes the default engine configuration, every other stage on and the speech coder on, which is what an app user hears; with other stages switched off a control can act differently (with the coder bypassed, for example, switching the converter's clipping off lets loud peaks through).
+Since [spec 014](../specs/014-control-manifest/spec.md) the library also carries a **control manifest**: constant data describing every adjustable setting and live control, 30 today (the three live controls, then every field of `Settings` in declaration order, then the battery value appended by spec 018). An app builds its sliders, switches and pickers from it instead of copying ranges and defaults by hand. Each entry gives a stable identifier (the setting's path, `vas.sensitivity`, or the live control's name, `volume`; the key for localization), a name, its **kind**, its **timing**, the paths it applies to, its signal-chain stage (0 for none), its value (a switch; an integer with exact `u64` bounds; a continuous `f32` range; or a choice whose options carry the value the engine takes), its default, its unit, the source and assumption IDs it rests on, and one sentence on what changing it does to the sound. Each sentence describes the default engine configuration, every other stage on and the speech coder on, which is what an app user hears; with other stages switched off a control can act differently (with the coder bypassed, for example, switching the converter's clipping off lets loud peaks through).
 
 The **kinds**: a *device control* is one the owner's manual or the service manual gives the user (route, volume, playback speed, microphone sensitivity); a *unit condition* is an audible difference an owner could hear between two units or over one unit's life (the hiss level; component spreads that are inaudible or not directly hearable stay model internals); a *model internal* is a value the device has that its user cannot reach (the limiter's threshold, attack and release; the pause threshold, delay and resume delay); an *emulator option* is something the device cannot do (the stage switches, the pause handling, the memory size, the output clamp, the listen point); a *host parameter* is set by the host (the seed, the host sample rate). The **timing classes**: *live* (a `set_*` call while running; a live control's value is kept by `reset` and `reconfigure`), *idle* (applied by `reconfigure` when nothing records or plays), *idle, memory-dependent* (also refused while the stored recordings do not fit: the speech coder switch and the memory figures) and *host-fixed* (the host rate, matched to the audio session).
 
@@ -294,7 +314,7 @@ for (uint32_t i = 0; i < rr_dr60_control_count(); i++) {
 }
 ```
 
-An index past any list is refused with `RR_DR60_STATUS_NO_SUCH_CONTROL` and nothing is written. `RrDr60Control` and `RrDr60ControlOption` have no size field; they join the pre-1.0 ABI pass.
+An index past any list is refused with `RR_DR60_STATUS_NO_SUCH_CONTROL` and nothing is written. `RrDr60Control` (120 bytes) and `RrDr60ControlOption` (24) start with `struct_size` since 0.22 (the [C / Swift](#c--swift) rule).
 
 ## Microphone (signal-chain stages 1 – 2)
 
@@ -491,7 +511,7 @@ p.set_playback_speed(5)?;                      // FAST from the next play call
 rr_dr60_set_playback_speed(p, 1);              /* RR_DR60_STATUS_INVALID_SPEED_LEVEL outside 1 - 5 */
 uint64_t total = 0;
 rr_dr60_playback_length_samples(p, 1, 1, &total);
-/* RrDr60PlayInfo.place since 0.13 (the struct grew 32 -> 40 bytes: rebuild against the header) */
+/* RrDr60PlayInfo.place since 0.13; the struct starts with struct_size since 0.22 (48 bytes) */
 ```
 
 > **Modeled on the documents, not measured against a unit.** The five ratios, the pitch behavior and the resampler's quality are assumptions ([A-054](hardware/assumptions.md)); a capture of a real unit playing a tone and a sustained vowel at each level decides them.
@@ -653,7 +673,7 @@ Also: read `input_position(Record)` just before stopping: it is the index of the
 
 **The speed change's onset.** For a change out of level 3 the first output sample that differs bit for bit lies within two device periods after P (a switch *into* level 3 first waits for a whole place, up to four device samples more, spec 013); the audible change follows after the playback path's latency, `playback_latency_samples()` **for your configuration** (241 host samples at 48 kHz in the default; 238 with stage 10 bypassed: the figure is the path's 1 kHz group delay, spec 006), as the place does. An app aligning a speed change with a volume change subtracts `playback_latency_samples()` from the speed's position. A speed change landing after the recording's latch has no effect on that playback, is logged, and moves the level reading, so it sets the level the next playback starts at.
 
-**The change log.** `process_with_events_and_changes(input, output, events, changes)` and `play_with_changes(output, changes)` (C: `rr_dr60_process_with_events_and_changes`, `rr_dr60_play_with_changes`) write the changes the stream applied in that call to the caller's buffer, the first ones when it is shorter, and report how many there were (`BlockInfo.changes`, `PlayInfo.changes`; in C the count is an out-parameter and the report structures are unchanged); `changes::MAX_CHANGES_PER_CALL` (139 since 0.17: two schedules of 64, the three plain setters and one cross-stream landing per record-side value; 67 before) is always enough; on the record side `record_with_changes(input, events, changes)` and `stop_recording_with_changes(events, changes)` (C: `rr_dr60_record_with_changes`, `rr_dr60_stop_recording_with_changes`) write the record-side entries, the one-pass's log-taking calls carry both sides (the record side's entries first). An entry (`ChangeEntry` / `RrDr60ChangeEntry`, 40 bytes, no size field: on the pre-1.0 ABI-pass list) carries the position it landed on, the control's index, the value **before** (the value that stream last applied for the control, so entries chain: each one's before is the previous one's after, or the value the stream started with), the value **after**, and the tag. An entry is reported by the call that produced the sample, never by an empty call or a block the voice activation dropped entirely. A scheduled change to the value already applied is a logged no-op (before equals after); a plain setter to the value already applied is not logged. The plain calls (`process*`, `play`) apply the changes, count them and discard the entries.
+**The change log.** `process_with_events_and_changes(input, output, events, changes)` and `play_with_changes(output, changes)` (C: `rr_dr60_process_with_events_and_changes`, `rr_dr60_play_with_changes`) write the changes the stream applied in that call to the caller's buffer, the first ones when it is shorter, and report how many there were (`BlockInfo.changes`, `PlayInfo.changes`; in C the count is an out-parameter and the report structures are unchanged); `changes::MAX_CHANGES_PER_CALL` (139 since 0.17: two schedules of 64, the three plain setters and one cross-stream landing per record-side value; 67 before) is always enough; on the record side `record_with_changes(input, events, changes)` and `stop_recording_with_changes(events, changes)` (C: `rr_dr60_record_with_changes`, `rr_dr60_stop_recording_with_changes`) write the record-side entries, the one-pass's log-taking calls carry both sides (the record side's entries first). An entry (`ChangeEntry` / `RrDr60ChangeEntry`, 40 bytes, **frozen** since 0.22: `RR_DR60_CHANGE_ENTRY_SIZE`) carries the position it landed on, the control's index, the value **before** (the value that stream last applied for the control, so entries chain: each one's before is the previous one's after, or the value the stream started with), the value **after**, and the tag. An entry is reported by the call that produced the sample, never by an empty call or a block the voice activation dropped entirely. A scheduled change to the value already applied is a logged no-op (before equals after); a plain setter to the value already applied is not logged. The plain calls (`process*`, `play`) apply the changes, count them and discard the entries.
 
 **Replaying a session.** Re-scheduling a log's entries (position, control, after, tag) reproduces the stream bit for bit **given** the same recording and settings (the playback stream) or the same input, seed and recording counter (the one-pass stream: the microphone hiss is keyed by the counter `recording_counter()` / `rr_dr60_recording_counter` reads, spec 012); the record side's values replay the same way given the same input, seed, recording counter and record schedule.
 
@@ -718,7 +738,7 @@ p.processing_record_write(number, &run, &mut record)?;
 ```c
 RrDr60RunData run = { .struct_size = sizeof run, .events = events, .event_count = n_events,
                       .changes = changes, .change_count = n_changes,
-                      .stop = { .struct_size = sizeof run.stop, .how = RR_DR60_STOP_CALL, /* the outcome's fields */ } };
+                      .stop = { .struct_size = sizeof run.stop, .how = RR_DR60_STOP_CALL, /* the outcome's stop_input_position, padding_start_sample, silence_fed_samples; the total fed */ } };
 size_t len = 0, written = 0;
 rr_dr60_processing_record_len(p, number, &run, &len);
 rr_dr60_processing_record_write(p, number, &run, buf, len, &written);

@@ -43,7 +43,7 @@ private func recordAndWrite(raw: [Int32], schedule: [(UInt64, UInt32, Double)]) 
     var pos = 0
     while pos < x.count {
         let n = min(1024, x.count - pos)
-        var info = RrDr60RecordInfo()
+        var info = RrDr60RecordInfo.sized
         var count: UInt = 0
         var total: UInt64 = 0
         let st = x.withUnsafeBufferPointer { buf in
@@ -55,16 +55,15 @@ private func recordAndWrite(raw: [Int32], schedule: [(UInt64, UInt32, Double)]) 
         pos += n
         fill()
     }
-    var outcome = RrDr60StopOutcome()
+    var outcome = RrDr60StopOutcome.sized
     var count: UInt = 0
     var total: UInt64 = 0
     #expect(isOK(rr_dr60_stop_recording_with_changes(p, &outcome, &ev, 64, &ch, UInt(ch.count), &count, &total)))
     #expect(outcome.kept)
-    events.append(contentsOf: ev.prefix(Int(outcome.flush.events)))
+    events.append(contentsOf: ev.prefix(Int(outcome.flush_events)))
     changes.append(contentsOf: ch.prefix(Int(count)))
-    var run = RrDr60RunData()
-    run.struct_size = UInt32(MemoryLayout<RrDr60RunData>.size)
-    run.stop.struct_size = UInt32(MemoryLayout<RrDr60StopFields>.size)
+    var run = RrDr60RunData.sized
+    run.stop = RrDr60StopFields.sized
     run.stop.how = UInt32(RR_DR60_STOP_CALL)
     run.stop.stop_input_position = outcome.stop_input_position
     run.stop.padding_start_sample = outcome.padding_start_sample
@@ -107,24 +106,27 @@ private func squareWithGap() -> [Int32] {
 @Test func digestRoundTrip() throws {
     let raw = squareWithGap()
     let (record, digest) = try recordAndWrite(raw: raw, schedule: [(10000, kneeControl, -30), (30000, hissControl, 3)])
-    let r = try #require(ProcessingRecord.read(record))
+    let r = try #require(try ProcessingRecord.read(record))
     #expect(r.recording_digest == digest)
     #expect(r.flags == 0)
     #expect(r.change_count == 2)
-    #expect(ProcessingRecord.reRender(record: record, raw: raw) == digest)
+    let again = try ProcessingRecord.reRender(record: record, raw: raw)
+    #expect(again == digest)
     // One sample moved: the digest differs.
     var other = raw
     other[12000] += 400_000
-    #expect(ProcessingRecord.reRender(record: record, raw: other) != digest)
+    let moved = try ProcessingRecord.reRender(record: record, raw: other)
+    #expect(moved != digest)
 }
 
 @Test func scheduleRefillPast64() throws {
     let raw = squareWithGap()
     let schedule: [(UInt64, UInt32, Double)] = (0 ..< 80).map { i in (UInt64(2000 + 500 * i), hissControl, Double(i % 5)) }
     let (record, digest) = try recordAndWrite(raw: raw, schedule: schedule)
-    let r = try #require(ProcessingRecord.read(record))
+    let r = try #require(try ProcessingRecord.read(record))
     #expect(r.change_count == 80)
-    #expect(ProcessingRecord.reRender(record: record, raw: raw) == digest)
+    let again = try ProcessingRecord.reRender(record: record, raw: raw)
+    #expect(again == digest)
 }
 
 @Test func samplesFromI24MatchesTheRule() {

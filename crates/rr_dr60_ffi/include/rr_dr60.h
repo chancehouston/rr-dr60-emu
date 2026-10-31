@@ -9,7 +9,8 @@
  *  2. A failed call changes nothing: out-parameters are untouched and state is unchanged.
  *     Exception: the info struct of rr_dr60_process, rr_dr60_process_with_events,
  *     rr_dr60_record, rr_dr60_stop_recording and rr_dr60_play is always written when not
- *     NULL, so a host that only checks `produced` or `stored` never reads a stale count.
+ *     NULL and its struct_size is accepted (spec 022), so a host that only checks `produced`
+ *     or `stored` never reads a stale count; a refused struct_size processes nothing.
  *  3. The caller owns all buffers; the library never keeps a pointer after a call returns.
  *     Using a handle after rr_dr60_destroy is undefined behavior.
  *  4. A handle must not be used by two threads at the same time; separate handles are
@@ -51,7 +52,7 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 21
+#define RR_DR60_VERSION_MINOR 22
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
@@ -63,6 +64,26 @@
 // A `changes_capacity` that is always enough for one call (spec 015 FR-005). Equal to the
 // Rust `changes::MAX_CHANGES_PER_CALL`.
 #define RR_DR60_MAX_CHANGES_PER_CALL 142
+
+// The C ABI version (spec 022 D3): 1 since 0.22. It moves on a change no size field can express
+// (a frozen struct's bytes, a function's signature or removal, an enum value's meaning, a field
+// reorder, a growth of `RrDr60Settings` or a change of its input rule) and never on an appended
+// status, control, tap, define, function or a field appended to a struct the library fills.
+// Pass it to `rr_dr60_abi_check` once at start.
+#define RR_DR60_ABI_VERSION 1
+
+// The largest `struct_size` any struct the library fills accepts (spec 022 D8): above it the
+// call is refused with `RR_DR60_STATUS_INVALID_ARGUMENT` and nothing is written, so an
+// uninitialized size field is a refusal, not a fill past the caller's struct.
+#define RR_DR60_MAX_STRUCT_SIZE 4096
+
+// `sizeof(RrDr60VasEvent)`, 16: the struct is frozen (spec 022 D2). Pass it to
+// `rr_dr60_abi_check`.
+#define RR_DR60_VAS_EVENT_SIZE 16
+
+// `sizeof(RrDr60ChangeEntry)`, 40: the struct is frozen (spec 022 D2). Pass it to
+// `rr_dr60_abi_check`.
+#define RR_DR60_CHANGE_ENTRY_SIZE 40
 
 // The volume control's default position (spec 009 FR-003; A-043): the reference position at
 // which a full-scale codec output just reaches the amplifier's clip ceiling under the loaded
@@ -182,7 +203,8 @@
 // `RrDr60RecordReadout.origin`: imported from a stored form (nothing to re-render).
 #define RR_DR60_ORIGIN_IMPORTED 1
 
-// `RrDr60ChangeEntry.reserved` since 0.20: the stream word of the playback stream.
+// `RrDr60ChangeEntry.stream` since 0.20 (named `reserved` until 0.21): the stream word of the
+// playback stream.
 #define RR_DR60_STREAM_WORD_PLAYBACK 1
 
 // The stream word of the one-pass stream.
@@ -300,6 +322,12 @@ enum RrDr60Status
   // FR-004). Build the engine with the stage on (and a tap at or after it) and switch it
   // with `rr_dr60_schedule_change` instead; see the guide, "Live stage bypass".
   RR_DR60_STATUS_STAGE_NOT_CONFIGURED = 36,
+  // `rr_dr60_abi_check`: the caller's header does not match this build of the library (spec
+  // 022 D3): the ABI version, the pointer width, the settings struct's size or a frozen
+  // struct's size differs. The library ships inside the app, so this is a build error of the
+  // app (a stale XCFramework, a mixed build), never a user condition: stop in a debug build,
+  // refuse to create an engine in a release build.
+  RR_DR60_STATUS_ABI_MISMATCH = 37,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -826,8 +854,12 @@ typedef struct RrDr60Settings {
   float mic_hiss_offset_db;
 } RrDr60Settings;
 
-// The result of one `rr_dr60_process` call (spec 003 FR-004, FR-005).
+// The result of one `rr_dr60_process` call (spec 003 FR-004, FR-005). `struct_size` first
+// (spec 022 D1): set it to `sizeof(RrDr60BlockInfo)`, 40 on 64-bit targets.
 typedef struct RrDr60BlockInfo {
+  // Set by the caller to `sizeof(RrDr60BlockInfo)`; read back as the size the library filled
+  // (spec 022 D1, D11: the compatible prefix-fill rule).
+  uint32_t struct_size;
   // Output samples written to `output[0 .. produced)`. Never more than `frames`. With the VAS
   // in drop mode (the default) it can be smaller, or 0.
   uintptr_t produced;
@@ -836,12 +868,14 @@ typedef struct RrDr60BlockInfo {
   // The VAS is paused at the end of the block.
   bool paused;
   // Speech-codec frames encoded in this block (spec 008 FR-008); 0 with the codec bypassed.
-  // Appended in 0.8 (24 → 32 bytes on 64-bit targets).
+  // Appended in 0.8 (24 → 32 bytes on 64-bit targets); 40 since 0.22 with the size field.
   uintptr_t frames;
 } RrDr60BlockInfo;
 
 // A VAS splice (drop mode) or muted region (mute mode), from `rr_dr60_process_with_events`
-// (spec 003 FR-005).
+// (spec 003 FR-005). **Frozen** (spec 022 D2): 16 bytes (`RR_DR60_VAS_EVENT_SIZE`), passed as
+// caller arrays; a different layout would be a new type with new functions, never a change to
+// this one.
 typedef struct RrDr60VasEvent {
   // Drop mode: stream output index of the first sample after the splice. Mute mode: stream
   // output index of the region's first muted sample. Counted from create, reset or
@@ -859,8 +893,9 @@ typedef struct RrDr60VasEvent {
 // `rr_dr60_set_route`, `rr_dr60_set_volume`, `rr_dr60_set_playback_speed`; tag your own from
 // 1), and the control manifest's index of the control (resolve it by identifier through
 // `rr_dr60_control`, never assume it). Values are the control's own as doubles: a route 0 or 1,
-// a volume position (rounded to single precision), a level 1 … 5. 40 bytes, no size field
-// (the pre-1.0 ABI pass); `reserved` is 0.
+// a volume position (rounded to single precision), a level 1 … 5. **Frozen** (spec 022 D2):
+// 40 bytes (`RR_DR60_CHANGE_ENTRY_SIZE`), passed as caller arrays; a different layout would be
+// a new type with new functions, never a change to this one.
 typedef struct RrDr60ChangeEntry {
   // The index the change landed on: a host output sample for the route, the volume and the
   // speed; a host input sample for a record-side value (spec 017; `rr_dr60_clock_of`).
@@ -874,13 +909,16 @@ typedef struct RrDr60ChangeEntry {
   // The control manifest's index.
   uint32_t control;
   // The stream word since 0.20 (spec 020 D9): 0 none (an entry from before 0.20 or a
-  // default), 1 playback, 2 one-pass, 3 record. (Named `reserved` since 0.16; unchanged in
-  // size and position.)
-  uint32_t reserved;
+  // default), 1 playback, 2 one-pass, 3 record. Named `reserved` from 0.16 to 0.21 (spec
+  // 022 D2: the same offset and meaning).
+  uint32_t stream;
 } RrDr60ChangeEntry;
 
-// The report of one `rr_dr60_record` call, and of the stop flush (spec 006 FR-006, FR-012).
+// The report of one `rr_dr60_record` call (spec 006 FR-006, FR-012). `struct_size` first
+// (spec 022 D1): 48 on 64-bit targets.
 typedef struct RrDr60RecordInfo {
+  // Set by the caller to `sizeof(RrDr60RecordInfo)`; read back as the filled size.
+  uint32_t struct_size;
   // Device samples appended to the recording by this call.
   uintptr_t stored;
   // VAS events this call generated; `rr_dr60_max_record_events` sizes the event buffer.
@@ -896,14 +934,32 @@ typedef struct RrDr60RecordInfo {
   // codec bypassed. Appended in 0.8.
   uintptr_t frames;
   // Speech-codec frames in the recording so far, this call's included (spec 008 FR-008).
-  // Appended in 0.8 (the struct grows 24 → 40 bytes on 64-bit targets).
+  // Appended in 0.8 (the struct grows 24 → 40 bytes on 64-bit targets); 48 since 0.22.
   uint64_t frames_total;
 } RrDr60RecordInfo;
 
 // The result of `rr_dr60_stop_recording` (spec 006 FR-005, FR-012; spec 008 FR-013).
+// `struct_size` first (spec 022 D1): 88 on 64-bit targets. The stop flush's report is inline
+// as the seven `flush_*` fields (spec 022 D9: no nested struct that could shift its container;
+// `outcome.flush.events` of 0.21 is `outcome.flush_events`), all zero when the flush was
+// skipped.
 typedef struct RrDr60StopOutcome {
-  // The stop flush's report (all zeros when the flush was skipped).
-  struct RrDr60RecordInfo flush;
+  // Set by the caller to `sizeof(RrDr60StopOutcome)`; read back as the filled size.
+  uint32_t struct_size;
+  // The flush's device samples appended to the recording.
+  uintptr_t flush_stored;
+  // The flush's VAS events.
+  uintptr_t flush_events;
+  // The VAS is paused at the end of the flush.
+  bool flush_paused;
+  // The recording stopped by itself during the flush.
+  bool flush_stopped;
+  // An `RrDr60StopReason` value for the flush.
+  uint32_t flush_stop_reason;
+  // The flush's speech-codec frames.
+  uintptr_t flush_frames;
+  // Speech-codec frames in the recording, the flush included.
+  uint64_t flush_frames_total;
   // The recording is in the memory; false when no input was fed and it was discarded as
   // empty (A-039).
   bool kept;
@@ -921,7 +977,7 @@ typedef struct RrDr60StopOutcome {
   uint64_t silence_fed_samples;
   // The record stream's input position when the stop was called (spec 020 D9): the host
   // samples fed before it; a re-render feeds exactly this many and calls the same stop.
-  // Since 0.20 (the struct grew 64 → 80 bytes; it has no size field: the pre-1.0 ABI pass).
+  // Since 0.20 (the struct grew 64 → 80 bytes; 88 since 0.22 with the size field).
   uint64_t stop_input_position;
   // The kept device sample at which the speech codec's padding begins (spec 020 D9): the
   // recording's length without padding. Since 0.20.
@@ -929,7 +985,10 @@ typedef struct RrDr60StopOutcome {
 } RrDr60StopOutcome;
 
 // The report of one `rr_dr60_play` call (spec 006 FR-006, FR-008; spec 008 FR-008).
+// `struct_size` first (spec 022 D1): 48 on 64-bit targets.
 typedef struct RrDr60PlayInfo {
+  // Set by the caller to `sizeof(RrDr60PlayInfo)`; read back as the filled size.
+  uint32_t struct_size;
   // Host samples written to `output[0 .. produced)`.
   uintptr_t produced;
   // The recording and its drain ended in this call; the engine is idle.
@@ -944,8 +1003,8 @@ typedef struct RrDr60PlayInfo {
   uint64_t frame_index;
   // The place in the recording, in whole stored device samples, of the last device sample
   // computed in this call (the playback speed control's place), and the recording's length
-  // once the place has reached its end; 0 before any (spec 013 FR-009). Appended in 0.13 (the struct grows 32 → 40 bytes
-  // on 64-bit targets: rebuild against this header).
+  // once the place has reached its end; 0 before any (spec 013 FR-009). Appended in 0.13
+  // (the struct grew 32 → 40 bytes on 64-bit targets; 48 since 0.22 with the size field).
   uint64_t place;
 } RrDr60PlayInfo;
 
@@ -961,8 +1020,10 @@ typedef struct RrDr60PlayInfo {
 typedef struct RrDr60Meters {
   // Set by the caller to `sizeof(RrDr60Meters)` (64 in this version; 56 in 0.16 and 0.17).
   // Below 56 is refused (`RR_DR60_STATUS_INVALID_ARGUMENT`); 56 … 63 fills the 56 bytes of
-  // the 0.16 fields and touches nothing else (a 0.17 binary keeps working); 64 and above
-  // fills every field and zeroes the bytes past 64.
+  // the 0.16 fields, never a partial appended field, and zeroes the bytes from 56 up to the
+  // caller's size (a 0.17 binary keeps working); 64 up to `RR_DR60_MAX_STRUCT_SIZE` fills
+  // every field and zeroes the bytes past 64; above the cap refused (spec 022 D8). Read back
+  // as the size the library filled, 56 or 64 (spec 022 D11).
   uint32_t struct_size;
   // The largest absolute input sample after the engine's sanitizing of non-finite samples.
   float input_peak;
@@ -1012,7 +1073,10 @@ typedef struct RrDr60Meters {
 } RrDr60Meters;
 
 // The engine's readable state, from `rr_dr60_get_state` (spec 006 FR-003, FR-015).
+// `struct_size` first (spec 022 D1): 20 on 64-bit targets.
 typedef struct RrDr60EngineState {
+  // Set by the caller to `sizeof(RrDr60EngineState)`; read back as the filled size.
+  uint32_t struct_size;
   // An `RrDr60State` value.
   uint32_t state;
   // An `RrDr60Route` value: the selected output route.
@@ -1025,8 +1089,11 @@ typedef struct RrDr60EngineState {
 } RrDr60EngineState;
 
 // The memory's figures, from `rr_dr60_memory_status` (spec 006 FR-011), in device samples:
-// divide by 6000 for seconds (A-026); C has no seconds helpers.
+// divide by 6000 for seconds (A-026); C has no seconds helpers. `struct_size` first (spec 022
+// D1): 48 on 64-bit targets.
 typedef struct RrDr60MemoryStatus {
+  // Set by the caller to `sizeof(RrDr60MemoryStatus)`; read back as the filled size.
+  uint32_t struct_size;
   // The configured capacity (`memory_capacity_s` × 6000).
   uint64_t capacity_samples;
   // Device samples stored, the recording in progress included.
@@ -1042,8 +1109,11 @@ typedef struct RrDr60MemoryStatus {
 } RrDr60MemoryStatus;
 
 // The speech codec's constants, from `rr_dr60_speech_codec_info` (spec 008 FR-003, FR-008):
-// the same layout as the Rust `SpeechCodecInfo` (24 bytes).
+// the Rust `SpeechCodecInfo`'s fields after the size field (28 bytes). `struct_size` first
+// (spec 022 D1).
 typedef struct RrDr60SpeechCodecInfo {
+  // Set by the caller to `sizeof(RrDr60SpeechCodecInfo)`; read back as the filled size.
+  uint32_t struct_size;
   // Device samples per frame: 120 (20 ms; A-040).
   uint32_t frame_samples;
   // Frame length in milliseconds: 20.
@@ -1064,8 +1134,11 @@ typedef struct RrDr60SpeechCodecInfo {
 //
 // Every `const char *` is non-NULL, NUL-terminated UTF-8, points at static storage inside the
 // library and stays valid and unchanged for the life of the process: keep it by reference,
-// never free it. The struct grows only at the end.
+// never free it. The struct grows only at the end, under `struct_size` (spec 022 D1; 72 on
+// 64-bit targets).
 typedef struct RrDr60ManifestHeader {
+  // Set by the caller to `sizeof(RrDr60ManifestHeader)`; read back as the filled size.
+  uint32_t struct_size;
   // The library's version, e.g. `"0.7.0"`.
   const char *library_version;
   // The device's internal sample rate, 6000 Hz (A-026).
@@ -1094,8 +1167,11 @@ typedef struct RrDr60ManifestHeader {
 //
 // Strings as in `RrDr60ManifestHeader`: static, NUL-terminated UTF-8, never NULL; an empty
 // note is `""`. The IDs are reached by index through `rr_dr60_manifest_stage_source` and
-// `rr_dr60_manifest_stage_assumption`. The struct grows only at the end.
+// `rr_dr60_manifest_stage_assumption`. The struct grows only at the end, under `struct_size`
+// (spec 022 D1; 80 on 64-bit targets: the field fills a former pad).
 typedef struct RrDr60StageEntry {
+  // Set by the caller to `sizeof(RrDr60StageEntry)`; read back as the filled size.
+  uint32_t struct_size;
   // 1 to 15, the signal-chain table's row number.
   uint32_t number;
   // The stable ASCII key (the key for localization).
@@ -1124,9 +1200,11 @@ typedef struct RrDr60StageEntry {
 
 // One control of the control manifest (spec 014 FR-002, FR-013), filled by
 // `rr_dr60_control`. Strings are static, NUL-terminated UTF-8, never NULL (an empty unit is
-// `""`). Fields of the value types the control does not have are zero. No size field and no
-// growth promise: the struct is on the pre-1.0 ABI-pass list (spec 014, owner decision 4).
+// `""`). Fields of the value types the control does not have are zero. `struct_size` first
+// (spec 022 D1; 120 on 64-bit targets): the struct grows only at the end.
 typedef struct RrDr60Control {
+  // Set by the caller to `sizeof(RrDr60Control)`; read back as the filled size.
+  uint32_t struct_size;
   // The stable identifier (the key for localization), e.g. `vas.sensitivity`.
   const char *identifier;
   // The display name.
@@ -1171,8 +1249,11 @@ typedef struct RrDr60Control {
   uint32_t assumption_count;
 } RrDr60Control;
 
-// One option of a choice (spec 014 FR-002), filled by `rr_dr60_control_option`.
+// One option of a choice (spec 014 FR-002), filled by `rr_dr60_control_option`. `struct_size`
+// first (spec 022 D1; 24 on 64-bit targets).
 typedef struct RrDr60ControlOption {
+  // Set by the caller to `sizeof(RrDr60ControlOption)`; read back as the filled size.
+  uint32_t struct_size;
   // The stable identifier, e.g. `earphone`, `after_record`, `hz_48000`.
   const char *identifier;
   // The value the engine takes: the C enumeration value, or the rate in hertz.
@@ -1182,8 +1263,8 @@ typedef struct RrDr60ControlOption {
 // The stop's figures a run carries (spec 020 D9, D10): from `RrDr60StopOutcome` (`how` 0,
 // the four fields copied), from a self-stop's `RrDr60RecordInfo` (`how` 1,
 // `stop_input_position` = `input_samples_total`, the others 0: the writer fills the padding
-// start with the length), or from a read record. `struct_size` first: set it to
-// `sizeof(RrDr60StopFields)`.
+// start with the length), or from a read record. **Frozen in layout** (spec 022 D2): 40 bytes,
+// the record form's; `struct_size` is written as 40 by the library and ignored on read.
 typedef struct RrDr60StopFields {
   // `sizeof(RrDr60StopFields)` as the caller compiled it.
   uint32_t struct_size;
@@ -1201,7 +1282,8 @@ typedef struct RrDr60StopFields {
 
 // The run data the host collected (spec 020 D10): the events and the change entries of every
 // `rr_dr60_record_with_changes` call and of the stop, in order, and the stop's fields. NULL
-// arrays with a count of 0 are allowed. `struct_size` first.
+// arrays with a count of 0 are allowed. `struct_size` first: below 48 or above
+// `RR_DR60_MAX_STRUCT_SIZE` is refused on read (spec 022 D8).
 typedef struct RrDr60RunData {
   // `sizeof(RrDr60RunData)`.
   uint32_t struct_size;
@@ -1211,7 +1293,7 @@ typedef struct RrDr60RunData {
   const struct RrDr60VasEvent *events;
   // How many.
   uintptr_t event_count;
-  // The record-stream change entries, in order (their `reserved` is the stream word).
+  // The record-stream change entries, in order (their `stream` is the stream word).
   const struct RrDr60ChangeEntry *changes;
   // How many.
   uintptr_t change_count;
@@ -1221,10 +1303,13 @@ typedef struct RrDr60RunData {
 
 // What a processing record says (spec 020 D1; data-model.md), filled by
 // `rr_dr60_processing_record_read`. `struct_size` first: set it to
-// `sizeof(RrDr60RecordReadout)`; a smaller size is refused, a larger one is filled with the
-// tail zeroed (spec 018's prefix-fill rule).
+// `sizeof(RrDr60RecordReadout)`; a smaller size is refused, a larger one up to
+// `RR_DR60_MAX_STRUCT_SIZE` is filled with the tail zeroed (spec 018's prefix-fill rule with
+// spec 022's cap).
 typedef struct RrDr60RecordReadout {
-  // `sizeof(RrDr60RecordReadout)` as the caller compiled it.
+  // `sizeof(RrDr60RecordReadout)` as the caller compiled it; read back as the filled size
+  // (spec 022 D11). In a prefix fill the embedded `settings.struct_size` is the settings
+  // bytes the prefix holds.
   uint32_t struct_size;
   // The record's form version.
   uint32_t form_version;
@@ -1345,9 +1430,12 @@ void rr_dr60_destroy(struct RrDr60Pipeline *pipeline);
 //
 // Only `output[0 .. produced)` holds output: with the VAS in drop mode (the default), pauses
 // are removed, so `produced` can be smaller than `frames`, or 0 (spec 003 FR-004).
-// `out_info` may be NULL. When it is not, it is always written: on an error, a poisoned handle
-// or `frames == 0` it gets `produced = 0`, `events = 0` and the current `paused` value
-// (`false` for a NULL handle).
+// `out_info` may be NULL. When it is not, its `struct_size` is read and checked first (spec
+// 022 D12: below 40 or above `RR_DR60_MAX_STRUCT_SIZE` → `RR_DR60_STATUS_INVALID_ARGUMENT`,
+// nothing written, nothing processed; with a NULL or poisoned handle the handle's status);
+// with an accepted size it is always written: on an error, a poisoned handle or `frames == 0`
+// it gets `produced = 0`, `events = 0` and the current `paused` value (`false` for a NULL
+// handle), the tail past 40 zeroed.
 //
 // `input == output` processes in place. Any other overlap returns
 // [`RrDr60Status::InvalidArgument`]. With `frames == 0`, both buffers may be NULL.
@@ -1473,8 +1561,9 @@ RrDr60Status rr_dr60_start_recording(struct RrDr60Pipeline *pipeline);
 // recording in progress; writes the block's VAS events (positions in the recording's device
 // samples from its start) to `events`, the first `events_capacity` of them (spec 006 FR-001,
 // FR-006). The recording stops by itself at the exact sample at which the memory fills
-// (`out_info->stopped`, FR-012). `out_info` is always written when not NULL (zeros on an
-// error). `events` may be NULL only when `events_capacity` is 0; `input` may be NULL only when
+// (`out_info->stopped`, FR-012). `out_info` is always written when not NULL and its
+// `struct_size` is accepted (the idle report on an error: `stored` 0, the current `paused`,
+// the tail zeroed; a refused size processes nothing, spec 022 D12). `events` may be NULL only when `events_capacity` is 0; `input` may be NULL only when
 // `frames` is 0. Real-time safe.
 //
 // With the speech codec on, `out_info.frames` and `frames_total` count the frames completed
@@ -1510,7 +1599,9 @@ RrDr60Status rr_dr60_max_record_events(struct RrDr60Pipeline *pipeline,
 // Stops the recording (spec 006 FR-005): flushes the record path's own latency of silence
 // through it (its events go to `events`), and keeps the recording (`kept`, its number and
 // length) or, when nothing was fed since the start, discards it as empty (A-039).
-// `out_outcome` is always written when not NULL (zeros on an error). Real-time safe.
+// `out_outcome` is always written when not NULL and its `struct_size` is accepted (the idle
+// outcome on an error, the tail zeroed; a refused size processes nothing, spec 022 D12).
+// Real-time safe.
 //
 // Statuses: `NOT_RECORDING` (including after a memory-full stop).
 //
@@ -1535,7 +1626,9 @@ RrDr60Status rr_dr60_start_playback(struct RrDr60Pipeline *pipeline, uint32_t nu
 
 // Produces the next block of host samples of the recording being played into
 // `output[0 .. produced)` (spec 006 FR-002, FR-008): the recording, then its drain, then
-// `finished` and idle. `out_info` is always written when not NULL (zeros on an error).
+// `finished` and idle. `out_info` is always written when not NULL and its `struct_size` is
+// accepted (the idle report on an error, the tail zeroed; a refused size processes nothing,
+// spec 022 D12).
 // `frames == 0` is OK (`output` may then be NULL). Real-time safe.
 //
 // Statuses: `NOT_PLAYING`.
@@ -1882,8 +1975,10 @@ RrDr60Status rr_dr60_battery_trajectory_row(uint32_t i, float *out_hours, float 
 // before any, after `rr_dr60_reset` and after `rr_dr60_reconfigure`. Real-time safe; never
 // changes the engine. `out->struct_size` is read first (the compatible prefix-fill rule, spec
 // 018 FR-010): below 56 (the size of 0.16 and 0.17) → `RR_DR60_STATUS_INVALID_ARGUMENT` and
-// nothing written; 56 … 63 → the 56 bytes of the 0.16 fields filled and nothing else touched;
-// 64 and above → the 64 bytes filled and the bytes `[64, struct_size)` zeroed (no upper cap).
+// nothing written; 56 … 63 → the 56 bytes of the 0.16 fields filled, `struct_size` read back
+// as 56 and the bytes `[56, struct_size)` zeroed; 64 up to `RR_DR60_MAX_STRUCT_SIZE` → the 64
+// bytes filled, 64 read back and the bytes `[64, struct_size)` zeroed; above the cap refused
+// (spec 022 D8, D11). Check order: the handle, then NULL, then the size.
 //
 // # Safety
 //
@@ -2116,6 +2211,23 @@ RrDr60Status rr_dr60_speech_codec_info(struct RrDr60SpeechCodecInfo *out);
 // `pipeline` must be a live handle. `out_encoding` must be NULL or writable.
 RrDr60Status rr_dr60_get_encoding(struct RrDr60Pipeline *pipeline, uint32_t *out_encoding);
 
+// The C ABI version this build of the library implements, `RR_DR60_ABI_VERSION` (spec 022 D3).
+// Real-time safe; no handle.
+uint32_t rr_dr60_abi_version(void);
+
+// Checks the caller's header against this build of the library (spec 022 D3): call once at
+// start with `RR_DR60_ABI_VERSION, sizeof(void *), sizeof(RrDr60Settings),
+// sizeof(RrDr60VasEvent), sizeof(RrDr60ChangeEntry)`. `RR_DR60_STATUS_OK` when the version is
+// this library's, the pointer width is 8, the settings size equals the library's (D13: the
+// settings struct is validated whole) and the two frozen sizes are 16 and 40; else
+// `RR_DR60_STATUS_ABI_MISMATCH`. Pure: touches no engine. A mismatch is a build error of the
+// app (the library ships inside it), never a user condition.
+RrDr60Status rr_dr60_abi_check(uint32_t abi_version,
+                               uintptr_t pointer_size,
+                               uintptr_t settings_size,
+                               uintptr_t vas_event_size,
+                               uintptr_t change_entry_size);
+
 // The library version as a static NUL-terminated string, e.g. `"0.1.0"`. Never NULL; do not
 // free.
 const char *rr_dr60_version_string(void);
@@ -2133,7 +2245,8 @@ uint32_t rr_dr60_manifest_stage_count(void);
 RrDr60Status rr_dr60_manifest_header(struct RrDr60ManifestHeader *out);
 
 // Copies stage `number` (1 to 15) into `*out` (spec 007 FR-002, FR-017). Real-time safe.
-// Check order: NULL first, then the range; nothing is written on a refusal.
+// Check order: NULL first, then `out->struct_size` (spec 022 D12), then the range; nothing is
+// written on a refusal.
 //
 // # Safety
 //
@@ -2162,12 +2275,13 @@ RrDr60Status rr_dr60_manifest_stage_assumption(uint32_t number,
                                                uint32_t index,
                                                const char **out_id);
 
-// The number of controls in the control manifest, 29 (spec 014 FR-013). Real-time safe.
+// The number of controls in the control manifest, 30 since 0.18 (spec 014 FR-013; spec 018 appended the battery value). Real-time safe.
 uint32_t rr_dr60_control_count(void);
 
 // Copies control `index` (0-based, in the manifest's order) into `*out` (spec 014 FR-013).
 // Real-time safe; needs no handle. Check order: NULL first (`RR_DR60_STATUS_NULL_POINTER`),
-// then the index (`RR_DR60_STATUS_NO_SUCH_CONTROL`); nothing is written on a refusal.
+// then `out->struct_size` (spec 022 D12), then the index (`RR_DR60_STATUS_NO_SUCH_CONTROL`);
+// nothing is written on a refusal.
 //
 // # Safety
 //

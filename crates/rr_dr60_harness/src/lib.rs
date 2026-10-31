@@ -5,6 +5,7 @@
 //! tolerances, and compares output against golden reference hashes. Every
 //! check reports the requirement and the A-/S- IDs it verifies.
 
+pub mod abi_checks;
 pub mod agc_checks;
 pub mod analysis;
 pub mod battery_checks;

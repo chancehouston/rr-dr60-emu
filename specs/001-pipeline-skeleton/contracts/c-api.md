@@ -56,10 +56,10 @@ const char  *rr_dr60_version_string(void);
 ## Rules
 
 1. **Errors are values (FR-024).** No function aborts, unwinds into C, or calls `exit`. Every entry point body runs inside `catch_unwind`. A caught panic returns `INTERNAL_ERROR` and poisons the handle. The `std` allocator's out-of-memory handler can still abort the process during `create` or `reconfigure`. This is documented as the only exception, and it can only happen outside real-time calls.
-2. **Failed calls change nothing.** On any non-OK status, `*out_*` parameters are left untouched and the pipeline state is unchanged (except poisoning).
+2. **Failed calls change nothing.** On any non-OK status, `*out_*` parameters are left untouched and the pipeline state is unchanged (except poisoning). *Amended by spec 022 (2026-10-31): the per-call report structs are always written when not NULL **and their `struct_size` is accepted**; a refused size processes nothing.*
 3. **Ownership.** The caller owns the buffers. The library never keeps a buffer pointer after a call returns. `destroy` frees the handle; using the handle after `destroy` is undefined behavior (documented in the header).
 4. **Threading.** A handle must not be used by two threads at once. Separate handles are independent.
-5. **ABI stability.** `RrDr60Settings` only grows at the end. `struct_size` must be at least the v0.1 size, or the call returns `INVALID_ARGUMENT`. New status codes and tap values are only appended.
+5. **ABI stability.** `RrDr60Settings` only grows at the end. `struct_size` must be at least the v0.1 size, or the call returns `INVALID_ARGUMENT`. New status codes and tap values are only appended. *Amended by spec 022 (2026-10-31): the settings struct is validated whole (`struct_size` equal to the library's, else `INVALID_ARGUMENT`; a larger one was accepted before 0.22) and is the one exception to the 0.22 promise, under which every struct the library fills starts with `struct_size` and only grows under it, `RrDr60VasEvent` and `RrDr60ChangeEntry` are frozen, and anything else moves `RR_DR60_ABI_VERSION`; see spec 022's contract.*
 6. **Parity (FR-023).** For any settings and input, `rr_dr60_process` output is bit-identical to `Pipeline::process`. The harness test `ffi_parity` checks this.
 7. **Unsafe hygiene.** Every `unsafe` block in `rr_dr60_ffi` has a `// SAFETY:` comment. Pointer and length pairs are turned into slices only after null and overlap checks.
 

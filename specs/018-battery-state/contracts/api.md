@@ -43,6 +43,7 @@ RrDr60Status rr_dr60_battery_ceiling_factor(float volts, float *out_factor); /* 
 RrDr60Status rr_dr60_battery_ceiling_db(float volts, float *out_db);
 RrDr60Status rr_dr60_battery_trajectory_row(uint32_t i, float *out_hours, float *out_volts); /* INVALID_ARGUMENT at or past 7 */
 /* RrDr60Meters: uint32_t amp_clip_count (offset 56), float battery_ceiling (offset 60); sizeof 64; struct_size below 56 refused, 56 … 63 filled to the size, 64 and above filled with the tail zeroed. */
+/* Amended by spec 022 (2026-10-31): above RR_DR60_MAX_STRUCT_SIZE (4096) refused; struct_size reads back as the filled size (56 or 64, no longer the caller's value); 56 … 63 zeroes the bytes from 56 up to the caller's size; every padding byte is zero. */
 ```
 
 Real-time list additions: `rr_dr60_set_battery_volts`, `rr_dr60_get_battery_volts`, the three battery functions.
