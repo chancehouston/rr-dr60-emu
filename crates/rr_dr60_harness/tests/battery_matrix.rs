@@ -68,3 +68,15 @@ fn playback_stream_at_every_rate() {
     }
     finish(rows);
 }
+
+/// Convergence T027, T028: the playback stream's below-knee identity (SC-001 "both streams")
+/// and the clip count against its twin at the five law points, at every rate (FR-010, SC-004).
+#[test]
+fn playback_identity_and_clip_count_at_every_rate() {
+    let mut rows = Vec::new();
+    for rate in configs::all_rates() {
+        rows.extend(bat::playback_below_knee_identity(&standard, rate));
+        rows.extend(bat::clip_count_twin(&standard, rate));
+    }
+    finish(rows);
+}

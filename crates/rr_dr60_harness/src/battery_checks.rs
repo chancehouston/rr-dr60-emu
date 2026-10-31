@@ -975,3 +975,84 @@ pub fn playback_rows(make: Make<'_>, rate: u32, to: f32) -> Vec<MeasurementResul
         ),
     ]
 }
+
+// ---- Convergence T027, T028 ------------------------------------------------------------------------
+
+/// SC-001 "both streams" (convergence T027): the below-knee identity on the **playback stream**:
+/// the −20 dBFS voiced stimulus recorded once and played at the reference position on the whole
+/// default with the codec off (the stored samples are the oracle's input), bit-identical at the
+/// five law points to the default's playback.
+pub fn playback_below_knee_identity(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
+    let mut settings = whole_default(rate);
+    settings.speech_codec_enabled = false;
+    let x = stimulus::voiced(f64::from(rate), 1.0, -20.0, 0x018);
+    let play_at = |volts: Option<f32>| -> Vec<f32> {
+        let mut p = make(settings);
+        p.set_route(Route::Speaker);
+        p.set_volume(VOLUME_REFERENCE).expect("a valid position");
+        p.start_recording().expect("start");
+        let _ = p.record(&x, &mut []).expect("record");
+        let _ = p.stop_recording(&mut []).expect("stop");
+        if let Some(v) = volts {
+            p.set_battery_volts(v).expect("a valid battery value");
+        }
+        cc::run(&mut p, Source::Playback(1), Partition::Fixed(1024)).out
+    };
+    let reference = play_at(None);
+    law_points()
+        .iter()
+        .map(|&volts| {
+            MeasurementResult::new(
+                "FR-002",
+                "playback: bit-identical to the default below the knee",
+                T_BATT,
+                rate,
+                "default",
+                format!("voiced -20 dBFS recorded and played at the reference position, {volts} V"),
+                pass(cc::same(&play_at(Some(volts)), &reference)),
+                "",
+                Tolerance::Exact(1.0), // 018 SC-001: both streams
+            )
+        })
+        .collect()
+}
+
+/// FR-010 / SC-004 "at every value and rate" (convergence T028): the amplifier clip count of
+/// every 1024-sample block of the clipped tone at `VOLUME_6DB_OVER` equals the output twin's
+/// count of samples above the knee's start (the knee is the identity below its start and
+/// strictly increasing above it; hardware review B6's caveat applies), at the five law points.
+pub fn clip_count_twin(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
+    let settings = stage11_only(rate);
+    let x = clipped_tone(rate);
+    law_points()
+        .iter()
+        .map(|&volts| {
+            let knee_lo = 0.85 * f64::from(ceiling_factor(volts));
+            let mut p = make(settings);
+            p.set_route(Route::Speaker);
+            p.set_volume(VOLUME_6DB_OVER).expect("a valid position");
+            p.set_battery_volts(volts).expect("a valid battery value");
+            let mut mismatches = 0usize;
+            let mut total = 0u64;
+            for chunk in x.chunks(1024) {
+                let mut y = vec![0.0f32; chunk.len()];
+                let _ = p.process(chunk, &mut y).expect("ok");
+                let twin = y.iter().filter(|&&v| f64::from(v).abs() > knee_lo).count();
+                let count = p.meters().amp_clip_count as usize;
+                mismatches += usize::from(count != twin);
+                total += count as u64;
+            }
+            MeasurementResult::new(
+                "FR-010",
+                "clip count equals the output twin's on every block (total above 0)",
+                T_BATT,
+                rate,
+                "stage11_only_speaker",
+                format!("tone 1 kHz 0 dBFS at +6 dB, {volts} V"),
+                pass(mismatches == 0 && total > 0),
+                "",
+                Tolerance::Exact(1.0), // 018 FR-010, SC-004
+            )
+        })
+        .collect()
+}

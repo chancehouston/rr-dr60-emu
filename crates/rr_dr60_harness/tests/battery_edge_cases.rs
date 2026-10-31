@@ -353,3 +353,43 @@ fn no_op_change_is_logged() {
     assert_eq!(e.len(), 1);
     assert_eq!((e[0].before, e[0].after, e[0].tag), (3.0, 3.0, 5));
 }
+
+/// Convergence T029 (FR-001): a plain `set_battery_volts` during a playback lands on the player's
+/// next block with a tag-0 entry, and the factor is in force from that block's first sample (a
+/// transition, read through the hook at its end).
+#[test]
+fn plain_setter_during_playback_lands_on_the_next_block() {
+    use rr_dr60::ChangeEntry;
+    let s = bat::stage11_only(RATE);
+    let x = bat::clipped_tone(RATE);
+    let mut p = standard(s);
+    p.set_route(Route::Speaker);
+    p.set_volume(VOLUME_6DB_OVER).unwrap();
+    p.start_recording().unwrap();
+    let _ = p.record(&x, &mut []).unwrap();
+    let _ = p.stop_recording(&mut []).unwrap();
+    p.start_playback(1).unwrap();
+    let mut log = vec![ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
+    let mut y = vec![0.0f32; 2048];
+    let info = p.play_with_changes(&mut y, &mut log).unwrap();
+    assert!(
+        bat::battery_entries(&log[..info.changes]).is_empty(),
+        "nothing before the setter"
+    );
+    p.set_battery_volts(2.4).unwrap();
+    let n = bat::n_of(RATE);
+    let mut y = vec![0.0f32; n + 64];
+    let info = p.play_with_changes(&mut y, &mut log).unwrap();
+    let e = bat::battery_entries(&log[..info.changes]);
+    assert_eq!(e.len(), 1, "one entry on the next block");
+    assert_eq!(
+        (e[0].position, e[0].tag, e[0].after),
+        (2048, 0, f64::from(2.4f32))
+    );
+    assert_eq!(
+        __test_hooks::battery_factor(&p, Stream::Playback).unwrap(),
+        f64::from(ceiling_factor(2.4)),
+        "the target in force after the transition"
+    );
+    assert_eq!(p.battery_volts(), 2.4);
+}

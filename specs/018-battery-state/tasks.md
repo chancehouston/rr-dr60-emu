@@ -91,3 +91,9 @@ description: "Task list for the battery state, the static law (018)"
 ## Implementation strategy
 
 MVP = Phases 1 – 3 (US1): the control lands, the default is bit-identical, the trajectory holds. Then US2 (the manifest, the meters, C), the golden and the cost, Polish. Commit after each task or logical group, Conventional Commits. Quote every timing figure from a solo release run; patch test files against their rustfmt-formatted text; one filter per test binary.
+
+## Phase 7: Convergence
+
+- [X] T027 Add the playback-stream below-knee identity to `crates/rr_dr60_harness/src/battery_checks.rs` (`playback_below_knee_identity`: the −20 dBFS voiced recorded and played at the reference position on the whole default with the codec off, bit-identical at the five law points) and run it in `battery_matrix` at every rate per SC-001 "both streams" (partial)
+- [X] T028 Add a matrix row to `battery_checks.rs` / `battery_matrix.rs`: the amplifier clip count against the output twin (`|y| > 0.85·b`) per block at the five law points and seven rates per FR-010 / SC-004 "at every value and rate" (partial)
+- [X] T029 Add an edge case to `crates/rr_dr60_harness/tests/battery_edge_cases.rs`: a plain `set_battery_volts` during a playback lands on the player's next block with a tag-0 entry and the factor in force per FR-001 (partial)
