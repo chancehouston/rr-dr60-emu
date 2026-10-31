@@ -630,6 +630,7 @@ impl Memory {
             Store::Samples(v) => v.capacity(),
             Store::Frames(v) => v.capacity() / self.encoding.unit_bytes(),
         };
+        debug_assert_eq!(self.spans.capacity(), self.blocks.capacity()); // 020 D5
         (store, self.spans.capacity())
     }
 }
