@@ -1220,3 +1220,37 @@ fn readme_speed_statements() {
         );
     }
 }
+
+/// Spec 020 FR-010 (tasks.md T025): the guide's "Processing record" section exists and
+/// carries none of the feature's forbidden words (the claims policy: the digest is a
+/// consistency check, never a seal; "events" and "measured" are the guide's existing words,
+/// scanned by the manifest's list elsewhere).
+#[test]
+fn guide_record_contract() {
+    let text = std::fs::read_to_string(mc::repo_root().join("docs/guide.md")).unwrap();
+    let start = text
+        .find("## Processing record\n")
+        .expect("the guide's Processing record section");
+    let end = text[start + 1..]
+        .find("\n## ")
+        .map_or(text.len(), |i| start + 1 + i);
+    let section = text[start..end].to_lowercase();
+    assert!(section.contains("belong together") && section.contains("not a signature"));
+    for word in [
+        "verified",
+        "authentic",
+        "proof",
+        "proves",
+        "tamper",
+        "genuine",
+        "accurate",
+        "honest",
+        "true about",
+        "sensor",
+    ] {
+        assert!(
+            !section.contains(word),
+            "the guide's Processing record section uses {word:?}"
+        );
+    }
+}

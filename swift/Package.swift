@@ -8,9 +8,13 @@ let package = Package(
     products: [
         // The C API (include/rr_dr60.h) as the Swift module RRDR60C.
         .library(name: "RRDR60C", targets: ["RRDR60C"]),
+        // The Swift helpers over it (spec 020: the processing record's re-render recipe).
+        .library(name: "RRDR60", targets: ["RRDR60"]),
     ],
     targets: [
         .binaryTarget(name: "RRDR60C", path: "RRDR60C.xcframework"),
+        .target(name: "RRDR60", dependencies: ["RRDR60C"]),
         .testTarget(name: "RRDR60CTests", dependencies: ["RRDR60C"]),
+        .testTarget(name: "RRDR60Tests", dependencies: ["RRDR60", "RRDR60C"]),
     ]
 )

@@ -18,6 +18,7 @@
 use alloc::vec::Vec;
 
 use crate::codec;
+use crate::error::Error;
 use crate::pipeline::VasEvent;
 use crate::rate::RatePlan;
 use crate::resample::{self, PolyphaseDown, PolyphaseUp};
@@ -84,6 +85,33 @@ fn host_latency(plan: &RatePlan, tau_device: f64, host_rate_hz: u32) -> u32 {
     (f64::from(plan.delay_host_samples())
         + tau_device * f64::from(host_rate_hz) / f64::from(DEVICE_RATE_HZ)
         + 0.5) as u32
+}
+
+/// The record path's latency to the speech encoder's input for `settings`, as a pure function
+/// (spec 020 research R-01; the recorder's `latency_host_samples_pre_encoder` equals it): the
+/// conversion's delay plus the record filter's 1 kHz group delay when the stage runs, rounded
+/// once. Allocates nothing.
+///
+/// # Errors
+///
+/// [`Error::UnsupportedHostRate`].
+pub(crate) fn record_latency_pre_encoder_for(settings: &Settings) -> Result<u32, Error> {
+    let plan = RatePlan::for_host(settings.host_rate_hz)?;
+    let tau = if settings.record_stage_enabled {
+        RecordStage::record().group_delay_1k_samples()
+    } else {
+        0.0
+    };
+    Ok(host_latency(&plan, tau, settings.host_rate_hz))
+}
+
+/// The conversion's `(l, m)` for a host rate (device = host · l ÷ m), as a pure function.
+///
+/// # Errors
+///
+/// [`Error::UnsupportedHostRate`].
+pub(crate) fn l_m_for(host_rate_hz: u32) -> Result<(u64, u64), Error> {
+    Ok(l_m(&RatePlan::for_host(host_rate_hz)?))
 }
 
 /// The speech codec's delay in host samples at `host_rate_hz`: 180 · host / 6000, an integer at

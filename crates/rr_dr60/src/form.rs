@@ -46,8 +46,9 @@ const OFF_COUNT: usize = 40; // contracts/recording-form.md (008 FR-010)
 /// The IEEE 802.3 polynomial, reflected (research R-04).
 const CRC_POLY: u32 = 0xEDB8_8320; // contracts/recording-form.md (006 FR-014)
 
-/// The exporting library's version, for the informational header fields.
-const LIB_VERSION: [u16; 3] = [
+/// The exporting library's version, for the informational header fields (and the processing
+/// record's `library_version`, spec 020).
+pub(crate) const LIB_VERSION: [u16; 3] = [
     parse_u16(env!("CARGO_PKG_VERSION_MAJOR")),
     parse_u16(env!("CARGO_PKG_VERSION_MINOR")),
     parse_u16(env!("CARGO_PKG_VERSION_PATCH")),
@@ -154,6 +155,71 @@ pub(crate) fn export(payload: Payload<'_>, out: &mut [u8]) -> Result<usize, Erro
         return Err(Error::BufferTooSmall { needed });
     }
     let out = &mut out[..needed];
+    write_header(encoding, k, &mut out[..HEADER_LEN]);
+    match payload {
+        Payload::Frames(frames) => out[HEADER_LEN..needed - 4].copy_from_slice(frames),
+        Payload::Samples(samples) => {
+            for (slot, s) in out[HEADER_LEN..needed - 4].chunks_exact_mut(4).zip(samples) {
+                slot.copy_from_slice(&s.to_le_bytes());
+            }
+        }
+    }
+    let crc = crc32(&out[..needed - 4]);
+    out[needed - 4..].copy_from_slice(&crc.to_le_bytes());
+    Ok(needed)
+}
+
+/// A streaming CRC-32 (the form's trailing field, computed without the whole sequence in one
+/// buffer; spec 020 research R-03).
+struct Crc32(u32);
+
+impl Crc32 {
+    const fn new() -> Self {
+        Self(0xFFFF_FFFF)
+    }
+    fn update(&mut self, bytes: &[u8]) {
+        let mut c = self.0;
+        for &b in bytes {
+            c = CRC_TABLE[((c ^ u32::from(b)) & 0xFF) as usize] ^ (c >> 8);
+        }
+        self.0 = c;
+    }
+    const fn finish(self) -> u32 {
+        !self.0
+    }
+}
+
+/// The FNV-1a 64 digest of the bytes `export` would write for `payload` (spec 020 D3, FR-003;
+/// research R-03), without writing them: the header in a stack buffer, then the units, then
+/// the CRC the form carries. Two passes over the recording, no allocation; byte-identical to
+/// hashing the exported sequence.
+pub(crate) fn digest(payload: Payload<'_>) -> u64 {
+    let mut header = [0u8; HEADER_LEN];
+    write_header(payload.encoding(), payload.units(), &mut header);
+    let mut crc = Crc32::new();
+    let mut h = crate::digest::Fnv1a64::new();
+    crc.update(&header);
+    h.update(&header);
+    match payload {
+        Payload::Frames(frames) => {
+            crc.update(frames);
+            h.update(frames);
+        }
+        Payload::Samples(samples) => {
+            for s in samples {
+                let b = s.to_le_bytes();
+                crc.update(&b);
+                h.update(&b);
+            }
+        }
+    }
+    h.update(&crc.finish().to_le_bytes());
+    h.finish()
+}
+
+/// The 48-byte header of the form for `k` units in `encoding` (contracts/recording-form.md).
+fn write_header(encoding: Encoding, k: usize, out: &mut [u8]) {
+    debug_assert_eq!(out.len(), HEADER_LEN);
     out[..MAGIC.len()].copy_from_slice(&MAGIC);
     out[OFF_VERSION..OFF_FLAGS].copy_from_slice(&FORM_VERSION.to_le_bytes());
     out[OFF_FLAGS..OFF_RATE].copy_from_slice(&0u16.to_le_bytes());
@@ -181,17 +247,6 @@ pub(crate) fn export(payload: Payload<'_>, out: &mut [u8]) -> Result<usize, Erro
     out[OFF_BITS..OFF_RESERVED_2].copy_from_slice(&bits.to_le_bytes());
     out[OFF_RESERVED_2..OFF_COUNT].copy_from_slice(&0u32.to_le_bytes());
     out[OFF_COUNT..HEADER_LEN].copy_from_slice(&(k as u64).to_le_bytes());
-    match payload {
-        Payload::Frames(frames) => out[HEADER_LEN..needed - 4].copy_from_slice(frames),
-        Payload::Samples(samples) => {
-            for (slot, s) in out[HEADER_LEN..needed - 4].chunks_exact_mut(4).zip(samples) {
-                slot.copy_from_slice(&s.to_le_bytes());
-            }
-        }
-    }
-    let crc = crc32(&out[..needed - 4]);
-    out[needed - 4..].copy_from_slice(&crc.to_le_bytes());
-    Ok(needed)
 }
 
 fn read_u16(bytes: &[u8], at: usize) -> u16 {

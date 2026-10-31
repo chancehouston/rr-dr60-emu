@@ -399,6 +399,124 @@ static int print_battery(void) {
 
 /* Spec 017 SC-003: a scheduled recording and a one-pass with record-side changes, as the Rust
    example `record_changes_rows` prints them. */
+/* Spec 020 (contracts/api.md): the processing-record rows as the Rust example `record_rows`
+   prints them: a ±0.125 square (24 up, 24 down) for 0.5 s, 0.4 s of silence (the gate pauses
+   after its 100 ms hang) and 0.3 s of square at 48 kHz through the default engine with the
+   codec bypassed, a knee change to −30 dBFS scheduled at input 10000 and a hiss change of +3 dB
+   at 30000; the run collected from every call and the stop; then the record's text verbatim,
+   the read-out's flags and counts, whether the rewrite is byte-identical, the digest check, map
+   (a) of kept sample 0, map (b) of input 24000, map (c) at output 10, and the feed-point rule on
+   three codes. */
+static int print_record(void) {
+  enum { PRATE = 48000, PN = PRATE * 12 / 10, PBLOCK = 1024, PEV = 64 };
+  static float pin[PN];
+  for (size_t i = 0; i < PN; i++) {
+    int on = i < (size_t)PRATE / 2 || i >= (size_t)PRATE * 9 / 10;
+    pin[i] = on ? ((i % 48 < 24) ? 0.125f : -0.125f) : 0.0f;
+  }
+  uint32_t knee = control_index("agc.knee_dbfs"), hiss = control_index("mic.hiss_offset_db");
+  if (knee == UINT32_MAX || hiss == UINT32_MAX) return 1;
+  RrDr60Settings s = rr_dr60_settings_default(PRATE);
+  s.speech_codec_enabled = false;
+  s.vas_hang_ms = 100.0f;
+  RrDr60Pipeline *p = NULL;
+  if (rr_dr60_create(&s, &p) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_schedule_change(p, RR_DR60_STREAM_RECORD, 10000, knee, -30.0, 7) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_schedule_change(p, RR_DR60_STREAM_RECORD, 30000, hiss, 3.0, 8) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_start_recording(p) != RR_DR60_STATUS_OK) return 1;
+  static RrDr60VasEvent events[4 * PEV];
+  static RrDr60ChangeEntry changes[4 * RR_DR60_MAX_CHANGES_PER_CALL];
+  size_t n_events = 0, n_changes = 0;
+  RrDr60VasEvent ev[PEV];
+  RrDr60ChangeEntry ch[RR_DR60_MAX_CHANGES_PER_CALL];
+  for (size_t pos = 0; pos < PN; pos += PBLOCK) {
+    size_t n = PN - pos < PBLOCK ? PN - pos : PBLOCK;
+    RrDr60RecordInfo info;
+    size_t count = 0;
+    uint64_t total = 0;
+    if (rr_dr60_record_with_changes(p, pin + pos, n, &info, ev, PEV, ch, RR_DR60_MAX_CHANGES_PER_CALL, &count, &total) !=
+        RR_DR60_STATUS_OK)
+      return 1;
+    if (info.events > PEV || info.stopped) return 1;
+    for (size_t k = 0; k < info.events; k++) events[n_events++] = ev[k];
+    for (size_t k = 0; k < count; k++) changes[n_changes++] = ch[k];
+  }
+  RrDr60StopOutcome so;
+  size_t count = 0;
+  uint64_t total = 0;
+  if (rr_dr60_stop_recording_with_changes(p, &so, ev, PEV, ch, RR_DR60_MAX_CHANGES_PER_CALL, &count, &total) !=
+      RR_DR60_STATUS_OK)
+    return 1;
+  if (!so.kept || so.flush.events > PEV) return 1;
+  for (size_t k = 0; k < so.flush.events; k++) events[n_events++] = ev[k];
+  for (size_t k = 0; k < count; k++) changes[n_changes++] = ch[k];
+  RrDr60RunData run;
+  memset(&run, 0, sizeof run);
+  run.struct_size = sizeof run;
+  run.events = events;
+  run.event_count = n_events;
+  run.changes = changes;
+  run.change_count = n_changes;
+  run.stop.struct_size = sizeof run.stop;
+  run.stop.how = RR_DR60_STOP_CALL;
+  run.stop.stop_input_position = so.stop_input_position;
+  run.stop.padding_start_sample = so.padding_start_sample;
+  run.stop.input_samples_total = total;
+  run.stop.silence_fed_samples = so.silence_fed_samples;
+  size_t len = 0;
+  if (rr_dr60_processing_record_len(p, so.number, &run, &len) != RR_DR60_STATUS_OK) return 1;
+  uint8_t *rec = (uint8_t *)malloc(len + 1);
+  if (!rec) return 1;
+  size_t written = 0;
+  if (rr_dr60_processing_record_write(p, so.number, &run, rec, len, &written) != RR_DR60_STATUS_OK || written != len)
+    return 1;
+  printf("record %zu\n", len);
+  fwrite(rec, 1, len, stdout);
+  RrDr60RecordReadout r;
+  memset(&r, 0, sizeof r);
+  r.struct_size = sizeof r;
+  if (rr_dr60_processing_record_read(p, rec, len, &r) != RR_DR60_STATUS_OK) return 1;
+  printf("flags %u unknown %u events %llu changes %llu counter %llu\n", (unsigned)r.flags,
+         (unsigned)r.unknown_setting_count, (unsigned long long)r.event_count, (unsigned long long)r.change_count,
+         (unsigned long long)r.recording_counter);
+  uint8_t *again = (uint8_t *)malloc(len + 1);
+  size_t again_len = 0;
+  if (!again || rr_dr60_processing_record_rewrite(rec, len, again, len + 1, &again_len) != RR_DR60_STATUS_OK) return 1;
+  printf("rewrite_identical %d\n", again_len == len && memcmp(again, rec, len) == 0);
+  bool matches = false;
+  if (rr_dr60_recording_digest_matches(p, so.number, &r, &matches) != RR_DR60_STATUS_OK) return 1;
+  uint64_t digest = 0;
+  if (rr_dr60_recording_digest(p, so.number, &digest) != RR_DR60_STATUS_OK) return 1;
+  printf("matches %d digest %016llx\n", matches, (unsigned long long)digest);
+  RrDr60InputAlignment a;
+  memset(&a, 0, sizeof a);
+  a.struct_size = sizeof a;
+  if (rr_dr60_kept_to_input(&r.settings, 0, events, n_events, &run.stop, &a) != RR_DR60_STATUS_OK) return 1;
+  printf("kept_to_input 0: %llu %llu %llu %u\n", (unsigned long long)a.centre, (unsigned long long)a.first,
+         (unsigned long long)a.last, (unsigned)a.clamped);
+  uint64_t kept = 0, removed = 0;
+  if (rr_dr60_input_to_kept(&r.settings, 24000, events, n_events, &kept, &removed) != RR_DR60_STATUS_OK) return 1;
+  printf("input_to_kept 24000: %llu %llu\n", (unsigned long long)kept, (unsigned long long)removed);
+  RrDr60PlaceState ps;
+  memset(&ps, 0, sizeof ps);
+  ps.struct_size = sizeof ps;
+  if (rr_dr60_place_at(10, PRATE, 3, 1500, NULL, 0, &ps) != RR_DR60_STATUS_OK) return 1;
+  printf("place_at 10: %llu %u %u %u %llu\n", (unsigned long long)ps.place_fifths, (unsigned)ps.level,
+         (unsigned)ps.fading, (unsigned)ps.latched, (unsigned long long)ps.old_place_fifths);
+  int32_t codes[3] = {-8388608, 0, 8388607};
+  float conv[3];
+  rr_dr60_samples_from_i24(codes, conv, 3);
+  for (int i = 0; i < 3; i++) {
+    uint32_t bits;
+    memcpy(&bits, &conv[i], 4);
+    printf("i24 %d %08x\n", (int)codes[i], (unsigned)bits);
+  }
+  free(rec);
+  free(again);
+  rr_dr60_destroy(p);
+  return 0;
+}
+
 static int print_record_changes(void) {
   enum { CRATE = 48000, CN = CRATE / 2, CBLOCK = 1024 };
   static float cin[CN], cout[CN];
@@ -541,6 +659,9 @@ int main(int argc, char **argv) {
   }
   if (argc > 1 && strcmp(argv[1], "--battery") == 0) {
     return print_battery();
+  }
+  if (argc > 1 && strcmp(argv[1], "--record") == 0) {
+    return print_record();
   }
   if (argc > 1 && strcmp(argv[1], "--manifest") == 0) {
     print_manifest();

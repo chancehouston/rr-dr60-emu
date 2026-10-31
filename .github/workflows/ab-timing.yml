@@ -60,3 +60,7 @@ jobs:
         run: scripts/ab-timing.sh 13defc7 crossfade
         env:
           RR_DR60_CROSSFADE_COST_CEILING: "0.05"
+      - name: Processing record A/B (020 FR-008, ceiling 5 %)
+        run: scripts/ab-timing.sh 01a61ca record_contract
+        env:
+          RR_DR60_RECORD_CONTRACT_COST_CEILING: "0.05"

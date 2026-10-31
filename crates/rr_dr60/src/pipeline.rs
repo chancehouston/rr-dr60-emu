@@ -159,6 +159,10 @@ pub struct Pipeline {
     /// grown, so the hooks build stays allocation-free in a call).
     #[cfg(feature = "__test-hooks")]
     pub(crate) speed_trace: alloc::vec::Vec<f64>,
+    /// Spec 020 (research R-04): the speed control's per-output place state of the last `play`
+    /// call, the first `SPEED_PLACE_TRACE_CAPACITY`; reserved at construction, never grown.
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) speed_place_trace: alloc::vec::Vec<crate::timeline::PlaceState>,
     /// Spec 016: the meter read-out of the last non-empty processing call (research R-01).
     pub(crate) meters: Meters,
     /// Spec 017 D4: the tag of the last landed change per record-side value (by slot), carried
@@ -287,6 +291,18 @@ pub struct VasEvent {
     pub output_position: u64,
     /// Drop mode: host input samples removed at this splice. Mute mode: the region's length.
     pub input_length: u64,
+}
+
+impl VasEvent {
+    /// An event with both fields given (spec 020: a recipient assembles the timeline maps'
+    /// inputs from a processing record's rows).
+    #[must_use]
+    pub const fn new(output_position: u64, input_length: u64) -> Self {
+        Self {
+            output_position,
+            input_length,
+        }
+    }
 }
 
 /// The speech codec in the one-pass stream (spec 008 research R-06): the encoder, the decoder
@@ -436,6 +452,9 @@ impl OnePass {
 /// footprint (spec 006 FR-017); the checks read it in calls of one host sample.
 #[cfg(feature = "__test-hooks")]
 const SPEED_TRACE_CAPACITY: usize = 8192; // engineering target (019 R-06)
+/// The per-output place trace's capacity (spec 020 research R-04; a 1024-sample call at 6 kHz).
+#[cfg(feature = "__test-hooks")]
+const SPEED_PLACE_TRACE_CAPACITY: usize = 2048; // engineering target (020 R-04)
 
 /// The live controls' values a pipeline starts with (`new`: the defaults; `reconfigure`: the
 /// values kept, spec 013 FR-001 and spec 018 FR-001).
@@ -465,6 +484,20 @@ impl Pipeline {
     /// [`Error::AllocationFailed`] if the recording store for the configured capacity cannot
     /// be reserved (spec 006 FR-017).
     pub fn new(settings: Settings) -> Result<Self, Error> {
+        Self::new_at_counter(settings, 0) // 012 FR-009: the recording counter starts at 0
+    }
+
+    /// As [`new`](Self::new), with the recording counter starting at `counter` (spec 020 D5,
+    /// FR-004): the first recording and the one-pass use the hiss stream of `counter` (A-049),
+    /// bit-identical to a fresh engine that recorded `counter` times first (the one-pass after
+    /// that engine's `reset`), and [`recording_counter`](Self::recording_counter) reads
+    /// `counter` before the first recording. The counter's rules are unchanged: it never
+    /// rewinds. This is how a processing record's re-render builds its engine.
+    ///
+    /// # Errors
+    ///
+    /// As [`new`](Self::new).
+    pub fn new_at_counter(settings: Settings, counter: u64) -> Result<Self, Error> {
         validate(&settings)?;
         let plan = RatePlan::for_host(settings.host_rate_hz)?;
         // Spec 008 FR-012: the codec setting fixes the memory's encoding.
@@ -473,7 +506,7 @@ impl Pipeline {
             settings,
             &plan,
             memory,
-            0, // 012 FR-009: the recording counter starts at 0
+            counter,
             LiveStart {
                 route: Route::default(),
                 volume: crate::output::VOLUME_REFERENCE, // A-043
@@ -502,11 +535,14 @@ impl Pipeline {
         } = live;
         let mut one_pass = OnePass::new(&settings, plan);
         one_pass.rec.rekey(counter); // 012 FR-009: the next recording's stream
+        one_pass.rec.ctl.set_stream(Stream::OnePass); // 020 D9
+        one_pass.play.ctl.set_stream(Stream::OnePass);
         one_pass
             .play
             .set_start_values(route, volume, speed_level, battery_volts); // 015 D3, 018
         let latency = latency_samples(plan, &settings, &one_pass);
-        let recorder = RecordPath::new(&settings, plan, false, true);
+        let mut recorder = RecordPath::new(&settings, plan, false, true);
+        recorder.ctl.set_stream(Stream::Record); // 020 D9
         Self {
             settings,
             one_pass,
@@ -522,6 +558,7 @@ impl Pipeline {
             player: {
                 let mut p = PlaybackPath::new(&settings, plan, false);
                 p.set_start_values(route, volume, speed_level, battery_volts); // 015 D3, 018
+                p.ctl.set_stream(Stream::Playback); // 020 D9
                 p
             },
             memory,
@@ -535,6 +572,8 @@ impl Pipeline {
             speed: SpeedStage::new(speed_level),
             #[cfg(feature = "__test-hooks")]
             speed_trace: alloc::vec::Vec::with_capacity(SPEED_TRACE_CAPACITY), // never grown: a play call pushes within it
+            #[cfg(feature = "__test-hooks")]
+            speed_place_trace: alloc::vec::Vec::with_capacity(SPEED_PLACE_TRACE_CAPACITY),
         }
     }
 

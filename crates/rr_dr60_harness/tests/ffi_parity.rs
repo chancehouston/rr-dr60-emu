@@ -1224,6 +1224,8 @@ fn c_api_record_play_loop_matches_rust_at_all_rates() {
             number,
             length_samples: length,
             silence_fed_samples: out.silence_fed_samples,
+            stop_input_position: out.stop_input_position, // 020 D9
+            padding_start_sample: out.padding_start_sample,
         };
         states.push(rust_state(&rust));
         let want_memory = rust_memory(&rust);
@@ -1359,6 +1361,8 @@ fn c_api_codec_loop_and_decoder_tap_match_rust_at_all_rates() {
             number,
             length_samples: length,
             silence_fed_samples: out.silence_fed_samples,
+            stop_input_position: out.stop_input_position, // 020 D9
+            padding_start_sample: out.padding_start_sample,
         };
         assert!(want_outcome.flush.frames_total * 120 == length);
         let want_bytes = split_checks::export_bytes(&rust, number);
@@ -2694,7 +2698,7 @@ fn changes_parity() {
             && c.after.to_bits() == r.after.to_bits()
             && c.tag == r.tag
             && c.control == r.control
-            && c.reserved == 0
+            && c.reserved == r.stream // 020 D9: the C field keeps its name
     };
     for &rate in configs::measurement_rates() {
         let x = stimulus::voiced(f64::from(rate), 0.5, -20.0, 0x015);
@@ -2867,7 +2871,7 @@ fn record_parity() {
             && c.after.to_bits() == r.after.to_bits()
             && c.tag == r.tag
             && c.control == r.control
-            && c.reserved == 0
+            && c.reserved == r.stream // 020 D9: the C field keeps its name
     };
     for &rate in configs::measurement_rates() {
         let x = stimulus::voiced(f64::from(rate), 0.5, -20.0, 0x017);
@@ -3323,5 +3327,457 @@ fn speed_crossfade_parity() {
             rr_dr60_destroy(h);
         }
         assert_eq!(rust, c_out, "{rate}: the crossfade through C");
+    }
+}
+
+/// Spec 020 FR-009 (tasks.md T020): the C writer, reader, digest, counter constructor, maps and
+/// feed-point helper equal the Rust path.
+#[test]
+fn record_contract_parity() {
+    use rr_dr60::record::{self, RecordReadout};
+    use rr_dr60::timeline::{self, KeptOrRemoved};
+    use rr_dr60::{ChangeEntry, VasEvent};
+    use rr_dr60_ffi::{
+        RrDr60InputAlignment, RrDr60PlaceState, RrDr60RecordReadout, RrDr60RunData,
+        RrDr60StopFields, rr_dr60_create_at_counter, rr_dr60_digest, rr_dr60_export,
+        rr_dr60_export_len, rr_dr60_input_to_kept, rr_dr60_kept_to_input,
+        rr_dr60_onepass_output_to_input, rr_dr60_place_at, rr_dr60_processing_record_len,
+        rr_dr60_processing_record_read, rr_dr60_processing_record_rewrite,
+        rr_dr60_processing_record_write, rr_dr60_record, rr_dr60_record_change,
+        rr_dr60_record_changes, rr_dr60_record_event, rr_dr60_record_events,
+        rr_dr60_recording_counter_of, rr_dr60_recording_digest, rr_dr60_recording_digest_matches,
+        rr_dr60_samples_from_i24, rr_dr60_start_recording, rr_dr60_stop_recording,
+    };
+    use rr_dr60_harness::checks::standard;
+    use rr_dr60_harness::record_contract_checks::{self as rc, Cell};
+    for &rate in configs::measurement_rates() {
+        let raw = rc::raw_stimulus(rate);
+        let cell = Cell {
+            codec: true,
+            changes: true,
+            mute: false,
+            self_stop: false,
+        };
+        let (p, run) = rc::record_run(&standard, rate, cell, &raw);
+        let tag = format!("{rate} Hz");
+        // The C writer on the same engine state: rebuild it through the C API by recording
+        // the same input with the same schedule, then compare the records byte for byte.
+        let s = rc::settings(cell, rate);
+        let h = create(&configs::c_settings(&s));
+        for (pos, control, value, t) in rc::cell_changes(rate) {
+            // SAFETY: a live handle.
+            assert_eq!(
+                unsafe { rr_dr60_schedule_change(h, 2, pos, control, value, t) },
+                RrDr60Status::Ok
+            );
+        }
+        // SAFETY: a live handle.
+        assert_eq!(unsafe { rr_dr60_start_recording(h) }, RrDr60Status::Ok);
+        let x = rc::samples(&raw);
+        let mut c_events: Vec<RrDr60VasEvent> = Vec::new();
+        let mut c_changes: Vec<RrDr60ChangeEntry> = Vec::new();
+        let mut ev = vec![RrDr60VasEvent::default(); 64];
+        let mut ch = vec![RrDr60ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
+        let mut total = 0u64;
+        for block in x.chunks(1024) {
+            let mut info = RrDr60RecordInfo::default();
+            let mut count = 0usize;
+            // SAFETY: valid buffers.
+            let st = unsafe {
+                rr_dr60_record_with_changes(
+                    h,
+                    block.as_ptr(),
+                    block.len(),
+                    &mut info,
+                    ev.as_mut_ptr(),
+                    64,
+                    ch.as_mut_ptr(),
+                    ch.len(),
+                    &mut count,
+                    &mut total,
+                )
+            };
+            assert_eq!(st, RrDr60Status::Ok);
+            c_events.extend_from_slice(&ev[..info.events]);
+            c_changes.extend_from_slice(&ch[..count]);
+        }
+        let mut so = RrDr60StopOutcome::default();
+        let mut count = 0usize;
+        // SAFETY: valid buffers.
+        let st = unsafe {
+            rr_dr60_stop_recording_with_changes(
+                h,
+                &mut so,
+                ev.as_mut_ptr(),
+                64,
+                ch.as_mut_ptr(),
+                ch.len(),
+                &mut count,
+                &mut total,
+            )
+        };
+        assert_eq!(st, RrDr60Status::Ok);
+        c_events.extend_from_slice(&ev[..so.flush.events]);
+        c_changes.extend_from_slice(&ch[..count]);
+        assert_eq!(c_events.len(), run.events.len(), "{tag}: the events");
+        assert_eq!(c_changes.len(), run.changes.len(), "{tag}: the entries");
+        let c_run = RrDr60RunData {
+            struct_size: size_of::<RrDr60RunData>() as u32,
+            reserved: 0,
+            events: c_events.as_ptr(),
+            event_count: c_events.len(),
+            changes: c_changes.as_ptr(),
+            change_count: c_changes.len(),
+            stop: RrDr60StopFields {
+                struct_size: size_of::<RrDr60StopFields>() as u32,
+                how: 0,
+                stop_input_position: so.stop_input_position,
+                padding_start_sample: so.padding_start_sample,
+                input_samples_total: total,
+                silence_fed_samples: so.silence_fed_samples,
+            },
+        };
+        let mut len = 0usize;
+        // SAFETY: valid pointers.
+        assert_eq!(
+            unsafe { rr_dr60_processing_record_len(h, so.number, &c_run, &mut len) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(len, run.record.len(), "{tag}: the length");
+        let mut c_rec = vec![0u8; len];
+        let mut written = 0usize;
+        // SAFETY: valid buffers.
+        assert_eq!(
+            unsafe {
+                rr_dr60_processing_record_write(
+                    h,
+                    so.number,
+                    &c_run,
+                    c_rec.as_mut_ptr(),
+                    len,
+                    &mut written,
+                )
+            },
+            RrDr60Status::Ok
+        );
+        assert_eq!(c_rec, run.record, "{tag}: the record bytes");
+        // The digests.
+        let mut d = 0u64;
+        // SAFETY: valid pointers.
+        assert_eq!(
+            unsafe { rr_dr60_recording_digest(h, so.number, &mut d) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(d, run.digest);
+        // SAFETY: a valid buffer.
+        assert_eq!(
+            unsafe { rr_dr60_digest(run.export.as_ptr(), run.export.len()) },
+            run.digest
+        );
+        let mut elen = 0usize;
+        // SAFETY: valid pointers.
+        assert_eq!(
+            unsafe { rr_dr60_export_len(h, so.number, &mut elen) },
+            RrDr60Status::Ok
+        );
+        let mut exp = vec![0u8; elen];
+        let mut ew = 0usize;
+        // SAFETY: valid buffers.
+        assert_eq!(
+            unsafe { rr_dr60_export(h, so.number, exp.as_mut_ptr(), elen, &mut ew) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(exp, run.export);
+        // The reader and the read-out's fields.
+        let mut cr = RrDr60RecordReadout {
+            struct_size: size_of::<RrDr60RecordReadout>() as u32,
+            ..unsafe { core::mem::zeroed() }
+        };
+        // SAFETY: valid buffers.
+        assert_eq!(
+            unsafe { rr_dr60_processing_record_read(h, c_rec.as_ptr(), len, &mut cr) },
+            RrDr60Status::Ok
+        );
+        let r = rc::readout(&run.record);
+        assert_eq!(
+            (
+                cr.flags,
+                cr.event_count,
+                cr.change_count,
+                cr.recording_counter,
+                cr.seed
+            ),
+            (
+                r.flags,
+                r.event_count,
+                r.change_count,
+                r.recording_counter,
+                r.seed
+            ),
+            "{tag}"
+        );
+        assert_eq!(cr.recording_digest, r.recording_digest);
+        assert_eq!(cr.stop.stop_input_position, r.stop.stop_input_position);
+        assert_eq!(
+            cr.settings.agc_knee_dbfs.to_bits(),
+            r.settings.agc.knee_dbfs.to_bits()
+        );
+        let mut matches = false;
+        // SAFETY: valid pointers.
+        assert_eq!(
+            unsafe { rr_dr60_recording_digest_matches(h, so.number, &mut cr, &mut matches) },
+            RrDr60Status::Ok
+        );
+        assert!(matches);
+        // NULL pipeline: the pure read, without the host-rate flag.
+        let mut pure = RrDr60RecordReadout {
+            struct_size: size_of::<RrDr60RecordReadout>() as u32,
+            ..unsafe { core::mem::zeroed() }
+        };
+        // SAFETY: valid buffers.
+        assert_eq!(
+            unsafe {
+                rr_dr60_processing_record_read(std::ptr::null_mut(), c_rec.as_ptr(), len, &mut pure)
+            },
+            RrDr60Status::Ok
+        );
+        assert_eq!(pure.flags, 0);
+        // The rewrite and the cursors.
+        let mut again = vec![0u8; len + 1];
+        let mut aw = 0usize;
+        // SAFETY: valid buffers.
+        assert_eq!(
+            unsafe {
+                rr_dr60_processing_record_rewrite(
+                    c_rec.as_ptr(),
+                    len,
+                    again.as_mut_ptr(),
+                    len + 1,
+                    &mut aw,
+                )
+            },
+            RrDr60Status::Ok
+        );
+        assert_eq!(&again[..aw], &run.record[..]);
+        let mut e = RrDr60VasEvent::default();
+        let mut hp = 0u64;
+        // SAFETY: valid pointers.
+        assert!(unsafe { rr_dr60_record_event(c_rec.as_ptr(), len, 0, &mut e, &mut hp) });
+        let want = record::record_event(&run.record, 0).unwrap();
+        assert_eq!(
+            (e.output_position, e.input_length, hp),
+            (
+                want.event.output_position,
+                want.event.input_length,
+                want.host_input_position
+            )
+        );
+        let mut c = RrDr60ChangeEntry::default();
+        // SAFETY: valid pointers.
+        assert!(unsafe { rr_dr60_record_change(c_rec.as_ptr(), len, 0, &mut c) });
+        assert_eq!(
+            (c.position, c.control, c.reserved),
+            (
+                run.changes[0].position,
+                run.changes[0].control,
+                run.changes[0].stream
+            )
+        );
+        let mut evs = vec![RrDr60VasEvent::default(); 64];
+        let mut chs = vec![RrDr60ChangeEntry::default(); 8];
+        // SAFETY: valid buffers.
+        let ne = unsafe { rr_dr60_record_events(c_rec.as_ptr(), len, 0, evs.as_mut_ptr(), 64) };
+        // SAFETY: valid buffers.
+        let nc = unsafe { rr_dr60_record_changes(c_rec.as_ptr(), len, 0, chs.as_mut_ptr(), 8) };
+        assert_eq!((ne, nc), (run.events.len(), run.changes.len()));
+        // The maps.
+        let cs = configs::c_settings(&r.settings);
+        for k in [0u64, 100, 1000] {
+            let mut a = RrDr60InputAlignment {
+                struct_size: size_of::<RrDr60InputAlignment>() as u32,
+                ..Default::default()
+            };
+            // SAFETY: valid pointers.
+            assert_eq!(
+                unsafe {
+                    rr_dr60_kept_to_input(
+                        &cs,
+                        k,
+                        c_events.as_ptr(),
+                        c_events.len(),
+                        &c_run.stop,
+                        &mut a,
+                    )
+                },
+                RrDr60Status::Ok
+            );
+            let want = timeline::kept_to_input(k, &r.settings, &run.events, &run.stop).unwrap();
+            assert_eq!(
+                (a.centre, a.first, a.last, a.clamped != 0),
+                (want.centre, want.first, want.last, want.clamped),
+                "{tag}: k {k}"
+            );
+        }
+        for pos in [0u64, 10_000, u64::from(rate)] {
+            let (mut kept, mut removed) = (0u64, 0u64);
+            // SAFETY: valid pointers.
+            assert_eq!(
+                unsafe {
+                    rr_dr60_input_to_kept(
+                        &cs,
+                        pos,
+                        c_events.as_ptr(),
+                        c_events.len(),
+                        &mut kept,
+                        &mut removed,
+                    )
+                },
+                RrDr60Status::Ok
+            );
+            match timeline::input_to_kept(pos, &r.settings, &run.events).unwrap() {
+                KeptOrRemoved::Kept(k) => assert_eq!((kept, removed), (k, u64::MAX)),
+                KeptOrRemoved::Removed { event_index } => {
+                    assert_eq!((kept, removed), (0, event_index))
+                }
+                KeptOrRemoved::Muted {
+                    kept: k,
+                    event_index,
+                } => {
+                    assert_eq!((kept, removed), (k, event_index))
+                }
+            }
+        }
+        let (mut input, mut clamped) = (0u64, false);
+        // SAFETY: valid pointers.
+        assert_eq!(
+            unsafe {
+                rr_dr60_onepass_output_to_input(
+                    5000,
+                    483,
+                    c_events.as_ptr(),
+                    c_events.len(),
+                    true,
+                    &mut input,
+                    &mut clamped,
+                )
+            },
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            (input, clamped),
+            timeline::onepass_output_to_input(5000, 483, &run.events, true)
+        );
+        let entries = [ChangeEntry::new(
+            rc::host_position_for(100, rate),
+            2,
+            3.0,
+            5.0,
+            1,
+            1,
+        )];
+        let c_entries: Vec<RrDr60ChangeEntry> = entries
+            .iter()
+            .map(|e| RrDr60ChangeEntry {
+                position: e.position,
+                before: e.before,
+                after: e.after,
+                tag: e.tag,
+                control: e.control,
+                reserved: e.stream,
+            })
+            .collect();
+        for i in [0u64, 100, 150, 3000] {
+            let mut ps = RrDr60PlaceState {
+                struct_size: size_of::<RrDr60PlaceState>() as u32,
+                ..Default::default()
+            };
+            // SAFETY: valid pointers.
+            assert_eq!(
+                unsafe { rr_dr60_place_at(i, rate, 3, 3000, c_entries.as_ptr(), 1, &mut ps) },
+                RrDr60Status::Ok
+            );
+            let want = timeline::place_at(i, rate, 3, 3000, &entries).unwrap();
+            assert_eq!(
+                (
+                    ps.place_fifths,
+                    ps.level as u8,
+                    ps.fading != 0,
+                    ps.old_place_fifths,
+                    ps.latched != 0
+                ),
+                (
+                    want.place_fifths,
+                    want.level,
+                    want.fading,
+                    want.old_place_fifths,
+                    want.latched
+                ),
+                "{tag}: output {i}"
+            );
+        }
+        // The feed-point helper and the counter constructor.
+        let codes = [-8_388_608i32, 7, 8_388_607];
+        let (mut c_out, mut r_out) = ([0.0f32; 3], [0.0f32; 3]);
+        // SAFETY: valid buffers.
+        unsafe { rr_dr60_samples_from_i24(codes.as_ptr(), c_out.as_mut_ptr(), 3) };
+        rr_dr60::input::samples_from_i24(&codes, &mut r_out);
+        assert_eq!(c_out.map(f32::to_bits), r_out.map(f32::to_bits));
+        let (mut known, mut counter) = (false, 0u64);
+        // SAFETY: valid pointers.
+        assert_eq!(
+            unsafe { rr_dr60_recording_counter_of(h, so.number, &mut known, &mut counter) },
+            RrDr60Status::Ok
+        );
+        assert!(known && counter == run.counter);
+        let mut h2: *mut RrDr60Pipeline = std::ptr::null_mut();
+        // SAFETY: valid pointers.
+        assert_eq!(
+            unsafe { rr_dr60_create_at_counter(&cs, 5, &mut h2) },
+            RrDr60Status::Ok
+        );
+        let mut q = rr_dr60::Pipeline::new_at_counter(r.settings, 5).unwrap();
+        q.start_recording().unwrap();
+        let _ = q.record(&x[..rate as usize / 2], &mut []).unwrap();
+        let _ = q.stop_recording(&mut []).unwrap();
+        // SAFETY: a live handle.
+        assert_eq!(unsafe { rr_dr60_start_recording(h2) }, RrDr60Status::Ok);
+        let mut info = RrDr60RecordInfo::default();
+        // SAFETY: valid buffers.
+        assert_eq!(
+            unsafe {
+                rr_dr60_record(
+                    h2,
+                    x.as_ptr(),
+                    rate as usize / 2,
+                    &mut info,
+                    std::ptr::null_mut(),
+                    0,
+                )
+            },
+            RrDr60Status::Ok
+        );
+        let mut so2 = RrDr60StopOutcome::default();
+        // SAFETY: valid buffers.
+        assert_eq!(
+            unsafe { rr_dr60_stop_recording(h2, &mut so2, std::ptr::null_mut(), 0) },
+            RrDr60Status::Ok
+        );
+        let mut d2 = 0u64;
+        // SAFETY: valid pointers.
+        assert_eq!(
+            unsafe { rr_dr60_recording_digest(h2, 1, &mut d2) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            d2,
+            q.recording_digest(1).unwrap(),
+            "{tag}: the counter constructor"
+        );
+        let _ = (p, RecordReadout::default(), VasEvent::default());
+        // SAFETY: live handles.
+        unsafe {
+            rr_dr60_destroy(h);
+            rr_dr60_destroy(h2);
+        }
     }
 }

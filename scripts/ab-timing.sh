@@ -23,6 +23,8 @@
 #     record path and the one-pass with the record schedule empty, 3 %;
 #     RR_DR60_RECORD_COST_CEILING on the runner; one knee change per block and the worst block
 #     reported).
+#   HEAD_TEST = record_contract: spec 020's record path, one-pass and playback levels 3 and 5 against the
+#     baseline (020 FR-008: each within 3 %; RR_DR60_RECORD_CONTRACT_COST_CEILING on the runner).
 #   HEAD_TEST = crossfade: spec 019's speed-change crossfade against the baseline (019 FR-009: the
 #     playback at constant levels 3 and 5, 3 %; RR_DR60_CROSSFADE_COST_CEILING on the runner; the
 #     fade-every-200-ms figure and its worst block reported, the block asserted by its test).
@@ -136,6 +138,56 @@ print(f"A/B meters vs {rev}, 48 kHz, 4096 blocks, speaker route, codec bypassed 
 print(f"  default front (stages 1 – 2 on): {rev} {bf:.2f} ns, working tree {hf:.2f} ns per host sample, {hf - bf:+.2f} ns ({100 * (hf / bf - 1):+.2f} %; ceiling {100 * ceiling:.0f} %) {'PASS' if front_ok else 'FAIL'}")
 print(f"  every stage off: {rev} {bo:.2f} ns, working tree {ho:.2f} ns per host sample, {ho - bo:+.2f} ns (budget {budget_ns:.2f} ns, the same absolute nanoseconds) {'PASS' if off_ok else 'FAIL'}")
 sys.exit(0 if front_ok and off_ok else 1)
+PY
+  exit $?
+fi
+
+if [ "$head_test" = "record_contract" ]; then
+  # Spec 020 FR-008: the record path, the one-pass and playback at constant levels 3 and 5.
+  # `tests/record_contract_timing.rs` is written against 0.19's public API and copied into the
+  # baseline worktree; each build prints the fastest-of-45 figure per path. Asserted: each
+  # within the ceiling (3 % by default, RR_DR60_RECORD_CONTRACT_COST_CEILING on the CI runner:
+  # 0.05); exits 1 when over.
+  cp "$root/crates/rr_dr60_harness/tests/record_contract_timing.rs" "$work/base/crates/rr_dr60_harness/tests/"
+  xbin_of() {
+    (cd "$1" && cargo test -q -p rr_dr60_harness --release --test "$2" --no-run --message-format=json 2>/dev/null) |
+      python3 -c 'import json,sys
+name = sys.argv[1]
+for l in sys.stdin:
+    try: m = json.loads(l)
+    except ValueError: continue
+    if m.get("reason") == "compiler-artifact" and m.get("target", {}).get("name") == name and m.get("executable"):
+        print(m["executable"])' "$2" | tail -1
+  }
+  echo "building the baseline ($baseline) and the working tree (record_contract) ..." >&2
+  base_bin="$(xbin_of "$work/base" record_contract_timing)"
+  head_bin="$(xbin_of "$root" record_contract_timing)"
+  [ -x "$base_bin" ] && [ -x "$head_bin" ] || { echo "ab-timing: a build failed" >&2; exit 1; }
+  : >"$work/base.txt"
+  : >"$work/head.txt"
+  for i in 1 2 3; do
+    echo "round $i of 3" >&2
+    "$base_bin" --ignored --exact record_contract_cost --nocapture --test-threads=1 2>/dev/null | grep -oE '(record|onepass|level3|level5)_ns=[0-9.]+' >>"$work/base.txt"
+    "$head_bin" --ignored --exact record_contract_cost --nocapture --test-threads=1 2>/dev/null | grep -oE '(record|onepass|level3|level5)_ns=[0-9.]+' >>"$work/head.txt"
+  done
+  python3 - "$work/base.txt" "$work/head.txt" "$baseline" "${RR_DR60_RECORD_CONTRACT_COST_CEILING:-0.03}" <<'PY'
+import re, sys
+def best(path):
+    out = {}
+    for line in open(path):
+        m = re.search(r"(\w+)=([\d.]+)", line.strip())
+        if m:
+            out[m.group(1)] = min(out.get(m.group(1), float("inf")), float(m.group(2)))
+    return out
+b, h, rev, ceiling = best(sys.argv[1]), best(sys.argv[2]), sys.argv[3], float(sys.argv[4])
+print(f"A/B record contract vs {rev}, 48 kHz, 4096 blocks, codec bypassed (020 FR-008; fastest of 45 runs × 3 alternations):")
+ok = True
+for key, name in [("record_ns", "record path"), ("onepass_ns", "one-pass"), ("level3_ns", "playback level 3"), ("level5_ns", "playback level 5")]:
+    bb, hh = b[key], h[key]
+    good = hh / bb - 1 <= ceiling
+    ok = ok and good
+    print(f"  {name}: {rev} {bb:.2f} ns, working tree {hh:.2f} ns per host sample, {hh - bb:+.2f} ns ({100 * (hh / bb - 1):+.2f} %; ceiling {100 * ceiling:.0f} %) {'PASS' if good else 'FAIL'}")
+sys.exit(0 if ok else 1)
 PY
   exit $?
 fi

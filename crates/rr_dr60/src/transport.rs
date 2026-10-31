@@ -14,7 +14,9 @@ use crate::codec::{self, Frame};
 use crate::error::Error;
 use crate::form;
 use crate::memory::{Encoding, MemoryStatus, Span};
+use crate::paths;
 use crate::pipeline::{Pipeline, VasEvent};
+use crate::record::{self, Origin, RecordReadout, RunData, flags};
 use crate::settings::{Route, VasMode};
 use crate::stages::speed::SpeedOut;
 
@@ -133,6 +135,15 @@ pub struct StopOutcome {
     /// `start_recording`, the stop's silence included. A change scheduled at or past it was
     /// dropped without an entry.
     pub input_samples_total: u64,
+    /// The record stream's input position when the stop was called: the host samples fed
+    /// before it, the stop's silence excluded (spec 020 D9). A re-render feeds exactly this
+    /// many samples and calls the same stop.
+    pub stop_input_position: u64,
+    /// The kept device sample at which the speech codec's padding begins (spec 020 D9): the
+    /// kept count after the latency flush with the codec on; the recording's length with the
+    /// codec bypassed, after a self-stop, or when the flush itself filled the memory (no
+    /// padding is fed then).
+    pub padding_start_sample: u64,
 }
 
 /// The report of one `play` call (spec 006 FR-006, FR-008; spec 008 FR-008).
@@ -275,7 +286,17 @@ impl Pipeline {
     /// (S-001: "FULL" refuses a start).
     pub fn start_recording(&mut self) -> Result<(), Error> {
         self.refuse_if_active()?;
-        self.memory.open()?;
+        // Spec 020 D5: the slot block, written as the recording opens: the counter the hiss
+        // stream is keyed with, the configuration (every landed value is in `settings`), the
+        // memory's remaining capacity before the open.
+        let block = crate::memory::SlotBlock {
+            counter: self.transport.counter,
+            settings: self.settings,
+            remaining_samples: self.memory.status().remaining_samples,
+            events_total: 0,
+            changes_total: 0,
+        };
+        self.memory.open(Some(block))?;
         self.recorder.reset();
         // 012 FR-009: the recorder's hiss is stream `counter`; the counter never rewinds.
         self.recorder.rekey(self.transport.counter);
@@ -327,6 +348,12 @@ impl Pipeline {
         self.take_landed_record(true); // 017 D4
         info.changes = self.recorder.ctl.log_len();
         info.input_samples_total = self.recorder.ctl.input;
+        // Spec 020 D5: the totals (a self-stop in this call closed the block as kept; it is
+        // still the last).
+        if let Some(b) = self.memory.last_block_mut() {
+            b.events_total += info.events as u64;
+            b.changes_total += info.changes as u64;
+        }
         Ok(info)
     }
 
@@ -385,10 +412,19 @@ impl Pipeline {
         // landed on the one-pass become pending here; the end of the recording clears the
         // schedule (`close_recording`) and the report carries the final input position.
         self.recorder.begin_call(&self.settings, &self.record_tags);
+        let stop_input_position = self.recorder.ctl.input; // 020 D9: before the flush
         let mut outcome = self.stop_recording_inner(events)?;
         self.take_landed_record(true);
         outcome.changes = self.recorder.ctl.log_len();
         outcome.input_samples_total = self.recorder.ctl.input;
+        outcome.stop_input_position = stop_input_position;
+        // Spec 020 D5: the totals, for a kept recording only (a discarded one has no block).
+        if let StopResult::Kept { .. } = outcome.result {
+            if let Some(b) = self.memory.last_block_mut() {
+                b.events_total += outcome.flush.events as u64;
+                b.changes_total += outcome.changes as u64;
+            }
+        }
         Ok(outcome)
     }
 
@@ -424,6 +460,8 @@ impl Pipeline {
                 silence_fed_samples: 0,
                 changes: 0,
                 input_samples_total: 0,
+                stop_input_position: 0,
+                padding_start_sample: 0,
             });
         }
         let mut flush = RecordInfo::default();
@@ -438,12 +476,18 @@ impl Pipeline {
             if pre_encoder > 0 {
                 self.finalize_record(); // 016 FR-001: the flush's figures
             }
+            let length = match result {
+                StopResult::Kept { length, .. } => length,
+                StopResult::DiscardedEmpty => 0,
+            };
             return Ok(StopOutcome {
                 flush,
                 result,
                 silence_fed_samples: 0,
                 changes: 0,
                 input_samples_total: 0,
+                stop_input_position: 0,
+                padding_start_sample: length, // 020 D9: no padding without the codec
             });
         }
         let drop_mode = self.settings.vas.enabled && self.settings.vas.mode == VasMode::Drop;
@@ -478,6 +522,12 @@ impl Pipeline {
             self.recorder.force_open(false);
         }
         let silence_fed_samples = self.transport.kept.saturating_sub(represented);
+        // 020 D9: the padding starts at `represented`; a flush that filled the memory fed no
+        // padding, so the figure is the length then.
+        let padding_start_sample = match stopped {
+            Some(StopResult::Kept { length, .. }) => length,
+            _ => represented,
+        };
         let result = match stopped {
             Some(result) => result,
             None => self.close_recording(events, &mut flush),
@@ -491,6 +541,8 @@ impl Pipeline {
             silence_fed_samples,
             changes: 0,
             input_samples_total: 0,
+            stop_input_position: 0,
+            padding_start_sample,
         })
     }
 
@@ -568,6 +620,10 @@ impl Pipeline {
         let mut trace = core::mem::take(&mut self.speed_trace); // its capacity kept; no allocation
         #[cfg(feature = "__test-hooks")]
         trace.clear();
+        #[cfg(feature = "__test-hooks")]
+        let mut place_trace = core::mem::take(&mut self.speed_place_trace);
+        #[cfg(feature = "__test-hooks")]
+        place_trace.clear();
         let Pipeline {
             memory,
             player,
@@ -636,6 +692,10 @@ impl Pipeline {
                 if trace.len() < trace.capacity() {
                     trace.push(d); // within the reserved capacity: no allocation
                 }
+                #[cfg(feature = "__test-hooks")]
+                if place_trace.len() < place_trace.capacity() {
+                    place_trace.push(speed.last_state()); // 020 R-04: map (c)'s pin
+                }
                 // 013 research R-05: the total is fixed once the place reaches K; the host
                 // sample being produced needs this device sample, so it lies within the total.
                 if cursor.total == u64::MAX {
@@ -678,6 +738,7 @@ impl Pipeline {
         #[cfg(feature = "__test-hooks")]
         {
             self.speed_trace = trace; // 019 research R-06: the device-rate trace hook
+            self.speed_place_trace = place_trace;
         }
         Ok(info)
     }
@@ -786,6 +847,255 @@ impl Pipeline {
         }
         self.memory.erase_all();
         Ok(())
+    }
+
+    /// The FNV-1a 64 digest of the bytes [`export`](Self::export) writes for recording
+    /// `number` (spec 020 D3, FR-003), without writing them: two passes over the recording, no
+    /// allocation; not real-time safe. Allowed in any state.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NoSuchRecording`].
+    pub fn recording_digest(&self, number: u32) -> Result<u64, Error> {
+        let span = self
+            .memory
+            .span(number)
+            .ok_or(Error::NoSuchRecording { number })?;
+        Ok(form::digest(self.payload(span)))
+    }
+
+    fn payload(&self, span: Span) -> form::Payload<'_> {
+        match self.memory.encoding() {
+            Encoding::Frames => form::Payload::Frames(self.memory.frames(span)),
+            Encoding::Samples => form::Payload::Samples(self.memory.samples(span)),
+        }
+    }
+
+    /// Whether a read record's digest is recording `number`'s (spec 020 FR-002, US2 AS3):
+    /// sets or clears the read-out's `DIGEST_MISMATCH` flag and returns `true` when they
+    /// belong together. Not real-time safe (the digest pass).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NoSuchRecording`].
+    pub fn recording_digest_matches(
+        &self,
+        number: u32,
+        readout: &mut RecordReadout,
+    ) -> Result<bool, Error> {
+        let same = self.recording_digest(number)? == readout.recording_digest;
+        if same {
+            readout.flags &= !flags::DIGEST_MISMATCH;
+        } else {
+            readout.flags |= flags::DIGEST_MISMATCH;
+        }
+        Ok(same)
+    }
+
+    /// Reads a processing record as [`record::read`] does and adds the engine's own flag
+    /// (spec 020 D4): `HOST_RATE_DIFFERS` when an engine-origin record's host rate is not this
+    /// engine's. Allocates nothing; allowed in any state.
+    ///
+    /// # Errors
+    ///
+    /// As [`record::read`].
+    pub fn processing_record_read(
+        &self,
+        bytes: &[u8],
+        out: &mut RecordReadout,
+    ) -> Result<(), Error> {
+        record::read(bytes, out)?;
+        if out.origin == Origin::Engine && out.host_rate_hz != self.settings.host_rate_hz {
+            out.flags |= flags::HOST_RATE_DIFFERS;
+        }
+        Ok(())
+    }
+
+    /// The exact length of recording `number`'s processing record for `run` (spec 020 FR-001;
+    /// research R-09): one counting pass, the run validated as the writer validates it. Not
+    /// real-time safe (the digest pass); refused while a recording is in progress (the stop's
+    /// report is part of the run).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::RecordingInProgress`], [`Error::NoSuchRecording`], [`Error::InconsistentRun`].
+    pub fn processing_record_len(&self, number: u32, run: &RunData<'_>) -> Result<usize, Error> {
+        let (r, rows) = self.readout_for(number, run)?;
+        Ok(record::len_iter(&r, rows, self.run_changes(&r, run)))
+    }
+
+    /// Writes recording `number`'s processing record for `run` into `out` and returns the
+    /// bytes written (spec 020 D1, D10, FR-001; contracts/record-form.md): the identity from
+    /// this library and the stage manifest, the configuration from the slot block the engine
+    /// filled at the recording's start, the digest of the stored form, the run the host
+    /// collected (each event's host-input position computed by the timeline map), and the
+    /// totals the engine counted. An imported recording's record names the stored form and
+    /// its digest only (`origin = imported`). The same inputs give the same bytes on every
+    /// platform. Allocates nothing; not real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// As [`processing_record_len`](Self::processing_record_len), then
+    /// [`Error::BufferTooSmall`] with the needed length.
+    pub fn processing_record_write(
+        &self,
+        number: u32,
+        run: &RunData<'_>,
+        out: &mut [u8],
+    ) -> Result<usize, Error> {
+        let (r, rows) = self.readout_for(number, run)?;
+        record::write_iter(&r, rows, self.run_changes(&r, run), out)
+    }
+
+    /// The change rows the record carries: the run's for an engine-origin record, none for
+    /// an imported one.
+    fn run_changes<'a>(&self, r: &RecordReadout, run: &RunData<'a>) -> &'a [ChangeEntry] {
+        if r.origin == Origin::Engine {
+            run.changes
+        } else {
+            &[]
+        }
+    }
+
+    /// The read-out of recording `number` for `run`, validated (data-model.md › RunData), and
+    /// its event rows.
+    fn readout_for<'a>(
+        &self,
+        number: u32,
+        run: &RunData<'a>,
+    ) -> Result<(RecordReadout, record::EventRows<'a>), Error> {
+        if self.transport.state == State::Recording {
+            return Err(Error::RecordingInProgress);
+        }
+        let span = self
+            .memory
+            .span(number)
+            .ok_or(Error::NoSuchRecording { number })?;
+        let block = self
+            .memory
+            .block(number)
+            .ok_or(Error::NoSuchRecording { number })?;
+        let encoding = self.memory.encoding();
+        let length = span.len as u64 * encoding.unit_samples() as u64;
+        let mut r = RecordReadout {
+            library_version: form::LIB_VERSION,
+            stored_form_version: 2,
+            stored_codec_model_version: match encoding {
+                Encoding::Frames => codec::MODEL_VERSION,
+                Encoding::Samples => [0; 3],
+            },
+            encoding,
+            stored_unit_count: span.len as u64,
+            recording_digest: form::digest(self.payload(span)),
+            ..RecordReadout::default()
+        };
+        let Some(b) = block else {
+            r.origin = Origin::Imported;
+            r.flags |= flags::IMPORTED_ORIGIN;
+            return Ok((r, record::EventRows::new(&[], 1, 1, 0, true)));
+        };
+        for (i, e) in crate::manifest::manifest().stages.iter().enumerate() {
+            r.stage_model_versions[i] = parse_model_version(e.model_version);
+        }
+        r.host_rate_hz = b.settings.host_rate_hz;
+        r.seed = b.settings.seed;
+        r.recording_counter = b.counter;
+        r.settings = b.settings;
+        r.remaining_samples_at_start = b.remaining_samples;
+        r.events_total = b.events_total;
+        r.changes_total = b.changes_total;
+        // The run (spec 020 D10): consistent with the recording, or refused.
+        let mut stop = run.stop;
+        if stop.padding_start_sample == 0 {
+            stop.padding_start_sample = length; // a self-stop's `RecordInfo`: no padding
+        }
+        let refuse = |reason| Err(Error::InconsistentRun { reason });
+        if stop.stop_input_position > stop.input_samples_total {
+            return refuse("the stop position past the input total");
+        }
+        if stop.padding_start_sample > length {
+            return refuse("the padding start past the length");
+        }
+        let lookahead = match encoding {
+            Encoding::Frames => u64::from(codec::LOOKAHEAD_SAMPLES),
+            Encoding::Samples => 0,
+        };
+        let mut last = 0u64;
+        for e in run.events {
+            if e.output_position < last {
+                return refuse("events out of order");
+            }
+            if e.output_position > length + lookahead {
+                return refuse("an event past the recording");
+            }
+            last = e.output_position;
+        }
+        if run.events.len() as u64 > b.events_total {
+            return refuse("more events than counted");
+        }
+        let mut last = 0u64;
+        for c in run.changes {
+            if c.position < last {
+                return refuse("entries out of order");
+            }
+            if c.position >= stop.input_samples_total {
+                return refuse("an entry at or past the final input position");
+            }
+            if c.stream == 0 {
+                return refuse("no stream");
+            }
+            if c.stream != crate::changes::STREAM_RECORD {
+                return refuse("not the record stream");
+            }
+            last = c.position;
+        }
+        if run.changes.len() as u64 > b.changes_total {
+            return refuse("more entries than counted");
+        }
+        // The stop's own relations (hardware review B5).
+        match stop.how {
+            crate::record::StopHow::MemoryFull => {
+                if stop.stop_input_position != stop.input_samples_total
+                    || stop.silence_fed_samples != 0
+                {
+                    return refuse("a self-stop's fields");
+                }
+            }
+            crate::record::StopHow::StopCall => {}
+        }
+        let padding_bound = match encoding {
+            Encoding::Frames => u64::from(codec::DELAY_SAMPLES) - 1,
+            Encoding::Samples => 0,
+        };
+        if stop.silence_fed_samples > padding_bound {
+            return refuse("the padding's count");
+        }
+        r.stop = stop;
+        let (l, m) = paths::l_m_for(b.settings.host_rate_hz)?;
+        let latency = paths::record_latency_pre_encoder_for(&b.settings)?;
+        let drop = b.settings.vas.enabled && b.settings.vas.mode == VasMode::Drop;
+        let rows = record::EventRows::new(run.events, l, m, u64::from(latency), drop);
+        // Every event row's host position lies before the input total (hardware review B1, B5).
+        if rows
+            .clone()
+            .any(|row| row.host_input_position >= stop.input_samples_total)
+        {
+            return refuse("an event past the input total");
+        }
+        Ok((r, rows))
+    }
+
+    /// The recording counter recording `number` was keyed with (spec 020 D5, FR-004), or
+    /// `None` for an imported recording (no slot block). Real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NoSuchRecording`].
+    pub fn recording_counter_of(&self, number: u32) -> Result<Option<u64>, Error> {
+        self.memory
+            .block(number)
+            .map(|b| b.map(|b| b.counter))
+            .ok_or(Error::NoSuchRecording { number })
     }
 
     /// The exported length of recording `number`, in bytes, so the host can size its buffer
@@ -932,10 +1242,19 @@ impl Pipeline {
         Ok(pre_drain + u64::from(self.player.drain_len_host_samples()))
     }
 
-    /// The record path's latency in host samples: input samples until the corresponding device
-    /// sample is stored (spec 006 FR-016), the speech codec's delay of 180 device samples
-    /// included when it is on (spec 008 FR-004); the stop flush is the part before the encoder.
-    /// Real-time safe.
+    /// The record path's latency in host samples **to the speech encoder's input** (spec 020
+    /// D8, research R-01): the conversion's delay plus the record filter's 1 kHz group delay,
+    /// rounded to a host sample (spec 006 FR-016's figure without the codec's 180); the stop's
+    /// flush feeds exactly this many zeros. Real-time safe.
+    pub fn record_latency_pre_encoder_samples(&self) -> u32 {
+        self.recorder.latency_host_samples_pre_encoder()
+    }
+
+    /// The record path's latency in host samples, the speech codec's delay included (see
+    /// below). Spec 020's timeline maps use
+    /// [`record_latency_pre_encoder_samples`](Self::record_latency_pre_encoder_samples): a
+    /// stored recording's frames carry no kept-domain shift (spec 008 FR-004), so the 180 are
+    /// the one-pass's alone.
     pub fn record_latency_samples(&self) -> u32 {
         self.recorder.latency_host_samples()
     }
@@ -1058,6 +1377,15 @@ impl Pipeline {
         self.recorder.clear_schedule(); // 017 D5: every end of a recording
         self.memory.close(true)
     }
+}
+
+/// A stage's manifest model version `M.m.p` as numbers (`[0, 0, 0]` for a stage not modeled).
+fn parse_model_version(text: &str) -> [u16; 3] {
+    let mut v = [0u16; 3];
+    for (slot, part) in v.iter_mut().zip(text.split('.')) {
+        *slot = part.parse().unwrap_or(0);
+    }
+    v
 }
 
 /// Counts `event` in `info` and writes it to `events` when a slot is free (spec 003 FR-005).
@@ -2757,5 +3085,608 @@ mod counter_tests {
         let _ = p.stop_recording(&mut []).unwrap();
         assert_eq!(stored(&p, 1), oracle(&s, 0, 40));
         assert_eq!(p.transport.counter, 1);
+    }
+}
+
+/// 020 T004, T006, T007 (spec 020 D5, D9, FR-004, FR-007; research R-05, R-07): the slot
+/// block, the counter constructor and the stop fields.
+#[cfg(test)]
+mod record_block_tests {
+    extern crate std;
+    use super::*;
+    use crate::changes::{STREAM_ONE_PASS, STREAM_PLAYBACK, STREAM_RECORD, Stream};
+    use crate::record::{StopFields, StopHow};
+    use crate::settings::Settings;
+    use alloc::vec::Vec;
+
+    const KNEE: u32 = 10; // the control manifest's `agc.knee_dbfs`
+
+    /// The default record path at 6 kHz with the codec off and a small memory.
+    fn settings(seed: u64) -> Settings {
+        let mut s = Settings::new(6000);
+        s.speech_codec_enabled = false;
+        s.seed = seed;
+        s.vas.hang_ms = 100.0; // a short hang: the stimulus's silences pause the gate
+        s.memory.capacity_s = 20;
+        s.memory.max_recordings = 8;
+        s
+    }
+
+    /// A burst that opens the gate, then silence long enough to pause it.
+    fn stimulus(n: usize) -> Vec<f32> {
+        (0..n)
+            .map(|i| {
+                // An exactly representable ±0.5 square (no libm in the core's tests).
+                if i < 2400 || (i % 6000) < 1200 {
+                    if i % 12 < 6 { 0.5 } else { -0.5 }
+                } else {
+                    0.0
+                }
+            })
+            .collect()
+    }
+
+    fn export(p: &Pipeline, number: u32) -> Vec<u8> {
+        let mut v = std::vec![0u8; p.export_len(number).unwrap()];
+        p.export(number, &mut v).unwrap();
+        v
+    }
+
+    fn record_one(p: &mut Pipeline, x: &[f32]) -> (RecordInfo, StopOutcome) {
+        p.start_recording().unwrap();
+        let mut ev = [VasEvent::default(); 64];
+        let info = p.record(x, &mut ev).unwrap();
+        let out = p.stop_recording(&mut ev).unwrap();
+        (info, out)
+    }
+
+    fn one_pass(p: &mut Pipeline, n: usize) -> Vec<f32> {
+        let x = stimulus(n);
+        let mut y = std::vec![0.0f32; n];
+        let _ = p.process(&x, &mut y).unwrap();
+        y
+    }
+
+    /// T004: a fresh engine at counter c equals a dirty engine that recorded c times (a landed
+    /// knee change, a pause at the end of the last recording, a burst in its last 100 ms, a
+    /// one-pass run between); the one-pass after the original's `reset`.
+    #[test]
+    fn fresh_at_counter_equals_dirty_engine() {
+        let x = stimulus(9000);
+        let mut dirty = Pipeline::new(settings(77)).unwrap();
+        for i in 0..3u64 {
+            if i == 1 {
+                dirty
+                    .schedule_change(Stream::Record, 100, KNEE, -4.0, 5)
+                    .unwrap();
+            }
+            let mut tail = x.clone();
+            tail.extend((0..600).map(|k| if k % 10 < 5 { 0.9 } else { -0.9 })); // a burst at the end
+            tail.extend(core::iter::repeat_n(0.0, 3000)); // then a pause
+            let _ = record_one(&mut dirty, &tail);
+            let _ = one_pass(&mut dirty, 1500);
+        }
+        assert_eq!(dirty.recording_counter(), 3);
+        // The landed knee stays in the settings: the fresh engine must start from it.
+        let mut s = *dirty.settings();
+        s.memory = settings(77).memory;
+        // The one-pass keyed at construction (coach 2): a fresh engine at 3, never reset, equals
+        // the original after its reset (both at stream 3), and differs from a counter-0 engine.
+        {
+            let mut at3 = Pipeline::new_at_counter(s, 3).unwrap();
+            let mut at0 = Pipeline::new(s).unwrap();
+            let mut orig = dirty.clone();
+            orig.reset();
+            let a = one_pass(&mut at3, 2000);
+            assert_eq!(a, one_pass(&mut orig, 2000), "keyed to 3 at construction");
+            assert_ne!(a, one_pass(&mut at0, 2000), "a counter-0 engine differs");
+        }
+        let mut fresh = Pipeline::new_at_counter(s, 3).unwrap();
+        assert_eq!(fresh.recording_counter(), 3);
+        let _ = record_one(&mut dirty, &x);
+        let _ = record_one(&mut fresh, &x);
+        assert_eq!(fresh.recording_counter(), 4);
+        assert_eq!(
+            export(&dirty, 4),
+            export(&fresh, 1),
+            "the recording at counter 3"
+        );
+        // The one-pass: equal after the original's reset (rekeyed at construction, reset and
+        // reconfigure only; hardware review B6).
+        dirty.reset();
+        fresh.reset();
+        assert_eq!(one_pass(&mut dirty, 2000), one_pass(&mut fresh, 2000));
+        // A counter-0 engine differs (the stream is keyed).
+        let mut zero = Pipeline::new(s).unwrap();
+        let _ = record_one(&mut zero, &x);
+        assert_ne!(export(&zero, 1), export(&fresh, 1));
+        assert_eq!(dirty.recording_counter_of(4).unwrap(), Some(3));
+        assert_eq!(fresh.recording_counter_of(1).unwrap(), Some(3));
+    }
+
+    /// T004: the pre-encoder latency against the published one.
+    #[test]
+    fn pre_encoder_latency() {
+        for rate in crate::SUPPORTED_HOST_RATES {
+            let mut s = Settings::new(rate);
+            s.speech_codec_enabled = false;
+            let p = Pipeline::new(s).unwrap();
+            assert_eq!(
+                p.record_latency_pre_encoder_samples(),
+                p.record_latency_samples()
+            );
+            s.speech_codec_enabled = true;
+            let p = Pipeline::new(s).unwrap();
+            assert_eq!(
+                p.record_latency_pre_encoder_samples() + 180 * rate / 6000,
+                p.record_latency_samples(),
+                "{rate} Hz"
+            );
+        }
+    }
+
+    /// T006: the block holds the start configuration (a landed change and a reconfigure
+    /// later do not move it); the totals; an imported recording has none.
+    #[test]
+    fn block_holds_the_start_configuration_and_totals() {
+        let x = stimulus(9000);
+        let mut p = Pipeline::new(settings(1)).unwrap();
+        p.schedule_change(Stream::Record, 100, KNEE, -4.0, 5)
+            .unwrap();
+        p.schedule_change(Stream::Record, 8000, KNEE, -6.0, 6)
+            .unwrap();
+        let (info, out) = record_one(&mut p, &x);
+        assert_eq!(info.changes, 2);
+        let b = p.memory.block(1).unwrap().unwrap();
+        assert_eq!(b.counter, 0);
+        assert_eq!(
+            b.settings.agc.knee_dbfs,
+            settings(1).agc.knee_dbfs,
+            "the start knee"
+        );
+        assert_eq!(b.remaining_samples, 120_000);
+        assert_eq!(b.changes_total, 2);
+        assert_eq!(b.events_total, (info.events + out.flush.events) as u64);
+        assert!(b.events_total >= 1, "the pause made an event");
+        // The settings moved; a reconfigure to another rate keeps the block as it was.
+        assert_eq!(p.settings().agc.knee_dbfs, -6.0);
+        let mut s = *p.settings();
+        s.host_rate_hz = 48_000;
+        p.reconfigure(s).unwrap();
+        let b = p.memory.block(1).unwrap().unwrap();
+        assert_eq!(b.settings.host_rate_hz, 6000);
+        assert_eq!(b.settings.agc.knee_dbfs, settings(1).agc.knee_dbfs);
+        // Grow the slot count with the memory kept: the blocks survive.
+        s.memory.max_recordings = 12;
+        p.reconfigure(s).unwrap();
+        assert_eq!(p.recording_counter_of(1).unwrap(), Some(0));
+        assert_eq!(p.memory.capacities().1, 13); // the span table; the blocks match it
+        // An imported recording has no block.
+        let bytes = export(&p, 1);
+        let n = p.import(&bytes).unwrap();
+        assert_eq!(p.recording_counter_of(n).unwrap(), None);
+        assert_eq!(
+            p.recording_counter_of(9).unwrap_err(),
+            Error::NoSuchRecording { number: 9 }
+        );
+        // Erase moves the blocks with their recordings.
+        p.erase(1).unwrap();
+        assert_eq!(p.recording_counter_of(1).unwrap(), None);
+    }
+
+    /// T006: a landing in the stop's flush counts; a flush entry's position lies between the
+    /// stop position and the input total (coach 4, hardware B3).
+    #[test]
+    fn flush_landing_counts_and_lies_in_the_flush() {
+        let x = stimulus(3000);
+        let mut p = Pipeline::new(settings(2)).unwrap();
+        // The flush feeds the pre-encoder latency of zeros (1 at 6 kHz): position 3000 is the
+        // flush's first sample.
+        assert!(p.record_latency_pre_encoder_samples() >= 1);
+        p.schedule_change(Stream::Record, 3000, KNEE, -4.0, 5)
+            .unwrap();
+        p.start_recording().unwrap();
+        let mut ev = [VasEvent::default(); 64];
+        let info = p.record(&x, &mut ev).unwrap();
+        assert_eq!(info.changes, 0);
+        let mut ch = [ChangeEntry::default(); 8];
+        let out = p.stop_recording_with_changes(&mut ev, &mut ch).unwrap();
+        assert_eq!(out.changes, 1);
+        assert_eq!(out.stop_input_position, 3000);
+        assert!(ch[0].position >= out.stop_input_position);
+        assert!(ch[0].position < out.input_samples_total);
+        assert_eq!(ch[0].stream, STREAM_RECORD);
+        assert_eq!(p.memory.block(1).unwrap().unwrap().changes_total, 1);
+    }
+
+    /// T007: the stop fields for a host stop (codec off and on), a self-stop and the hybrid.
+    #[test]
+    fn stop_fields() {
+        // Codec off: the padding start is the length.
+        let x = stimulus(3000);
+        let mut p = Pipeline::new(settings(3)).unwrap();
+        let (_, out) = record_one(&mut p, &x);
+        let StopResult::Kept { length, .. } = out.result else {
+            panic!()
+        };
+        assert_eq!(out.padding_start_sample, length);
+        assert_eq!(out.stop_input_position, 3000);
+        let f = StopFields::from(&out);
+        assert_eq!(f.how, StopHow::StopCall);
+        assert_eq!(f.input_samples_total, out.input_samples_total);
+        assert!(StopFields::kept(&out));
+        // Codec on: the padding start is the represented count, below the length.
+        let mut s = settings(3);
+        s.speech_codec_enabled = true;
+        let mut p = Pipeline::new(s).unwrap();
+        let (_, out) = record_one(&mut p, &x);
+        let StopResult::Kept { length, .. } = out.result else {
+            panic!()
+        };
+        assert!(out.padding_start_sample < length);
+        // The padding runs to the frame boundary plus the 60-sample look-ahead, which is not
+        // stored (spec 008 FR-013): fed = length + 60 − represented.
+        assert_eq!(
+            out.padding_start_sample + out.silence_fed_samples,
+            length + 60
+        );
+        assert_eq!(length, out.padding_start_sample.div_ceil(120) * 120);
+        // A self-stop: the fields from the `RecordInfo`.
+        let mut s = settings(3);
+        s.memory.capacity_s = 1;
+        s.vas.enabled = false;
+        let mut p = Pipeline::new(s).unwrap();
+        p.start_recording().unwrap();
+        let mut ev = [VasEvent::default(); 64];
+        let info = p.record(&stimulus(9000), &mut ev).unwrap();
+        assert_eq!(p.memory.block(1).unwrap().unwrap().remaining_samples, 6000);
+        assert_eq!(info.stopped, Some(StopReason::MemoryFull));
+        let f = StopFields::from(&info);
+        assert_eq!(f.how, StopHow::MemoryFull);
+        assert_eq!(f.stop_input_position, info.input_samples_total);
+        assert_eq!(f.silence_fed_samples, 0);
+        assert!(p.stop_recording(&mut ev).is_err());
+        // The hybrid: a host stop whose flush fills the memory keeps `StopCall`, no padding.
+        let mut s = settings(3);
+        s.memory.capacity_s = 1;
+        s.vas.enabled = false;
+        s.speech_codec_enabled = true;
+        let mut p = Pipeline::new(s).unwrap();
+        let pre = p.record_latency_pre_encoder_samples() as usize;
+        p.start_recording().unwrap();
+        let fill = stimulus(6000 - pre / 2);
+        let info = p.record(&fill, &mut ev).unwrap();
+        assert!(info.stopped.is_none());
+        let out = p.stop_recording(&mut ev).unwrap();
+        let StopResult::Kept { length, .. } = out.result else {
+            panic!()
+        };
+        assert_eq!(
+            out.flush.stopped,
+            Some(StopReason::MemoryFull),
+            "the flush filled it"
+        );
+        assert_eq!(StopFields::from(&out).how, StopHow::StopCall);
+        assert_eq!(out.padding_start_sample, length);
+        assert_eq!(length, 6000);
+    }
+
+    /// T007: the stream word per stream, and 0 on a default entry.
+    #[test]
+    fn stream_words() {
+        assert_eq!(ChangeEntry::default().stream, 0);
+        assert_eq!(Stream::Playback.word(), STREAM_PLAYBACK);
+        assert_eq!(Stream::OnePass.word(), STREAM_ONE_PASS);
+        assert_eq!(Stream::Record.word(), STREAM_RECORD);
+        let mut p = Pipeline::new(settings(4)).unwrap();
+        p.schedule_change(Stream::OnePass, 10, KNEE, -4.0, 1)
+            .unwrap();
+        p.schedule_change(Stream::OnePass, 10, 1, 0.5, 2).unwrap(); // the volume
+        let x = stimulus(600);
+        let mut y = std::vec![0.0f32; 600];
+        let mut ev = [VasEvent::default(); 16];
+        let mut ch = [ChangeEntry::default(); 8];
+        let info = p
+            .process_with_events_and_changes(&x, &mut y, &mut ev, &mut ch)
+            .unwrap();
+        assert_eq!(info.changes, 2);
+        assert!(ch[..2].iter().all(|e| e.stream == STREAM_ONE_PASS));
+        let _ = record_one(&mut p, &x);
+        p.schedule_change(Stream::Playback, 5, 1, 0.3, 3).unwrap();
+        p.start_playback(1).unwrap();
+        let mut pi = p.play_with_changes(&mut y, &mut ch).unwrap();
+        while pi.changes == 0 && !pi.finished {
+            pi = p.play_with_changes(&mut y, &mut ch).unwrap();
+        }
+        assert_eq!(ch[0].stream, STREAM_PLAYBACK);
+    }
+}
+
+/// 020 T009 (spec 020 D1, D10, FR-001 – FR-003; research R-03, R-07): the engine's writer,
+/// reader and digest.
+#[cfg(test)]
+mod record_tests {
+    extern crate std;
+    use super::*;
+    use crate::changes::{STREAM_ONE_PASS, STREAM_RECORD, Stream};
+    use crate::record::{StopFields, StopHow, flags};
+    use crate::settings::Settings;
+    use alloc::vec::Vec;
+    use std::string::String;
+
+    const KNEE: u32 = 10;
+
+    fn settings(codec: bool) -> Settings {
+        let mut s = Settings::new(6000);
+        s.speech_codec_enabled = codec;
+        s.seed = 5;
+        s.vas.hang_ms = 100.0;
+        s.memory.capacity_s = 20;
+        s.memory.max_recordings = 8;
+        s
+    }
+
+    fn stimulus(n: usize) -> Vec<f32> {
+        (0..n)
+            .map(|i| {
+                // An exactly representable ±0.5 square (no libm in the core's tests).
+                if i < 2400 || (i % 6000) < 1200 {
+                    if i % 12 < 6 { 0.5 } else { -0.5 }
+                } else {
+                    0.0
+                }
+            })
+            .collect()
+    }
+
+    /// A recording with one landed change, the run collected; `(events, changes, stop)`.
+    fn record_run(p: &mut Pipeline, x: &[f32]) -> (Vec<VasEvent>, Vec<ChangeEntry>, StopFields) {
+        p.schedule_change(Stream::Record, 1000, KNEE, -4.0, 7)
+            .unwrap();
+        p.start_recording().unwrap();
+        let mut ev = [VasEvent::default(); 64];
+        let mut ch = [ChangeEntry::default(); 16];
+        let mut events = Vec::new();
+        let mut changes = Vec::new();
+        for block in x.chunks(1024) {
+            let info = p.record_with_changes(block, &mut ev, &mut ch).unwrap();
+            events.extend_from_slice(&ev[..info.events]);
+            changes.extend_from_slice(&ch[..info.changes]);
+        }
+        let out = p.stop_recording_with_changes(&mut ev, &mut ch).unwrap();
+        events.extend_from_slice(&ev[..out.flush.events]);
+        changes.extend_from_slice(&ch[..out.changes]);
+        (events, changes, StopFields::from(&out))
+    }
+
+    fn write(p: &Pipeline, number: u32, run: &RunData<'_>) -> Vec<u8> {
+        let n = p.processing_record_len(number, run).unwrap();
+        let mut v = std::vec![0u8; n];
+        assert_eq!(p.processing_record_write(number, run, &mut v).unwrap(), n);
+        v
+    }
+
+    fn export(p: &Pipeline, number: u32) -> Vec<u8> {
+        let mut v = std::vec![0u8; p.export_len(number).unwrap()];
+        p.export(number, &mut v).unwrap();
+        v
+    }
+
+    #[test]
+    fn digest_equals_export_hash_and_matches() {
+        for codec in [false, true] {
+            let mut p = Pipeline::new(settings(codec)).unwrap();
+            let _ = record_run(&mut p, &stimulus(9000));
+            assert_eq!(
+                p.recording_digest(1).unwrap(),
+                crate::digest::fnv1a64(&export(&p, 1)),
+                "codec {codec}"
+            );
+            let mut r = RecordReadout {
+                recording_digest: p.recording_digest(1).unwrap(),
+                ..RecordReadout::default()
+            };
+            assert!(p.recording_digest_matches(1, &mut r).unwrap());
+            assert_eq!(r.flags & flags::DIGEST_MISMATCH, 0);
+            r.recording_digest ^= 1;
+            assert!(!p.recording_digest_matches(1, &mut r).unwrap());
+            assert_ne!(r.flags & flags::DIGEST_MISMATCH, 0);
+            assert_eq!(
+                p.recording_digest(2).unwrap_err(),
+                Error::NoSuchRecording { number: 2 }
+            );
+        }
+    }
+
+    #[test]
+    fn write_from_engine_matches_pure_writer_and_reads_back() {
+        let mut p = Pipeline::new(settings(true)).unwrap();
+        let (events, changes, stop) = record_run(&mut p, &stimulus(9000));
+        assert!(!events.is_empty() && changes.len() == 1);
+        let run = RunData {
+            events: &events,
+            changes: &changes,
+            stop,
+        };
+        let bytes = write(&p, 1, &run);
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(text.contains("\norigin = engine\nhost_rate_hz = 6000\n"));
+        assert!(text.contains("\nseed = 5\nrecording_counter = 0\n"));
+        assert!(text.contains("\nencoding = frames\n"));
+        assert!(
+            text.contains("\nsetting.agc.knee_dbfs = -1\n"),
+            "the start knee: {text}"
+        );
+        assert!(text.contains("\nchange.0 = 1000 agc.knee_dbfs -1 -4 7 record\n"));
+        assert!(text.contains(&std::format!("\nrun.events_total = {}\n", events.len())));
+        // The pure writer on the read-out gives the same bytes.
+        let mut r = RecordReadout::default();
+        p.processing_record_read(&bytes, &mut r).unwrap();
+        assert_eq!(r.flags, 0);
+        assert_eq!(r.settings, settings(true));
+        assert_eq!(r.stop, stop);
+        let rows: Vec<_> = (0..events.len() as u64)
+            .map(|i| record::record_event(&bytes, i).unwrap())
+            .collect();
+        let n = record::len(&r, &rows, &changes);
+        let mut again = std::vec![0u8; n];
+        record::write(&r, &rows, &changes, &mut again).unwrap();
+        assert_eq!(again, bytes);
+        // The event rows' host positions at 6 kHz: the kept position plus the earlier
+        // removed lengths, minus the pre-encoder latency (1 at 6 kHz).
+        let mut removed = 0;
+        for (row, e) in rows.iter().zip(&events) {
+            assert_eq!(row.event, *e);
+            assert_eq!(
+                row.host_input_position,
+                (e.output_position + removed).saturating_sub(1)
+            );
+            removed += e.input_length;
+        }
+        // The host-rate flag is the engine reader's.
+        let mut q = Pipeline::new(Settings::new(48_000)).unwrap();
+        q.processing_record_read(&bytes, &mut r).unwrap();
+        assert_eq!(r.flags, flags::HOST_RATE_DIFFERS);
+        q.reconfigure(settings(true)).unwrap();
+        q.processing_record_read(&bytes, &mut r).unwrap();
+        assert_eq!(r.flags, 0);
+    }
+
+    #[test]
+    fn inconsistent_runs_refused_and_honest_ones_accepted() {
+        let mut p = Pipeline::new(settings(true)).unwrap();
+        let (events, changes, stop) = record_run(&mut p, &stimulus(9000));
+        let length = p.recording_length(1).unwrap();
+        let reason = |events: &[VasEvent], changes: &[ChangeEntry], stop: StopFields| match p
+            .processing_record_len(
+                1,
+                &RunData {
+                    events,
+                    changes,
+                    stop,
+                },
+            ) {
+            Err(Error::InconsistentRun { reason }) => reason,
+            other => panic!("{other:?}"),
+        };
+        let mut ev = events.clone();
+        ev.reverse();
+        if ev.len() > 1 {
+            assert_eq!(reason(&ev, &changes, stop), "events out of order");
+        }
+        let mut ev = events.clone();
+        ev.push(VasEvent::new(length + 61, 1));
+        assert_eq!(reason(&ev, &changes, stop), "an event past the recording");
+        // Up to the look-ahead past the length is consistent with frames.
+        let mut ev = events.clone();
+        ev.push(VasEvent::new(length + 60, 1));
+        let mut over = ev.clone();
+        over.push(VasEvent::new(length + 60, 1));
+        assert_eq!(reason(&over, &changes, stop), "more events than counted");
+        let mut ch = changes.clone();
+        ch.push(ChangeEntry::new(2000, KNEE, -4.0, -5.0, 1, STREAM_RECORD));
+        assert_eq!(reason(&events, &ch, stop), "more entries than counted");
+        let mut ch = changes.clone();
+        ch[0].position = stop.input_samples_total;
+        assert_eq!(
+            reason(&events, &ch, stop),
+            "an entry at or past the final input position"
+        );
+        let mut ch = changes.clone();
+        ch[0].stream = 0;
+        assert_eq!(reason(&events, &ch, stop), "no stream");
+        ch[0].stream = STREAM_ONE_PASS;
+        assert_eq!(reason(&events, &ch, stop), "not the record stream");
+        let mut bad = stop;
+        bad.stop_input_position = stop.input_samples_total + 1;
+        assert_eq!(
+            reason(&events, &changes, bad),
+            "the stop position past the input total"
+        );
+        let mut bad = stop;
+        bad.padding_start_sample = length + 1;
+        assert_eq!(
+            reason(&events, &changes, bad),
+            "the padding start past the length"
+        );
+        // A flush entry (between the stop position and the total) is consistent.
+        let mut ch = changes.clone();
+        ch[0].position = stop.stop_input_position;
+        assert!(
+            p.processing_record_len(
+                1,
+                &RunData {
+                    events: &events,
+                    changes: &ch,
+                    stop
+                }
+            )
+            .is_ok()
+        );
+        // A short run is accepted and flagged on reading.
+        let bytes = write(
+            &p,
+            1,
+            &RunData {
+                events: &[],
+                changes: &[],
+                stop,
+            },
+        );
+        let mut r = RecordReadout::default();
+        p.processing_record_read(&bytes, &mut r).unwrap();
+        assert_eq!(r.flags, flags::INCOMPLETE_RUN);
+        // A self-stop's fields (padding 0) are filled with the length.
+        let info = RecordInfo {
+            input_samples_total: stop.input_samples_total,
+            stopped: Some(StopReason::MemoryFull),
+            ..RecordInfo::default()
+        };
+        let sf = StopFields::from(&info);
+        assert_eq!(sf.how, StopHow::MemoryFull);
+        let bytes = write(
+            &p,
+            1,
+            &RunData {
+                events: &events,
+                changes: &[],
+                stop: sf,
+            },
+        );
+        p.processing_record_read(&bytes, &mut r).unwrap();
+        assert_eq!(r.stop.padding_start_sample, length);
+        assert_eq!(r.stop.how, StopHow::MemoryFull);
+    }
+
+    #[test]
+    fn imported_in_progress_and_empty_slot() {
+        let mut p = Pipeline::new(settings(false)).unwrap();
+        let (events, changes, stop) = record_run(&mut p, &stimulus(9000));
+        let run = RunData {
+            events: &events,
+            changes: &changes,
+            stop,
+        };
+        let bytes = export(&p, 1);
+        let n = p.import(&bytes).unwrap();
+        let rec = write(&p, n, &run);
+        let text = String::from_utf8(rec.clone()).unwrap();
+        assert!(text.contains("\norigin = imported\n"));
+        assert!(
+            !text.contains("host_rate_hz") && !text.contains("run.") && !text.contains("setting.")
+        );
+        let mut r = RecordReadout::default();
+        p.processing_record_read(&rec, &mut r).unwrap();
+        assert_eq!(r.flags, flags::IMPORTED_ORIGIN);
+        assert_eq!(r.recording_digest, p.recording_digest(1).unwrap());
+        assert_eq!(
+            p.processing_record_len(9, &run).unwrap_err(),
+            Error::NoSuchRecording { number: 9 }
+        );
+        p.start_recording().unwrap();
+        assert_eq!(
+            p.processing_record_len(1, &run).unwrap_err(),
+            Error::RecordingInProgress
+        );
     }
 }

@@ -72,10 +72,7 @@ What to do about it:
 
   Show coincidences as windows, never as instants. Don't use "synchronized" in copy until a measured figure exists, and never say "precise".
 - **Interruptions and route changes.** Stop the item and start a new one, as the device would; don't feed zeros. A hardware-rate change needs `reconfigure`, which refuses during a recording: either resample to a fixed session rate in the app, or split the item. Capture in the audio session's measurement mode, so the OS applies no gain control or noise suppression.
-- **Timeline mapping (engine gap, verified in code).**
-  - A stored device sample is a *kept* sample. The 180-sample codec delay is counted in kept samples, after the voice activation (VAS) has removed its pauses. Subtracting the total record latency from an output index and then applying the splices is wrong by up to a splice's length.
-  - The latency before the codec is not exposed separately.
-  - An output sample depends on an input **interval** (about −30 to +10 ms, from the 20 ms frame, the 10 ms look-ahead and the filters), not an instant.
+- **Timeline mapping (closed by spec 020, engine 0.20.0).** `timeline::kept_to_input` gives a stored sample's nominal host-input alignment through every removed gap (the latency convention to the encoder's input, widened to the direct-path window: about −22 … +30 ms re the frame start with the codec on); `input_to_kept` the reverse, or the event that removed the sample; `place_at` the speed stage's place at a playback output. Show an alignment as a window, never an instant; the maps state a direct contribution, and the gain, the gating and the coder's state depend on earlier input. The stored frames carry no kept-domain shift: the codec's 180 samples are the one-pass's latency alone.
 
 ## 3. The experience
 
@@ -128,7 +125,7 @@ The figures in these cards are illustrations. A shipped card prints the engine's
   - the processed audio as WAV;
   - the original microphone audio, only if the user opts in on each share;
   - `tracks.csv`, `markers.json` and `notes.txt`;
-  - `session.json`: settings, seed, recording counter, model versions, event log;
+  - `recording.rrdr60` (the stored form) and `recording.processing-record.txt` (spec 020: identity, settings at the start, entries, voice-activation gaps, digest); `session.json` holds the app's half: sensor tracks' clock anchors, marks, the device model, app and engine versions;
   - a `README.txt` giving the units and the clock.
 - **Without the app:** the recipient can unzip it, play the WAV and open the CSV.
 - **Later:** a rendered video (waveform, tracks, captioned marks), or a static HTML viewer.
@@ -196,8 +193,8 @@ A second kind of user mark, from the same notes: one tap marks the moment a ques
 | Hazard | Fix |
 |---|---|
 | The stored raw audio is not the exact samples that were fed (a lossy format, a converter run again) | Quantize to 24-bit at the feed point, feed that, and store it losslessly (about 300 MB/h at 48 kHz) |
-| The hiss stream's counter has no public getter or setter | Add a counter getter and a construct-at-counter option |
-| A library or model upgrade between recording and review | Store the library version and each stage's model version, plus a digest of the live output. On a mismatch, label the result "re-rendered with version X; differs from the live render". |
+| The hiss stream's counter has no public getter or setter | Built: `recording_counter()` (0.16) and `new_at_counter` (0.20) |
+| A library or model upgrade between recording and review | Built (0.20): the processing record carries the library and per-stage model versions and the stored form's digest; the reader flags a difference and names the stage; the re-render contract holds at the record's library version |
 | Cross-platform identity | CI's golden jobs cover six desktop targets and the iOS simulator, but no Android target. Add an Android arm64 golden job before shared case files reach Android. |
 | Random access | A bit-exact state needs a render from the item's start: about 27 s per hour of audio on the development machine, a guessed 0.5–1 min on a phone. An optional state checkpoint would remove this. |
 
@@ -234,6 +231,7 @@ Feature descriptions (WHAT/WHY), ready for `/speckit-specify`:
 
   Target accuracy: one device sample. The cost budget is to be set by measurement (a first guess is about 5 % at 48 kHz).
 - **020, record side first:** As someone sharing a case file, I want a versioned record of the settings, seed, recording counter, library and per-stage model versions and the event log, plus a digest of the stored form. Re-rendering the original microphone audio from that record must reproduce the recording bit for bit, so a recipient can confirm how it was processed. A model-version mismatch is refused with a clear status. Also wanted:
+  - *Built (engine 0.20.0, 2026-10-31) as the processing record at the scope above, with two departures: version differences are reported, not refused (the record stays readable for ever), and the digest is FNV-1a 64 (consistency, not a signature). The frame-parameter reader and the checkpoint stay later, on an app request.*
   - an offline reader for codec frame parameters (pitch lag, gains), with no live cost;
   - optionally, a state checkpoint and restore.
 - **015 (built, engine 0.16.0):** each change a stream applies is logged at its output-sample position with the control, the values before and after and a caller tag; the recording counter has a public getter. Moved to 020: the host-input index a change maps to (through the voice-activation events), construct-at-counter, and the map from a playback position to the recording's place under a speed schedule.

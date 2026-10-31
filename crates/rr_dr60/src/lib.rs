@@ -209,8 +209,10 @@ pub mod battery;
 pub mod changes;
 mod codec;
 pub mod controls;
+pub mod digest;
 mod error;
 mod form;
+pub mod input;
 pub mod manifest;
 mod memory;
 pub mod mic;
@@ -218,6 +220,7 @@ pub mod output;
 mod paths;
 mod pipeline;
 mod rate;
+pub mod record;
 mod resample;
 mod sanitize;
 mod settings;
@@ -225,10 +228,11 @@ pub mod speed;
 mod stages;
 #[cfg(test)]
 mod test_util;
+pub mod timeline;
 mod transport;
 mod validate;
 
-pub use changes::{ChangeEntry, Clock, Stream};
+pub use changes::{ChangeEntry, Clock, STREAM_ONE_PASS, STREAM_PLAYBACK, STREAM_RECORD, Stream};
 pub use controls::{
     ControlEntry, ControlKind, ControlOption, ControlPaths, ControlTiming, ControlValue, control,
     controls,
@@ -519,6 +523,15 @@ pub mod __test_hooks {
     /// passes stage 10 and the resampler.
     pub fn speed_device_outputs(pipeline: &crate::Pipeline) -> alloc::vec::Vec<f64> {
         pipeline.speed_trace.clone()
+    }
+
+    /// Spec 020 (research R-04): the speed control's per-output place state of the last `play`
+    /// call (the own part, the tail and the drain's silence, where the state no longer moves),
+    /// the first 2048 outputs: map (c)'s pin.
+    pub fn speed_place_trace(
+        pipeline: &crate::Pipeline,
+    ) -> alloc::vec::Vec<crate::timeline::PlaceState> {
+        pipeline.speed_place_trace.clone()
     }
 
     /// The speed control's bank for `level` as designed at construction: 5 phases × 57 taps,

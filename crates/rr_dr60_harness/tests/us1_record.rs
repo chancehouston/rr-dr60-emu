@@ -85,8 +85,15 @@ fn as1_input_zero_equals_the_constant_configuration() {
                     assert_eq!(a.log.len(), 1, "{tag}: one entry");
                     let e = a.log[0];
                     assert_eq!(
-                        (e.position, e.before, e.after, e.tag, e.control, e.reserved),
-                        (0, v.read(&base), v.as_f64(), 1, v.control(), 0),
+                        (e.position, e.before, e.after, e.tag, e.control, e.stream),
+                        (
+                            0,
+                            v.read(&base),
+                            v.as_f64(),
+                            1,
+                            v.control(),
+                            rr_dr60::STREAM_RECORD
+                        ),
                         "{tag}: the entry"
                     );
                     assert!(b.log.is_empty());

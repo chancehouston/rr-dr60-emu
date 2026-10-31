@@ -210,6 +210,6 @@ The app schedules record-side changes through the C API with the same refusals a
 - **D7:** the protocol of specs 011 – 016.
 - **D8 alternative:** a one-sentence amendment of A-021 recording the mid-recording unknown (the coach's default; rejected for the cheaper direct citation of S-001, which is the sentence the note rests on; the register row would read "amended" and the cross-check would run).
 - **D9 alternative:** a linear-in-dB glide (rejected: spec 011's smoothstep on the linear gain is the engine's one transition shape; a dB glide needs an exponential per sample).
-- **D10 alternative:** guide text only for k(P) and the clock rule (rejected: the Swift package and spec 020 should read the engine's rule, not re-derive it).
+- **D10 alternative:** guide text only for k(P) and the clock rule (rejected: the Swift package and spec 020 should read the engine's rule, not re-derive it). *Spec 020 (2026-10-31) delivered the clock maps: `timeline::input_to_kept` and `onepass_output_to_input`.*
 - **Spec-Kit process for this feature**, per the owner's 2026-10-29 cadence: owner sign-offs at this spec, the plan and the merge; reviews and phases otherwise proceed and stop only on a failed check or a new decision.
 - No release is published; the CHANGELOG records the feature as 0.17.0, a minor version with new functions, a constant change and the manifest's timing words.

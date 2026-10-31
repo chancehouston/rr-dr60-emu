@@ -46,3 +46,10 @@ echo "smoke --record-changes matches the Rust example"
 cargo run -q -p rr_dr60_harness --example battery_rows > target/example-battery.txt
 diff target/smoke-battery.txt target/example-battery.txt
 echo "smoke --battery matches the Rust example"
+# Spec 020 (contracts/api.md): the C program's processing-record rows (the record's text, the
+# read-out, the rewrite, the digest check, the three maps, the feed-point rule) against the Rust
+# example `record_rows`.
+./target/smoke --record > target/smoke-record.txt
+cargo run -q -p rr_dr60_harness --example record_rows > target/example-record.txt
+diff target/smoke-record.txt target/example-record.txt
+echo "smoke --record matches the Rust example"

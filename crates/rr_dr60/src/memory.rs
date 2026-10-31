@@ -132,6 +132,24 @@ enum Store {
     Frames(Vec<u8>),
 }
 
+/// What the engine keeps per recording slot for the processing record (spec 020 D5, research
+/// R-05): written when the recording opens, moved with the recording by `erase`, absent for an
+/// imported recording. About 152 bytes; one slot per configured recording, reserved at
+/// construction (the store's footprint figure counts the store and the span table, as before).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SlotBlock {
+    /// The recording counter the hiss stream was keyed with (A-049).
+    pub(crate) counter: u64,
+    /// The configuration the recording started with (the seed and the host rate inside).
+    pub(crate) settings: crate::Settings,
+    /// The memory's remaining capacity before the recording opened, in device samples.
+    pub(crate) remaining_samples: u64,
+    /// Voice-activation events the recording generated.
+    pub(crate) events_total: u64,
+    /// Record-stream change entries that landed during the recording.
+    pub(crate) changes_total: u64,
+}
+
 /// The store and its span table (research R-03; spec 008 R-07: spans count **units**, a device
 /// sample or a frame).
 #[derive(Debug)]
@@ -143,6 +161,8 @@ pub(crate) struct Memory {
     /// One span per recording, in number order, in units; while recording, the open span is
     /// last.
     spans: Vec<Span>,
+    /// One block per span, in the same order (spec 020 D5): `None` for an imported recording.
+    blocks: Vec<Option<SlotBlock>>,
     capacity_units: usize,
     max_recordings: usize,
     /// A recording is open (the last span is in progress).
@@ -176,6 +196,7 @@ impl Memory {
             store: Store::Samples(Vec::new()),
             encoding: Encoding::Samples,
             spans: Vec::new(),
+            blocks: Vec::new(),
             capacity_units: 0,
             max_recordings: 0,
             in_progress: false,
@@ -210,10 +231,15 @@ impl Memory {
         spans
             .try_reserve_exact(max_recordings + 1)
             .map_err(|_| Error::AllocationFailed)?;
+        let mut blocks = Vec::new();
+        blocks
+            .try_reserve_exact(max_recordings + 1)
+            .map_err(|_| Error::AllocationFailed)?;
         Ok(Self {
             store,
             encoding,
             spans,
+            blocks,
             capacity_units,
             max_recordings,
             in_progress: false,
@@ -249,7 +275,7 @@ impl Memory {
     ///
     /// [`Error::MemoryFull`] when no recorded time remains (checked first), then
     /// [`Error::NoRecordingSlots`] when the count is at its capacity.
-    pub(crate) fn open(&mut self) -> Result<(), Error> {
+    pub(crate) fn open(&mut self, block: Option<SlotBlock>) -> Result<(), Error> {
         debug_assert!(!self.in_progress);
         if self.used_units() >= self.capacity_units {
             return Err(Error::MemoryFull);
@@ -261,8 +287,25 @@ impl Memory {
             start: self.used_units(),
             len: 0,
         });
+        self.blocks.push(block);
         self.in_progress = true;
         Ok(())
+    }
+
+    /// The slot block of closed recording `number` (spec 020 D5): `Some(None)` for an imported
+    /// recording, `None` for no such recording.
+    pub(crate) fn block(&self, number: u32) -> Option<Option<&SlotBlock>> {
+        let i = usize::try_from(number).ok()?.checked_sub(1)?;
+        if i >= self.count() {
+            return None;
+        }
+        Some(self.blocks[i].as_ref())
+    }
+
+    /// The last block (the recording in progress, or the last closed one): the totals' target
+    /// (spec 020 D5).
+    pub(crate) fn last_block_mut(&mut self) -> Option<&mut SlotBlock> {
+        self.blocks.last_mut().and_then(Option::as_mut)
     }
 
     /// Appends one device sample to the recording in progress (the samples encoding). Returns
@@ -320,6 +363,7 @@ impl Memory {
             debug_assert!(len == 0 || fed_any, "nothing fed, nothing stored");
             self.truncate_units(start);
             self.spans.pop();
+            self.blocks.pop(); // 020 D5: no block for a discarded recording
             return StopResult::DiscardedEmpty;
         }
         if let Some(span) = self.spans.last_mut() {
@@ -345,6 +389,7 @@ impl Memory {
             if let Some(span) = self.spans.pop() {
                 self.truncate_units(span.start);
             }
+            self.blocks.pop(); // 020 D5
         }
     }
 
@@ -361,6 +406,7 @@ impl Memory {
             return None;
         }
         let span = self.spans.remove(i);
+        self.blocks.remove(i); // 020 D5: the blocks follow their recordings
         match &mut self.store {
             Store::Samples(v) => {
                 v.drain(span.start..span.start + span.len);
@@ -406,6 +452,7 @@ impl Memory {
             "an exact-size iterator keeps its word"
         );
         self.spans.push(Span { start, len: k });
+        self.blocks.push(None); // 020 D5: an imported recording has no block
         Ok(self.spans.len() as u32)
     }
 
@@ -433,6 +480,7 @@ impl Memory {
             start: used,
             len: k,
         });
+        self.blocks.push(None); // 020 D5
         Ok(self.spans.len() as u32)
     }
 
@@ -442,6 +490,7 @@ impl Memory {
         debug_assert!(!self.in_progress);
         self.truncate_units(0);
         self.spans.clear();
+        self.blocks.clear();
     }
 
     /// A recording is open.
@@ -569,6 +618,7 @@ impl Memory {
             ),
         }
         m.spans.extend_from_slice(&self.spans);
+        m.blocks.extend_from_slice(&self.blocks);
         Ok(m)
     }
 
@@ -580,6 +630,7 @@ impl Memory {
             Store::Samples(v) => v.capacity(),
             Store::Frames(v) => v.capacity() / self.encoding.unit_bytes(),
         };
+        debug_assert_eq!(self.spans.capacity(), self.blocks.capacity()); // 020 D5
         (store, self.spans.capacity())
     }
 }
@@ -602,10 +653,13 @@ impl Clone for Memory {
         };
         let mut spans = Vec::with_capacity(self.spans.capacity());
         spans.extend_from_slice(&self.spans);
+        let mut blocks = Vec::with_capacity(self.blocks.capacity());
+        blocks.extend_from_slice(&self.blocks);
         Self {
             store,
             encoding: self.encoding,
             spans,
+            blocks,
             capacity_units: self.capacity_units,
             max_recordings: self.max_recordings,
             in_progress: self.in_progress,
@@ -629,7 +683,7 @@ mod tests {
     fn reserves_capacity_once() {
         let mut m = small();
         assert_eq!(m.capacities(), (100, 4));
-        m.open().unwrap();
+        m.open(None).unwrap();
         for i in 0..100 {
             let room = m.append_sample(i as f32);
             assert_eq!(room, i < 99, "sample {i}");
@@ -668,7 +722,7 @@ mod tests {
     #[test]
     fn open_append_close_numbering() {
         let mut m = small();
-        m.open().unwrap();
+        m.open(None).unwrap();
         for i in 0..10 {
             assert!(m.append_sample(i as f32));
         }
@@ -680,7 +734,7 @@ mod tests {
             }
         );
         assert_eq!(m.status().count, 1);
-        m.open().unwrap();
+        m.open(None).unwrap();
         assert_eq!(m.status().count, 1, "the one in progress is not counted");
         for i in 0..20 {
             assert!(m.append_sample(100.0 + i as f32));
@@ -717,7 +771,7 @@ mod tests {
     #[test]
     fn close_with_input_but_nothing_stored_discards() {
         let mut m = small();
-        m.open().unwrap();
+        m.open(None).unwrap();
         assert_eq!(m.close(true), StopResult::DiscardedEmpty);
         assert_eq!(m.count(), 0);
         assert_eq!(m.used(), 0);
@@ -727,13 +781,13 @@ mod tests {
     #[test]
     fn close_without_input_discards() {
         let mut m = small();
-        m.open().unwrap();
+        m.open(None).unwrap();
         assert_eq!(m.close(false), StopResult::DiscardedEmpty);
         assert_eq!(m.count(), 0);
         assert_eq!(m.used(), 0);
         assert_eq!(m.capacities(), (100, 4));
         // Reset's discard with samples already stored truncates the store.
-        m.open().unwrap();
+        m.open(None).unwrap();
         assert!(m.append_sample(1.0));
         m.discard_in_progress();
         assert_eq!((m.count(), m.used()), (0, 0));
@@ -744,7 +798,7 @@ mod tests {
     #[test]
     fn clone_keeps_capacity() {
         let mut m = small();
-        m.open().unwrap();
+        m.open(None).unwrap();
         assert!(m.append_sample(0.5));
         assert_eq!(
             m.close(true),
@@ -789,7 +843,7 @@ mod tests {
     fn five() -> Memory {
         let mut m = Memory::with_capacity_samples(200, 5).unwrap();
         for n in 1..=5u32 {
-            m.open().unwrap();
+            m.open(None).unwrap();
             for i in 0..(10 * n as usize) {
                 assert!(m.append_sample(n as f32 + i as f32 / 100.0));
             }
@@ -809,7 +863,7 @@ mod tests {
     #[test]
     fn append_returns_false_exactly_at_capacity() {
         let mut m = Memory::with_capacity_samples(5, 1).unwrap();
-        m.open().unwrap();
+        m.open(None).unwrap();
         assert_eq!(
             (0..5)
                 .map(|i| m.append_sample(i as f32))
@@ -835,29 +889,29 @@ mod tests {
     fn open_refused_when_full_or_no_slot() {
         // No time, slots left.
         let mut m = Memory::with_capacity_samples(3, 2).unwrap();
-        m.open().unwrap();
+        m.open(None).unwrap();
         for i in 0..3 {
             m.append_sample(i as f32);
         }
         assert!(matches!(m.close(true), StopResult::Kept { number: 1, .. }));
-        assert_eq!(m.open(), Err(Error::MemoryFull));
+        assert_eq!(m.open(None), Err(Error::MemoryFull));
         assert!(!m.in_progress());
         assert_eq!(m.status().slots_remaining, 1);
         // Time left, no slots.
         let mut m = Memory::with_capacity_samples(100, 2).unwrap();
         for n in 1..=2 {
-            m.open().unwrap();
+            m.open(None).unwrap();
             assert!(m.append_sample(0.5));
             assert!(matches!(m.close(true), StopResult::Kept { number, .. } if number == n));
         }
-        assert_eq!(m.open(), Err(Error::NoRecordingSlots));
+        assert_eq!(m.open(None), Err(Error::NoRecordingSlots));
         assert_eq!(m.status().remaining_samples, 98);
         // Both: the time refusal comes first.
         let mut m = Memory::with_capacity_samples(1, 1).unwrap();
-        m.open().unwrap();
+        m.open(None).unwrap();
         assert!(!m.append_sample(0.5));
         assert!(matches!(m.close(true), StopResult::Kept { number: 1, .. }));
-        assert_eq!(m.open(), Err(Error::MemoryFull));
+        assert_eq!(m.open(None), Err(Error::MemoryFull));
     }
 
     /// 006 T026 (FR-013; S-001 "there are no missing numbers"): erasing 3 of 5 leaves four,
@@ -923,7 +977,7 @@ mod tests {
         assert_eq!(m.span(1), None);
         assert_eq!(m.capacities(), (200, 6));
         // Usable again, numbering restarts at 1.
-        m.open().unwrap();
+        m.open(None).unwrap();
         assert!(m.append_sample(1.0));
         assert_eq!(
             m.close(true),
@@ -954,7 +1008,7 @@ mod tests {
         assert_eq!((s.max_recordings, s.count, s.slots_remaining), (3, 0, 3));
         assert_eq!(s.capacity_seconds(), 10.0);
         assert_eq!(s.remaining_seconds(), 10.0);
-        m.open().unwrap();
+        m.open(None).unwrap();
         for _ in 0..9000 {
             assert!(m.append_sample(0.1));
         }
@@ -996,7 +1050,7 @@ mod tests {
             Encoding::Samples,
         )
         .unwrap();
-        m.open().unwrap();
+        m.open(None).unwrap();
         for _ in 0..6000 {
             m.append_sample(0.25);
         }
@@ -1044,7 +1098,7 @@ mod tests {
         assert_eq!(d.status().capacity_samples, 21_600_000); // units × 120
         assert_eq!(d.encoding(), Encoding::Frames);
         let mut m = Memory::with_units(3, 2, Encoding::Frames).unwrap();
-        m.open().unwrap();
+        m.open(None).unwrap();
         let f = |b: u8| [b; 10];
         assert!(m.append_frame(&f(1)));
         assert!(m.append_frame(&f(2)));
@@ -1064,7 +1118,7 @@ mod tests {
         assert_eq!((s.used_samples, s.remaining_samples), (360, 0));
         assert_eq!(m.frames(m.span(1).unwrap()).len(), 30);
         assert_eq!(&m.frames(m.span(1).unwrap())[10..20], &[2u8; 10]);
-        assert_eq!(m.open(), Err(Error::MemoryFull));
+        assert_eq!(m.open(None), Err(Error::MemoryFull));
         assert_eq!(m.erase(1), Some(Span { start: 0, len: 3 }));
         assert_eq!(m.status().remaining_samples, 360);
         // Import of frames; a samples import is the other encoding.
@@ -1157,5 +1211,103 @@ mod tests {
         off.speech_codec_enabled = false;
         assert_eq!(Encoding::for_settings(&on), Encoding::Frames);
         assert_eq!(Encoding::for_settings(&off), Encoding::Samples);
+    }
+}
+
+/// 020 T005 (spec 020 D5; research R-05; data-model › SlotBlock): the blocks follow the spans.
+#[cfg(test)]
+mod block_tests {
+    use super::*;
+
+    fn block(counter: u64) -> SlotBlock {
+        SlotBlock {
+            counter,
+            settings: crate::Settings::new(6000),
+            remaining_samples: 0,
+            events_total: 0,
+            changes_total: 0,
+        }
+    }
+
+    fn record(m: &mut Memory, counter: u64, n: usize) {
+        m.open(Some(block(counter))).unwrap();
+        for i in 0..n {
+            assert!(m.append_sample(i as f32));
+        }
+        assert!(matches!(m.close(true), StopResult::Kept { .. }));
+    }
+
+    #[test]
+    fn open_pushes_a_block_and_capacity_is_reserved() {
+        let mut m = Memory::with_capacity_samples(100, 4).unwrap();
+        assert_eq!(m.blocks.capacity(), 5);
+        record(&mut m, 7, 3);
+        assert_eq!(m.block(1).unwrap().unwrap().counter, 7);
+        assert_eq!(m.blocks.capacity(), 5);
+        assert!(m.block(2).is_none());
+    }
+
+    #[test]
+    fn discarded_recording_leaves_no_block() {
+        let mut m = Memory::with_capacity_samples(100, 4).unwrap();
+        m.open(Some(block(1))).unwrap();
+        assert!(matches!(m.close(false), StopResult::DiscardedEmpty));
+        assert!(m.blocks.is_empty());
+        m.open(Some(block(2))).unwrap();
+        m.discard_in_progress();
+        assert!(m.blocks.is_empty());
+        record(&mut m, 3, 2);
+        assert_eq!(m.block(1).unwrap().unwrap().counter, 3);
+    }
+
+    #[test]
+    fn erase_moves_the_blocks() {
+        let mut m = Memory::with_capacity_samples(100, 4).unwrap();
+        record(&mut m, 1, 2);
+        record(&mut m, 2, 2);
+        record(&mut m, 3, 2);
+        assert!(m.erase(1).is_some());
+        assert_eq!(m.block(1).unwrap().unwrap().counter, 2);
+        assert_eq!(m.block(2).unwrap().unwrap().counter, 3);
+        assert!(m.block(3).is_none());
+    }
+
+    #[test]
+    fn import_pushes_none() {
+        let mut m = Memory::with_capacity_samples(100, 4).unwrap();
+        m.import_samples([0.5f32, 0.25].into_iter()).unwrap();
+        assert_eq!(m.block(1), Some(None));
+        record(&mut m, 9, 1);
+        assert_eq!(m.block(2).unwrap().unwrap().counter, 9);
+    }
+
+    #[test]
+    fn copied_to_and_clone_and_erase_all() {
+        let mut m = Memory::with_capacity_samples(100, 4).unwrap();
+        record(&mut m, 4, 2);
+        let s = MemorySettings {
+            capacity_s: 1,
+            max_recordings: 6,
+        };
+        let c = m.copied_to(&s, Encoding::Samples).unwrap();
+        assert_eq!(c.block(1).unwrap().unwrap().counter, 4);
+        assert_eq!(c.blocks.capacity(), 7);
+        let k = m.clone();
+        assert_eq!(k.block(1).unwrap().unwrap().counter, 4);
+        assert_eq!(k.blocks.capacity(), m.blocks.capacity());
+        m.erase_all();
+        assert!(m.blocks.is_empty());
+    }
+
+    #[test]
+    fn last_block_mut_counts() {
+        let mut m = Memory::with_capacity_samples(100, 4).unwrap();
+        m.open(Some(block(1))).unwrap();
+        m.last_block_mut().unwrap().events_total += 2;
+        assert!(m.append_sample(0.0));
+        assert!(matches!(m.close(true), StopResult::Kept { .. }));
+        m.last_block_mut().unwrap().changes_total += 1;
+        let b = m.block(1).unwrap().unwrap();
+        assert_eq!((b.events_total, b.changes_total), (2, 1));
     }
 }

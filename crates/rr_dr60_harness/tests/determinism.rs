@@ -964,3 +964,25 @@ fn crossfade_same_calls_same_output() {
         let _ = Stream::Playback;
     }
 }
+
+/// Spec 020 SC-002 (tasks.md T023): the same recording and run give the same record bytes
+/// and the same digest, from two engines.
+#[test]
+fn record_contract_same_calls_same_bytes() {
+    use rr_dr60_harness::checks::standard;
+    use rr_dr60_harness::record_contract_checks::{self as rc, Cell};
+    for rate in [6000u32, 48_000] {
+        let raw = rc::raw_stimulus(rate);
+        let cell = Cell {
+            codec: true,
+            changes: true,
+            mute: false,
+            self_stop: false,
+        };
+        let (_, a) = rc::record_run(&standard, rate, cell, &raw);
+        let (_, b) = rc::record_run(&standard, rate, cell, &raw);
+        assert_eq!(a.record, b.record, "{rate} Hz: the record");
+        assert_eq!(a.digest, b.digest, "{rate} Hz: the digest");
+        assert_eq!(a.export, b.export, "{rate} Hz: the stored form");
+    }
+}

@@ -147,6 +147,13 @@ const FRAME: usize = tables::FRAME_SAMPLES;
 const SUBFRAME: usize = tables::SUBFRAME_SAMPLES;
 /// Samples before the frame in the analysis window.
 const PAST_INPUT: usize = WINDOW_SAMPLES - FRAME - tables::LOOKAHEAD_SAMPLES; // 60
+/// The coder's reach before a frame's start, in kept samples (spec 020 research R-01): the
+/// larger of the pitch search's past excitation and the LPC window's past input.
+pub(crate) const PAST_REACH: usize = if pitch::PAST_EXC > PAST_INPUT {
+    pitch::PAST_EXC
+} else {
+    PAST_INPUT
+};
 /// The frame's place in the analysis window.
 const FRAME_START: usize = PAST_INPUT;
 const FRAME_END: usize = PAST_INPUT + FRAME;

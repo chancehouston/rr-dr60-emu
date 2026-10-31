@@ -274,6 +274,30 @@ impl SpeedStage {
         self.p5
     }
 
+    /// The state the last output was computed under (spec 020 map (c)'s pin, research R-04):
+    /// its place, the level, whether the old branch contributed and at which place, and
+    /// whether the place has reached K after it.
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn last_state(&self) -> crate::timeline::PlaceState {
+        let (fading, old_place_fifths) = match self.fade {
+            Some(f) => (true, f.old_p5 - self.step(f.old_k)),
+            None => (false, 0),
+        };
+        crate::timeline::PlaceState {
+            place_fifths: self.last_p5.unwrap_or(0),
+            level: match self.active {
+                3 => 1,
+                4 => 2,
+                5 => 3,
+                6 => 4,
+                _ => 5,
+            },
+            fading,
+            old_place_fifths,
+            latched: self.latched,
+        }
+    }
+
     /// The look-ahead in effect (a mutant moves it; research R-12).
     #[inline]
     fn lookahead(&self) -> i64 {

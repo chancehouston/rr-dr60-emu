@@ -23,6 +23,7 @@
 //! registers (spec 014 FR-007 – FR-010, FR-016).
 
 use crate::manifest::{bytes_eq, chars, ends_with_dot, ids_ok};
+use crate::settings::{Tap, VasMode};
 
 /// The number of entries: three live controls and 26 settings (014 FR-001).
 pub const CONTROL_COUNT: usize = 30; // FR-001; spec 018: `battery_volts` appended at 29
@@ -169,6 +170,58 @@ pub fn controls() -> &'static [ControlEntry] {
     #[allow(clippy::let_unit_value)]
     let () = CONTROL_FORM_RULES_HOLD;
     &CONTROLS
+}
+
+/// The engine value of a tap choice (the C enumeration's; spec 014 FR-005, spec 020's record).
+pub(crate) const fn tap_code(t: Tap) -> u32 {
+    match t {
+        Tap::AfterRecord => 0,
+        Tap::AfterPlayback => 1,
+        Tap::AfterAgc => 2,
+        Tap::AfterVas => 3,
+        Tap::AfterDecoder => 4,
+        Tap::RouteOutput => 5,
+        Tap::AfterVolumeAmp => 6,
+        Tap::AfterSpeaker => 7,
+        Tap::AfterEarphone => 8,
+        Tap::AfterMicCapsule => 9,
+        Tap::AfterMicAmp => 10,
+    }
+}
+
+/// The tap of an engine value, if any.
+pub(crate) const fn tap_from_code(c: u32) -> Option<Tap> {
+    Some(match c {
+        0 => Tap::AfterRecord,
+        1 => Tap::AfterPlayback,
+        2 => Tap::AfterAgc,
+        3 => Tap::AfterVas,
+        4 => Tap::AfterDecoder,
+        5 => Tap::RouteOutput,
+        6 => Tap::AfterVolumeAmp,
+        7 => Tap::AfterSpeaker,
+        8 => Tap::AfterEarphone,
+        9 => Tap::AfterMicCapsule,
+        10 => Tap::AfterMicAmp,
+        _ => return None,
+    })
+}
+
+/// The engine value of a voice-activation mode.
+pub(crate) const fn mode_code(m: VasMode) -> u32 {
+    match m {
+        VasMode::Drop => 0,
+        VasMode::Mute => 1,
+    }
+}
+
+/// The voice-activation mode of an engine value, if any.
+pub(crate) const fn mode_from_code(c: u32) -> Option<VasMode> {
+    match c {
+        0 => Some(VasMode::Drop),
+        1 => Some(VasMode::Mute),
+        _ => None,
+    }
 }
 
 /// The entry with `identifier`, or `None`.
@@ -828,28 +881,32 @@ mod tests {
     }
 
     fn tap_value(t: Tap) -> (&'static str, u32) {
-        // An exhaustive match: a new tap fails to compile until listed (research R-03). The
-        // values are the C enumeration's; the harness checks them against the header.
-        match t {
-            Tap::AfterRecord => ("after_record", 0),
-            Tap::AfterPlayback => ("after_playback", 1),
-            Tap::AfterAgc => ("after_agc", 2),
-            Tap::AfterVas => ("after_vas", 3),
-            Tap::AfterDecoder => ("after_decoder", 4),
-            Tap::RouteOutput => ("route_output", 5),
-            Tap::AfterVolumeAmp => ("after_volume_amp", 6),
-            Tap::AfterSpeaker => ("after_speaker", 7),
-            Tap::AfterEarphone => ("after_earphone", 8),
-            Tap::AfterMicCapsule => ("after_mic_capsule", 9),
-            Tap::AfterMicAmp => ("after_mic_amp", 10),
-        }
+        // The values are the C enumeration's (`tap_code`); the harness checks them against the
+        // header. An exhaustive match on the names: a new tap fails to compile until listed.
+        let name = match t {
+            Tap::AfterRecord => "after_record",
+            Tap::AfterPlayback => "after_playback",
+            Tap::AfterAgc => "after_agc",
+            Tap::AfterVas => "after_vas",
+            Tap::AfterDecoder => "after_decoder",
+            Tap::RouteOutput => "route_output",
+            Tap::AfterVolumeAmp => "after_volume_amp",
+            Tap::AfterSpeaker => "after_speaker",
+            Tap::AfterEarphone => "after_earphone",
+            Tap::AfterMicCapsule => "after_mic_capsule",
+            Tap::AfterMicAmp => "after_mic_amp",
+        };
+        assert_eq!(tap_from_code(tap_code(t)), Some(t));
+        (name, tap_code(t))
     }
 
     fn mode_value(m: VasMode) -> (&'static str, u32) {
-        match m {
-            VasMode::Drop => ("drop", 0),
-            VasMode::Mute => ("mute", 1),
-        }
+        let name = match m {
+            VasMode::Drop => "drop",
+            VasMode::Mute => "mute",
+        };
+        assert_eq!(mode_from_code(mode_code(m)), Some(m));
+        (name, mode_code(m))
     }
 
     fn route_value(r: Route) -> (&'static str, u32) {

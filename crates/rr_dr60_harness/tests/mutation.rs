@@ -1650,3 +1650,152 @@ mod crossfade {
         assert_all(&xf::wait_cases(&standard, 6000));
     }
 }
+
+/// Spec 020 SC-003, SC-005 (tasks.md T023): six mutants of the record contract, each rejected by
+/// its named oracle.
+mod record_contract {
+    use rr_dr60::record::{self, RecordReadout};
+    use rr_dr60::timeline;
+    use rr_dr60_harness::checks::standard;
+    use rr_dr60_harness::record_contract_checks::{self as rc, Cell, Delta, mutants};
+
+    const RATE: u32 = 48_000;
+
+    /// `digest_equals_export_hash`: the digest over every byte but the last differs.
+    #[test]
+    fn digest_without_last_byte_is_caught() {
+        let raw = rc::raw_stimulus(RATE);
+        let (p, run) = rc::record_run(
+            &standard,
+            RATE,
+            Cell {
+                codec: false,
+                changes: false,
+                mute: false,
+                self_stop: false,
+            },
+            &raw,
+        );
+        assert_ne!(
+            mutants::digest_without_last_byte(&p, run.number),
+            run.digest
+        );
+        assert_eq!(p.recording_digest(run.number).unwrap(), run.digest);
+    }
+
+    /// The round trip's read: a checksum over the wrong span is refused.
+    #[test]
+    fn checksum_wrong_span_is_caught() {
+        let raw = rc::raw_stimulus(RATE);
+        let (_, run) = rc::record_run(
+            &standard,
+            RATE,
+            Cell {
+                codec: false,
+                changes: true,
+                mute: false,
+                self_stop: false,
+            },
+            &raw,
+        );
+        let bad = mutants::checksum_wrong_span(&run.record);
+        assert_eq!(
+            record::read(&bad, &mut RecordReadout::default()).unwrap_err(),
+            rr_dr60::Error::RecordChecksumMismatch
+        );
+        assert!(record::read(&run.record, &mut RecordReadout::default()).is_ok());
+    }
+
+    /// US1 AS1: the settings read from the engine instead of the block differ after a landed
+    /// change, and the mutant's record re-renders to another digest.
+    #[test]
+    fn settings_from_engine_is_caught() {
+        let raw = rc::raw_stimulus(RATE);
+        let (p, run) = rc::record_run(
+            &standard,
+            RATE,
+            Cell {
+                codec: false,
+                changes: true,
+                mute: false,
+                self_stop: false,
+            },
+            &raw,
+        );
+        let bad = mutants::settings_from_engine(&p, &run.record);
+        assert_ne!(bad, run.record);
+        assert_ne!(rc::re_render(&bad, &raw, 1024, Delta::None), run.digest);
+        assert_eq!(
+            rc::re_render(&run.record, &raw, 1024, Delta::None),
+            run.digest
+        );
+    }
+
+    /// The self-stop cell: a re-render without the capacity precondition fails the digest.
+    #[test]
+    fn self_stop_without_capacity_is_caught() {
+        let raw = rc::raw_stimulus(RATE);
+        let (_, run) = rc::record_run(
+            &standard,
+            RATE,
+            Cell {
+                codec: true,
+                changes: false,
+                mute: false,
+                self_stop: true,
+            },
+            &raw,
+        );
+        assert_ne!(
+            rc::re_render(&run.record, &raw, 1024, Delta::NoFill),
+            run.digest
+        );
+        assert_eq!(
+            rc::re_render(&run.record, &raw, 1024, Delta::None),
+            run.digest
+        );
+    }
+
+    /// The markers: map (a) with the codec's delay moves the centre by 180 device samples.
+    #[test]
+    fn alignment_with_codec_delay_is_caught() {
+        let x = rc::marker_stimulus(RATE);
+        let s = rc::marker_settings(RATE, true, true);
+        let (_, _, events, stop) = rc::record_samples(s, &x);
+        let k = events[1].output_position;
+        let good = timeline::kept_to_input(k, &s, &events, &stop)
+            .unwrap()
+            .centre;
+        let bad = mutants::alignment_with_codec_delay(k, &s, &events, &stop);
+        assert_eq!(good - bad, 180 * u64::from(RATE) / 6000);
+    }
+
+    /// The corner case "two requests inside one fade": the walker without the wait disagrees
+    /// with the stage's trace; the committed walker agrees.
+    #[test]
+    fn place_at_without_wait_is_caught() {
+        let n = u64::from(rr_dr60::speed::CROSSFADE_SAMPLES);
+        let requests = [(100u64, 5u8), (130, 1), (160, 4)];
+        let (m, _) = rc::place_case_mismatches(RATE, 3, &requests);
+        assert_eq!(m, 0);
+        let entries: Vec<_> = requests
+            .iter()
+            .enumerate()
+            .map(|(i, (d, level))| {
+                rr_dr60::ChangeEntry::new(
+                    rc::host_position_for(*d, RATE),
+                    2,
+                    3.0,
+                    f64::from(*level),
+                    i as u64,
+                    1,
+                )
+            })
+            .collect();
+        let at = 100 + n / 2;
+        let good = timeline::place_at(at, RATE, 3, 3000, &entries).unwrap();
+        let bad = mutants::place_at_without_wait(at, RATE, 3, 3000, &entries);
+        assert_ne!(good, bad, "the second request applied during the fade");
+        assert_eq!(good.level, 5, "the wait: the first fade still runs");
+    }
+}
