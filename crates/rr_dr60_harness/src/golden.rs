@@ -295,6 +295,27 @@ pub struct GoldenEntry {
     /// serialized) in the twelve earlier files (FR-005).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub battery: Option<BatteryGolden>,
+    /// Spec 020: the processing record of the entry's recording. Present in the record file's
+    /// entries only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_contract: Option<RecordContractGolden>,
+}
+
+/// Spec 020: the record part of a golden entry (plan review, coach 11): the record's text with
+/// the `library_version` and `stage.N.model_version` values replaced by `<current>` (those
+/// lines are asserted against the library and the manifest at compare time, so the golden moves
+/// only when the record's data moves) and its own checksum line dropped (it covers the raw
+/// versions).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RecordContractGolden {
+    /// The normalized record, one string per line.
+    pub lines: Vec<String>,
+    /// The stored form's digest as the record names it.
+    pub digest: String,
+    /// The event and change rows.
+    pub event_count: u64,
+    /// The change rows.
+    pub change_count: u64,
 }
 
 /// Spec 018: the battery part of a golden entry (research R-09).
@@ -512,6 +533,7 @@ pub fn entry(stimulus: &str, config: &str, host_rate_hz: u32, output: &[f32]) ->
         timed_changes: None,
         record_changes: None,
         battery: None,
+        record_contract: None,
     }
 }
 
@@ -2762,6 +2784,98 @@ pub fn generate_battery(make: Make<'_>, bless: bool) -> GoldenFile {
 pub fn committed_battery() -> GoldenFile {
     serde_json::from_str(include_str!("../golden/golden-battery-v1.json"))
         .expect("valid embedded battery golden file")
+}
+
+// ---- Spec 020: the processing-record golden (plan review, coach 11) ------------------------
+
+/// Normalizes a record's text for the golden: the version values replaced, the checksum line
+/// dropped. Returns the lines and the raw `(library_version, stage lines)` for the compare-time
+/// assertions.
+pub fn normalize_record(text: &str) -> (Vec<String>, String, Vec<String>) {
+    let mut lines = Vec::new();
+    let mut library = String::new();
+    let mut stages = Vec::new();
+    for l in text.lines() {
+        if let Some(v) = l.strip_prefix("library_version = ") {
+            library = v.to_string();
+            lines.push("library_version = <current>".to_string());
+        } else if l.starts_with("stage.") {
+            stages.push(l.to_string());
+            let name = l.split(" = ").next().unwrap_or(l);
+            lines.push(format!("{name} = <current>"));
+        } else if l.starts_with("record_checksum = ") {
+            lines.push("record_checksum = <dropped>".to_string());
+        } else {
+            lines.push(l.to_string());
+        }
+    }
+    (lines, library, stages)
+}
+
+/// The spec 020 golden (research R-02; plan review coach 11): one entry per rate, the default
+/// engine with the codec bypassed (the stored samples are the entry's output), a knee change and
+/// the matrix stimulus's gaps, the record normalized. At bless time the raw version lines are
+/// asserted against the library and the manifest; at compare time too, by the test.
+pub fn generate_record_contract(make: Make<'_>) -> GoldenFile {
+    use crate::record_contract_checks::{self as rc, Cell};
+    let mut entries = Vec::new();
+    for rate in configs::all_rates() {
+        let cell = Cell {
+            codec: false,
+            changes: true,
+            mute: false,
+            self_stop: false,
+        };
+        let raw = rc::raw_stimulus(rate);
+        let (p, run) = rc::record_run(make, rate, cell, &raw);
+        let stored = rr_dr60::__test_hooks::stored_samples(&p, run.number).to_vec();
+        let text = String::from_utf8(run.record.clone()).expect("ASCII");
+        let (lines, library, stages) = normalize_record(&text);
+        assert_eq!(library, rr_dr60::VERSION, "{rate} Hz: the library line");
+        assert_eq!(stages, manifest_stage_lines(), "{rate} Hz: the stage lines");
+        let r = rc::readout(&run.record);
+        let mut e = entry("matrix_voice", "record_contract", rate, &stored);
+        e.record_contract = Some(RecordContractGolden {
+            lines,
+            digest: format!("fnv1a64:{:016x}", run.digest),
+            event_count: r.event_count,
+            change_count: r.change_count,
+        });
+        entries.push(e);
+    }
+    GoldenFile {
+        format: "rr_dr60-golden".into(),
+        version: 1,
+        library_version: rr_dr60::VERSION.into(),
+        entries,
+    }
+}
+
+/// The `stage.N.model_version = …` lines the manifest implies, in stage order (the record's).
+pub fn manifest_stage_lines() -> Vec<String> {
+    rr_dr60::manifest()
+        .stages
+        .iter()
+        .filter(|e| !e.model_version.is_empty())
+        .map(|e| format!("stage.{}.model_version = {}", e.number, e.model_version))
+        .collect()
+}
+
+/// The committed spec 020 golden file (embedded at compile time).
+///
+/// # Panics
+///
+/// If the embedded JSON is not a golden file.
+pub fn committed_record_contract() -> GoldenFile {
+    serde_json::from_str(include_str!("../golden/golden-record-v1.json"))
+        .expect("valid embedded record golden file")
+}
+
+/// Path of the spec 020 record golden file. Bless it only with
+/// `RR_DR60_BLESS=record cargo test -p rr_dr60_harness --test golden_record`, with a CHANGELOG
+/// entry.
+pub fn path_record_contract() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-record-v1.json")
 }
 
 /// Path of the spec 018 battery golden file. Bless it only with
