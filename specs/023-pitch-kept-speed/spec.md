@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-31
 
-**Status**: Draft reviewed (coach 1 – 18, hardware B1 – B10, product M1 – M8, all applied at their defaults); awaiting the owner's sign-off (D1 – D11)
+**Status**: Spec approved by the owner 2026-10-31 (D1 – D11, D11 free via the curated-values rule); planning
 
 **Input**: User description: "023 pitch-kept playback speed as an option (mechanism c1; the owner's road to 1.0, decisions.md 2026-10-31). As an app user reviewing a recording, I want to slow a playback down (or speed it up) at the device's five levels without the voice dropping or rising in pitch, selectable as an option beside the modeled default, so that a slowed passage keeps its pitch; as an app developer I want it as one more live control with the same live-change, scheduling, logging, length and progress rules the speed level already has."
 
@@ -27,6 +27,10 @@ The owner reads this section first. Each decision gives the recommendation; the 
 | D11 | **The app's tier** (product M1; an app rule, not an engine field): the kind rule puts the knob in the Workbench, and the curated-values rule of 1.0-feature-set.md § 5 lets the free app offer the pitch-kept value as a curated setting of the device's own speed control (a "Pitch kept (engine option)" switch beside the free speed control; "Pitch follows speed (modeled default)" the other label); the Workbench gets nothing new from this spec. If a capture shows the device keeps pitch, the option becomes the device default by a CHANGELOG-recorded assumption change. | **Free via the curated-values rule, kind unchanged** (alternatives: Workbench by kind; a fifth kind "candidate device behavior", free by rule) |
 
 ## Clarifications
+
+### Session 2026-10-31 (owner sign-off)
+
+- The owner approved D1 – D11 as recommended: the kind model internal, the WSOLA parameters, the place as 013's clock with an exact mode-aware length, the frame-fed level change and blended mode change with one wait rule, the off-grid and vowel oracles, 3 × the increment, the appended-only C surface with the promise script, and **D11: free via the curated-values rule** (the kind unchanged, the Workbench gets nothing new). The rest proceeds to the plan sign-off and then to the merge, stopping only on a failed check or a new decision.
 
 ### Session 2026-10-31 (the draft reviews: coach 1 – 18, hardware B1 – B10, product M1 – M8)
 
