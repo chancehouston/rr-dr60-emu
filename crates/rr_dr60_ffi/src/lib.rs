@@ -342,7 +342,9 @@ pub struct RrDr60ChangeEntry {
     pub tag: u64,
     /// The control manifest's index.
     pub control: u32,
-    /// 0.
+    /// The stream word since 0.20 (spec 020 D9): 0 none (an entry from before 0.20 or a
+    /// default), 1 playback, 2 one-pass, 3 record. (Named `reserved` since 0.16; unchanged in
+    /// size and position.)
     pub reserved: u32,
 }
 
@@ -436,6 +438,13 @@ pub struct RrDr60StopOutcome {
     /// input (spec 012 FR-009): with the capsule (stage 1) on, the recording's tail there
     /// carries the hiss.
     pub silence_fed_samples: u64,
+    /// The record stream's input position when the stop was called (spec 020 D9): the host
+    /// samples fed before it; a re-render feeds exactly this many and calls the same stop.
+    /// Since 0.20 (the struct grew 64 → 80 bytes; it has no size field: the pre-1.0 ABI pass).
+    pub stop_input_position: u64,
+    /// The kept device sample at which the speech codec's padding begins (spec 020 D9): the
+    /// recording's length without padding. Since 0.20.
+    pub padding_start_sample: u64,
 }
 
 /// The report of one `rr_dr60_play` call (spec 006 FR-006, FR-008; spec 008 FR-008).
@@ -1503,6 +1512,8 @@ fn c_outcome(o: StopOutcome) -> RrDr60StopOutcome {
         number,
         length_samples,
         silence_fed_samples: o.silence_fed_samples,
+        stop_input_position: o.stop_input_position,
+        padding_start_sample: o.padding_start_sample,
     }
 }
 
@@ -4663,7 +4674,7 @@ mod tests {
             assert_eq!(offset_of!(RrDr60StopOutcome, number), 44);
             assert_eq!(offset_of!(RrDr60StopOutcome, length_samples), 48);
             assert_eq!(offset_of!(RrDr60StopOutcome, silence_fed_samples), 56);
-            assert_eq!(size_of::<RrDr60StopOutcome>(), 64); // 40 → 64
+            assert_eq!(size_of::<RrDr60StopOutcome>(), 80); // 40 → 64 → 80 (0.20)
             assert_eq!(offset_of!(RrDr60PlayInfo, frame_index), 24);
             assert_eq!(offset_of!(RrDr60PlayInfo, place), 32); // spec 013
             assert_eq!(size_of::<RrDr60PlayInfo>(), 40); // 16 → 32 → 40 (013)
@@ -4744,6 +4755,8 @@ mod tests {
             number: 9,
             length_samples: 9,
             silence_fed_samples: 9,
+            stop_input_position: 9,
+            padding_start_sample: 9,
         };
         // SAFETY: a NULL handle is allowed; the buffers are valid.
         unsafe {
@@ -5699,7 +5712,7 @@ mod changes_tests {
             (log[0].position, log[0].control, log[0].after, log[0].tag),
             (10, VOLUME, 0.25, 5)
         );
-        assert_eq!(log[0].reserved, 0);
+        assert_eq!(log[0].reserved, rr_dr60::STREAM_ONE_PASS); // 020 D9
         assert_eq!(pending(h, ONE_PASS), 0);
         let mut pos = 0u64;
         // SAFETY: a live handle and a valid out pointer.

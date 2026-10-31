@@ -289,6 +289,18 @@ pub struct VasEvent {
     pub input_length: u64,
 }
 
+impl VasEvent {
+    /// An event with both fields given (spec 020: a recipient assembles the timeline maps'
+    /// inputs from a processing record's rows).
+    #[must_use]
+    pub const fn new(output_position: u64, input_length: u64) -> Self {
+        Self {
+            output_position,
+            input_length,
+        }
+    }
+}
+
 /// The speech codec in the one-pass stream (spec 008 research R-06): the encoder, the decoder
 /// and a delay line that makes the codec's delay exactly 180 kept samples (`DELAY_SAMPLES`), a
 /// whole number of host samples at every rate, so record-then-play stays bit-identical to the
@@ -465,6 +477,20 @@ impl Pipeline {
     /// [`Error::AllocationFailed`] if the recording store for the configured capacity cannot
     /// be reserved (spec 006 FR-017).
     pub fn new(settings: Settings) -> Result<Self, Error> {
+        Self::new_at_counter(settings, 0) // 012 FR-009: the recording counter starts at 0
+    }
+
+    /// As [`new`](Self::new), with the recording counter starting at `counter` (spec 020 D5,
+    /// FR-004): the first recording and the one-pass use the hiss stream of `counter` (A-049),
+    /// bit-identical to a fresh engine that recorded `counter` times first (the one-pass after
+    /// that engine's `reset`), and [`recording_counter`](Self::recording_counter) reads
+    /// `counter` before the first recording. The counter's rules are unchanged: it never
+    /// rewinds. This is how a processing record's re-render builds its engine.
+    ///
+    /// # Errors
+    ///
+    /// As [`new`](Self::new).
+    pub fn new_at_counter(settings: Settings, counter: u64) -> Result<Self, Error> {
         validate(&settings)?;
         let plan = RatePlan::for_host(settings.host_rate_hz)?;
         // Spec 008 FR-012: the codec setting fixes the memory's encoding.
@@ -473,7 +499,7 @@ impl Pipeline {
             settings,
             &plan,
             memory,
-            0, // 012 FR-009: the recording counter starts at 0
+            counter,
             LiveStart {
                 route: Route::default(),
                 volume: crate::output::VOLUME_REFERENCE, // A-043
@@ -502,11 +528,14 @@ impl Pipeline {
         } = live;
         let mut one_pass = OnePass::new(&settings, plan);
         one_pass.rec.rekey(counter); // 012 FR-009: the next recording's stream
+        one_pass.rec.ctl.set_stream(Stream::OnePass); // 020 D9
+        one_pass.play.ctl.set_stream(Stream::OnePass);
         one_pass
             .play
             .set_start_values(route, volume, speed_level, battery_volts); // 015 D3, 018
         let latency = latency_samples(plan, &settings, &one_pass);
-        let recorder = RecordPath::new(&settings, plan, false, true);
+        let mut recorder = RecordPath::new(&settings, plan, false, true);
+        recorder.ctl.set_stream(Stream::Record); // 020 D9
         Self {
             settings,
             one_pass,
@@ -522,6 +551,7 @@ impl Pipeline {
             player: {
                 let mut p = PlaybackPath::new(&settings, plan, false);
                 p.set_start_values(route, volume, speed_level, battery_volts); // 015 D3, 018
+                p.ctl.set_stream(Stream::Playback); // 020 D9
                 p
             },
             memory,

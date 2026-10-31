@@ -173,6 +173,33 @@ pub enum Error {
         /// The rejected value.
         volts: f32,
     },
+    /// A processing record whose form version this library does not read: 0, or above
+    /// [`record::FORM_VERSION`](crate::record::FORM_VERSION) (spec 020 D4, FR-002).
+    UnknownRecordVersion {
+        /// The record's version line.
+        version: u32,
+    },
+    /// A processing record with a line that is not `name = value`, a name version 1 does not
+    /// define, a value that does not parse, or a missing final line end (spec 020 FR-002).
+    MalformedRecord {
+        /// The 1-based line, 0 when the record has no final line end.
+        line: u32,
+    },
+    /// A processing record lacking a line its origin requires (spec 020 FR-002).
+    MissingRecordField {
+        /// The field's name.
+        field: &'static str,
+    },
+    /// A processing record whose last line's checksum does not match its bytes (spec 020
+    /// FR-002): truncated or altered.
+    RecordChecksumMismatch,
+    /// The run data handed to the processing-record writer is inconsistent with the
+    /// recording (spec 020 D10, FR-001): out of order, past the recording, from another
+    /// stream, or more rows than the engine counted.
+    InconsistentRun {
+        /// Why.
+        reason: &'static str,
+    },
 }
 
 /// Inclusive range of `memory.capacity_s`, in seconds: one second to 24 hours (engineering
@@ -361,6 +388,22 @@ impl fmt::Display for Error {
                 f,
                 "invalid battery value {volts} V: must be finite and within 2.2 … 3.0"
             ),
+            Error::UnknownRecordVersion { version } => write!(
+                f,
+                "processing record form version {version} is not one this library reads"
+            ),
+            Error::MalformedRecord { line } => {
+                write!(f, "malformed processing record at line {line}")
+            }
+            Error::MissingRecordField { field } => {
+                write!(f, "processing record lacks the required field {field}")
+            }
+            Error::RecordChecksumMismatch => {
+                write!(f, "processing record checksum does not match its bytes")
+            }
+            Error::InconsistentRun { reason } => {
+                write!(f, "inconsistent run data: {reason}")
+            }
         }
     }
 }
@@ -533,5 +576,11 @@ mod tests {
         assert!(control.contains("29"), "{control}");
         let volts = Error::InvalidBatteryVolts { volts: 3.1 }.to_string();
         assert!(volts.contains("3.1") && volts.contains("2.2"), "{volts}");
+        // Spec 020: the five record statuses name their reason.
+        assert!(Error::UnknownRecordVersion { version: 2 }.to_string().contains('2'));
+        assert!(Error::MalformedRecord { line: 7 }.to_string().contains('7'));
+        assert!(Error::MissingRecordField { field: "seed" }.to_string().contains("seed"));
+        assert!(Error::RecordChecksumMismatch.to_string().contains("checksum"));
+        assert!(Error::InconsistentRun { reason: "no stream" }.to_string().contains("no stream"));
     }
 }

@@ -133,6 +133,15 @@ pub struct StopOutcome {
     /// `start_recording`, the stop's silence included. A change scheduled at or past it was
     /// dropped without an entry.
     pub input_samples_total: u64,
+    /// The record stream's input position when the stop was called: the host samples fed
+    /// before it, the stop's silence excluded (spec 020 D9). A re-render feeds exactly this
+    /// many samples and calls the same stop.
+    pub stop_input_position: u64,
+    /// The kept device sample at which the speech codec's padding begins (spec 020 D9): the
+    /// kept count after the latency flush with the codec on; the recording's length with the
+    /// codec bypassed, after a self-stop, or when the flush itself filled the memory (no
+    /// padding is fed then).
+    pub padding_start_sample: u64,
 }
 
 /// The report of one `play` call (spec 006 FR-006, FR-008; spec 008 FR-008).
@@ -275,7 +284,17 @@ impl Pipeline {
     /// (S-001: "FULL" refuses a start).
     pub fn start_recording(&mut self) -> Result<(), Error> {
         self.refuse_if_active()?;
-        self.memory.open()?;
+        // Spec 020 D5: the slot block, written as the recording opens: the counter the hiss
+        // stream is keyed with, the configuration (every landed value is in `settings`), the
+        // memory's remaining capacity before the open.
+        let block = crate::memory::SlotBlock {
+            counter: self.transport.counter,
+            settings: self.settings,
+            remaining_samples: self.memory.status().remaining_samples,
+            events_total: 0,
+            changes_total: 0,
+        };
+        self.memory.open(Some(block))?;
         self.recorder.reset();
         // 012 FR-009: the recorder's hiss is stream `counter`; the counter never rewinds.
         self.recorder.rekey(self.transport.counter);
@@ -327,6 +346,12 @@ impl Pipeline {
         self.take_landed_record(true); // 017 D4
         info.changes = self.recorder.ctl.log_len();
         info.input_samples_total = self.recorder.ctl.input;
+        // Spec 020 D5: the totals (a self-stop in this call closed the block as kept; it is
+        // still the last).
+        if let Some(b) = self.memory.last_block_mut() {
+            b.events_total += info.events as u64;
+            b.changes_total += info.changes as u64;
+        }
         Ok(info)
     }
 
@@ -385,10 +410,19 @@ impl Pipeline {
         // landed on the one-pass become pending here; the end of the recording clears the
         // schedule (`close_recording`) and the report carries the final input position.
         self.recorder.begin_call(&self.settings, &self.record_tags);
+        let stop_input_position = self.recorder.ctl.input; // 020 D9: before the flush
         let mut outcome = self.stop_recording_inner(events)?;
         self.take_landed_record(true);
         outcome.changes = self.recorder.ctl.log_len();
         outcome.input_samples_total = self.recorder.ctl.input;
+        outcome.stop_input_position = stop_input_position;
+        // Spec 020 D5: the totals, for a kept recording only (a discarded one has no block).
+        if let StopResult::Kept { .. } = outcome.result {
+            if let Some(b) = self.memory.last_block_mut() {
+                b.events_total += outcome.flush.events as u64;
+                b.changes_total += outcome.changes as u64;
+            }
+        }
         Ok(outcome)
     }
 
@@ -424,6 +458,8 @@ impl Pipeline {
                 silence_fed_samples: 0,
                 changes: 0,
                 input_samples_total: 0,
+                stop_input_position: 0,
+                padding_start_sample: 0,
             });
         }
         let mut flush = RecordInfo::default();
@@ -438,12 +474,18 @@ impl Pipeline {
             if pre_encoder > 0 {
                 self.finalize_record(); // 016 FR-001: the flush's figures
             }
+            let length = match result {
+                StopResult::Kept { length, .. } => length,
+                StopResult::DiscardedEmpty => 0,
+            };
             return Ok(StopOutcome {
                 flush,
                 result,
                 silence_fed_samples: 0,
                 changes: 0,
                 input_samples_total: 0,
+                stop_input_position: 0,
+                padding_start_sample: length, // 020 D9: no padding without the codec
             });
         }
         let drop_mode = self.settings.vas.enabled && self.settings.vas.mode == VasMode::Drop;
@@ -478,6 +520,12 @@ impl Pipeline {
             self.recorder.force_open(false);
         }
         let silence_fed_samples = self.transport.kept.saturating_sub(represented);
+        // 020 D9: the padding starts at `represented`; a flush that filled the memory fed no
+        // padding, so the figure is the length then.
+        let padding_start_sample = match stopped {
+            Some(StopResult::Kept { length, .. }) => length,
+            _ => represented,
+        };
         let result = match stopped {
             Some(result) => result,
             None => self.close_recording(events, &mut flush),
@@ -491,6 +539,8 @@ impl Pipeline {
             silence_fed_samples,
             changes: 0,
             input_samples_total: 0,
+            stop_input_position: 0,
+            padding_start_sample,
         })
     }
 
@@ -788,6 +838,19 @@ impl Pipeline {
         Ok(())
     }
 
+    /// The recording counter recording `number` was keyed with (spec 020 D5, FR-004), or
+    /// `None` for an imported recording (no slot block). Real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NoSuchRecording`].
+    pub fn recording_counter_of(&self, number: u32) -> Result<Option<u64>, Error> {
+        self.memory
+            .block(number)
+            .map(|b| b.map(|b| b.counter))
+            .ok_or(Error::NoSuchRecording { number })
+    }
+
     /// The exported length of recording `number`, in bytes, so the host can size its buffer
     /// (spec 006 FR-014; spec 008 FR-010): 52 + 10 × the stored frames with the speech codec
     /// on, 52 + 4 × the stored samples when it is bypassed (form version 2). Real-time safe.
@@ -932,10 +995,19 @@ impl Pipeline {
         Ok(pre_drain + u64::from(self.player.drain_len_host_samples()))
     }
 
-    /// The record path's latency in host samples: input samples until the corresponding device
-    /// sample is stored (spec 006 FR-016), the speech codec's delay of 180 device samples
-    /// included when it is on (spec 008 FR-004); the stop flush is the part before the encoder.
-    /// Real-time safe.
+    /// The record path's latency in host samples **to the speech encoder's input** (spec 020
+    /// D8, research R-01): the conversion's delay plus the record filter's 1 kHz group delay,
+    /// rounded to a host sample (spec 006 FR-016's figure without the codec's 180); the stop's
+    /// flush feeds exactly this many zeros. Real-time safe.
+    pub fn record_latency_pre_encoder_samples(&self) -> u32 {
+        self.recorder.latency_host_samples_pre_encoder()
+    }
+
+    /// The record path's latency in host samples, the speech codec's delay included (see
+    /// below). Spec 020's timeline maps use
+    /// [`record_latency_pre_encoder_samples`](Self::record_latency_pre_encoder_samples): a
+    /// stored recording's frames carry no kept-domain shift (spec 008 FR-004), so the 180 are
+    /// the one-pass's alone.
     pub fn record_latency_samples(&self) -> u32 {
         self.recorder.latency_host_samples()
     }

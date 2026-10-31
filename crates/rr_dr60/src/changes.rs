@@ -62,18 +62,29 @@ pub struct ChangeEntry {
     pub tag: u64,
     /// The control manifest's index of the control.
     pub control: u32,
-    /// 0; a later use (the pre-1.0 ABI pass).
-    pub reserved: u32,
+    /// The stream that applied the change (spec 020 D9): [`STREAM_PLAYBACK`] (1),
+    /// [`STREAM_ONE_PASS`] (2) or [`STREAM_RECORD`] (3); 0 for an entry from before 0.20 or a
+    /// default entry. The one-pass's two clocks are told apart by the control ([`clock_of`]).
+    /// (Until 0.19 this field was `reserved`, always 0; the C field keeps that name.)
+    pub stream: u32,
 }
 
+/// The stream word of the playback stream (spec 020 D9).
+pub const STREAM_PLAYBACK: u32 = 1;
+/// The stream word of the one-pass stream.
+pub const STREAM_ONE_PASS: u32 = 2;
+/// The stream word of the record stream (the recorder).
+pub const STREAM_RECORD: u32 = 3;
+
 impl ChangeEntry {
-    /// An entry with every field given and `reserved` 0.
+    /// An entry with every field given.
     pub(crate) const fn new(
         position: u64,
         control: u32,
         before: f64,
         after: f64,
         tag: u64,
+        stream: u32,
     ) -> Self {
         Self {
             position,
@@ -81,7 +92,19 @@ impl ChangeEntry {
             after,
             tag,
             control,
-            reserved: 0,
+            stream,
+        }
+    }
+}
+
+impl Stream {
+    /// The stream word entries of this stream carry (spec 020 D9).
+    #[must_use]
+    pub const fn word(self) -> u32 {
+        match self {
+            Stream::Playback => STREAM_PLAYBACK,
+            Stream::OnePass => STREAM_ONE_PASS,
+            Stream::Record => STREAM_RECORD,
         }
     }
 }
@@ -360,16 +383,16 @@ mod tests {
         assert_eq!(offset_of!(ChangeEntry, after), 16);
         assert_eq!(offset_of!(ChangeEntry, tag), 24);
         assert_eq!(offset_of!(ChangeEntry, control), 32);
-        assert_eq!(offset_of!(ChangeEntry, reserved), 36);
+        assert_eq!(offset_of!(ChangeEntry, stream), 36);
         assert_eq!(
-            ChangeEntry::new(1, 2, 3.0, 4.0, 5),
+            ChangeEntry::new(1, 2, 3.0, 4.0, 5, 0),
             ChangeEntry {
                 position: 1,
                 before: 3.0,
                 after: 4.0,
                 tag: 5,
                 control: 2,
-                reserved: 0,
+                stream: 0,
             }
         );
         assert_eq!(MAX_CHANGES_PER_CALL, 139); // 017: 2 · 64 + 3 + 8
@@ -421,6 +444,8 @@ pub(crate) struct StreamState {
     last_battery: f32,
     pending_battery: f32,
     pub(crate) landed_battery: Option<f32>,
+    /// The stream word the entries carry (spec 020 D9); set after construction.
+    stream: u32,
     #[cfg(feature = "__test-hooks")]
     pub(crate) mutation: ChangeMutation,
     pub(crate) schedule: Schedule,
@@ -457,6 +482,7 @@ impl StreamState {
             last_battery: battery,
             pending_battery: battery,
             landed_battery: None,
+            stream: 0,
             log: [ChangeEntry::default(); MAX_CHANGES_PER_CALL],
             log_len: 0,
             #[cfg(feature = "__test-hooks")]
@@ -634,9 +660,14 @@ impl StreamState {
     #[inline]
     fn push(&mut self, position: u64, control: u32, before: f64, after: f64, tag: u64) {
         if let Some(slot) = self.log.get_mut(self.log_len) {
-            *slot = ChangeEntry::new(position, control, before, after, tag);
+            *slot = ChangeEntry::new(position, control, before, after, tag, self.stream);
         }
         self.log_len += 1;
+    }
+
+    /// Sets the stream word the entries carry (spec 020 D9; construction time).
+    pub(crate) fn set_stream(&mut self, stream: Stream) {
+        self.stream = stream.word();
     }
 
     /// Copies the call's entries into `into` (the first ones when it is shorter) and returns
@@ -943,6 +974,8 @@ pub(crate) struct RecordCtl {
     /// settings), as a slot mask.
     landed_mask: u8,
     landed_tag: [u64; 8],
+    /// The stream word the entries carry (spec 020 D9); set after construction.
+    stream: u32,
     #[cfg(feature = "__test-hooks")]
     pub(crate) mutation: RecordMutation,
     pub(crate) schedule: Schedule,
@@ -962,11 +995,17 @@ impl RecordCtl {
             pending_tag: [0; 8],
             landed_mask: 0,
             landed_tag: [0; 8],
+            stream: 0,
             #[cfg(feature = "__test-hooks")]
             mutation: RecordMutation::default(),
             schedule: Schedule::new(),
             log: [ChangeEntry::default(); RECORD_LOG],
         }
+    }
+
+    /// Sets the stream word the entries carry (spec 020 D9; construction time).
+    pub(crate) fn set_stream(&mut self, stream: Stream) {
+        self.stream = stream.word();
     }
 
     /// The last applied values.
@@ -1072,7 +1111,7 @@ impl RecordCtl {
         values.set(slot, value);
         apply(&values, slot);
         if let Some(e) = self.log.get_mut(self.log_len) {
-            *e = ChangeEntry::new(pos, LIVE_RECORD[slot], before, values.get(slot), tag);
+            *e = ChangeEntry::new(pos, LIVE_RECORD[slot], before, values.get(slot), tag, self.stream);
         }
         self.log_len += 1;
         self.last = values;
@@ -1344,15 +1383,15 @@ mod record_tests {
         assert_eq!(ctl.drain_log(&mut log), 3);
         assert_eq!(
             log[0],
-            ChangeEntry::new(0, LIVE_RECORD[SLOT_HANG], 1000.0, 50.0, 9)
+            ChangeEntry::new(0, LIVE_RECORD[SLOT_HANG], 1000.0, 50.0, 9, 0)
         );
         assert_eq!(
             log[1],
-            ChangeEntry::new(0, LIVE_RECORD[SLOT_KNEE], -1.0, -5.0, 7)
+            ChangeEntry::new(0, LIVE_RECORD[SLOT_KNEE], -1.0, -5.0, 7, 0)
         );
         assert_eq!(
             log[2],
-            ChangeEntry::new(0, LIVE_RECORD[SLOT_HISS], 0.0, 3.0, 11)
+            ChangeEntry::new(0, LIVE_RECORD[SLOT_HISS], 0.0, 3.0, 11, 0)
         );
         assert_eq!(ctl.next_apply, 2);
         ctl.input = 1;

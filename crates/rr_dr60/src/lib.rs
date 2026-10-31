@@ -209,6 +209,7 @@ pub mod battery;
 pub mod changes;
 mod codec;
 pub mod controls;
+pub mod digest;
 mod error;
 mod form;
 pub mod manifest;
@@ -218,6 +219,7 @@ pub mod output;
 mod paths;
 mod pipeline;
 mod rate;
+pub mod record;
 mod resample;
 mod sanitize;
 mod settings;
@@ -228,7 +230,7 @@ mod test_util;
 mod transport;
 mod validate;
 
-pub use changes::{ChangeEntry, Clock, Stream};
+pub use changes::{ChangeEntry, Clock, STREAM_ONE_PASS, STREAM_PLAYBACK, STREAM_RECORD, Stream};
 pub use controls::{
     ControlEntry, ControlKind, ControlOption, ControlPaths, ControlTiming, ControlValue, control,
     controls,

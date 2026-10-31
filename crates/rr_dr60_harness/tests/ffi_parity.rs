@@ -1224,6 +1224,8 @@ fn c_api_record_play_loop_matches_rust_at_all_rates() {
             number,
             length_samples: length,
             silence_fed_samples: out.silence_fed_samples,
+            stop_input_position: out.stop_input_position, // 020 D9
+            padding_start_sample: out.padding_start_sample,
         };
         states.push(rust_state(&rust));
         let want_memory = rust_memory(&rust);
@@ -1359,6 +1361,8 @@ fn c_api_codec_loop_and_decoder_tap_match_rust_at_all_rates() {
             number,
             length_samples: length,
             silence_fed_samples: out.silence_fed_samples,
+            stop_input_position: out.stop_input_position, // 020 D9
+            padding_start_sample: out.padding_start_sample,
         };
         assert!(want_outcome.flush.frames_total * 120 == length);
         let want_bytes = split_checks::export_bytes(&rust, number);
@@ -2694,7 +2698,7 @@ fn changes_parity() {
             && c.after.to_bits() == r.after.to_bits()
             && c.tag == r.tag
             && c.control == r.control
-            && c.reserved == 0
+            && c.reserved == r.stream // 020 D9: the C field keeps its name
     };
     for &rate in configs::measurement_rates() {
         let x = stimulus::voiced(f64::from(rate), 0.5, -20.0, 0x015);
@@ -2867,7 +2871,7 @@ fn record_parity() {
             && c.after.to_bits() == r.after.to_bits()
             && c.tag == r.tag
             && c.control == r.control
-            && c.reserved == 0
+            && c.reserved == r.stream // 020 D9: the C field keeps its name
     };
     for &rate in configs::measurement_rates() {
         let x = stimulus::voiced(f64::from(rate), 0.5, -20.0, 0x017);
