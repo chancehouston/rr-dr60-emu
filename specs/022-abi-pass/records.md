@@ -13,6 +13,7 @@
 | `docs/product/brief.md` | The distribution line: "64-bit targets only (iOS is 64-bit; on Android `arm64-v8a` and `x86_64`, which Play serves to every current device; 32-bit-only devices are not offered the app)". | review |
 | `swift/README.md` | `import RRDR60` for the helpers vs the bare `RRDR60C`; `.sized` (never on settings), `checkABI()` and what a mismatch means, the raw module's trap, 64-bit, the `.iOS(.v16)` note; the last line amended (the helpers and the re-render are the Swift-native surface). | review |
 | `specs/018-battery-state/contracts/api.md`, `specs/020-session-contract/contracts/api.md` | Dated notes: the cap on every sized struct, Meters' read-back, the readout's padding and embedded-settings rule, `StopFields` frozen, `RunData`'s cap. | review |
+| `.github/workflows/ci.yml` | The nightly `miri` job on the helper's tests (`abi_tests::write_sized`, `readout`, `default_is`, `published`): SC-004's gate, no longer one-off (the hardware review's Q1). | the job itself |
 | `scripts/check-traceability.sh` | `check_file crates/rr_dr60_ffi/src/lib.rs` added so the new literals (4096, 16, 40, 1, 37) are audited with their "spec 022 D…" citations. | the audit |
 | `docs/hardware/*` | No change (no assumption). | — |
 | `CLAUDE.md` | The status entry, the Spec 022 reports commands, the engine order (022 done → c1 next); the "pre-1.0 ABI pass" list cleared; the Miri result. | review |

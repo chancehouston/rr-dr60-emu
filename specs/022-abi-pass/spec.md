@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-31
 
-**Status**: Spec approved by the owner 2026-10-31 (D1 – D12); plan reviewed 2026-10-31 (coach 1 – 11, hardware B1 – B9, product M1 – M9); D13 approved by the owner 2026-10-31 (the settings rule, found inverted by the plan's hardware review); plan approved 2026-10-31; tasks
+**Status**: Complete on `main` (PR #55 merged 2026-10-31, merge commit 12a3c45; version 0.22.0). Spec approved by the owner 2026-10-31 (D1 – D12); plan reviewed 2026-10-31 (coach 1 – 11, hardware B1 – B9, product M1 – M9); D13 approved by the owner 2026-10-31 (the settings rule, found inverted by the plan's hardware review); plan approved 2026-10-31; implemented, reviewed (coach 1 – 10, hardware B1 – B6), converged and merged 2026-10-31
 
 **Input**: User description: "022 the pre-1.0 C ABI pass (the owner's road to 1.0, decisions.md 2026-10-31). As an app developer integrating the C API (directly or through the Swift package), I want every struct the library fills to carry a size field with one stated compatibility rule, and the two array-element structs to be declared frozen with a start-up check, so that a later library can add a field to a report without breaking my binary, a stale binary is refused clearly instead of being written past its struct, and this is the last ABI break before 1.0."
 
@@ -53,6 +53,11 @@ The owner reads this section first. Each decision gives the recommendation; the 
 - **The Swift package's obligations named** (product M1, coach 8): a `.sized` initializer on every sized struct, `RRDR60.checkABI()` run once lazily before the first wrapper call and callable at launch, both test targets setting the size, the raw `RRDR60C` module's trap documented.
 - **Success criteria tightened** (coach 11): SC-001 per-call reports at the measurement rates, the rest once; SC-002 the right tuple, each argument wrong alone, all wrong, version 0 and `UINT32_MAX`; the smoke's size table is new.
 - **Considered, not adopted**: a numeric version accessor and a status-name function (product M-engine: a `rr_dr60_status_name` saves every app a 38-name table; additive, backlog) (additive at any time; backlog), folding the library version into the check (every patch release would mismatch), a typed Swift engine wrapper (its own feature after 0.90.0, designed with the app).
+
+### Session 2026-10-31 (the post-implementation reviews: coach 1 – 10, hardware B1 – B6)
+
+- **D10 had one violation** the first gate could not see: the read-out's embedded settings were assigned as a whole struct inside a filler, so fifteen padding bytes (its own four and the settings' four runs) carried stack bytes in a debug build; fixed field by field, the padding tables derived from the field offsets (which also found `RrDr60StageEntry`'s pad at 52), the source scan reading the fillers, Miri running the real fill. **SC-004 restated**: the Miri run is no longer one-off; a nightly `miri` CI job runs the helper's tests on every PR (the hardware review's Q1, at its default).
+- The Swift entry points **throw** the mismatch (US2 AS3 as written; the first implementation returned `nil`, indistinguishable from an unreadable record); the fallback reason `.libraryRefused(status:)` names a library refusal with every header comparison holding (the library's sizes are not exposed; a getter is backlog). The three read-side structs of spec 020 join the smoke and the parity (fifteen covered, as the plan said). The read-out input takes the cap; the header diff is checked line by line; the per-call matrix gains its poisoned stop/play and playback-in-progress rows; "2.1 ns" is the whole idle call, an upper bound; a 32-bit target fails to build rather than being "refused".
 
 ### Session 2026-10-31 (the plan reviews: coach 1 – 11, hardware B1 – B9, product M1 – M9)
 
