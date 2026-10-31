@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-31
 
-**Status**: Draft (the three draft reviews applied 2026-10-31; awaiting the owner's sign-off on D1 – D12)
+**Status**: Spec approved by the owner 2026-10-31 (D1 – D12); planning
 
 **Input**: User description: "022 the pre-1.0 C ABI pass (the owner's road to 1.0, decisions.md 2026-10-31). As an app developer integrating the C API (directly or through the Swift package), I want every struct the library fills to carry a size field with one stated compatibility rule, and the two array-element structs to be declared frozen with a start-up check, so that a later library can add a field to a report without breaking my binary, a stale binary is refused clearly instead of being written past its struct, and this is the last ABI break before 1.0."
 
@@ -28,6 +28,10 @@ The owner reads this section first. Each decision gives the recommendation; the 
 | D12 | **The check order on the per-call reports.** When `out_info` is non-NULL its `struct_size` is read and validated immediately after the handle's NULL check and before every other argument and state check; a refused size returns `INVALID_ARGUMENT` and writes nothing. On any later error the report is still written under the rule, as in 0.21 (`produced = 0`, the current `paused`; the tail zeroed when larger); with a NULL or poisoned handle the report is written only if its size is valid and the status stays the handle's. The constant-data functions check NULL, then the size, then the index. | **As stated** |
 
 ## Clarifications
+
+### Session 2026-10-31 (owner sign-off)
+
+- The owner approved D1 – D12 as recommended (the eleven size fields, the frozen pair with the `stream` rename, the five-argument check and 64-bit only, one `feat!:` as the last planned break, the cap, the flattened outcome, zeroed padding, the read-back, the check order). The rest proceeds to the plan sign-off and then to the merge, stopping only on a failed check or a new decision.
 
 ### Session 2026-10-31 (the draft reviews: coach 1 – 13, hardware B1 – B11, product M1 – M8)
 
