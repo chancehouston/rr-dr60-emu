@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-31
 
-**Status**: Spec approved by the owner 2026-10-31 (D1 – D11); plan drafted and reviewed 2026-10-31, awaiting the plan sign-off
+**Status**: Spec (D1 – D11) and plan approved by the owner 2026-10-31; implementing on `021-playback-bypass`
 
 **Input**: User description: "021 live playback-stage bypass with a crossfade (the owner's engine order 020 → 021, decisions.md 2026-10-29; controls-discussion.md § 2a row 6 'Stage bypass and A/B (with / without the speaker): playback-side stages live with a crossfade; record-side stages an offline re-render, not live', § 2b 'Playback-stage bypass, live (10, 11, 12, 13): both branches computed for a 20 ms crossfade; each bypassed branch keeps running to stay warm', § 4 item 8 '021: Live playback-stage bypass with a crossfade (M; Workbench A/B for stages 10 – 13)'). As a Workbench user listening to a playback, I want to switch each playback-side stage in and out while the recording plays, with no click, so that I can hear what each stage does to the same passage instead of stopping, reconfiguring and playing again."
 
@@ -41,6 +41,10 @@ The owner reads this section first. Each decision gives the recommendation; the 
 - **The app contract has eleven points** (product M1, M4 – M6, M8), the loudness rule for stage 11 on the earphone route among them: the Workbench moves the volume to position 1 before offering the switch (or compensates, or confirms); the engine does not compensate.
 - **The block-size-1 case is a partition**, not a setter oracle (the switches have no 0.20 setter) (coach 8).
 - **The hot path is one byte** (`bypass_state == 0` takes 0.20's path) in a `#[repr(C)]` chain; a cached `amp_counting` gates the clip count (hardware B10, coach 11).
+
+### Session 2026-10-31 (plan sign-off)
+
+- The owner approved the plan (P1 – P8) with the eleven restatements above, including the one new function `stage11_bypass_level_db` and the app's loudness rule; the rest proceeds to the merge, stopping only on a failed check or a new decision.
 
 ### Session 2026-10-31 (owner sign-off)
 
