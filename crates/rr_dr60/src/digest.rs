@@ -7,9 +7,9 @@
 //! It is a consistency check, not a signature.
 
 /// The FNV-1a 64 offset basis.
-pub const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+pub const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325; // FR-003: the published FNV-1a 64 constant (020 D3)
 /// The FNV-1a 64 prime.
-pub const PRIME: u64 = 0x0000_0100_0000_01b3;
+pub const PRIME: u64 = 0x0000_0100_0000_01b3; // FR-003: the published FNV-1a 64 constant (020 D3)
 
 /// A streaming FNV-1a 64 state (the two-pass digest of a recording in memory, research R-03).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
