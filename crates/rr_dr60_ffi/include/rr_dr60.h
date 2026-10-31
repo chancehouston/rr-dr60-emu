@@ -141,6 +141,56 @@
 // `RR_DR60_CONTROL_PATH_*` bit: the one-pass engine (`rr_dr60_process`).
 #define RR_DR60_CONTROL_PATH_ONE_PASS 4
 
+// The processing record form's version this library writes (spec 020 D2); it reads every
+// earlier one and refuses 0 and any later one. Equal to the Rust `record::FORM_VERSION`.
+#define RR_DR60_PROCESSING_RECORD_VERSION 1
+
+// `RrDr60RecordReadout.flags`: the record's library version differs from this library's.
+#define RR_DR60_RECORD_FLAG_LIBRARY_DIFFERS 1
+
+// A stage's model version differs (`stage_mask` names which: bit n − 1 for stage n).
+#define RR_DR60_RECORD_FLAG_STAGE_MODEL_DIFFERS 2
+
+// The record's host rate differs from the reading engine's (set only with a handle).
+#define RR_DR60_RECORD_FLAG_HOST_RATE_DIFFERS 4
+
+// Setting names or control identifiers this library does not know (`unknown_setting_count`;
+// listed by `rr_dr60_record_unknown_setting`).
+#define RR_DR60_RECORD_FLAG_UNKNOWN_SETTINGS 8
+
+// Fewer event or change rows than the engine counted (the app collected fewer than the engine
+// counted, N of M).
+#define RR_DR60_RECORD_FLAG_INCOMPLETE_RUN 16
+
+// The recording was imported: the record names the stored form and its digest only.
+#define RR_DR60_RECORD_FLAG_IMPORTED_ORIGIN 32
+
+// Checked against a recording in memory (`rr_dr60_recording_digest_matches`): the digests
+// differ.
+#define RR_DR60_RECORD_FLAG_DIGEST_MISMATCH 64
+
+// `RrDr60StopFields.how`: the host called `rr_dr60_stop_recording` (also when its flush
+// filled the memory).
+#define RR_DR60_STOP_CALL 0
+
+// `RrDr60StopFields.how`: the memory filled during a `rr_dr60_record` call (the self-stop).
+#define RR_DR60_STOP_MEMORY_FULL 1
+
+// `RrDr60RecordReadout.origin`: recorded by the engine that wrote the record.
+#define RR_DR60_ORIGIN_ENGINE 0
+
+// `RrDr60RecordReadout.origin`: imported from a stored form (nothing to re-render).
+#define RR_DR60_ORIGIN_IMPORTED 1
+
+// `RrDr60ChangeEntry.reserved` since 0.20: the stream word of the playback stream.
+#define RR_DR60_STREAM_WORD_PLAYBACK 1
+
+// The stream word of the one-pass stream.
+#define RR_DR60_STREAM_WORD_ONE_PASS 2
+
+// The stream word of the record stream (the recorder).
+#define RR_DR60_STREAM_WORD_RECORD 3
+
 // Result of every fallible C API call.
 enum RrDr60Status
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -230,6 +280,21 @@ enum RrDr60Status
   // voltage outside `RR_DR60_BATTERY_VOLTS_MIN` … `RR_DR60_BATTERY_VOLTS_MAX` or not finite;
   // the value is unchanged and nothing is stored (spec 018 FR-001).
   RR_DR60_STATUS_INVALID_BATTERY_VOLTS = 30,
+  // A processing record whose form version this library does not read: 0, or above
+  // `RR_DR60_PROCESSING_RECORD_VERSION` (spec 020 D4).
+  RR_DR60_STATUS_UNKNOWN_RECORD_VERSION = 31,
+  // A processing record with a line that is not `name = value`, a name version 1 does not
+  // define, a value that does not parse, or no final line end (spec 020 FR-002).
+  RR_DR60_STATUS_MALFORMED_RECORD = 32,
+  // A processing record lacking a line its origin requires (spec 020 FR-002).
+  RR_DR60_STATUS_MISSING_RECORD_FIELD = 33,
+  // A processing record whose last line's checksum does not match its bytes (truncated or
+  // altered; spec 020 FR-002).
+  RR_DR60_STATUS_RECORD_CHECKSUM_MISMATCH = 34,
+  // The run data handed to the processing-record writer is inconsistent with the recording:
+  // out of order, past the recording, from another stream, or more rows than the engine
+  // counted (spec 020 D10, FR-001).
+  RR_DR60_STATUS_INCONSISTENT_RUN = 35,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -803,7 +868,9 @@ typedef struct RrDr60ChangeEntry {
   uint64_t tag;
   // The control manifest's index.
   uint32_t control;
-  // 0.
+  // The stream word since 0.20 (spec 020 D9): 0 none (an entry from before 0.20 or a
+  // default), 1 playback, 2 one-pass, 3 record. (Named `reserved` since 0.16; unchanged in
+  // size and position.)
   uint32_t reserved;
 } RrDr60ChangeEntry;
 
@@ -847,6 +914,13 @@ typedef struct RrDr60StopOutcome {
   // input (spec 012 FR-009): with the capsule (stage 1) on, the recording's tail there
   // carries the hiss.
   uint64_t silence_fed_samples;
+  // The record stream's input position when the stop was called (spec 020 D9): the host
+  // samples fed before it; a re-render feeds exactly this many and calls the same stop.
+  // Since 0.20 (the struct grew 64 → 80 bytes; it has no size field: the pre-1.0 ABI pass).
+  uint64_t stop_input_position;
+  // The kept device sample at which the speech codec's padding begins (spec 020 D9): the
+  // recording's length without padding. Since 0.20.
+  uint64_t padding_start_sample;
 } RrDr60StopOutcome;
 
 // The report of one `rr_dr60_play` call (spec 006 FR-006, FR-008; spec 008 FR-008).
@@ -1099,6 +1173,135 @@ typedef struct RrDr60ControlOption {
   // The value the engine takes: the C enumeration value, or the rate in hertz.
   uint32_t value;
 } RrDr60ControlOption;
+
+// The stop's figures a run carries (spec 020 D9, D10): from `RrDr60StopOutcome` (`how` 0,
+// the four fields copied), from a self-stop's `RrDr60RecordInfo` (`how` 1,
+// `stop_input_position` = `input_samples_total`, the others 0: the writer fills the padding
+// start with the length), or from a read record. `struct_size` first: set it to
+// `sizeof(RrDr60StopFields)`.
+typedef struct RrDr60StopFields {
+  // `sizeof(RrDr60StopFields)` as the caller compiled it.
+  uint32_t struct_size;
+  // `RR_DR60_STOP_CALL` or `RR_DR60_STOP_MEMORY_FULL`.
+  uint32_t how;
+  // The host samples fed before the stop was called.
+  uint64_t stop_input_position;
+  // The kept device sample at which the codec's padding begins (the length without it).
+  uint64_t padding_start_sample;
+  // Every host sample fed since the start, the stop's silence included.
+  uint64_t input_samples_total;
+  // The post-gate device samples of the padding.
+  uint64_t silence_fed_samples;
+} RrDr60StopFields;
+
+// The run data the host collected (spec 020 D10): the events and the change entries of every
+// `rr_dr60_record_with_changes` call and of the stop, in order, and the stop's fields. NULL
+// arrays with a count of 0 are allowed. `struct_size` first.
+typedef struct RrDr60RunData {
+  // `sizeof(RrDr60RunData)`.
+  uint32_t struct_size;
+  // Reserved; 0.
+  uint32_t reserved;
+  // The voice-activation events, in order.
+  const struct RrDr60VasEvent *events;
+  // How many.
+  uintptr_t event_count;
+  // The record-stream change entries, in order (their `reserved` is the stream word).
+  const struct RrDr60ChangeEntry *changes;
+  // How many.
+  uintptr_t change_count;
+  // The stop's fields.
+  struct RrDr60StopFields stop;
+} RrDr60RunData;
+
+// What a processing record says (spec 020 D1; data-model.md), filled by
+// `rr_dr60_processing_record_read`. `struct_size` first: set it to
+// `sizeof(RrDr60RecordReadout)`; a smaller size is refused, a larger one is filled with the
+// tail zeroed (spec 018's prefix-fill rule).
+typedef struct RrDr60RecordReadout {
+  // `sizeof(RrDr60RecordReadout)` as the caller compiled it.
+  uint32_t struct_size;
+  // The record's form version.
+  uint32_t form_version;
+  // The library that wrote the record: major, minor, patch.
+  uint16_t library_version[3];
+  // The stored form's version (2).
+  uint16_t stored_form_version;
+  // The codec model version the stored form declares (0, 0, 0 with samples).
+  uint16_t stored_codec_model_version[3];
+  // Under `RR_DR60_RECORD_FLAG_STAGE_MODEL_DIFFERS`: bit n − 1 for stage n.
+  uint16_t stage_mask;
+  // `RR_DR60_ORIGIN_ENGINE` or `RR_DR60_ORIGIN_IMPORTED`.
+  uint32_t origin;
+  // The host rate (0 under the imported origin).
+  uint32_t host_rate_hz;
+  // An `RrDr60Encoding` value: 0 frames, 1 samples.
+  uint32_t encoding;
+  // The `RR_DR60_RECORD_FLAG_*` bits.
+  uint32_t flags;
+  // Setting names and control identifiers this library does not know.
+  uint32_t unknown_setting_count;
+  // Reserved; 0.
+  uint32_t reserved;
+  // The seed (valid under the engine origin).
+  uint64_t seed;
+  // The recording counter the hiss stream was keyed with (valid under the engine origin).
+  uint64_t recording_counter;
+  // The stored units (frames or samples by `encoding`).
+  uint64_t stored_unit_count;
+  // The FNV-1a 64 digest of the stored form's bytes.
+  uint64_t recording_digest;
+  // The memory's remaining capacity before the recording opened, in device samples.
+  uint64_t remaining_samples_at_start;
+  // The voice-activation events the engine counted.
+  uint64_t events_total;
+  // The record-stream entries the engine counted.
+  uint64_t changes_total;
+  // Event rows present.
+  uint64_t event_count;
+  // Change rows present.
+  uint64_t change_count;
+  // Each stage's model version as the record names it (0, 0, 0 absent or not modeled).
+  uint16_t stage_model_versions[15][3];
+  // Reserved; 0.
+  uint16_t reserved_2;
+  // The stop's fields.
+  struct RrDr60StopFields stop;
+  // The configuration at the recording's start (the host rate and the seed included;
+  // `rr_dr60_settings_default(6000)` under the imported origin).
+  struct RrDr60Settings settings;
+} RrDr60RecordReadout;
+
+// A kept sample's nominal host-input alignment (spec 020 map (a)). `struct_size` first.
+typedef struct RrDr60InputAlignment {
+  // `sizeof(RrDr60InputAlignment)`.
+  uint32_t struct_size;
+  // An end was clamped to the recording's input range (1) or not (0).
+  uint32_t clamped;
+  // The host input sample the kept sample aligns with.
+  uint64_t centre;
+  // The window's first host sample.
+  uint64_t first;
+  // The window's last host sample.
+  uint64_t last;
+} RrDr60InputAlignment;
+
+// The speed control's place at a playback device output (spec 020 map (c)). `struct_size`
+// first.
+typedef struct RrDr60PlaceState {
+  // `sizeof(RrDr60PlaceState)`.
+  uint32_t struct_size;
+  // The level computing the output (1 … 5).
+  uint32_t level;
+  // The output was a blend sample (1) or not (0).
+  uint32_t fading;
+  // The place has reached the recording's end after this output (1) or not (0).
+  uint32_t latched;
+  // The place of the output, in fifths of a stored sample.
+  uint64_t place_fifths;
+  // The old branch's place for a blend sample, in fifths; 0 otherwise.
+  uint64_t old_place_fifths;
+} RrDr60PlaceState;
 
 // `RR_DR60_TAP_AFTER_PLAYBACK` under the stage's name: after stage 10, before the output chain
 // (version 0.8's default output; spec 009 FR-011).
@@ -1984,6 +2187,271 @@ RrDr60Status rr_dr60_control_source(uint32_t index, uint32_t i, const char **out
 //
 // `out_id` must be NULL (then `RR_DR60_STATUS_NULL_POINTER`) or point to a writable pointer.
 RrDr60Status rr_dr60_control_assumption(uint32_t index, uint32_t i, const char **out_id);
+
+// Spec 020 FR-004: as `rr_dr60_create`, with the recording counter starting at `counter`
+// (the first recording and the one-pass use that counter's microphone-noise stream; a
+// processing record's re-render builds its engine so). Never advances the counter by itself.
+//
+// # Safety
+//
+// As `rr_dr60_create`.
+RrDr60Status rr_dr60_create_at_counter(const struct RrDr60Settings *settings,
+                                       uint64_t counter,
+                                       struct RrDr60Pipeline **out_pipeline);
+
+// The record path's latency in host samples to the speech encoder's input (spec 020 D8): the
+// timeline maps' latency; `rr_dr60_record_latency_samples` minus the codec's delay when it
+// is on. 0 for NULL.
+//
+// # Safety
+//
+// `pipeline` is NULL or a live handle.
+uint32_t rr_dr60_record_latency_pre_encoder_samples(struct RrDr60Pipeline *pipeline);
+
+// The recording counter recording `number` was keyed with (spec 020 D5): `*out_known` is set
+// to `true` and `*out_counter` to the counter, or `*out_known` to `false` for an imported
+// recording (`*out_counter` 0).
+//
+// # Safety
+//
+// `pipeline` a live handle; the outs writable.
+RrDr60Status rr_dr60_recording_counter_of(struct RrDr60Pipeline *pipeline,
+                                          uint32_t number,
+                                          bool *out_known,
+                                          uint64_t *out_counter);
+
+// The FNV-1a 64 digest of `len` bytes (spec 020 D3): the function the processing record's
+// `recording_digest` and `record_checksum` lines use. 0xcbf29ce484222325 for no bytes.
+//
+// # Safety
+//
+// `bytes` is NULL (with `len` 0) or `len` readable bytes.
+uint64_t rr_dr60_digest(const uint8_t *bytes, uintptr_t len);
+
+// The digest of the bytes `rr_dr60_export` writes for recording `number` (spec 020 FR-003),
+// without writing them. Not real-time safe.
+//
+// # Safety
+//
+// `pipeline` a live handle; `out` writable.
+RrDr60Status rr_dr60_recording_digest(struct RrDr60Pipeline *pipeline,
+                                      uint32_t number,
+                                      uint64_t *out);
+
+// The exact length of recording `number`'s processing record for `run` (spec 020 FR-001):
+// one counting pass, the run validated as the writer validates it. Not real-time safe;
+// refused while a recording is in progress.
+//
+// # Safety
+//
+// `pipeline` a live handle; `run` as `RrDr60RunData` documents; `out_len` writable.
+RrDr60Status rr_dr60_processing_record_len(struct RrDr60Pipeline *pipeline,
+                                           uint32_t number,
+                                           const struct RrDr60RunData *run,
+                                           uintptr_t *out_len);
+
+// Writes recording `number`'s processing record for `run` into `out` (`out_len` bytes) and
+// sets `*out_written` (spec 020 D1, D10, FR-001; contracts/record-form.md). The same inputs
+// give the same bytes on every platform. Not real-time safe.
+//
+// # Safety
+//
+// As `rr_dr60_processing_record_len`; `out` writable for `out_len` bytes.
+RrDr60Status rr_dr60_processing_record_write(struct RrDr60Pipeline *pipeline,
+                                             uint32_t number,
+                                             const struct RrDr60RunData *run,
+                                             uint8_t *out,
+                                             uintptr_t out_len,
+                                             uintptr_t *out_written);
+
+// Reads a processing record into `*out` (spec 020 D4, FR-002): refuses an unknown form
+// version, a malformed line, a missing required field or a checksum mismatch (statuses 31 –
+// 34), and reports every difference as a flag. With a live `pipeline` the host-rate flag is
+// set too; with NULL the read is the pure one. `out->struct_size` must be set.
+//
+// # Safety
+//
+// `pipeline` NULL or a live handle; `bytes` `len` readable bytes; `out` non-null and
+// `out->struct_size` bytes writable.
+RrDr60Status rr_dr60_processing_record_read(struct RrDr60Pipeline *pipeline,
+                                            const uint8_t *bytes,
+                                            uintptr_t len,
+                                            struct RrDr60RecordReadout *out);
+
+// Reads a record and writes it again from the read-out and its rows (spec 020 US1 AS4: the
+// round trip), `*out_written` set; `out` may be NULL with `out_len` 0 to learn the length
+// (`RR_DR60_STATUS_BUFFER_TOO_SMALL` is not returned then: the length is in `*out_written`).
+//
+// # Safety
+//
+// `bytes` `len` readable bytes; `out` writable for `out_len`; `out_written` writable.
+RrDr60Status rr_dr60_processing_record_rewrite(const uint8_t *bytes,
+                                               uintptr_t len,
+                                               uint8_t *out,
+                                               uintptr_t out_len,
+                                               uintptr_t *out_written);
+
+// The pure writer (spec 020 FR-001): writes a record from a read-out and its rows (the
+// events with their host-input positions, the change entries with the control's manifest
+// index and the stream word in `reserved`) into `out` and sets `*out_written`; `out` may be
+// NULL with `out_len` 0 to learn the length in `*out_written`. Needs no handle.
+//
+// # Safety
+//
+// `readout` a valid read-out of this library's size; the arrays NULL with a count of 0 or
+// readable; `out` writable for `out_len`; `out_written` writable.
+RrDr60Status rr_dr60_record_write(const struct RrDr60RecordReadout *readout,
+                                  const struct RrDr60VasEvent *events,
+                                  const uint64_t *host_input_positions,
+                                  uintptr_t event_count,
+                                  const struct RrDr60ChangeEntry *changes,
+                                  uintptr_t change_count,
+                                  uint8_t *out,
+                                  uintptr_t out_len,
+                                  uintptr_t *out_written);
+
+// Whether a read record's digest is recording `number`'s (spec 020 US2 AS3): sets or clears
+// the read-out's `RR_DR60_RECORD_FLAG_DIGEST_MISMATCH` and `*out_matches`. Not real-time safe.
+//
+// # Safety
+//
+// `pipeline` a live handle; `readout` a read-out of this library's size; `out_matches`
+// writable.
+RrDr60Status rr_dr60_recording_digest_matches(struct RrDr60Pipeline *pipeline,
+                                              uint32_t number,
+                                              struct RrDr60RecordReadout *readout,
+                                              bool *out_matches);
+
+// Event row `i` of a record the reader accepted (spec 020): `*out_event` and
+// `*out_host_input_position` set; returns `false` past the rows. Re-scans the lines: extract
+// once with `rr_dr60_record_events` rather than calling it per sample.
+//
+// # Safety
+//
+// `bytes` `len` readable bytes; the outs writable.
+bool rr_dr60_record_event(const uint8_t *bytes,
+                          uintptr_t len,
+                          uint64_t i,
+                          struct RrDr60VasEvent *out_event,
+                          uint64_t *out_host_input_position);
+
+// Change row `i` of a record the reader accepted, the control identifier resolved to this
+// library's manifest index and the stream word in `reserved`; `false` past the rows or for an
+// identifier this library does not know.
+//
+// # Safety
+//
+// `bytes` `len` readable bytes; `out` writable.
+bool rr_dr60_record_change(const uint8_t *bytes,
+                           uintptr_t len,
+                           uint64_t i,
+                           struct RrDr60ChangeEntry *out);
+
+// Fills `out` (`capacity` events) with the event rows from `first` on, in one pass; returns
+// how many were written.
+//
+// # Safety
+//
+// `bytes` `len` readable bytes; `out` writable for `capacity` events.
+uintptr_t rr_dr60_record_events(const uint8_t *bytes,
+                                uintptr_t len,
+                                uint64_t first,
+                                struct RrDr60VasEvent *out,
+                                uintptr_t capacity);
+
+// As `rr_dr60_record_events` for the change rows (a row with an unknown identifier is
+// skipped).
+//
+// # Safety
+//
+// `bytes` `len` readable bytes; `out` writable for `capacity` entries.
+uintptr_t rr_dr60_record_changes(const uint8_t *bytes,
+                                 uintptr_t len,
+                                 uint64_t first,
+                                 struct RrDr60ChangeEntry *out,
+                                 uintptr_t capacity);
+
+// The `i`-th setting name or control identifier this library does not know, in the record's
+// order, copied NUL-terminated into `out` (`capacity` bytes; truncated when short); `false`
+// past the unknown names.
+//
+// # Safety
+//
+// `bytes` `len` readable bytes; `out` writable for `capacity` bytes.
+bool rr_dr60_record_unknown_setting(const uint8_t *bytes,
+                                    uintptr_t len,
+                                    uint32_t i,
+                                    char *out,
+                                    uintptr_t capacity);
+
+// Map (a) (spec 020 D8): the nominal host-input alignment of kept device sample `k` of a
+// recording made with `settings`, through its `event_count` voice-activation events and
+// its stop fields; `out->struct_size` must be set.
+//
+// # Safety
+//
+// `settings` a valid struct of its `struct_size`; `events` NULL with a count of 0 or readable;
+// `stop` a valid struct; `out` writable for its `struct_size`.
+RrDr60Status rr_dr60_kept_to_input(const struct RrDr60Settings *settings,
+                                   uint64_t k,
+                                   const struct RrDr60VasEvent *events,
+                                   uintptr_t event_count,
+                                   const struct RrDr60StopFields *stop,
+                                   struct RrDr60InputAlignment *out);
+
+// Map (b) (spec 020 D8): the kept device sample host-input sample `p` reaches
+// (`*out_kept`, `*out_removed_by_event` = UINT64_MAX), or the voice-activation event that
+// removed it (`*out_removed_by_event` its index, `*out_kept` 0).
+//
+// # Safety
+//
+// As `rr_dr60_kept_to_input`; the outs writable.
+RrDr60Status rr_dr60_input_to_kept(const struct RrDr60Settings *settings,
+                                   uint64_t p,
+                                   const struct RrDr60VasEvent *events,
+                                   uintptr_t event_count,
+                                   uint64_t *out_kept,
+                                   uint64_t *out_removed_by_event);
+
+// The one-pass's clocks (spec 020 D8): the input-clock position output-clock `position`
+// aligns with, through the one-pass's `latency` (`rr_dr60_latency_samples`) and its
+// `event_count` voice-activation events; `*out_clamped` when the result was clamped at 0.
+//
+// # Safety
+//
+// `events` NULL with a count of 0 or readable; the outs writable.
+RrDr60Status rr_dr60_onepass_output_to_input(uint64_t position,
+                                             uint32_t latency,
+                                             const struct RrDr60VasEvent *events,
+                                             uintptr_t event_count,
+                                             uint64_t *out_input,
+                                             bool *out_clamped);
+
+// Map (c) (spec 020 D8): the speed control's place at playback device output `index` for a
+// recording of `unit_count` stored device samples played from `start_level` with the
+// `playback_speed` entries of the playback stream's log (`entry_count` entries in position
+// order; other controls' entries ignored); `out->struct_size` must be set.
+//
+// # Safety
+//
+// `entries` NULL with a count of 0 or readable; `out` writable for its `struct_size`.
+RrDr60Status rr_dr60_place_at(uint64_t index,
+                              uint32_t host_rate_hz,
+                              uint8_t start_level,
+                              uint64_t unit_count,
+                              const struct RrDr60ChangeEntry *entries,
+                              uintptr_t entry_count,
+                              struct RrDr60PlaceState *out);
+
+// The feed-point rule (spec 020 D12): converts `count` 24-bit integer samples (−2²³ … 2²³ − 1
+// in an `int32_t`) to the engine's input, x ÷ 2²³, exact for every value.
+//
+// # Safety
+//
+// `src` readable and `dst` writable for `count` samples.
+void rr_dr60_samples_from_i24(const int32_t *src,
+                              float *dst,
+                              uintptr_t count);
 
 #ifdef __cplusplus
 }  // extern "C"

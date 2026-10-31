@@ -146,6 +146,21 @@ pub enum RrDr60Status {
     /// voltage outside `RR_DR60_BATTERY_VOLTS_MIN` … `RR_DR60_BATTERY_VOLTS_MAX` or not finite;
     /// the value is unchanged and nothing is stored (spec 018 FR-001).
     InvalidBatteryVolts = 30,
+    /// A processing record whose form version this library does not read: 0, or above
+    /// `RR_DR60_PROCESSING_RECORD_VERSION` (spec 020 D4).
+    UnknownRecordVersion = 31,
+    /// A processing record with a line that is not `name = value`, a name version 1 does not
+    /// define, a value that does not parse, or no final line end (spec 020 FR-002).
+    MalformedRecord = 32,
+    /// A processing record lacking a line its origin requires (spec 020 FR-002).
+    MissingRecordField = 33,
+    /// A processing record whose last line's checksum does not match its bytes (truncated or
+    /// altered; spec 020 FR-002).
+    RecordChecksumMismatch = 34,
+    /// The run data handed to the processing-record writer is inconsistent with the recording:
+    /// out of order, past the recording, from another stream, or more rows than the engine
+    /// counted (spec 020 D10, FR-001).
+    InconsistentRun = 35,
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -795,6 +810,18 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
         Error::InvalidBatteryVolts { .. } => {
             (RrDr60Status::InvalidBatteryVolts, RrDr60SettingField::None) // spec 018
         }
+        // Spec 020 contracts/api.md: statuses 31 – 35.
+        Error::UnknownRecordVersion { .. } => {
+            (RrDr60Status::UnknownRecordVersion, RrDr60SettingField::None)
+        }
+        Error::MalformedRecord { .. } => (RrDr60Status::MalformedRecord, RrDr60SettingField::None),
+        Error::MissingRecordField { .. } => {
+            (RrDr60Status::MissingRecordField, RrDr60SettingField::None)
+        }
+        Error::RecordChecksumMismatch => {
+            (RrDr60Status::RecordChecksumMismatch, RrDr60SettingField::None)
+        }
+        Error::InconsistentRun { .. } => (RrDr60Status::InconsistentRun, RrDr60SettingField::None),
         Error::NoSuchControl { .. } => (RrDr60Status::NoSuchControl, RrDr60SettingField::None),
         // Spec 013 contracts/c-api.md: status 25.
         Error::InvalidSpeedLevel { .. } => {
@@ -6321,5 +6348,1316 @@ mod crossfade_tests {
             rr_dr60::speed::CROSSFADE_SAMPLES,
             6 * RR_DR60_SPEED_CROSSFADE_MS
         );
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Spec 020: the processing record, the digest, the counter constructor, the timeline maps and
+// the feed-point helper (contracts/api.md).
+
+use rr_dr60::Encoding;
+use rr_dr60::record::{self, Origin, RecordReadout, RunData, StopFields, StopHow};
+use rr_dr60::timeline::{self, KeptOrRemoved};
+
+/// The processing record form's version this library writes (spec 020 D2); it reads every
+/// earlier one and refuses 0 and any later one. Equal to the Rust `record::FORM_VERSION`.
+pub const RR_DR60_PROCESSING_RECORD_VERSION: u32 = 1; // 020 D2 (a literal so cbindgen emits the define; the unit test pins it)
+
+/// `RrDr60RecordReadout.flags`: the record's library version differs from this library's.
+pub const RR_DR60_RECORD_FLAG_LIBRARY_DIFFERS: u32 = 1;
+/// A stage's model version differs (`stage_mask` names which: bit n − 1 for stage n).
+pub const RR_DR60_RECORD_FLAG_STAGE_MODEL_DIFFERS: u32 = 2;
+/// The record's host rate differs from the reading engine's (set only with a handle).
+pub const RR_DR60_RECORD_FLAG_HOST_RATE_DIFFERS: u32 = 4;
+/// Setting names or control identifiers this library does not know (`unknown_setting_count`;
+/// listed by `rr_dr60_record_unknown_setting`).
+pub const RR_DR60_RECORD_FLAG_UNKNOWN_SETTINGS: u32 = 8;
+/// Fewer event or change rows than the engine counted (the app collected fewer than the engine
+/// counted, N of M).
+pub const RR_DR60_RECORD_FLAG_INCOMPLETE_RUN: u32 = 16;
+/// The recording was imported: the record names the stored form and its digest only.
+pub const RR_DR60_RECORD_FLAG_IMPORTED_ORIGIN: u32 = 32;
+/// Checked against a recording in memory (`rr_dr60_recording_digest_matches`): the digests
+/// differ.
+pub const RR_DR60_RECORD_FLAG_DIGEST_MISMATCH: u32 = 64;
+
+/// `RrDr60StopFields.how`: the host called `rr_dr60_stop_recording` (also when its flush
+/// filled the memory).
+pub const RR_DR60_STOP_CALL: u32 = 0;
+/// `RrDr60StopFields.how`: the memory filled during a `rr_dr60_record` call (the self-stop).
+pub const RR_DR60_STOP_MEMORY_FULL: u32 = 1;
+/// `RrDr60RecordReadout.origin`: recorded by the engine that wrote the record.
+pub const RR_DR60_ORIGIN_ENGINE: u32 = 0;
+/// `RrDr60RecordReadout.origin`: imported from a stored form (nothing to re-render).
+pub const RR_DR60_ORIGIN_IMPORTED: u32 = 1;
+/// `RrDr60ChangeEntry.reserved` since 0.20: the stream word of the playback stream.
+pub const RR_DR60_STREAM_WORD_PLAYBACK: u32 = 1;
+/// The stream word of the one-pass stream.
+pub const RR_DR60_STREAM_WORD_ONE_PASS: u32 = 2;
+/// The stream word of the record stream (the recorder).
+pub const RR_DR60_STREAM_WORD_RECORD: u32 = 3;
+
+/// The stop's figures a run carries (spec 020 D9, D10): from `RrDr60StopOutcome` (`how` 0,
+/// the four fields copied), from a self-stop's `RrDr60RecordInfo` (`how` 1,
+/// `stop_input_position` = `input_samples_total`, the others 0: the writer fills the padding
+/// start with the length), or from a read record. `struct_size` first: set it to
+/// `sizeof(RrDr60StopFields)`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RrDr60StopFields {
+    /// `sizeof(RrDr60StopFields)` as the caller compiled it.
+    pub struct_size: u32,
+    /// `RR_DR60_STOP_CALL` or `RR_DR60_STOP_MEMORY_FULL`.
+    pub how: u32,
+    /// The host samples fed before the stop was called.
+    pub stop_input_position: u64,
+    /// The kept device sample at which the codec's padding begins (the length without it).
+    pub padding_start_sample: u64,
+    /// Every host sample fed since the start, the stop's silence included.
+    pub input_samples_total: u64,
+    /// The post-gate device samples of the padding.
+    pub silence_fed_samples: u64,
+}
+
+/// The run data the host collected (spec 020 D10): the events and the change entries of every
+/// `rr_dr60_record_with_changes` call and of the stop, in order, and the stop's fields. NULL
+/// arrays with a count of 0 are allowed. `struct_size` first.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct RrDr60RunData {
+    /// `sizeof(RrDr60RunData)`.
+    pub struct_size: u32,
+    /// Reserved; 0.
+    pub reserved: u32,
+    /// The voice-activation events, in order.
+    pub events: *const RrDr60VasEvent,
+    /// How many.
+    pub event_count: usize,
+    /// The record-stream change entries, in order (their `reserved` is the stream word).
+    pub changes: *const RrDr60ChangeEntry,
+    /// How many.
+    pub change_count: usize,
+    /// The stop's fields.
+    pub stop: RrDr60StopFields,
+}
+
+/// What a processing record says (spec 020 D1; data-model.md), filled by
+/// `rr_dr60_processing_record_read`. `struct_size` first: set it to
+/// `sizeof(RrDr60RecordReadout)`; a smaller size is refused, a larger one is filled with the
+/// tail zeroed (spec 018's prefix-fill rule).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct RrDr60RecordReadout {
+    /// `sizeof(RrDr60RecordReadout)` as the caller compiled it.
+    pub struct_size: u32,
+    /// The record's form version.
+    pub form_version: u32,
+    /// The library that wrote the record: major, minor, patch.
+    pub library_version: [u16; 3],
+    /// The stored form's version (2).
+    pub stored_form_version: u16,
+    /// The codec model version the stored form declares (0, 0, 0 with samples).
+    pub stored_codec_model_version: [u16; 3],
+    /// Under `RR_DR60_RECORD_FLAG_STAGE_MODEL_DIFFERS`: bit n − 1 for stage n.
+    pub stage_mask: u16,
+    /// `RR_DR60_ORIGIN_ENGINE` or `RR_DR60_ORIGIN_IMPORTED`.
+    pub origin: u32,
+    /// The host rate (0 under the imported origin).
+    pub host_rate_hz: u32,
+    /// An `RrDr60Encoding` value: 0 frames, 1 samples.
+    pub encoding: u32,
+    /// The `RR_DR60_RECORD_FLAG_*` bits.
+    pub flags: u32,
+    /// Setting names and control identifiers this library does not know.
+    pub unknown_setting_count: u32,
+    /// Reserved; 0.
+    pub reserved: u32,
+    /// The seed (valid under the engine origin).
+    pub seed: u64,
+    /// The recording counter the hiss stream was keyed with (valid under the engine origin).
+    pub recording_counter: u64,
+    /// The stored units (frames or samples by `encoding`).
+    pub stored_unit_count: u64,
+    /// The FNV-1a 64 digest of the stored form's bytes.
+    pub recording_digest: u64,
+    /// The memory's remaining capacity before the recording opened, in device samples.
+    pub remaining_samples_at_start: u64,
+    /// The voice-activation events the engine counted.
+    pub events_total: u64,
+    /// The record-stream entries the engine counted.
+    pub changes_total: u64,
+    /// Event rows present.
+    pub event_count: u64,
+    /// Change rows present.
+    pub change_count: u64,
+    /// Each stage's model version as the record names it (0, 0, 0 absent or not modeled).
+    pub stage_model_versions: [[u16; 3]; 15],
+    /// Reserved; 0.
+    pub reserved_2: u16,
+    /// The stop's fields.
+    pub stop: RrDr60StopFields,
+    /// The configuration at the recording's start (the host rate and the seed included;
+    /// `rr_dr60_settings_default(6000)` under the imported origin).
+    pub settings: RrDr60Settings,
+}
+
+/// A kept sample's nominal host-input alignment (spec 020 map (a)). `struct_size` first.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RrDr60InputAlignment {
+    /// `sizeof(RrDr60InputAlignment)`.
+    pub struct_size: u32,
+    /// An end was clamped to the recording's input range (1) or not (0).
+    pub clamped: u32,
+    /// The host input sample the kept sample aligns with.
+    pub centre: u64,
+    /// The window's first host sample.
+    pub first: u64,
+    /// The window's last host sample.
+    pub last: u64,
+}
+
+/// The speed control's place at a playback device output (spec 020 map (c)). `struct_size`
+/// first.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RrDr60PlaceState {
+    /// `sizeof(RrDr60PlaceState)`.
+    pub struct_size: u32,
+    /// The level computing the output (1 … 5).
+    pub level: u32,
+    /// The output was a blend sample (1) or not (0).
+    pub fading: u32,
+    /// The place has reached the recording's end after this output (1) or not (0).
+    pub latched: u32,
+    /// The place of the output, in fifths of a stored sample.
+    pub place_fifths: u64,
+    /// The old branch's place for a blend sample, in fifths; 0 otherwise.
+    pub old_place_fifths: u64,
+}
+
+const STOP_FIELDS_SIZE: u32 = size_of::<RrDr60StopFields>() as u32;
+const RUN_DATA_SIZE: u32 = size_of::<RrDr60RunData>() as u32;
+const READOUT_SIZE: u32 = size_of::<RrDr60RecordReadout>() as u32;
+const ALIGNMENT_SIZE: u32 = size_of::<RrDr60InputAlignment>() as u32;
+const PLACE_STATE_SIZE: u32 = size_of::<RrDr60PlaceState>() as u32;
+const _: () = assert!(STOP_FIELDS_SIZE == 40 && ALIGNMENT_SIZE == 32 && PLACE_STATE_SIZE == 32); // 020 contracts/api.md
+
+/// Reads a `struct_size`-first struct's size at `out` (offset 0, unaligned).
+///
+/// # Safety
+///
+/// `out` is non-null and its first four bytes readable.
+unsafe fn struct_size_at<T>(out: *const T) -> u32 {
+    // SAFETY: the caller's contract.
+    unsafe { out.cast::<u32>().read_unaligned() }
+}
+
+/// Spec 018's prefix-fill rule for a new struct: a size below `full` is refused, the struct is
+/// copied whole, and a larger caller buffer's tail is zero-filled.
+///
+/// # Safety
+///
+/// `out` is non-null and `size` bytes writable; `value` is a `repr(C)` struct with no
+/// uninitialized padding.
+unsafe fn fill_prefix<T: Copy>(out: *mut T, value: &T, size: u32, full: u32) -> RrDr60Status {
+    if size < full {
+        return RrDr60Status::InvalidArgument;
+    }
+    // SAFETY: the caller's contract; `full` bytes of `value` are initialized.
+    unsafe {
+        core::ptr::copy_nonoverlapping((value as *const T).cast::<u8>(), out.cast::<u8>(), full as usize);
+        if size > full {
+            core::ptr::write_bytes(out.cast::<u8>().add(full as usize), 0, (size - full) as usize);
+        }
+    }
+    RrDr60Status::Ok
+}
+
+impl RrDr60StopFields {
+    fn to_core(self) -> Result<StopFields, RrDr60Status> {
+        let how = match self.how {
+            RR_DR60_STOP_CALL => StopHow::StopCall,
+            RR_DR60_STOP_MEMORY_FULL => StopHow::MemoryFull,
+            _ => return Err(RrDr60Status::InvalidArgument),
+        };
+        Ok(StopFields {
+            how,
+            stop_input_position: self.stop_input_position,
+            padding_start_sample: self.padding_start_sample,
+            input_samples_total: self.input_samples_total,
+            silence_fed_samples: self.silence_fed_samples,
+        })
+    }
+
+    fn from_core(f: &StopFields) -> Self {
+        Self {
+            struct_size: STOP_FIELDS_SIZE,
+            how: match f.how {
+                StopHow::StopCall => RR_DR60_STOP_CALL,
+                StopHow::MemoryFull => RR_DR60_STOP_MEMORY_FULL,
+            },
+            stop_input_position: f.stop_input_position,
+            padding_start_sample: f.padding_start_sample,
+            input_samples_total: f.input_samples_total,
+            silence_fed_samples: f.silence_fed_samples,
+        }
+    }
+}
+
+/// The C settings struct for Rust settings (the inverse of `to_settings`; every variant
+/// mapped: a new tap or mode fails to compile until listed).
+fn settings_to_c(s: &Settings) -> RrDr60Settings {
+    let tap = match s.tap {
+        Tap::AfterRecord => 0,
+        Tap::AfterPlayback => 1,
+        Tap::AfterAgc => 2,
+        Tap::AfterVas => 3,
+        Tap::AfterDecoder => 4,
+        Tap::RouteOutput => 5,
+        Tap::AfterVolumeAmp => 6,
+        Tap::AfterSpeaker => 7,
+        Tap::AfterEarphone => 8,
+        Tap::AfterMicCapsule => 9,
+        Tap::AfterMicAmp => 10,
+        _ => 5, // a tap this build does not know (the enum is non-exhaustive): the default
+    };
+    let vas_mode = match s.vas.mode {
+        VasMode::Drop => 0,
+        VasMode::Mute => 1,
+        _ => 0,
+    };
+    RrDr60Settings {
+        record_stage_enabled: s.record_stage_enabled,
+        playback_stage_enabled: s.playback_stage_enabled,
+        tap,
+        seed: s.seed,
+        agc_enabled: s.agc.enabled,
+        agc_knee_dbfs: s.agc.knee_dbfs,
+        agc_attack_ms: s.agc.attack_ms,
+        agc_release_ms: s.agc.release_ms,
+        vas_enabled: s.vas.enabled,
+        vas_mode,
+        vas_sensitivity: u32::from(s.vas.sensitivity),
+        vas_threshold_dbfs: s.vas.threshold_dbfs,
+        vas_hang_ms: s.vas.hang_ms,
+        vas_onset_ms: s.vas.onset_ms,
+        adc_clamp_enabled: s.adc_clamp_enabled,
+        memory_capacity_s: s.memory.capacity_s,
+        memory_max_recordings: s.memory.max_recordings,
+        speech_codec_enabled: s.speech_codec_enabled,
+        output_volume_amp_enabled: s.output.volume_amp_enabled,
+        output_speaker_enabled: s.output.speaker_enabled,
+        output_earphone_enabled: s.output.earphone_enabled,
+        output_clamp_enabled: s.output.clamp_enabled,
+        mic_capsule_enabled: s.mic.capsule_enabled,
+        mic_amp_enabled: s.mic.amp_enabled,
+        mic_hiss_offset_db: s.mic.hiss_offset_db,
+        ..rr_dr60_settings_default(s.host_rate_hz)
+    }
+}
+
+impl RrDr60RecordReadout {
+    fn from_core(r: &RecordReadout) -> Self {
+        Self {
+            struct_size: READOUT_SIZE,
+            form_version: r.form_version,
+            library_version: r.library_version,
+            stored_form_version: r.stored_form_version,
+            stored_codec_model_version: r.stored_codec_model_version,
+            stage_mask: r.stage_mask,
+            origin: match r.origin {
+                Origin::Engine => RR_DR60_ORIGIN_ENGINE,
+                Origin::Imported => RR_DR60_ORIGIN_IMPORTED,
+            },
+            host_rate_hz: r.host_rate_hz,
+            encoding: match r.encoding {
+                Encoding::Frames => 0,
+                Encoding::Samples => 1,
+                _ => 1,
+            },
+            flags: r.flags,
+            unknown_setting_count: r.unknown_setting_count,
+            reserved: 0,
+            seed: r.seed,
+            recording_counter: r.recording_counter,
+            stored_unit_count: r.stored_unit_count,
+            recording_digest: r.recording_digest,
+            remaining_samples_at_start: r.remaining_samples_at_start,
+            events_total: r.events_total,
+            changes_total: r.changes_total,
+            event_count: r.event_count,
+            change_count: r.change_count,
+            stage_model_versions: r.stage_model_versions,
+            reserved_2: 0,
+            stop: RrDr60StopFields::from_core(&r.stop),
+            settings: settings_to_c(&r.settings),
+        }
+    }
+
+    fn to_core(&self) -> Result<RecordReadout, RrDr60Status> {
+        let settings = to_settings(&self.settings).map_err(|(s, _)| s)?;
+        let mut r = RecordReadout::default();
+        r.form_version = self.form_version;
+        r.library_version = self.library_version;
+        r.stage_model_versions = self.stage_model_versions;
+        r.host_rate_hz = self.host_rate_hz;
+        r.origin = match self.origin {
+            RR_DR60_ORIGIN_ENGINE => Origin::Engine,
+            RR_DR60_ORIGIN_IMPORTED => Origin::Imported,
+            _ => return Err(RrDr60Status::InvalidArgument),
+        };
+        r.seed = self.seed;
+        r.recording_counter = self.recording_counter;
+        r.stored_form_version = self.stored_form_version;
+        r.stored_codec_model_version = self.stored_codec_model_version;
+        r.encoding = match self.encoding {
+            0 => Encoding::Frames,
+            1 => Encoding::Samples,
+            _ => return Err(RrDr60Status::InvalidArgument),
+        };
+        r.stored_unit_count = self.stored_unit_count;
+        r.recording_digest = self.recording_digest;
+        r.settings = settings;
+        r.remaining_samples_at_start = self.remaining_samples_at_start;
+        r.events_total = self.events_total;
+        r.changes_total = self.changes_total;
+        r.stop = self.stop.to_core()?;
+        r.event_count = self.event_count;
+        r.change_count = self.change_count;
+        r.unknown_setting_count = self.unknown_setting_count;
+        r.flags = self.flags;
+        r.stage_mask = self.stage_mask;
+        Ok(r)
+    }
+}
+
+/// The caller's bytes as a slice (NULL with a length of 0 is an empty slice).
+///
+/// # Safety
+///
+/// `bytes` is NULL or `len` readable bytes.
+unsafe fn bytes_in<'a>(bytes: *const u8, len: usize) -> Result<&'a [u8], RrDr60Status> {
+    if bytes.is_null() {
+        return if len == 0 { Ok(&[]) } else { Err(RrDr60Status::NullPointer) };
+    }
+    // SAFETY: the caller's contract.
+    Ok(unsafe { std::slice::from_raw_parts(bytes, len) })
+}
+
+/// Spec 020 FR-004: as `rr_dr60_create`, with the recording counter starting at `counter`
+/// (the first recording and the one-pass use that counter's microphone-noise stream; a
+/// processing record's re-render builds its engine so). Never advances the counter by itself.
+///
+/// # Safety
+///
+/// As `rr_dr60_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_create_at_counter(
+    settings: *const RrDr60Settings,
+    counter: u64,
+    out_pipeline: *mut *mut RrDr60Pipeline,
+) -> RrDr60Status {
+    if settings.is_null() || out_pipeline.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: checked non-null; the caller guarantees a valid struct of its `struct_size`.
+    let settings = match unsafe { check_struct_size(settings) } {
+        Ok(s) => s,
+        Err((status, _)) => return status,
+    };
+    let result = catch_unwind(|| {
+        let s = validate_c(settings).map_err(|(status, _)| status)?;
+        let inner = Pipeline::new_at_counter(s, counter).map_err(status_from_error)?;
+        Ok(Box::new(RrDr60Pipeline {
+            inner,
+            poisoned: false,
+            last_paused: false,
+            #[cfg(feature = "ffi-test-panic")]
+            force_panic: false,
+        }))
+    });
+    match result {
+        Ok(Ok(handle)) => {
+            // SAFETY: out_pipeline is non-null and writable (caller contract).
+            unsafe { *out_pipeline = Box::into_raw(handle) };
+            RrDr60Status::Ok
+        }
+        Ok(Err(status)) => status,
+        Err(_) => panic_to_status(None),
+    }
+}
+
+/// The record path's latency in host samples to the speech encoder's input (spec 020 D8): the
+/// timeline maps' latency; `rr_dr60_record_latency_samples` minus the codec's delay when it
+/// is on. 0 for NULL.
+///
+/// # Safety
+///
+/// `pipeline` is NULL or a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_record_latency_pre_encoder_samples(
+    pipeline: *mut RrDr60Pipeline,
+) -> u32 {
+    // SAFETY: NULL or a live handle (caller contract).
+    match unsafe { live(pipeline) } {
+        Ok(p) => p.inner.record_latency_pre_encoder_samples(),
+        Err(_) => 0,
+    }
+}
+
+/// The recording counter recording `number` was keyed with (spec 020 D5): `*out_known` is set
+/// to `true` and `*out_counter` to the counter, or `*out_known` to `false` for an imported
+/// recording (`*out_counter` 0).
+///
+/// # Safety
+///
+/// `pipeline` a live handle; the outs writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_recording_counter_of(
+    pipeline: *mut RrDr60Pipeline,
+    number: u32,
+    out_known: *mut bool,
+    out_counter: *mut u64,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out_known.is_null() || out_counter.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    match p.inner.recording_counter_of(number) {
+        // SAFETY: the outs are writable (caller contract).
+        Ok(c) => unsafe {
+            *out_known = c.is_some();
+            *out_counter = c.unwrap_or(0);
+            RrDr60Status::Ok
+        },
+        Err(e) => status_from_error(e),
+    }
+}
+
+/// The FNV-1a 64 digest of `len` bytes (spec 020 D3): the function the processing record's
+/// `recording_digest` and `record_checksum` lines use. 0xcbf29ce484222325 for no bytes.
+///
+/// # Safety
+///
+/// `bytes` is NULL (with `len` 0) or `len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_digest(bytes: *const u8, len: usize) -> u64 {
+    // SAFETY: the caller's contract.
+    match unsafe { bytes_in(bytes, len) } {
+        Ok(b) => rr_dr60::digest::fnv1a64(b),
+        Err(_) => rr_dr60::digest::OFFSET_BASIS,
+    }
+}
+
+/// The digest of the bytes `rr_dr60_export` writes for recording `number` (spec 020 FR-003),
+/// without writing them. Not real-time safe.
+///
+/// # Safety
+///
+/// `pipeline` a live handle; `out` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_recording_digest(
+    pipeline: *mut RrDr60Pipeline,
+    number: u32,
+    out: *mut u64,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    match p.inner.recording_digest(number) {
+        // SAFETY: `out` is writable (caller contract).
+        Ok(d) => unsafe {
+            *out = d;
+            RrDr60Status::Ok
+        },
+        Err(e) => status_from_error(e),
+    }
+}
+
+/// The run data as the core's (the arrays borrowed, the stop converted).
+///
+/// # Safety
+///
+/// `run` non-null with a valid `struct_size`; its arrays NULL with a count of 0 or readable
+/// for their counts.
+unsafe fn run_in<'a>(run: *const RrDr60RunData) -> Result<RunData<'a>, RrDr60Status> {
+    if run.is_null() {
+        return Err(RrDr60Status::NullPointer);
+    }
+    // SAFETY: non-null; the caller's contract on `struct_size`.
+    if unsafe { struct_size_at(run) } < RUN_DATA_SIZE {
+        return Err(RrDr60Status::InvalidArgument);
+    }
+    // SAFETY: a valid struct of at least its size.
+    let r = unsafe { &*run };
+    let events: &[VasEvent] = if r.events.is_null() {
+        if r.event_count != 0 {
+            return Err(RrDr60Status::NullPointer);
+        }
+        &[]
+    } else {
+        // SAFETY: `RrDr60VasEvent` has the layout of `VasEvent` (the const assert); readable
+        // for the count (caller contract).
+        unsafe { std::slice::from_raw_parts(r.events.cast::<VasEvent>(), r.event_count) }
+    };
+    let changes: &[ChangeEntry] = if r.changes.is_null() {
+        if r.change_count != 0 {
+            return Err(RrDr60Status::NullPointer);
+        }
+        &[]
+    } else {
+        // SAFETY: `RrDr60ChangeEntry` has the layout of `ChangeEntry` (the const assert).
+        unsafe { std::slice::from_raw_parts(r.changes.cast::<ChangeEntry>(), r.change_count) }
+    };
+    Ok(RunData {
+        events,
+        changes,
+        stop: r.stop.to_core()?,
+    })
+}
+
+/// The exact length of recording `number`'s processing record for `run` (spec 020 FR-001):
+/// one counting pass, the run validated as the writer validates it. Not real-time safe;
+/// refused while a recording is in progress.
+///
+/// # Safety
+///
+/// `pipeline` a live handle; `run` as `RrDr60RunData` documents; `out_len` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_processing_record_len(
+    pipeline: *mut RrDr60Pipeline,
+    number: u32,
+    run: *const RrDr60RunData,
+    out_len: *mut usize,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out_len.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: the caller's contract on `run`.
+    let run = match unsafe { run_in(run) } {
+        Ok(r) => r,
+        Err(status) => return status,
+    };
+    match catch_unwind(AssertUnwindSafe(|| p.inner.processing_record_len(number, &run))) {
+        // SAFETY: `out_len` is writable (caller contract).
+        Ok(Ok(n)) => unsafe {
+            *out_len = n;
+            RrDr60Status::Ok
+        },
+        Ok(Err(e)) => status_from_error(e),
+        Err(_) => panic_to_status(Some(p)),
+    }
+}
+
+/// Writes recording `number`'s processing record for `run` into `out` (`out_len` bytes) and
+/// sets `*out_written` (spec 020 D1, D10, FR-001; contracts/record-form.md). The same inputs
+/// give the same bytes on every platform. Not real-time safe.
+///
+/// # Safety
+///
+/// As `rr_dr60_processing_record_len`; `out` writable for `out_len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_processing_record_write(
+    pipeline: *mut RrDr60Pipeline,
+    number: u32,
+    run: *const RrDr60RunData,
+    out: *mut u8,
+    out_len: usize,
+    out_written: *mut usize,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out_written.is_null() || (out.is_null() && out_len != 0) {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: the caller's contract on `run`.
+    let run = match unsafe { run_in(run) } {
+        Ok(r) => r,
+        Err(status) => return status,
+    };
+    // SAFETY: `out` is writable for `out_len` bytes (caller contract); an empty slice for NULL.
+    let buf: &mut [u8] = if out.is_null() { &mut [] } else { unsafe { std::slice::from_raw_parts_mut(out, out_len) } };
+    match catch_unwind(AssertUnwindSafe(|| p.inner.processing_record_write(number, &run, buf))) {
+        // SAFETY: `out_written` is writable (caller contract).
+        Ok(Ok(n)) => unsafe {
+            *out_written = n;
+            RrDr60Status::Ok
+        },
+        Ok(Err(e)) => status_from_error(e),
+        Err(_) => panic_to_status(Some(p)),
+    }
+}
+
+/// Reads a processing record into `*out` (spec 020 D4, FR-002): refuses an unknown form
+/// version, a malformed line, a missing required field or a checksum mismatch (statuses 31 –
+/// 34), and reports every difference as a flag. With a live `pipeline` the host-rate flag is
+/// set too; with NULL the read is the pure one. `out->struct_size` must be set.
+///
+/// # Safety
+///
+/// `pipeline` NULL or a live handle; `bytes` `len` readable bytes; `out` non-null and
+/// `out->struct_size` bytes writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_processing_record_read(
+    pipeline: *mut RrDr60Pipeline,
+    bytes: *const u8,
+    len: usize,
+    out: *mut RrDr60RecordReadout,
+) -> RrDr60Status {
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: the caller's contract.
+    let bytes = match unsafe { bytes_in(bytes, len) } {
+        Ok(b) => b,
+        Err(status) => return status,
+    };
+    // SAFETY: `out` non-null, its first four bytes readable (caller contract).
+    let size = unsafe { struct_size_at(out) };
+    if size < READOUT_SIZE {
+        return RrDr60Status::InvalidArgument;
+    }
+    let mut r = RecordReadout::default();
+    let result = if pipeline.is_null() {
+        catch_unwind(AssertUnwindSafe(|| record::read(bytes, &mut r)))
+    } else {
+        // SAFETY: a live handle (caller contract).
+        let p = match unsafe { live(pipeline) } {
+            Ok(p) => p,
+            Err(status) => return status,
+        };
+        catch_unwind(AssertUnwindSafe(|| p.inner.processing_record_read(bytes, &mut r)))
+    };
+    match result {
+        Ok(Ok(())) => {
+            let c = RrDr60RecordReadout::from_core(&r);
+            // SAFETY: `out` is `size` bytes writable (caller contract).
+            unsafe { fill_prefix(out, &c, size, READOUT_SIZE) }
+        }
+        Ok(Err(e)) => status_from_error(e),
+        Err(_) => panic_to_status(None),
+    }
+}
+
+/// Reads a record and writes it again from the read-out and its rows (spec 020 US1 AS4: the
+/// round trip), `*out_written` set; `out` may be NULL with `out_len` 0 to learn the length
+/// (`RR_DR60_STATUS_BUFFER_TOO_SMALL` is not returned then: the length is in `*out_written`).
+///
+/// # Safety
+///
+/// `bytes` `len` readable bytes; `out` writable for `out_len`; `out_written` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_processing_record_rewrite(
+    bytes: *const u8,
+    len: usize,
+    out: *mut u8,
+    out_len: usize,
+    out_written: *mut usize,
+) -> RrDr60Status {
+    if out_written.is_null() || (out.is_null() && out_len != 0) {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: the caller's contract.
+    let bytes = match unsafe { bytes_in(bytes, len) } {
+        Ok(b) => b,
+        Err(status) => return status,
+    };
+    let result = catch_unwind(|| {
+        let mut r = RecordReadout::default();
+        record::read(bytes, &mut r)?;
+        let n = r.event_count as usize;
+        let m = r.change_count as usize;
+        let mut events = Vec::with_capacity(n);
+        for i in 0..n as u64 {
+            if let Some(e) = record::record_event(bytes, i) {
+                events.push(e);
+            }
+        }
+        let mut changes = vec![ChangeEntry::default(); m];
+        let got = record::record_changes(bytes, 0, &mut changes);
+        changes.truncate(got);
+        let needed = record::len(&r, &events, &changes);
+        Ok::<(usize, RecordReadout, Vec<record::RecordEvent>, Vec<ChangeEntry>), Error>((needed, r, events, changes))
+    });
+    let (needed, r, events, changes) = match result {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => return status_from_error(e),
+        Err(_) => return panic_to_status(None),
+    };
+    if out.is_null() {
+        // SAFETY: `out_written` is writable (caller contract).
+        unsafe { *out_written = needed };
+        return RrDr60Status::Ok;
+    }
+    // SAFETY: `out` is writable for `out_len` bytes (caller contract).
+    let buf = unsafe { std::slice::from_raw_parts_mut(out, out_len) };
+    match record::write(&r, &events, &changes, buf) {
+        // SAFETY: `out_written` is writable (caller contract).
+        Ok(n) => unsafe {
+            *out_written = n;
+            RrDr60Status::Ok
+        },
+        Err(e) => status_from_error(e),
+    }
+}
+
+/// The pure writer (spec 020 FR-001): writes a record from a read-out and its rows (the
+/// events with their host-input positions, the change entries with the control's manifest
+/// index and the stream word in `reserved`) into `out` and sets `*out_written`; `out` may be
+/// NULL with `out_len` 0 to learn the length in `*out_written`. Needs no handle.
+///
+/// # Safety
+///
+/// `readout` a valid read-out of this library's size; the arrays NULL with a count of 0 or
+/// readable; `out` writable for `out_len`; `out_written` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_record_write(
+    readout: *const RrDr60RecordReadout,
+    events: *const RrDr60VasEvent,
+    host_input_positions: *const u64,
+    event_count: usize,
+    changes: *const RrDr60ChangeEntry,
+    change_count: usize,
+    out: *mut u8,
+    out_len: usize,
+    out_written: *mut usize,
+) -> RrDr60Status {
+    if readout.is_null() || out_written.is_null() || (out.is_null() && out_len != 0) {
+        return RrDr60Status::NullPointer;
+    }
+    if (events.is_null() || host_input_positions.is_null()) && event_count != 0 {
+        return RrDr60Status::NullPointer;
+    }
+    if changes.is_null() && change_count != 0 {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: non-null; the caller's contract on the size.
+    if unsafe { struct_size_at(readout) } < READOUT_SIZE {
+        return RrDr60Status::InvalidArgument;
+    }
+    // SAFETY: a valid read-out of at least its size.
+    let r = match unsafe { (*readout).to_core() } {
+        Ok(r) => r,
+        Err(status) => return status,
+    };
+    let rows: Vec<record::RecordEvent> = (0..event_count)
+        .map(|i| {
+            // SAFETY: readable for the count (caller contract); the layouts match.
+            let (e, h) = unsafe { (*events.add(i), *host_input_positions.add(i)) };
+            record::RecordEvent {
+                event: VasEvent::new(e.output_position, e.input_length),
+                host_input_position: h,
+            }
+        })
+        .collect();
+    let changes: &[ChangeEntry] = if change_count == 0 {
+        &[]
+    } else {
+        // SAFETY: readable for the count; the layouts match (the const assert).
+        unsafe { std::slice::from_raw_parts(changes.cast::<ChangeEntry>(), change_count) }
+    };
+    if out.is_null() {
+        // SAFETY: `out_written` is writable (caller contract).
+        unsafe { *out_written = record::len(&r, &rows, changes) };
+        return RrDr60Status::Ok;
+    }
+    // SAFETY: `out` is writable for `out_len` bytes (caller contract).
+    let buf = unsafe { std::slice::from_raw_parts_mut(out, out_len) };
+    match catch_unwind(AssertUnwindSafe(|| record::write(&r, &rows, changes, buf))) {
+        // SAFETY: `out_written` is writable (caller contract).
+        Ok(Ok(n)) => unsafe {
+            *out_written = n;
+            RrDr60Status::Ok
+        },
+        Ok(Err(e)) => status_from_error(e),
+        Err(_) => panic_to_status(None),
+    }
+}
+
+/// Whether a read record's digest is recording `number`'s (spec 020 US2 AS3): sets or clears
+/// the read-out's `RR_DR60_RECORD_FLAG_DIGEST_MISMATCH` and `*out_matches`. Not real-time safe.
+///
+/// # Safety
+///
+/// `pipeline` a live handle; `readout` a read-out of this library's size; `out_matches`
+/// writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_recording_digest_matches(
+    pipeline: *mut RrDr60Pipeline,
+    number: u32,
+    readout: *mut RrDr60RecordReadout,
+    out_matches: *mut bool,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if readout.is_null() || out_matches.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: non-null; the caller's contract on the size.
+    if unsafe { struct_size_at(readout) } < READOUT_SIZE {
+        return RrDr60Status::InvalidArgument;
+    }
+    // SAFETY: a valid read-out of at least its size.
+    let r = unsafe { &mut *readout };
+    match p.inner.recording_digest(number) {
+        Ok(d) => {
+            let same = d == r.recording_digest;
+            if same {
+                r.flags &= !RR_DR60_RECORD_FLAG_DIGEST_MISMATCH;
+            } else {
+                r.flags |= RR_DR60_RECORD_FLAG_DIGEST_MISMATCH;
+            }
+            // SAFETY: `out_matches` is writable (caller contract).
+            unsafe { *out_matches = same };
+            RrDr60Status::Ok
+        }
+        Err(e) => status_from_error(e),
+    }
+}
+
+/// Event row `i` of a record the reader accepted (spec 020): `*out_event` and
+/// `*out_host_input_position` set; returns `false` past the rows. Re-scans the lines: extract
+/// once with `rr_dr60_record_events` rather than calling it per sample.
+///
+/// # Safety
+///
+/// `bytes` `len` readable bytes; the outs writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_record_event(
+    bytes: *const u8,
+    len: usize,
+    i: u64,
+    out_event: *mut RrDr60VasEvent,
+    out_host_input_position: *mut u64,
+) -> bool {
+    if out_event.is_null() || out_host_input_position.is_null() {
+        return false;
+    }
+    // SAFETY: the caller's contract.
+    let Ok(bytes) = (unsafe { bytes_in(bytes, len) }) else {
+        return false;
+    };
+    match record::record_event(bytes, i) {
+        // SAFETY: the outs are writable (caller contract).
+        Some(e) => unsafe {
+            *out_event = RrDr60VasEvent {
+                output_position: e.event.output_position,
+                input_length: e.event.input_length,
+            };
+            *out_host_input_position = e.host_input_position;
+            true
+        },
+        None => false,
+    }
+}
+
+/// Change row `i` of a record the reader accepted, the control identifier resolved to this
+/// library's manifest index and the stream word in `reserved`; `false` past the rows or for an
+/// identifier this library does not know.
+///
+/// # Safety
+///
+/// `bytes` `len` readable bytes; `out` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_record_change(
+    bytes: *const u8,
+    len: usize,
+    i: u64,
+    out: *mut RrDr60ChangeEntry,
+) -> bool {
+    if out.is_null() {
+        return false;
+    }
+    // SAFETY: the caller's contract.
+    let Ok(bytes) = (unsafe { bytes_in(bytes, len) }) else {
+        return false;
+    };
+    match record::record_change(bytes, i) {
+        // SAFETY: `out` is writable; the layouts match (the const assert).
+        Some(e) => unsafe {
+            out.cast::<ChangeEntry>().write(e);
+            true
+        },
+        None => false,
+    }
+}
+
+/// Fills `out` (`capacity` events) with the event rows from `first` on, in one pass; returns
+/// how many were written.
+///
+/// # Safety
+///
+/// `bytes` `len` readable bytes; `out` writable for `capacity` events.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_record_events(
+    bytes: *const u8,
+    len: usize,
+    first: u64,
+    out: *mut RrDr60VasEvent,
+    capacity: usize,
+) -> usize {
+    if out.is_null() && capacity != 0 {
+        return 0;
+    }
+    // SAFETY: the caller's contract.
+    let Ok(bytes) = (unsafe { bytes_in(bytes, len) }) else {
+        return 0;
+    };
+    // SAFETY: `out` is writable for `capacity` events; the layouts match (the const assert).
+    let slice: &mut [VasEvent] = if capacity == 0 { &mut [] } else { unsafe { std::slice::from_raw_parts_mut(out.cast::<VasEvent>(), capacity) } };
+    record::record_events(bytes, first, slice)
+}
+
+/// As `rr_dr60_record_events` for the change rows (a row with an unknown identifier is
+/// skipped).
+///
+/// # Safety
+///
+/// `bytes` `len` readable bytes; `out` writable for `capacity` entries.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_record_changes(
+    bytes: *const u8,
+    len: usize,
+    first: u64,
+    out: *mut RrDr60ChangeEntry,
+    capacity: usize,
+) -> usize {
+    if out.is_null() && capacity != 0 {
+        return 0;
+    }
+    // SAFETY: the caller's contract.
+    let Ok(bytes) = (unsafe { bytes_in(bytes, len) }) else {
+        return 0;
+    };
+    // SAFETY: `out` is writable for `capacity` entries; the layouts match (the const assert).
+    let slice: &mut [ChangeEntry] = if capacity == 0 { &mut [] } else { unsafe { std::slice::from_raw_parts_mut(out.cast::<ChangeEntry>(), capacity) } };
+    record::record_changes(bytes, first, slice)
+}
+
+/// The `i`-th setting name or control identifier this library does not know, in the record's
+/// order, copied NUL-terminated into `out` (`capacity` bytes; truncated when short); `false`
+/// past the unknown names.
+///
+/// # Safety
+///
+/// `bytes` `len` readable bytes; `out` writable for `capacity` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_record_unknown_setting(
+    bytes: *const u8,
+    len: usize,
+    i: u32,
+    out: *mut c_char,
+    capacity: usize,
+) -> bool {
+    if out.is_null() || capacity == 0 {
+        return false;
+    }
+    // SAFETY: the caller's contract.
+    let Ok(bytes) = (unsafe { bytes_in(bytes, len) }) else {
+        return false;
+    };
+    let Some(name) = record::record_unknown_setting(bytes, i) else {
+        return false;
+    };
+    let n = name.len().min(capacity - 1);
+    // SAFETY: `out` is writable for `capacity` bytes (caller contract).
+    unsafe {
+        core::ptr::copy_nonoverlapping(name.as_ptr(), out.cast::<u8>(), n);
+        *out.add(n) = 0;
+    }
+    true
+}
+
+/// Map (a) (spec 020 D8): the nominal host-input alignment of kept device sample `k` of a
+/// recording made with `settings`, through its `event_count` voice-activation events and
+/// its stop fields; `out->struct_size` must be set.
+///
+/// # Safety
+///
+/// `settings` a valid struct of its `struct_size`; `events` NULL with a count of 0 or readable;
+/// `stop` a valid struct; `out` writable for its `struct_size`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_kept_to_input(
+    settings: *const RrDr60Settings,
+    k: u64,
+    events: *const RrDr60VasEvent,
+    event_count: usize,
+    stop: *const RrDr60StopFields,
+    out: *mut RrDr60InputAlignment,
+) -> RrDr60Status {
+    if settings.is_null() || stop.is_null() || out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: checked non-null; the caller's contracts.
+    let settings = match unsafe { check_struct_size(settings) } {
+        Ok(s) => s,
+        Err((status, _)) => return status,
+    };
+    let s = match to_settings(settings) {
+        Ok(s) => s,
+        Err((status, _)) => return status,
+    };
+    let events: &[VasEvent] = if events.is_null() {
+        if event_count != 0 {
+            return RrDr60Status::NullPointer;
+        }
+        &[]
+    } else {
+        // SAFETY: readable for the count; the layouts match (the const assert).
+        unsafe { std::slice::from_raw_parts(events.cast::<VasEvent>(), event_count) }
+    };
+    // SAFETY: a valid stop struct (caller contract).
+    let stop = match unsafe { (*stop).to_core() } {
+        Ok(f) => f,
+        Err(status) => return status,
+    };
+    // SAFETY: `out` non-null, its size readable (caller contract).
+    let size = unsafe { struct_size_at(out) };
+    match timeline::kept_to_input(k, &s, events, &stop) {
+        Ok(a) => {
+            let c = RrDr60InputAlignment {
+                struct_size: ALIGNMENT_SIZE,
+                clamped: u32::from(a.clamped),
+                centre: a.centre,
+                first: a.first,
+                last: a.last,
+            };
+            // SAFETY: `out` is `size` bytes writable (caller contract).
+            unsafe { fill_prefix(out, &c, size, ALIGNMENT_SIZE) }
+        }
+        Err(e) => status_from_error(e),
+    }
+}
+
+/// Map (b) (spec 020 D8): the kept device sample host-input sample `p` reaches
+/// (`*out_kept`, `*out_removed_by_event` = UINT64_MAX), or the voice-activation event that
+/// removed it (`*out_removed_by_event` its index, `*out_kept` 0).
+///
+/// # Safety
+///
+/// As `rr_dr60_kept_to_input`; the outs writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_input_to_kept(
+    settings: *const RrDr60Settings,
+    p: u64,
+    events: *const RrDr60VasEvent,
+    event_count: usize,
+    out_kept: *mut u64,
+    out_removed_by_event: *mut u64,
+) -> RrDr60Status {
+    if settings.is_null() || out_kept.is_null() || out_removed_by_event.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: checked non-null; the caller's contracts.
+    let settings = match unsafe { check_struct_size(settings) } {
+        Ok(s) => s,
+        Err((status, _)) => return status,
+    };
+    let s = match to_settings(settings) {
+        Ok(s) => s,
+        Err((status, _)) => return status,
+    };
+    let events: &[VasEvent] = if events.is_null() {
+        if event_count != 0 {
+            return RrDr60Status::NullPointer;
+        }
+        &[]
+    } else {
+        // SAFETY: readable for the count; the layouts match (the const assert).
+        unsafe { std::slice::from_raw_parts(events.cast::<VasEvent>(), event_count) }
+    };
+    match timeline::input_to_kept(p, &s, events) {
+        // SAFETY: the outs are writable (caller contract).
+        Ok(KeptOrRemoved::Kept(k)) => unsafe {
+            *out_kept = k;
+            *out_removed_by_event = u64::MAX;
+            RrDr60Status::Ok
+        },
+        // SAFETY: the outs are writable (caller contract).
+        Ok(KeptOrRemoved::Removed { event_index }) => unsafe {
+            *out_kept = 0;
+            *out_removed_by_event = event_index;
+            RrDr60Status::Ok
+        },
+        Err(e) => status_from_error(e),
+    }
+}
+
+/// The one-pass's clocks (spec 020 D8): the input-clock position output-clock `position`
+/// aligns with, through the one-pass's `latency` (`rr_dr60_latency_samples`) and its
+/// `event_count` voice-activation events; `*out_clamped` when the result was clamped at 0.
+///
+/// # Safety
+///
+/// `events` NULL with a count of 0 or readable; the outs writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_onepass_output_to_input(
+    position: u64,
+    latency: u32,
+    events: *const RrDr60VasEvent,
+    event_count: usize,
+    out_input: *mut u64,
+    out_clamped: *mut bool,
+) -> RrDr60Status {
+    if out_input.is_null() || out_clamped.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let events: &[VasEvent] = if events.is_null() {
+        if event_count != 0 {
+            return RrDr60Status::NullPointer;
+        }
+        &[]
+    } else {
+        // SAFETY: readable for the count; the layouts match (the const assert).
+        unsafe { std::slice::from_raw_parts(events.cast::<VasEvent>(), event_count) }
+    };
+    let (input, clamped) = timeline::onepass_output_to_input(position, latency, events);
+    // SAFETY: the outs are writable (caller contract).
+    unsafe {
+        *out_input = input;
+        *out_clamped = clamped;
+    }
+    RrDr60Status::Ok
+}
+
+/// Map (c) (spec 020 D8): the speed control's place at playback device output `index` for a
+/// recording of `unit_count` stored device samples played from `start_level` with the
+/// `playback_speed` entries of the playback stream's log (`entry_count` entries in position
+/// order; other controls' entries ignored); `out->struct_size` must be set.
+///
+/// # Safety
+///
+/// `entries` NULL with a count of 0 or readable; `out` writable for its `struct_size`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_place_at(
+    index: u64,
+    host_rate_hz: u32,
+    start_level: u8,
+    unit_count: u64,
+    entries: *const RrDr60ChangeEntry,
+    entry_count: usize,
+    out: *mut RrDr60PlaceState,
+) -> RrDr60Status {
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let entries: &[ChangeEntry] = if entries.is_null() {
+        if entry_count != 0 {
+            return RrDr60Status::NullPointer;
+        }
+        &[]
+    } else {
+        // SAFETY: readable for the count; the layouts match (the const assert).
+        unsafe { std::slice::from_raw_parts(entries.cast::<ChangeEntry>(), entry_count) }
+    };
+    if !(1..=5).contains(&start_level) {
+        return RrDr60Status::InvalidSpeedLevel;
+    }
+    // SAFETY: `out` non-null, its size readable (caller contract).
+    let size = unsafe { struct_size_at(out) };
+    match catch_unwind(|| timeline::place_at(index, host_rate_hz, start_level, unit_count, entries)) {
+        Ok(Ok(st)) => {
+            let c = RrDr60PlaceState {
+                struct_size: PLACE_STATE_SIZE,
+                level: u32::from(st.level),
+                fading: u32::from(st.fading),
+                latched: u32::from(st.latched),
+                place_fifths: st.place_fifths,
+                old_place_fifths: st.old_place_fifths,
+            };
+            // SAFETY: `out` is `size` bytes writable (caller contract).
+            unsafe { fill_prefix(out, &c, size, PLACE_STATE_SIZE) }
+        }
+        Ok(Err(e)) => status_from_error(e),
+        Err(_) => panic_to_status(None),
+    }
+}
+
+/// The feed-point rule (spec 020 D12): converts `count` 24-bit integer samples (−2²³ … 2²³ − 1
+/// in an `int32_t`) to the engine's input, x ÷ 2²³, exact for every value.
+///
+/// # Safety
+///
+/// `src` readable and `dst` writable for `count` samples.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_samples_from_i24(src: *const i32, dst: *mut f32, count: usize) {
+    if src.is_null() || dst.is_null() || count == 0 {
+        return;
+    }
+    // SAFETY: the caller's contract.
+    let (s, d) = unsafe { (std::slice::from_raw_parts(src, count), std::slice::from_raw_parts_mut(dst, count)) };
+    rr_dr60::input::samples_from_i24(s, d);
+}
+
+#[cfg(test)]
+mod record_contract_tests {
+    use super::*;
+
+    /// The define equals the core's constant; the flags equal the core's; the stream words.
+    #[test]
+    fn constants_pin_the_core() {
+        assert_eq!(RR_DR60_PROCESSING_RECORD_VERSION, record::FORM_VERSION);
+        assert_eq!(RR_DR60_RECORD_FLAG_LIBRARY_DIFFERS, record::flags::LIBRARY_DIFFERS);
+        assert_eq!(RR_DR60_RECORD_FLAG_STAGE_MODEL_DIFFERS, record::flags::STAGE_MODEL_DIFFERS);
+        assert_eq!(RR_DR60_RECORD_FLAG_HOST_RATE_DIFFERS, record::flags::HOST_RATE_DIFFERS);
+        assert_eq!(RR_DR60_RECORD_FLAG_UNKNOWN_SETTINGS, record::flags::UNKNOWN_SETTINGS);
+        assert_eq!(RR_DR60_RECORD_FLAG_INCOMPLETE_RUN, record::flags::INCOMPLETE_RUN);
+        assert_eq!(RR_DR60_RECORD_FLAG_IMPORTED_ORIGIN, record::flags::IMPORTED_ORIGIN);
+        assert_eq!(RR_DR60_RECORD_FLAG_DIGEST_MISMATCH, record::flags::DIGEST_MISMATCH);
+        assert_eq!(RR_DR60_STREAM_WORD_PLAYBACK, rr_dr60::STREAM_PLAYBACK);
+        assert_eq!(RR_DR60_STREAM_WORD_ONE_PASS, rr_dr60::STREAM_ONE_PASS);
+        assert_eq!(RR_DR60_STREAM_WORD_RECORD, rr_dr60::STREAM_RECORD);
+        assert_eq!(RrDr60Status::InconsistentRun as u32, 35);
+    }
+
+    /// The settings conversions are inverses on the default and on a doctored configuration.
+    #[test]
+    fn settings_round_trip() {
+        let mut s = Settings::new(44_100);
+        s.tap = Tap::AfterMicAmp;
+        s.vas.mode = VasMode::Mute;
+        s.agc.knee_dbfs = -3.5;
+        s.seed = 77;
+        let c = settings_to_c(&s);
+        assert_eq!(to_settings(&c).unwrap(), s);
+    }
+
+    /// The prefix-fill rule on the read-out: smaller refused, larger zero-filled.
+    #[test]
+    fn readout_prefix_fill() {
+        let r = RecordReadout::default();
+        let c = RrDr60RecordReadout::from_core(&r);
+        let mut big = vec![0xAAu8; READOUT_SIZE as usize + 16];
+        big[..4].copy_from_slice(&(READOUT_SIZE + 16).to_le_bytes());
+        // SAFETY: a writable buffer of the declared size.
+        let st = unsafe { fill_prefix(big.as_mut_ptr().cast::<RrDr60RecordReadout>(), &c, READOUT_SIZE + 16, READOUT_SIZE) };
+        assert_eq!(st, RrDr60Status::Ok);
+        assert!(big[READOUT_SIZE as usize..].iter().all(|&b| b == 0));
+        let mut small = vec![0u8; READOUT_SIZE as usize];
+        // SAFETY: a writable buffer.
+        let st = unsafe { fill_prefix(small.as_mut_ptr().cast::<RrDr60RecordReadout>(), &c, READOUT_SIZE - 1, READOUT_SIZE) };
+        assert_eq!(st, RrDr60Status::InvalidArgument);
+        assert_eq!(c.to_core().unwrap().form_version, 1);
     }
 }
