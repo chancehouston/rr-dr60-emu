@@ -3965,3 +3965,566 @@ fn bypass_parity() {
         unsafe { rr_dr60_destroy(h) };
     }
 }
+
+/// Spec 022 (tasks.md T009): the pre-1.0 C ABI pass. The rows of `abi_checks::rows_at` built
+/// through the C API agree with the Rust path at the measurement rates (the eleven structs and
+/// the meters field for field, the read-back size included); the four cases per out-struct on a
+/// painted buffer; the ABI check and the settings rule (D13); a refused per-call report
+/// processes nothing; the `stream` name on the frozen entry.
+#[test]
+fn abi_pass_parity() {
+    use rr_dr60_harness::abi_checks as ab;
+    use std::fmt::Write as _;
+    assert_eq!(RrDr60Status::AbiMismatch as u32, 37);
+    assert_eq!(RR_DR60_ABI_VERSION, 1);
+    assert_eq!(RR_DR60_MAX_STRUCT_SIZE, 4096);
+    assert_eq!(RR_DR60_VAS_EVENT_SIZE as usize, size_of::<RrDr60VasEvent>());
+    assert_eq!(
+        RR_DR60_CHANGE_ENTRY_SIZE as usize,
+        size_of::<RrDr60ChangeEntry>()
+    );
+    assert_eq!(rr_dr60_abi_version(), 1);
+    for (name, size) in ab::SIZES {
+        let got = match name {
+            "RrDr60BlockInfo" => size_of::<RrDr60BlockInfo>(),
+            "RrDr60RecordInfo" => size_of::<RrDr60RecordInfo>(),
+            "RrDr60StopOutcome" => size_of::<RrDr60StopOutcome>(),
+            "RrDr60PlayInfo" => size_of::<RrDr60PlayInfo>(),
+            "RrDr60EngineState" => size_of::<RrDr60EngineState>(),
+            "RrDr60MemoryStatus" => size_of::<RrDr60MemoryStatus>(),
+            "RrDr60SpeechCodecInfo" => size_of::<RrDr60SpeechCodecInfo>(),
+            "RrDr60ManifestHeader" => size_of::<RrDr60ManifestHeader>(),
+            "RrDr60StageEntry" => size_of::<RrDr60StageEntry>(),
+            "RrDr60Control" => size_of::<RrDr60Control>(),
+            "RrDr60ControlOption" => size_of::<RrDr60ControlOption>(),
+            "RrDr60Meters" => size_of::<RrDr60Meters>(),
+            "RrDr60RecordReadout" => size_of::<RrDr60RecordReadout>(),
+            "RrDr60InputAlignment" => size_of::<RrDr60InputAlignment>(),
+            "RrDr60PlaceState" => size_of::<RrDr60PlaceState>(),
+            "RrDr60VasEvent" => size_of::<RrDr60VasEvent>(),
+            "RrDr60ChangeEntry" => size_of::<RrDr60ChangeEntry>(),
+            "RrDr60StopFields" => size_of::<RrDr60StopFields>(),
+            "RrDr60RunData" => size_of::<RrDr60RunData>(),
+            "RrDr60Settings" => size_of::<RrDr60Settings>(),
+            _ => unreachable!(),
+        };
+        assert_eq!(got, size as usize, "{name}");
+    }
+    // The ABI check (SC-002): the tuple, each wrong alone (the settings size one above and one
+    // below), all wrong, 0 and MAX.
+    let ok = (1u32, 8usize, 120usize, 16usize, 40usize);
+    let call = |t: (u32, usize, usize, usize, usize)| rr_dr60_abi_check(t.0, t.1, t.2, t.3, t.4);
+    assert_eq!(call(ok), RrDr60Status::Ok);
+    for bad in [
+        (2, 8, 120, 16, 40),
+        (0, 8, 120, 16, 40),
+        (u32::MAX, 8, 120, 16, 40),
+        (1, 4, 120, 16, 40),
+        (1, 8, 121, 16, 40),
+        (1, 8, 119, 16, 40),
+        (1, 8, 120, 24, 40),
+        (1, 8, 120, 16, 48),
+        (0, 4, 0, 0, 0),
+    ] {
+        assert_eq!(call(bad), RrDr60Status::AbiMismatch, "{bad:?}");
+    }
+    // D13 at create.
+    for size in [119u32, 121] {
+        let mut s = rr_dr60_settings_default(48_000);
+        s.struct_size = size;
+        let mut p = std::ptr::null_mut();
+        // SAFETY: valid pointers; a whole struct whatever its size field says.
+        assert_eq!(
+            unsafe { rr_dr60_create(&s, &mut p) },
+            RrDr60Status::InvalidArgument
+        );
+        assert!(p.is_null());
+    }
+
+    // The rows through C, at the measurement rates, against the Rust path.
+    for &rate in configs::measurement_rates() {
+        let want = ab::rows_at(rate);
+        let s = ab::settings(rate);
+        let cs = configs::c_settings(&s);
+        let x = ab::square(ab::BLOCK);
+        let mut y = vec![0.0f32; ab::BLOCK];
+        let mut ev = [RrDr60VasEvent::default(); 64];
+        let p = create(&cs);
+        let mut o = String::new();
+        o.push_str("sizes\n");
+        for (name, size) in ab::SIZES {
+            writeln!(o, "{name} {size}").unwrap();
+        }
+        writeln!(
+            o,
+            "defines {RR_DR60_ABI_VERSION} {RR_DR60_MAX_STRUCT_SIZE} {RR_DR60_VAS_EVENT_SIZE} {RR_DR60_CHANGE_ENTRY_SIZE}"
+        )
+        .unwrap();
+        let mut bi = RrDr60BlockInfo::default();
+        // SAFETY: a live handle and valid buffers.
+        assert_eq!(
+            unsafe {
+                rr_dr60_process_with_events(
+                    p,
+                    x.as_ptr(),
+                    y.as_mut_ptr(),
+                    x.len(),
+                    &mut bi,
+                    ev.as_mut_ptr(),
+                    64,
+                )
+            },
+            RrDr60Status::Ok
+        );
+        writeln!(
+            o,
+            "block_info {} {} {} {} {}",
+            bi.struct_size, bi.produced, bi.events, bi.paused as u32, bi.frames
+        )
+        .unwrap();
+        let mut m = RrDr60Meters::default();
+        // SAFETY: a live handle.
+        assert_eq!(unsafe { rr_dr60_meters(p, &mut m) }, RrDr60Status::Ok);
+        writeln!(
+            o,
+            "meters {} {:08x} {:08x} {:08x} {:08x} {:08x} {} {} {} {:08x} {:08x} {} {} {:08x}",
+            m.struct_size,
+            m.input_peak.to_bits(),
+            m.limiter_input_peak.to_bits(),
+            m.gain_reduction_db.to_bits(),
+            m.hold_charge.to_bits(),
+            m.record_filter_peak.to_bits(),
+            m.adc_clamp_count,
+            m.vas_paused,
+            m.hang_remaining_samples,
+            m.reconstruction_peak.to_bits(),
+            m.route_peak.to_bits(),
+            m.output_clamp_count,
+            m.amp_clip_count,
+            m.battery_ceiling.to_bits()
+        )
+        .unwrap();
+        // SAFETY: a live handle.
+        assert_eq!(unsafe { rr_dr60_start_recording(p) }, RrDr60Status::Ok);
+        let mut ri = RrDr60RecordInfo::default();
+        // SAFETY: a live handle and valid buffers.
+        assert_eq!(
+            unsafe { rr_dr60_record(p, x.as_ptr(), x.len(), &mut ri, ev.as_mut_ptr(), 64) },
+            RrDr60Status::Ok
+        );
+        writeln!(
+            o,
+            "record_info {} {} {} {} {} {} {} {}",
+            ri.struct_size,
+            ri.stored,
+            ri.events,
+            ri.paused as u32,
+            ri.stopped as u32,
+            ri.stop_reason,
+            ri.frames,
+            ri.frames_total
+        )
+        .unwrap();
+        let mut so = RrDr60StopOutcome::default();
+        // SAFETY: a live handle and valid buffers.
+        assert_eq!(
+            unsafe { rr_dr60_stop_recording(p, &mut so, ev.as_mut_ptr(), 64) },
+            RrDr60Status::Ok
+        );
+        writeln!(
+            o,
+            "stop_outcome {} {} {} {} {} {} {} {} {} {} {} {} {} {}",
+            so.struct_size,
+            so.flush_stored,
+            so.flush_events,
+            so.flush_paused as u32,
+            so.flush_stopped as u32,
+            so.flush_stop_reason,
+            so.flush_frames,
+            so.flush_frames_total,
+            so.kept as u32,
+            so.number,
+            so.length_samples,
+            so.silence_fed_samples,
+            so.stop_input_position,
+            so.padding_start_sample
+        )
+        .unwrap();
+        // SAFETY: a live handle.
+        assert_eq!(unsafe { rr_dr60_start_playback(p, 1) }, RrDr60Status::Ok);
+        let mut pi = RrDr60PlayInfo::default();
+        // SAFETY: a live handle and a valid buffer.
+        assert_eq!(
+            unsafe { rr_dr60_play(p, y.as_mut_ptr(), y.len(), &mut pi) },
+            RrDr60Status::Ok
+        );
+        writeln!(
+            o,
+            "play_info {} {} {} {} {} {}",
+            pi.struct_size, pi.produced, pi.finished as u32, pi.frames, pi.frame_index, pi.place
+        )
+        .unwrap();
+        let st = c_state(p);
+        writeln!(
+            o,
+            "engine_state {} {} {} {} {}",
+            st.struct_size, st.state, st.route, st.current_recording, st.speaker_muted as u32
+        )
+        .unwrap();
+        let ms = c_memory(p);
+        writeln!(
+            o,
+            "memory_status {} {} {} {} {} {} {}",
+            ms.struct_size,
+            ms.capacity_samples,
+            ms.used_samples,
+            ms.remaining_samples,
+            ms.max_recordings,
+            ms.count,
+            ms.slots_remaining
+        )
+        .unwrap();
+        // SAFETY: a live handle.
+        unsafe { rr_dr60_stop_playback(p) };
+        let mut ci = RrDr60SpeechCodecInfo::default();
+        // SAFETY: a valid out pointer.
+        assert_eq!(
+            unsafe { rr_dr60_speech_codec_info(&mut ci) },
+            RrDr60Status::Ok
+        );
+        writeln!(
+            o,
+            "speech_codec_info {} {} {} {} {} {}.{}.{}",
+            ci.struct_size,
+            ci.frame_samples,
+            ci.frame_ms,
+            ci.bits_per_frame,
+            ci.delay_samples,
+            ci.model_version[0],
+            ci.model_version[1],
+            ci.model_version[2]
+        )
+        .unwrap();
+        let cstr = |p: *const std::ffi::c_char| {
+            // SAFETY: a static NUL-terminated string from the library.
+            unsafe { std::ffi::CStr::from_ptr(p) }
+                .to_str()
+                .unwrap()
+                .to_owned()
+        };
+        let mut h = RrDr60ManifestHeader::default();
+        // SAFETY: a valid out pointer.
+        assert_eq!(unsafe { rr_dr60_manifest_header(&mut h) }, RrDr60Status::Ok);
+        writeln!(
+            o,
+            "manifest_header {} {} {} {} {} {} {} {}",
+            h.struct_size,
+            cstr(h.library_version),
+            h.device_rate_hz,
+            h.stage_count,
+            h.count_not_modeled,
+            h.count_assumed,
+            h.count_sourced,
+            h.count_checked
+        )
+        .unwrap();
+        let mut e = RrDr60StageEntry::default();
+        // SAFETY: a valid out pointer.
+        assert_eq!(
+            unsafe { rr_dr60_manifest_stage(3, &mut e) },
+            RrDr60Status::Ok
+        );
+        writeln!(
+            o,
+            "stage_entry {} {} {} {} {} {} {} {}",
+            e.struct_size,
+            e.number,
+            cstr(e.identifier),
+            e.status,
+            e.path,
+            e.confidence,
+            e.source_count,
+            e.assumption_count
+        )
+        .unwrap();
+        let mut c = RrDr60Control::default();
+        // SAFETY: a valid out pointer.
+        assert_eq!(unsafe { rr_dr60_control(0, &mut c) }, RrDr60Status::Ok);
+        writeln!(
+            o,
+            "control {} 0 {} {} {} {} {} {} {} {} {} {:08x} {:08x} {:08x} {} {} {} {} {}",
+            c.struct_size,
+            cstr(c.identifier),
+            c.kind,
+            c.timing,
+            c.paths,
+            c.stage,
+            c.value_type,
+            c.int_min,
+            c.int_max,
+            c.int_default,
+            c.float_min.to_bits(),
+            c.float_max.to_bits(),
+            c.float_default.to_bits(),
+            c.option_count,
+            c.choice_default,
+            c.has_default,
+            c.source_count,
+            c.assumption_count
+        )
+        .unwrap();
+        let (choice, _, _) = ab::first_choice();
+        let mut op = RrDr60ControlOption::default();
+        // SAFETY: a valid out pointer.
+        assert_eq!(
+            unsafe { rr_dr60_control_option(choice as u32, 0, &mut op) },
+            RrDr60Status::Ok
+        );
+        writeln!(
+            o,
+            "control_option {} {} 0 {} {}",
+            op.struct_size,
+            choice,
+            cstr(op.identifier),
+            op.value
+        )
+        .unwrap();
+        assert_eq!(o, want, "{rate} Hz: the C rows differ from the Rust rows");
+
+        // The four cases per out-struct on a painted, 8-aligned buffer (US1 AS1 – AS4).
+        #[repr(C, align(8))]
+        struct Painted([u8; 4200]);
+        let paint = |size: u32| {
+            let mut b = Painted([0xAA; 4200]);
+            b.0[..4].copy_from_slice(&size.to_ne_bytes());
+            b
+        };
+        let size_of_buf = |b: &Painted| u32::from_ne_bytes(b.0[..4].try_into().unwrap());
+        type Fill<'a> = Box<dyn Fn(*mut u8) -> RrDr60Status + 'a>;
+        let mut cases: Vec<(&str, u32, u32, Fill)> = Vec::new();
+        let xp = x.as_ptr();
+        let yp = y.as_mut_ptr();
+        // SAFETY (each closure): a live handle, valid buffers, and an out pointer that the
+        // library checks before writing.
+        cases.push((
+            "block",
+            40,
+            40,
+            Box::new(move |b| unsafe { rr_dr60_process(p, xp, yp, 64, b.cast()) }),
+        ));
+        cases.push((
+            "state",
+            20,
+            20,
+            Box::new(move |b| unsafe { rr_dr60_get_state(p, b.cast()) }),
+        ));
+        cases.push((
+            "memory",
+            48,
+            48,
+            Box::new(move |b| unsafe { rr_dr60_memory_status(p, b.cast()) }),
+        ));
+        cases.push((
+            "meters",
+            56,
+            64,
+            Box::new(move |b| unsafe { rr_dr60_meters(p, b.cast()) }),
+        ));
+        cases.push((
+            "codec",
+            28,
+            28,
+            Box::new(move |b| unsafe { rr_dr60_speech_codec_info(b.cast()) }),
+        ));
+        cases.push((
+            "header",
+            72,
+            72,
+            Box::new(move |b| unsafe { rr_dr60_manifest_header(b.cast()) }),
+        ));
+        cases.push((
+            "stage",
+            80,
+            80,
+            Box::new(move |b| unsafe { rr_dr60_manifest_stage(3, b.cast()) }),
+        ));
+        cases.push((
+            "control",
+            120,
+            120,
+            Box::new(move |b| unsafe { rr_dr60_control(0, b.cast()) }),
+        ));
+        cases.push((
+            "option",
+            24,
+            24,
+            Box::new(move |b| unsafe { rr_dr60_control_option(choice as u32, 0, b.cast()) }),
+        ));
+        for (name, min, full, fill) in &cases {
+            for size in [0, min - 1, 4097, u32::MAX] {
+                let mut b = paint(size);
+                assert_eq!(
+                    fill(b.0.as_mut_ptr()),
+                    RrDr60Status::InvalidArgument,
+                    "{name} at {size}"
+                );
+                assert!(
+                    b.0[4..].iter().all(|&v| v == 0xAA),
+                    "{name}: nothing written at {size}"
+                );
+            }
+            for size in [*full, full + 16, 4096] {
+                let mut b = paint(size);
+                assert_eq!(fill(b.0.as_mut_ptr()), RrDr60Status::Ok, "{name} at {size}");
+                assert_eq!(size_of_buf(&b), *full, "{name}: the read-back at {size}");
+                assert!(
+                    b.0[*full as usize..size as usize].iter().all(|&v| v == 0),
+                    "{name}: the tail at {size}"
+                );
+                assert!(
+                    b.0[size as usize..].iter().all(|&v| v == 0xAA),
+                    "{name}: beyond {size}"
+                );
+            }
+        }
+        // The record, stop and play reports on their own transport states.
+        // SAFETY: a live handle.
+        assert_eq!(unsafe { rr_dr60_start_recording(p) }, RrDr60Status::Ok);
+        for size in [0u32, 47, 4097] {
+            let mut b = paint(size);
+            // SAFETY: a live handle and valid buffers.
+            assert_eq!(
+                unsafe {
+                    rr_dr60_record(
+                        p,
+                        x.as_ptr(),
+                        64,
+                        b.0.as_mut_ptr().cast(),
+                        std::ptr::null_mut(),
+                        0,
+                    )
+                },
+                RrDr60Status::InvalidArgument
+            );
+            assert!(b.0[4..].iter().all(|&v| v == 0xAA));
+        }
+        let mut b = paint(64);
+        // SAFETY: as above.
+        assert_eq!(
+            unsafe {
+                rr_dr60_record(
+                    p,
+                    x.as_ptr(),
+                    x.len(),
+                    b.0.as_mut_ptr().cast(),
+                    std::ptr::null_mut(),
+                    0,
+                )
+            },
+            RrDr60Status::Ok
+        );
+        assert_eq!(size_of_buf(&b), 48);
+        assert!(b.0[48..64].iter().all(|&v| v == 0) && b.0[64..].iter().all(|&v| v == 0xAA));
+        let mut b = paint(87);
+        // SAFETY: as above.
+        assert_eq!(
+            unsafe { rr_dr60_stop_recording(p, b.0.as_mut_ptr().cast(), std::ptr::null_mut(), 0) },
+            RrDr60Status::InvalidArgument
+        );
+        assert!(b.0[4..].iter().all(|&v| v == 0xAA));
+        let mut b = paint(100);
+        // SAFETY: as above.
+        assert_eq!(
+            unsafe { rr_dr60_stop_recording(p, b.0.as_mut_ptr().cast(), std::ptr::null_mut(), 0) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(size_of_buf(&b), 88);
+        assert!(b.0[88..100].iter().all(|&v| v == 0) && b.0[100..].iter().all(|&v| v == 0xAA));
+        // SAFETY: a live handle.
+        assert_eq!(unsafe { rr_dr60_start_playback(p, 1) }, RrDr60Status::Ok);
+        let mut b = paint(47);
+        // SAFETY: as above.
+        assert_eq!(
+            unsafe { rr_dr60_play(p, y.as_mut_ptr(), 64, b.0.as_mut_ptr().cast()) },
+            RrDr60Status::InvalidArgument
+        );
+        assert!(b.0[4..].iter().all(|&v| v == 0xAA));
+        let mut b = paint(64);
+        // SAFETY: as above.
+        assert_eq!(
+            unsafe { rr_dr60_play(p, y.as_mut_ptr(), 64, b.0.as_mut_ptr().cast()) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(size_of_buf(&b), 48);
+        assert!(b.0[48..64].iter().all(|&v| v == 0) && b.0[64..].iter().all(|&v| v == 0xAA));
+        // SAFETY: a live handle.
+        unsafe { rr_dr60_stop_playback(p) };
+        // A refused report processes nothing: the positions, the memory status and the meters.
+        let snap = |p: *mut RrDr60Pipeline| {
+            let mut pos = [0u64; 2];
+            // SAFETY: a live handle.
+            unsafe {
+                rr_dr60_stream_position(p, 1, &mut pos[0]);
+                rr_dr60_input_position(p, 1, &mut pos[1]);
+            }
+            (pos, c_memory(p), {
+                let mut m = RrDr60Meters::default();
+                // SAFETY: a live handle.
+                unsafe { rr_dr60_meters(p, &mut m) };
+                m
+            })
+        };
+        let before = snap(p);
+        let mut b = paint(39);
+        // SAFETY: as above; refused.
+        assert_eq!(
+            unsafe {
+                rr_dr60_process(
+                    p,
+                    x.as_ptr(),
+                    y.as_mut_ptr(),
+                    x.len(),
+                    b.0.as_mut_ptr().cast(),
+                )
+            },
+            RrDr60Status::InvalidArgument
+        );
+        let mut b = paint(4097);
+        // SAFETY: as above; refused.
+        assert_eq!(
+            unsafe {
+                rr_dr60_record(
+                    p,
+                    x.as_ptr(),
+                    x.len(),
+                    b.0.as_mut_ptr().cast(),
+                    std::ptr::null_mut(),
+                    0,
+                )
+            },
+            RrDr60Status::InvalidArgument
+        );
+        // SAFETY: as above; refused.
+        assert_eq!(
+            unsafe { rr_dr60_play(p, y.as_mut_ptr(), y.len(), b.0.as_mut_ptr().cast()) },
+            RrDr60Status::InvalidArgument
+        );
+        assert_eq!(
+            before,
+            snap(p),
+            "{rate} Hz: a refused report processed something"
+        );
+        // SAFETY: destroying once.
+        unsafe { rr_dr60_destroy(p) };
+    }
+    // The frozen entry's field is `stream` (D2): a value round trip through the C struct.
+    let e = RrDr60ChangeEntry {
+        position: 1,
+        before: 0.0,
+        after: 1.0,
+        tag: 2,
+        control: 3,
+        stream: 2,
+    };
+    assert_eq!(e.stream, 2);
+}

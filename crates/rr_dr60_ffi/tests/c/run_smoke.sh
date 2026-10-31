@@ -59,3 +59,9 @@ echo "smoke --bypass matches the Rust example"
 cargo run -q -p rr_dr60_harness --example record_rows > target/example-record.txt
 diff target/smoke-record.txt target/example-record.txt
 echo "smoke --record matches the Rust example"
+# Spec 022 SC-001: the C program's ABI rows (the size table, the defines and one row per struct
+# the library fills, with the read-back size) equal the Rust example's, byte for byte.
+./target/smoke --abi > target/smoke-abi.txt
+cargo run -q -p rr_dr60_harness --example abi_rows > target/example-abi.txt
+diff target/smoke-abi.txt target/example-abi.txt
+echo "smoke --abi matches the Rust example"

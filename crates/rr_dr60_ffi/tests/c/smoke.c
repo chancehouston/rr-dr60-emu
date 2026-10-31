@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define FS 48000
 #define PI 3.14159265358979323846 /* M_PI is not part of strict C11 */
@@ -694,6 +695,398 @@ static void print_controls(void) {
   }
 }
 
+
+/* ---- Spec 022, the pre-1.0 C ABI pass (tasks.md T008) ---- */
+
+/* The size table the ABI rows and the cases pin (research R-03; 64-bit targets). */
+typedef struct {
+  const char *name;
+  size_t size;
+} AbiSize;
+static const AbiSize abi_sizes[20] = {
+    {"RrDr60BlockInfo", sizeof(RrDr60BlockInfo)},
+    {"RrDr60RecordInfo", sizeof(RrDr60RecordInfo)},
+    {"RrDr60StopOutcome", sizeof(RrDr60StopOutcome)},
+    {"RrDr60PlayInfo", sizeof(RrDr60PlayInfo)},
+    {"RrDr60EngineState", sizeof(RrDr60EngineState)},
+    {"RrDr60MemoryStatus", sizeof(RrDr60MemoryStatus)},
+    {"RrDr60SpeechCodecInfo", sizeof(RrDr60SpeechCodecInfo)},
+    {"RrDr60ManifestHeader", sizeof(RrDr60ManifestHeader)},
+    {"RrDr60StageEntry", sizeof(RrDr60StageEntry)},
+    {"RrDr60Control", sizeof(RrDr60Control)},
+    {"RrDr60ControlOption", sizeof(RrDr60ControlOption)},
+    {"RrDr60Meters", sizeof(RrDr60Meters)},
+    {"RrDr60RecordReadout", sizeof(RrDr60RecordReadout)},
+    {"RrDr60InputAlignment", sizeof(RrDr60InputAlignment)},
+    {"RrDr60PlaceState", sizeof(RrDr60PlaceState)},
+    {"RrDr60VasEvent", sizeof(RrDr60VasEvent)},
+    {"RrDr60ChangeEntry", sizeof(RrDr60ChangeEntry)},
+    {"RrDr60StopFields", sizeof(RrDr60StopFields)},
+    {"RrDr60RunData", sizeof(RrDr60RunData)},
+    {"RrDr60Settings", sizeof(RrDr60Settings)},
+};
+static const size_t abi_expected[20] = {40, 48, 88, 48, 20, 48, 28, 72, 80, 120, 24, 64, 376, 32, 32, 16, 40, 40, 80, 120};
+
+static uint32_t abi_first_choice(void) {
+  for (uint32_t i = 0; i < rr_dr60_control_count(); i++) {
+    SIZED(RrDr60Control, c);
+    if (rr_dr60_control(i, &c) != RR_DR60_STATUS_OK) return 0;
+    if (c.value_type == RR_DR60_CONTROL_VALUE_TYPE_CHOICE) return i;
+  }
+  return 0;
+}
+
+static uint32_t f32bits(float f) {
+  uint32_t b;
+  memcpy(&b, &f, 4);
+  return b;
+}
+
+/* `smoke --abi`: the rows as the Rust example `abi_rows` prints them (research R-07): the size
+   table, the defines, and one row per struct the library fills, read on a ±0.125 square at
+   48 kHz through the default engine with the codec bypassed; the figure after each name is the
+   struct's `struct_size` as read back after the call (D11). */
+static int print_abi(void) {
+  enum { ARATE = 48000, AN = 4096 };
+  static float ain[AN], aout[AN];
+  for (size_t i = 0; i < AN; i++) ain[i] = (i % 48 < 24) ? 0.125f : -0.125f;
+  printf("sizes\n");
+  for (int i = 0; i < 20; i++) printf("%s %zu\n", abi_sizes[i].name, abi_sizes[i].size);
+  printf("defines %u %u %u %u\n", (unsigned)RR_DR60_ABI_VERSION, (unsigned)RR_DR60_MAX_STRUCT_SIZE,
+         (unsigned)RR_DR60_VAS_EVENT_SIZE, (unsigned)RR_DR60_CHANGE_ENTRY_SIZE);
+  RrDr60Settings s = rr_dr60_settings_default(ARATE);
+  s.speech_codec_enabled = false;
+  RrDr60Pipeline *p = NULL;
+  if (rr_dr60_create(&s, &p) != RR_DR60_STATUS_OK) return 1;
+  RrDr60VasEvent ev[64];
+  SIZED(RrDr60BlockInfo, bi);
+  if (rr_dr60_process_with_events(p, ain, aout, AN, &bi, ev, 64) != RR_DR60_STATUS_OK) return 1;
+  printf("block_info %u %zu %zu %u %zu\n", bi.struct_size, bi.produced, bi.events, (unsigned)bi.paused, bi.frames);
+  SIZED(RrDr60Meters, m);
+  if (rr_dr60_meters(p, &m) != RR_DR60_STATUS_OK) return 1;
+  printf("meters %u %08x %08x %08x %08x %08x %u %u %llu %08x %08x %u %u %08x\n", m.struct_size, f32bits(m.input_peak),
+         f32bits(m.limiter_input_peak), f32bits(m.gain_reduction_db), f32bits(m.hold_charge),
+         f32bits(m.record_filter_peak), m.adc_clamp_count, m.vas_paused, (unsigned long long)m.hang_remaining_samples,
+         f32bits(m.reconstruction_peak), f32bits(m.route_peak), m.output_clamp_count, m.amp_clip_count,
+         f32bits(m.battery_ceiling));
+  if (rr_dr60_start_recording(p) != RR_DR60_STATUS_OK) return 1;
+  SIZED(RrDr60RecordInfo, ri);
+  if (rr_dr60_record(p, ain, AN, &ri, ev, 64) != RR_DR60_STATUS_OK) return 1;
+  printf("record_info %u %zu %zu %u %u %u %zu %llu\n", ri.struct_size, ri.stored, ri.events, (unsigned)ri.paused,
+         (unsigned)ri.stopped, ri.stop_reason, ri.frames, (unsigned long long)ri.frames_total);
+  SIZED(RrDr60StopOutcome, so);
+  if (rr_dr60_stop_recording(p, &so, ev, 64) != RR_DR60_STATUS_OK) return 1;
+  printf("stop_outcome %u %zu %zu %u %u %u %zu %llu %u %u %llu %llu %llu %llu\n", so.struct_size, so.flush_stored,
+         so.flush_events, (unsigned)so.flush_paused, (unsigned)so.flush_stopped, so.flush_stop_reason, so.flush_frames,
+         (unsigned long long)so.flush_frames_total, (unsigned)so.kept, so.number, (unsigned long long)so.length_samples,
+         (unsigned long long)so.silence_fed_samples, (unsigned long long)so.stop_input_position,
+         (unsigned long long)so.padding_start_sample);
+  if (rr_dr60_start_playback(p, 1) != RR_DR60_STATUS_OK) return 1;
+  SIZED(RrDr60PlayInfo, pi);
+  if (rr_dr60_play(p, aout, AN, &pi) != RR_DR60_STATUS_OK) return 1;
+  printf("play_info %u %zu %u %zu %llu %llu\n", pi.struct_size, pi.produced, (unsigned)pi.finished, pi.frames,
+         (unsigned long long)pi.frame_index, (unsigned long long)pi.place);
+  SIZED(RrDr60EngineState, st);
+  if (rr_dr60_get_state(p, &st) != RR_DR60_STATUS_OK) return 1;
+  printf("engine_state %u %u %u %u %u\n", st.struct_size, st.state, st.route, st.current_recording,
+         (unsigned)st.speaker_muted);
+  SIZED(RrDr60MemoryStatus, ms);
+  if (rr_dr60_memory_status(p, &ms) != RR_DR60_STATUS_OK) return 1;
+  printf("memory_status %u %llu %llu %llu %u %u %u\n", ms.struct_size, (unsigned long long)ms.capacity_samples,
+         (unsigned long long)ms.used_samples, (unsigned long long)ms.remaining_samples, ms.max_recordings, ms.count,
+         ms.slots_remaining);
+  rr_dr60_stop_playback(p);
+  rr_dr60_destroy(p);
+  SIZED(RrDr60SpeechCodecInfo, ci);
+  if (rr_dr60_speech_codec_info(&ci) != RR_DR60_STATUS_OK) return 1;
+  printf("speech_codec_info %u %u %u %u %u %u.%u.%u\n", ci.struct_size, ci.frame_samples, ci.frame_ms, ci.bits_per_frame,
+         ci.delay_samples, ci.model_version[0], ci.model_version[1], ci.model_version[2]);
+  SIZED(RrDr60ManifestHeader, h);
+  if (rr_dr60_manifest_header(&h) != RR_DR60_STATUS_OK) return 1;
+  printf("manifest_header %u %s %u %u %u %u %u %u\n", h.struct_size, h.library_version, h.device_rate_hz, h.stage_count,
+         h.count_not_modeled, h.count_assumed, h.count_sourced, h.count_checked);
+  SIZED(RrDr60StageEntry, e);
+  if (rr_dr60_manifest_stage(3, &e) != RR_DR60_STATUS_OK) return 1;
+  printf("stage_entry %u %u %s %u %u %u %u %u\n", e.struct_size, e.number, e.identifier, e.status, e.path, e.confidence,
+         e.source_count, e.assumption_count);
+  SIZED(RrDr60Control, c);
+  if (rr_dr60_control(0, &c) != RR_DR60_STATUS_OK) return 1;
+  printf("control %u 0 %s %u %u %u %u %u %llu %llu %llu %08x %08x %08x %u %u %u %u %u\n", c.struct_size, c.identifier,
+         c.kind, c.timing, c.paths, c.stage, c.value_type, (unsigned long long)c.int_min, (unsigned long long)c.int_max,
+         (unsigned long long)c.int_default, f32bits(c.float_min), f32bits(c.float_max), f32bits(c.float_default),
+         c.option_count, c.choice_default, c.has_default, c.source_count, c.assumption_count);
+  uint32_t choice = abi_first_choice();
+  SIZED(RrDr60ControlOption, o);
+  if (rr_dr60_control_option(choice, 0, &o) != RR_DR60_STATUS_OK) return 1;
+  printf("control_option %u %u 0 %s %u\n", o.struct_size, choice, o.identifier, o.value);
+  return 0;
+}
+
+/* The painted buffer the cases fill: 8-aligned, 4200 bytes, 0xAA everywhere but the size word. */
+typedef union {
+  uint64_t align;
+  uint8_t b[4200];
+} AbiBuf;
+
+static void abi_paint(AbiBuf *buf, uint32_t size) {
+  memset(buf->b, 0xAA, sizeof buf->b);
+  memcpy(buf->b, &size, 4);
+}
+
+static uint32_t abi_size(const AbiBuf *buf) {
+  uint32_t s;
+  memcpy(&s, buf->b, 4);
+  return s;
+}
+
+static int abi_untouched(const AbiBuf *buf, size_t from) {
+  for (size_t i = from; i < sizeof buf->b; i++)
+    if (buf->b[i] != 0xAA) return 0;
+  return 1;
+}
+
+static int abi_zero(const AbiBuf *buf, size_t lo, size_t hi) {
+  for (size_t i = lo; i < hi; i++)
+    if (buf->b[i] != 0) return 0;
+  return 1;
+}
+
+typedef struct {
+  RrDr60Pipeline *p;
+  const float *in;
+  float *out;
+  uint32_t choice;
+} AbiCtx;
+
+typedef RrDr60Status (*AbiFill)(AbiCtx *ctx, void *out);
+
+static RrDr60Status abi_fill_block(AbiCtx *x, void *out) {
+  return rr_dr60_process(x->p, x->in, x->out, 64, (RrDr60BlockInfo *)out);
+}
+static RrDr60Status abi_fill_record(AbiCtx *x, void *out) {
+  rr_dr60_start_recording(x->p); /* RECORDING_IN_PROGRESS after the first call is fine */
+  return rr_dr60_record(x->p, x->in, 4096, (RrDr60RecordInfo *)out, NULL, 0);
+}
+static RrDr60Status abi_fill_stop(AbiCtx *x, void *out) {
+  rr_dr60_start_recording(x->p);
+  return rr_dr60_stop_recording(x->p, (RrDr60StopOutcome *)out, NULL, 0);
+}
+static RrDr60Status abi_fill_play(AbiCtx *x, void *out) {
+  rr_dr60_stop_recording(x->p, NULL, NULL, 0); /* NOT_RECORDING is fine */
+  rr_dr60_start_playback(x->p, 1);              /* PLAYBACK_IN_PROGRESS is fine */
+  return rr_dr60_play(x->p, x->out, 64, (RrDr60PlayInfo *)out);
+}
+static RrDr60Status abi_fill_state(AbiCtx *x, void *out) { return rr_dr60_get_state(x->p, (RrDr60EngineState *)out); }
+static RrDr60Status abi_fill_memory(AbiCtx *x, void *out) {
+  return rr_dr60_memory_status(x->p, (RrDr60MemoryStatus *)out);
+}
+static RrDr60Status abi_fill_meters(AbiCtx *x, void *out) { return rr_dr60_meters(x->p, (RrDr60Meters *)out); }
+static RrDr60Status abi_fill_codec(AbiCtx *x, void *out) {
+  (void)x;
+  return rr_dr60_speech_codec_info((RrDr60SpeechCodecInfo *)out);
+}
+static RrDr60Status abi_fill_header(AbiCtx *x, void *out) {
+  (void)x;
+  return rr_dr60_manifest_header((RrDr60ManifestHeader *)out);
+}
+static RrDr60Status abi_fill_stage(AbiCtx *x, void *out) {
+  (void)x;
+  return rr_dr60_manifest_stage(3, (RrDr60StageEntry *)out);
+}
+static RrDr60Status abi_fill_control(AbiCtx *x, void *out) {
+  (void)x;
+  return rr_dr60_control(0, (RrDr60Control *)out);
+}
+static RrDr60Status abi_fill_option(AbiCtx *x, void *out) {
+  return rr_dr60_control_option(x->choice, 0, (RrDr60ControlOption *)out);
+}
+
+/* The four cases of US1 AS1 – AS4 on one struct (FR-001, FR-007): below the smallest published
+   layout refused and untouched; the exact size, size + 16 and 4096 filled with the padding
+   positions zero, the size read back as the filled size, the tail zero and nothing beyond the
+   caller's size touched; above the cap refused and untouched. */
+static void abi_struct_cases(const char *name, uint32_t min, uint32_t full, const size_t (*pads)[2], size_t npads,
+                             AbiFill fill, AbiCtx *ctx) {
+  AbiBuf buf;
+  const uint32_t below[2] = {0, min - 1};
+  for (int i = 0; i < 2; i++) {
+    abi_paint(&buf, below[i]);
+    CHECK(fill(ctx, buf.b) == RR_DR60_STATUS_INVALID_ARGUMENT, "%s: struct_size %u refused", name, below[i]);
+    CHECK(abi_size(&buf) == below[i] && abi_untouched(&buf, 4), "%s: nothing written at %u", name, below[i]);
+  }
+  const uint32_t ok[3] = {full, full + 16, RR_DR60_MAX_STRUCT_SIZE};
+  for (int i = 0; i < 3; i++) {
+    abi_paint(&buf, ok[i]);
+    CHECK(fill(ctx, buf.b) == RR_DR60_STATUS_OK, "%s: struct_size %u filled", name, ok[i]);
+    CHECK(abi_size(&buf) == full, "%s: read-back %u at %u (want %u)", name, abi_size(&buf), ok[i], full);
+    for (size_t k = 0; k < npads; k++)
+      CHECK(abi_zero(&buf, pads[k][0], pads[k][1]), "%s: padding %zu..%zu zero", name, pads[k][0], pads[k][1]);
+    CHECK(abi_zero(&buf, full, ok[i]), "%s: tail %u..%u zero", name, full, ok[i]);
+    CHECK(abi_untouched(&buf, ok[i]), "%s: nothing past %u", name, ok[i]);
+  }
+  const uint32_t above[2] = {RR_DR60_MAX_STRUCT_SIZE + 1, UINT32_MAX};
+  for (int i = 0; i < 2; i++) {
+    abi_paint(&buf, above[i]);
+    CHECK(fill(ctx, buf.b) == RR_DR60_STATUS_INVALID_ARGUMENT, "%s: struct_size %u refused", name, above[i]);
+    CHECK(abi_untouched(&buf, 4), "%s: nothing written at %u", name, above[i]);
+  }
+}
+
+static double abi_ns_per_call(clock_t t0, clock_t t1, double calls) {
+  return (double)(t1 - t0) / (double)CLOCKS_PER_SEC * 1e9 / calls;
+}
+
+/* Spec 022 (tasks.md T008): the size table against the 64-bit figures, the cases per struct,
+   the state-unchanged check, the NULL-handle and zero-frames paths, the ABI check, the settings
+   rule (D13) and the three per-call figures (reported). */
+static void abi_cases(void) {
+  CHECK(sizeof(void *) == 8, "the C ABI is 64-bit pointer width only (022 D3)");
+  for (int i = 0; i < 20; i++)
+    CHECK(abi_sizes[i].size == abi_expected[i], "%s is %zu bytes (want %zu; 022 R-03)", abi_sizes[i].name,
+          abi_sizes[i].size, abi_expected[i]);
+  CHECK(RR_DR60_ABI_VERSION == 1 && RR_DR60_MAX_STRUCT_SIZE == 4096 && RR_DR60_VAS_EVENT_SIZE == 16 &&
+            RR_DR60_CHANGE_ENTRY_SIZE == 40,
+        "the four defines (022 D2, D3, D8)");
+  CHECK(rr_dr60_abi_version() == RR_DR60_ABI_VERSION, "rr_dr60_abi_version");
+  CHECK(RR_DR60_STATUS_ABI_MISMATCH == 37, "status 37");
+  /* The ABI check: the right tuple, each argument wrong alone (the settings size one above and
+     one below), all wrong, 0 and UINT32_MAX (SC-002). */
+  CHECK(rr_dr60_abi_check(RR_DR60_ABI_VERSION, sizeof(void *), sizeof(RrDr60Settings), sizeof(RrDr60VasEvent),
+                          sizeof(RrDr60ChangeEntry)) == RR_DR60_STATUS_OK,
+        "abi_check: the right tuple");
+  CHECK(rr_dr60_abi_check(2, 8, 120, 16, 40) == RR_DR60_STATUS_ABI_MISMATCH, "abi_check: version 2");
+  CHECK(rr_dr60_abi_check(0, 8, 120, 16, 40) == RR_DR60_STATUS_ABI_MISMATCH, "abi_check: version 0");
+  CHECK(rr_dr60_abi_check(UINT32_MAX, 8, 120, 16, 40) == RR_DR60_STATUS_ABI_MISMATCH, "abi_check: version max");
+  CHECK(rr_dr60_abi_check(1, 4, 120, 16, 40) == RR_DR60_STATUS_ABI_MISMATCH, "abi_check: pointer 4");
+  CHECK(rr_dr60_abi_check(1, 8, 121, 16, 40) == RR_DR60_STATUS_ABI_MISMATCH, "abi_check: settings one above");
+  CHECK(rr_dr60_abi_check(1, 8, 119, 16, 40) == RR_DR60_STATUS_ABI_MISMATCH, "abi_check: settings one below");
+  CHECK(rr_dr60_abi_check(1, 8, 120, 24, 40) == RR_DR60_STATUS_ABI_MISMATCH, "abi_check: event size");
+  CHECK(rr_dr60_abi_check(1, 8, 120, 16, 48) == RR_DR60_STATUS_ABI_MISMATCH, "abi_check: entry size");
+  CHECK(rr_dr60_abi_check(0, 4, 0, 0, 0) == RR_DR60_STATUS_ABI_MISMATCH, "abi_check: all wrong");
+  /* D13: the settings struct is validated whole. */
+  {
+    RrDr60Settings s = rr_dr60_settings_default(48000);
+    RrDr60Pipeline *q = NULL;
+    const uint32_t sizes[2] = {119, 121};
+    for (int i = 0; i < 2; i++) {
+      s.struct_size = sizes[i];
+      RrDr60SettingField f = RR_DR60_SETTING_FIELD_NONE;
+      CHECK(rr_dr60_create(&s, &q) == RR_DR60_STATUS_INVALID_ARGUMENT && q == NULL, "create(struct_size = %u) (022 D13)",
+            sizes[i]);
+      CHECK(rr_dr60_settings_validate(&s, &f) == RR_DR60_STATUS_INVALID_ARGUMENT && f == RR_DR60_SETTING_FIELD_STRUCT_SIZE,
+            "validate(struct_size = %u) names STRUCT_SIZE (022 D13)", sizes[i]);
+    }
+    s.struct_size = 120;
+    CHECK(rr_dr60_create(&s, &q) == RR_DR60_STATUS_OK && q != NULL, "create(struct_size = 120)");
+    rr_dr60_destroy(q);
+  }
+  /* The cases per struct, each with its fill route. */
+  enum { CRATE = 48000, CN = 4096 };
+  static float cin[CN], cout[CN];
+  for (size_t i = 0; i < CN; i++) cin[i] = (i % 48 < 24) ? 0.125f : -0.125f;
+  RrDr60Settings s = rr_dr60_settings_default(CRATE);
+  s.speech_codec_enabled = false;
+  AbiCtx ctx = {NULL, cin, cout, abi_first_choice()};
+  CHECK(rr_dr60_create(&s, &ctx.p) == RR_DR60_STATUS_OK, "create (abi cases)");
+  static const size_t pad_block[2][2] = {{4, 8}, {25, 32}};
+  static const size_t pad_record[2][2] = {{4, 8}, {26, 28}};
+  static const size_t pad_stop[3][2] = {{4, 8}, {26, 28}, {49, 52}};
+  static const size_t pad_play[2][2] = {{4, 8}, {17, 24}};
+  static const size_t pad_state[1][2] = {{17, 20}};
+  static const size_t pad_memory[2][2] = {{4, 8}, {44, 48}};
+  static const size_t pad_header[1][2] = {{4, 8}};
+  static const size_t pad_control[1][2] = {{4, 8}};
+  static const size_t pad_option[2][2] = {{4, 8}, {20, 24}};
+  abi_struct_cases("RrDr60BlockInfo", 40, 40, pad_block, 2, abi_fill_block, &ctx);
+  abi_struct_cases("RrDr60RecordInfo", 48, 48, pad_record, 2, abi_fill_record, &ctx);
+  abi_struct_cases("RrDr60StopOutcome", 88, 88, pad_stop, 3, abi_fill_stop, &ctx);
+  abi_struct_cases("RrDr60PlayInfo", 48, 48, pad_play, 2, abi_fill_play, &ctx);
+  abi_struct_cases("RrDr60EngineState", 20, 20, pad_state, 1, abi_fill_state, &ctx);
+  abi_struct_cases("RrDr60MemoryStatus", 48, 48, pad_memory, 2, abi_fill_memory, &ctx);
+  abi_struct_cases("RrDr60Meters", 56, 64, NULL, 0, abi_fill_meters, &ctx);
+  abi_struct_cases("RrDr60SpeechCodecInfo", 28, 28, NULL, 0, abi_fill_codec, &ctx);
+  abi_struct_cases("RrDr60ManifestHeader", 72, 72, pad_header, 1, abi_fill_header, &ctx);
+  abi_struct_cases("RrDr60StageEntry", 80, 80, NULL, 0, abi_fill_stage, &ctx);
+  abi_struct_cases("RrDr60Control", 120, 120, pad_control, 1, abi_fill_control, &ctx);
+  abi_struct_cases("RrDr60ControlOption", 24, 24, pad_option, 2, abi_fill_option, &ctx);
+  /* Meters' known smaller layout: 60 fills 56, reads back 56, zeroes 56 … 59 (D11). */
+  {
+    AbiBuf buf;
+    abi_paint(&buf, 60);
+    CHECK(rr_dr60_meters(ctx.p, (RrDr60Meters *)buf.b) == RR_DR60_STATUS_OK && abi_size(&buf) == 56 &&
+              abi_zero(&buf, 56, 60) && abi_untouched(&buf, 60),
+          "RrDr60Meters at 60: the 0.16 prefix, 56 read back, 56..60 zero (022 D11)");
+  }
+  rr_dr60_stop_playback(ctx.p);
+  rr_dr60_stop_recording(ctx.p, NULL, NULL, 0);
+  rr_dr60_destroy(ctx.p);
+  /* A refused per-call report processes nothing (US1 AS1): the positions, the memory status and
+     the meters are byte-equal before and after. */
+  {
+    RrDr60Pipeline *q = NULL;
+    CHECK(rr_dr60_create(&s, &q) == RR_DR60_STATUS_OK, "create (state check)");
+    SIZED(RrDr60BlockInfo, bi);
+    CHECK(rr_dr60_process(q, cin, cout, CN, &bi) == RR_DR60_STATUS_OK, "one real block");
+    uint64_t pos0[2] = {0, 0}, pos1[2] = {0, 0};
+    SIZED(RrDr60MemoryStatus, ms0);
+    SIZED(RrDr60MemoryStatus, ms1);
+    SIZED(RrDr60Meters, m0);
+    SIZED(RrDr60Meters, m1);
+    rr_dr60_stream_position(q, RR_DR60_STREAM_ONE_PASS, &pos0[0]);
+    rr_dr60_input_position(q, RR_DR60_STREAM_ONE_PASS, &pos0[1]);
+    rr_dr60_memory_status(q, &ms0);
+    rr_dr60_meters(q, &m0);
+    AbiBuf bad;
+    abi_paint(&bad, 39);
+    CHECK(rr_dr60_process(q, cin, cout, CN, (RrDr60BlockInfo *)bad.b) == RR_DR60_STATUS_INVALID_ARGUMENT, "refused process");
+    abi_paint(&bad, 4097);
+    CHECK(rr_dr60_record(q, cin, CN, (RrDr60RecordInfo *)bad.b, NULL, 0) == RR_DR60_STATUS_INVALID_ARGUMENT,
+          "refused record");
+    CHECK(rr_dr60_play(q, cout, CN, (RrDr60PlayInfo *)bad.b) == RR_DR60_STATUS_INVALID_ARGUMENT, "refused play");
+    rr_dr60_stream_position(q, RR_DR60_STREAM_ONE_PASS, &pos1[0]);
+    rr_dr60_input_position(q, RR_DR60_STREAM_ONE_PASS, &pos1[1]);
+    rr_dr60_memory_status(q, &ms1);
+    rr_dr60_meters(q, &m1);
+    CHECK(pos0[0] == pos1[0] && pos0[1] == pos1[1] && memcmp(&ms0, &ms1, sizeof ms0) == 0 &&
+              memcmp(&m0, &m1, sizeof m0) == 0,
+          "a refused report processes nothing (022 US1 AS1)");
+    /* The NULL-handle and zero-frames paths at a valid and an invalid size (D12). */
+    abi_paint(&bad, 40);
+    CHECK(rr_dr60_process(NULL, cin, cout, 64, (RrDr60BlockInfo *)bad.b) == RR_DR60_STATUS_NULL_POINTER &&
+              abi_size(&bad) == 40 && abi_zero(&bad, 4, 40),
+          "NULL handle, valid size: the idle report written");
+    abi_paint(&bad, 0);
+    CHECK(rr_dr60_process(NULL, cin, cout, 64, (RrDr60BlockInfo *)bad.b) == RR_DR60_STATUS_NULL_POINTER &&
+              abi_untouched(&bad, 4),
+          "NULL handle, invalid size: nothing written");
+    abi_paint(&bad, 56);
+    CHECK(rr_dr60_process(q, NULL, NULL, 0, (RrDr60BlockInfo *)bad.b) == RR_DR60_STATUS_OK && abi_size(&bad) == 40 &&
+              abi_zero(&bad, 40, 56),
+          "zero frames, valid size: the idle report with a zero tail");
+    abi_paint(&bad, 39);
+    CHECK(rr_dr60_process(q, NULL, NULL, 0, (RrDr60BlockInfo *)bad.b) == RR_DR60_STATUS_INVALID_ARGUMENT &&
+              abi_untouched(&bad, 4),
+          "zero frames, invalid size: refused");
+    /* The three per-call figures (FR-009; reported, CPU time). */
+    {
+      const size_t calls64 = 20 * CRATE / 64;
+      clock_t t0 = clock();
+      for (size_t i = 0; i < calls64; i++) rr_dr60_process(q, cin, cout, 64, &bi);
+      clock_t t1 = clock();
+      const size_t calls4096 = 20 * CRATE / CN;
+      for (size_t i = 0; i < calls4096; i++) rr_dr60_process(q, cin, cout, CN, &bi);
+      clock_t t2 = clock();
+      for (size_t i = 0; i < 1000000; i++) rr_dr60_process(q, NULL, NULL, 0, &bi);
+      clock_t t3 = clock();
+      printf("abi timing (reported): process 64: %.0f ns/call; process 4096: %.0f ns/call; size check and idle write "
+             "(frames 0): %.1f ns/call\n",
+             abi_ns_per_call(t0, t1, (double)calls64), abi_ns_per_call(t1, t2, (double)calls4096),
+             abi_ns_per_call(t2, t3, 1e6));
+    }
+    rr_dr60_destroy(q);
+  }
+}
+
 int main(int argc, char **argv) {
   if (argc > 1 && strcmp(argv[1], "--controls") == 0) {
     print_controls();
@@ -720,6 +1113,9 @@ int main(int argc, char **argv) {
   if (argc > 1 && strcmp(argv[1], "--manifest") == 0) {
     print_manifest();
     return 0;
+  }
+  if (argc > 1 && strcmp(argv[1], "--abi") == 0) {
+    return print_abi();
   }
   static float in[N], out[N];
   for (size_t i = 0; i < N; i++) in[i] = (float)(0.1 * sin(2.0 * PI * 1000.0 * (double)i / FS));
@@ -1582,6 +1978,8 @@ int main(int argc, char **argv) {
   CHECK(sizeof ci == 28, "RrDr60SpeechCodecInfo is %zu bytes (must be 28 since 0.22)", sizeof ci);
   printf("speech codec: %u samples/frame (%u ms), %u bits/frame, delay %u samples, model %u.%u.%u\n", ci.frame_samples,
          ci.frame_ms, ci.bits_per_frame, ci.delay_samples, ci.model_version[0], ci.model_version[1], ci.model_version[2]);
+
+  abi_cases();
 
   if (failures) {
     fprintf(stderr, "smoke: %d failure(s)\n", failures);
