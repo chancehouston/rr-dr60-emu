@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-31
 
-**Status**: Spec approved by the owner 2026-10-31 (D1 – D12); plan reviewed 2026-10-31 (coach 1 – 11, hardware B1 – B9, product M1 – M9); **D13 awaits the owner** (the settings rule, found inverted by the plan's hardware review)
+**Status**: Spec approved by the owner 2026-10-31 (D1 – D12); plan reviewed 2026-10-31 (coach 1 – 11, hardware B1 – B9, product M1 – M9); D13 approved by the owner 2026-10-31 (the settings rule, found inverted by the plan's hardware review); plan approved 2026-10-31; tasks
 
 **Input**: User description: "022 the pre-1.0 C ABI pass (the owner's road to 1.0, decisions.md 2026-10-31). As an app developer integrating the C API (directly or through the Swift package), I want every struct the library fills to carry a size field with one stated compatibility rule, and the two array-element structs to be declared frozen with a start-up check, so that a later library can add a field to a report without breaking my binary, a stale binary is refused clearly instead of being written past its struct, and this is the last ABI break before 1.0."
 
@@ -34,6 +34,10 @@ The owner reads this section first. Each decision gives the recommendation; the 
 
 - The owner approved D1 – D12 as recommended (the eleven size fields, the frozen pair with the `stream` rename, the five-argument check and 64-bit only, one `feat!:` as the last planned break, the cap, the flattened outcome, zeroed padding, the read-back, the check order). The rest proceeds to the plan sign-off and then to the merge, stopping only on a failed check or a new decision.
 
+### Session 2026-10-31 (the owner's plan sign-off)
+
+- The owner approved **D13 as recommended** (equality at `rr_dr60_create` / `reconfigure` / `settings_validate` and in the ABI check; `RrDr60Settings` the one exception to the growth promise; a settings growth moves `RR_DR60_ABI_VERSION`) and the plan (P1 – P9 with the three plan reviews applied). The next owner stop is the merge.
+
 ### Session 2026-10-31 (the draft reviews: coach 1 – 13, hardware B1 – B11, product M1 – M8)
 
 - **"A stale binary is refused" was false for pre-0.22 callers** (hardware B1, coach 3): a 0.21 binary never writes `struct_size`, so the library reads whatever lies at offset 0; the pass is a hard break for every earlier binary and protects 0.22-and-later callers from future growth (D4 reworded). The cap (D8) turns the common garbage case into a refusal.
@@ -52,7 +56,7 @@ The owner reads this section first. Each decision gives the recommendation; the 
 
 ### Session 2026-10-31 (the plan reviews: coach 1 – 11, hardware B1 – B9, product M1 – M9)
 
-- **The settings rule was described backwards** (hardware B1, Critical): the code refuses a *smaller* settings struct and accepts a larger one; D1's edge case, D3's "at most" and the assumption said the opposite, and D4's promise did not hold for the one struct every app passes first. **D13** (awaiting the owner): equality at `create` and in the check, settings carved out of the growth promise, a settings growth moves the ABI version; AS2 and the create test take one above and one below.
+- **The settings rule was described backwards** (hardware B1, Critical): the code refuses a *smaller* settings struct and accepts a larger one; D1's edge case, D3's "at most" and the assumption said the opposite, and D4's promise did not hold for the one struct every app passes first. **D13** (approved at the recommendation): equality at `create` and in the check, settings carved out of the growth promise, a settings growth moves the ABI version; AS2 and the create test take one above and one below.
 - **The counts** (coach 3): fifteen out-structs through the helper, three inputs with their own read rules (`RunData` gets the cap on read; `StopFields` frozen, its size ignored on read as today, written as 40); the "spec 020 five writers" are three (two cited lines were a unit test).
 - **The helper** (coach 2, hardware B3, B4): takes a per-struct ascending list of published layouts ending in `size_of`, fills the largest ≤ the caller's size and writes it back (`[56, 64]` for Meters, `[SIZE]` elsewhere); `build` assigns fields into a zeroed `MaybeUninit` buffer and never assigns the whole struct (a typed copy drops padding in the abstract machine); the byte copy reads the buffer; the size is read by `struct_size_at` (never `(*out).struct_size`). A one-off Miri run gates it (SC-004). `Default` on the fifteen is a manual zeroed value plus the size, and a source-scan test forbids `derive(Default)` and any whole-struct write to them (coach 5).
 - **A pre-existing uninitialized-padding copy** (hardware B2): `RrDr60RecordReadout` has four padding bytes at 212 – 215 that today's `fill_prefix` copies from a typed value; the helper closes it; the painted check adds the readout's offsets (and Meters as a negative control).

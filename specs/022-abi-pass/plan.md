@@ -2,11 +2,11 @@
 
 **Branch**: `022-abi-pass` | **Date**: 2026-10-31 | **Spec**: [spec.md](spec.md)
 
-**Input**: Feature specification from `/specs/022-abi-pass/spec.md` (approved D1 – D12, 2026-10-31; D13 awaiting the owner)
+**Input**: Feature specification from `/specs/022-abi-pass/spec.md` (approved D1 – D13 and the plan, 2026-10-31)
 
 ## Decisions and findings (owner: read this section)
 
-The spec's D1 – D12 stand. The three plan reviews (coach 1 – 11, hardware B1 – B9, product M1 – M9; 2026-10-31) are applied at their defaults; one finding is a **new decision for the owner**:
+The spec's D1 – D12 stand. The three plan reviews (coach 1 – 11, hardware B1 – B9, product M1 – M9; 2026-10-31) are applied at their defaults; one finding was a new decision, **D13, approved by the owner 2026-10-31** at the recommendation:
 
 - **D13 (hardware B1, Critical): the settings rule was described backwards.** The code refuses a settings struct *smaller* than the library's and **accepts a larger one** (reading its prefix, dropping a newer caller's fields); the spec said the opposite, and D4's growth promise did not hold for the one struct every app passes first. Recommended: `rr_dr60_create` / `reconfigure` / `settings_validate` refuse any size different from the library's; the ABI check requires equality; `RrDr60Settings` is the stated exception to the growth promise; a settings growth moves `RR_DR60_ABI_VERSION`. Alternative: a real input prefix rule (a smaller struct's tail filled from the defaults), which would need every future setting to default to its neutral value, a constraint spec 012 already breaks.
 
@@ -87,4 +87,4 @@ docs/guide.md, README.md, CHANGELOG.md, docs/product/{decisions,brief}.md, specs
 
 ## Reviews
 
-The coach (1 – 11), the hardware-emulation reviewer (B1 – B9) and the product specialist (M1 – M9) reviewed this plan on 2026-10-31; every finding is applied above and in the design documents at the reviewers' defaults, and the spec carries the restatements as a dated Clarifications session. D13 is the one new decision, for the owner's plan sign-off.
+The coach (1 – 11), the hardware-emulation reviewer (B1 – B9) and the product specialist (M1 – M9) reviewed this plan on 2026-10-31; every finding is applied above and in the design documents at the reviewers' defaults, and the spec carries the restatements as a dated Clarifications session. D13 and the plan were approved by the owner on 2026-10-31.
