@@ -84,3 +84,7 @@ description: "Task list for the speed-change crossfade (019)"
 ## Implementation strategy
 
 MVP = Phase 1 – 3 (the stage blends, the identities and the click table hold at 6 kHz). Then US2 (the wait's description, the manifest, C), the re-pins, the cost and the records.
+
+## Phase 7: Convergence
+
+- [X] T023 Add an edge case to `crates/rr_dr60_harness/tests/crossfade_edge_cases.rs`: a change scheduled inside a blend that runs into the latch is dropped without sound but logged with chained target levels, the output equal to the reference, per FR-005 "a waited request reaching the latch is dropped, its entry logged" (partial)

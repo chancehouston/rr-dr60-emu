@@ -223,3 +223,31 @@ fn log_carries_target_levels() {
     );
     let _ = Stream::Playback;
 }
+
+/// Convergence T023 (FR-005): a change scheduled inside a blend that runs into the latch never
+/// sounds (the output equals the reference, which drops it) but is logged with chained target
+/// levels, and the reading follows it.
+#[test]
+fn waited_request_into_the_latch_is_logged() {
+    let x = xf::stored_tone(2000.0, 1200);
+    let xs = xf::stored_stream(&x);
+    let k = xs.len() as u64; // level 3 plays one output per stored sample: position = output
+    let mut p = xf::recorded(&standard, speed_only(), &x);
+    let r = cc::run_scheduled(
+        &mut p,
+        Source::Playback(1),
+        &[Change::speed(k - 10, 5, 1), Change::speed(k - 5, 1, 2)],
+        Partition::Fixed(64),
+    );
+    let (want, _) = sc::reference_output_at(&xs, 1, 3, &[(k - 10, 5), (k - 5, 1)]);
+    assert_eq!(sc::mismatches(&r.out, &want), 0);
+    let e = cc::entries_of(&r.log, cc::speed_control());
+    assert_eq!(e.len(), 2, "both requests logged");
+    assert_eq!((e[0].before, e[0].after), (3.0, 5.0));
+    assert_eq!((e[1].before, e[1].after), (5.0, 1.0));
+    assert_eq!(
+        p.playback_speed(),
+        1,
+        "the reading follows the latest request"
+    );
+}
