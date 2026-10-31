@@ -15,8 +15,8 @@ description: "Task list for the processing record (020)"
 
 ## Phase 1: Setup
 
-- [ ] T001 Bump the workspace to 0.20.0: `version = "0.20.0"` in `[workspace.package]` and the internal dependency entries of `Cargo.toml`; `RR_DR60_VERSION_MINOR = 20` and its test in `crates/rr_dr60_ffi/src/lib.rs`; regenerate `crates/rr_dr60_ffi/include/rr_dr60.h`; re-bless the stage manifest's version line (`RR_DR60_BLESS=manifest cargo test -p rr_dr60_harness --test us2_cross_check canonical`, then `RR_DR60_BLESS=readme … readme -- --test-threads=1`); `swift/Package.swift` and the Swift version test if they pin the minor.
-- [ ] T002 [P] Record the baseline in a scratch note: the thirteen audio golden SHA guards (`crates/rr_dr60_harness/tests/golden*.rs`), every smoke hash in `crates/rr_dr60_ffi/tests/c/smoke.c`, the 1096-test count of `cargo test --all-features`, coverage 97.27 % locally (0.19). They must all be unmoved at the end (FR-008, SC-001).
+- [X] T001 Bump the workspace to 0.20.0: `version = "0.20.0"` in `[workspace.package]` and the internal dependency entries of `Cargo.toml`; `RR_DR60_VERSION_MINOR = 20` and its test in `crates/rr_dr60_ffi/src/lib.rs`; regenerate `crates/rr_dr60_ffi/include/rr_dr60.h`; re-bless the stage manifest's version line (`RR_DR60_BLESS=manifest cargo test -p rr_dr60_harness --test us2_cross_check canonical`, then `RR_DR60_BLESS=readme … readme -- --test-threads=1`); `swift/Package.swift` and the Swift version test if they pin the minor.
+- [X] T002 [P] Record the baseline in a scratch note: the thirteen audio golden SHA guards (`crates/rr_dr60_harness/tests/golden*.rs`), every smoke hash in `crates/rr_dr60_ffi/tests/c/smoke.c`, the 1096-test count of `cargo test --all-features`, coverage 97.27 % locally (0.19). They must all be unmoved at the end (FR-008, SC-001).
 
 ## Phase 2: Foundational
 
