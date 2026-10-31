@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-31
 
-**Status**: Spec approved by the owner (2026-10-31); plan drafted with the three plan reviews applied, plan approved 2026-10-31; implementing
+**Status**: Implemented on `020-session-contract` (2026-10-31); PR pending
 
 **Input**: User description: "020 session contract (the owner's engine order 019 → 020, decisions.md 2026-10-29; controls-discussion.md § 4 item 7; investigation-mode.md § 5 "020, record side first"; the items specs 015 and 017 moved here). As an Investigation-mode app and as someone sharing a case file, I want a versioned record for each recording, exported beside the stored form, that says exactly how the recording was processed, so that a recipient with the kept microphone audio and the same library can re-render the recording bit for bit and confirm that the record and the recording belong together, and an app can place every logged change and every voice-activation gap on the microphone's timeline."
 

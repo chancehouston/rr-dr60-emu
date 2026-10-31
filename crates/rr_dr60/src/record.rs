@@ -669,10 +669,10 @@ mod req {
     pub const SEED: u32 = 8;
     pub const COUNTER: u32 = 16;
     pub const STORED_FORM: u32 = 32;
-    pub const STORED_CODEC: u32 = 64;
-    pub const ENCODING: u32 = 128;
-    pub const UNITS: u32 = 256;
-    pub const DIGEST: u32 = 512;
+    pub const STORED_CODEC: u32 = 1 << 6;
+    pub const ENCODING: u32 = 1 << 7;
+    pub const UNITS: u32 = 1 << 8;
+    pub const DIGEST: u32 = 1 << 9;
     pub const REMAINING: u32 = 1 << 10;
     pub const EVENTS_TOTAL: u32 = 1 << 11;
     pub const CHANGES_TOTAL: u32 = 1 << 12;
