@@ -70,7 +70,7 @@ description: "Task list for the pre-1.0 C ABI pass (022)"
 - [x] T017 Record the figures in research.md › Figures and restatements: the sizes as pinned, the smoke's three timing figures, the `SIZED` count, the Miri result (T007); run the release-only A/B modes solo as a no-regression check: `scripts/ab-timing.sh 81f14dd playback`, `… record`, `… bypass` (reported).
 - [x] T018 The full gate: `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `RUSTFLAGS="-D warnings" cargo build -p rr_dr60_ffi --release` (feature-less), the iOS target build, the header drift check, `cargo test --all-features` (count recorded), the MSRV build with `-D warnings`, `crates/rr_dr60_ffi/tests/c/run_smoke.sh`, the iOS simulator golden run, `cd swift && swift test`, `cargo llvm-cov --all-features --workspace --fail-under-lines 80` detached (within 1 point of 96.64 %); the fifteen guards, every smoke hash and the core trees unmoved (T002).
 - [x] T019 The post-implementation reviews: `speckit-coach` and `hw-emulation-reviewer` on the branch (read-only); apply their findings at the defaults; re-run the gate.
-- [ ] T020 Push the branch, open the PR with the `ab-timing` label (the body from a scratch note: D1 – D13, the sizes table, the three edits, the figures, the re-bless of the manifest's version line), CI green on all 12 jobs plus `registers`; the CLAUDE.md status entry (figures, lessons); `/speckit-converge`; the owner merges; the post-merge records on main (spec status, the engine order: 022 done → c1 next, the memory bookmark).
+- [x] T020 Push the branch, open the PR with the `ab-timing` label (the body from a scratch note: D1 – D13, the sizes table, the three edits, the figures, the re-bless of the manifest's version line), CI green on all 12 jobs plus `registers`; the CLAUDE.md status entry (figures, lessons); `/speckit-converge`; the owner merges; the post-merge records on main (spec status, the engine order: 022 done → c1 next, the memory bookmark).
 
 ## Dependencies
 
@@ -85,3 +85,7 @@ description: "Task list for the pre-1.0 C ABI pass (022)"
 ## Implementation strategy
 
 MVP = Phase 2 + US1 (the C contract proven in Rust and C); US2 adds the Swift surface; Polish the records and the gate. One `feat!:` commit series on the branch; the PR squashes nothing (the house keeps the history).
+
+## Phase 6: Convergence
+
+- [x] T021 Record the nightly `miri` CI job (`.github/workflows/ci.yml`, the hardware review's post-implementation Q1 at its default) in `specs/022-abi-pass/spec.md`'s Clarifications as a dated restatement of SC-004's "one-off" Miri run and in `specs/022-abi-pass/records.md` per plan: the Miri gate (R-01, SC-004) (unrequested)
