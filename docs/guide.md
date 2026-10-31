@@ -219,7 +219,7 @@ static void manifest_line(const char *key, const char *value) {
 }
 
 static void print_manifest(void) {
-  RrDr60ManifestHeader h;
+  RrDr60ManifestHeader h = { .struct_size = sizeof h }; /* every struct the library fills starts like this (0.22) */
   if (rr_dr60_manifest_header(&h) != RR_DR60_STATUS_OK) return;
   printf("rr_dr60 manifest\n");
   manifest_line("library_version", h.library_version);
@@ -232,7 +232,7 @@ static void print_manifest(void) {
   manifest_line("assumptions_link", h.assumptions_link);
   manifest_line("sources_link", h.sources_link);
   for (uint32_t n = 1; n <= rr_dr60_manifest_stage_count(); n++) {
-    RrDr60StageEntry e;
+    RrDr60StageEntry e = { .struct_size = sizeof e };
     if (rr_dr60_manifest_stage(n, &e) != RR_DR60_STATUS_OK) return;
     printf("\nstage %u %s\n", e.number, e.identifier);
     manifest_line("name", e.name);

@@ -577,6 +577,7 @@ fn rust_blocks(s: rr_dr60::Settings, x: &[f32], block: usize) -> (Vec<f32>, Vec<
                 events: info.events,
                 paused: info.paused,
                 frames: info.frames,
+                ..Default::default()
             },
             ev[..info.events].iter().copied().map(c_event).collect(),
         ));
@@ -755,6 +756,7 @@ fn c_api_out_info_on_early_returns_and_old_struct_size() {
         events: 77,
         paused: false,
         frames: 77,
+        ..Default::default()
     };
     let mut info = stale;
     // SAFETY (all below): p is live; buffers are valid for their stated lengths.
@@ -771,6 +773,7 @@ fn c_api_out_info_on_early_returns_and_old_struct_size() {
             events: 0,
             paused: true,
             frames: 0,
+            ..Default::default()
         };
         // frames == 0.
         let status = rr_dr60_process(p, std::ptr::null(), std::ptr::null_mut(), 0, &mut info);
@@ -932,6 +935,7 @@ mod panics {
             events: 9,
             paused: true,
             frames: 9,
+            ..Default::default()
         };
         // SAFETY: live (poisoned) handle; valid buffers.
         assert_eq!(
@@ -1041,7 +1045,7 @@ fn c_record(p: *mut RrDr60Pipeline, x: &[f32], block: usize) -> CRecorded {
     let status =
         unsafe { rr_dr60_stop_recording(p, &mut r.outcome, slots.as_mut_ptr(), slots.len()) };
     assert_eq!(status, RrDr60Status::Ok);
-    r.events.extend_from_slice(&slots[..r.outcome.flush.events]);
+    r.events.extend_from_slice(&slots[..r.outcome.flush_events]);
     r
 }
 
@@ -1082,6 +1086,7 @@ fn c_rec_info(i: rr_dr60::RecordInfo) -> RrDr60RecordInfo {
         },
         frames: i.frames,
         frames_total: i.frames_total,
+        ..Default::default()
     }
 }
 
@@ -1092,6 +1097,7 @@ fn c_play_info(i: rr_dr60::PlayInfo) -> RrDr60PlayInfo {
         frames: i.frames,
         frame_index: i.frame_index,
         place: i.place, // spec 013 FR-009
+        ..Default::default()
     }
 }
 
@@ -1173,6 +1179,7 @@ fn rust_state(p: &Pipeline) -> RrDr60EngineState {
         },
         current_recording: st.current.unwrap_or(0),
         speaker_muted: st.speaker_muted,
+        ..Default::default()
     }
 }
 
@@ -1185,6 +1192,7 @@ fn rust_memory(p: &Pipeline) -> RrDr60MemoryStatus {
         max_recordings: m.max_recordings,
         count: m.count,
         slots_remaining: m.slots_remaining,
+        ..Default::default()
     }
 }
 
@@ -1219,13 +1227,20 @@ fn c_api_record_play_loop_matches_rust_at_all_rates() {
             _ => (false, 0, 0),
         };
         let want_outcome = RrDr60StopOutcome {
-            flush: c_rec_info(out.flush),
+            flush_stored: out.flush.stored,
+            flush_events: out.flush.events,
+            flush_paused: out.flush.paused,
+            flush_stopped: out.flush.stopped.is_some(),
+            flush_stop_reason: c_rec_info(out.flush).stop_reason,
+            flush_frames: out.flush.frames,
+            flush_frames_total: out.flush.frames_total,
             kept,
             number,
             length_samples: length,
             silence_fed_samples: out.silence_fed_samples,
             stop_input_position: out.stop_input_position, // 020 D9
             padding_start_sample: out.padding_start_sample,
+            ..Default::default()
         };
         states.push(rust_state(&rust));
         let want_memory = rust_memory(&rust);
@@ -1356,15 +1371,22 @@ fn c_api_codec_loop_and_decoder_tap_match_rust_at_all_rates() {
         };
         assert_eq!(length % 120, 0);
         let want_outcome = RrDr60StopOutcome {
-            flush: c_rec_info(out.flush),
+            flush_stored: out.flush.stored,
+            flush_events: out.flush.events,
+            flush_paused: out.flush.paused,
+            flush_stopped: out.flush.stopped.is_some(),
+            flush_stop_reason: c_rec_info(out.flush).stop_reason,
+            flush_frames: out.flush.frames,
+            flush_frames_total: out.flush.frames_total,
             kept: true,
             number,
             length_samples: length,
             silence_fed_samples: out.silence_fed_samples,
             stop_input_position: out.stop_input_position, // 020 D9
             padding_start_sample: out.padding_start_sample,
+            ..Default::default()
         };
-        assert!(want_outcome.flush.frames_total * 120 == length);
+        assert!(want_outcome.flush_frames_total * 120 == length);
         let want_bytes = split_checks::export_bytes(&rust, number);
         assert_eq!(u16::from_le_bytes([want_bytes[22], want_bytes[23]]), 1);
         let (want_play, want_play_infos) = rust_play_infos(&mut rust, number, 997);
@@ -1485,7 +1507,8 @@ fn c_api_state_table_refusals() {
                 state: 1,
                 route: 0,
                 current_recording: 1,
-                speaker_muted: true
+                speaker_muted: true,
+                ..Default::default()
             }
         );
         assert_eq!(
@@ -1543,7 +1566,8 @@ fn c_api_state_table_refusals() {
                 state: 2,
                 route: 0,
                 current_recording: 1,
-                speaker_muted: false
+                speaker_muted: false,
+                ..Default::default()
             }
         );
         assert_eq!(rr_dr60_start_recording(p), RrDr60Status::PlaybackInProgress);
@@ -2698,7 +2722,7 @@ fn changes_parity() {
             && c.after.to_bits() == r.after.to_bits()
             && c.tag == r.tag
             && c.control == r.control
-            && c.reserved == r.stream // 020 D9: the C field keeps its name
+            && c.stream == r.stream // 020 D9; 022 D2: named `stream`
     };
     for &rate in configs::measurement_rates() {
         let x = stimulus::voiced(f64::from(rate), 0.5, -20.0, 0x015);
@@ -2871,7 +2895,7 @@ fn record_parity() {
             && c.after.to_bits() == r.after.to_bits()
             && c.tag == r.tag
             && c.control == r.control
-            && c.reserved == r.stream // 020 D9: the C field keeps its name
+            && c.stream == r.stream // 020 D9; 022 D2: named `stream`
     };
     for &rate in configs::measurement_rates() {
         let x = stimulus::voiced(f64::from(rate), 0.5, -20.0, 0x017);
@@ -3417,7 +3441,7 @@ fn record_contract_parity() {
             )
         };
         assert_eq!(st, RrDr60Status::Ok);
-        c_events.extend_from_slice(&ev[..so.flush.events]);
+        c_events.extend_from_slice(&ev[..so.flush_events]);
         c_changes.extend_from_slice(&ch[..count]);
         assert_eq!(c_events.len(), run.events.len(), "{tag}: the events");
         assert_eq!(c_changes.len(), run.changes.len(), "{tag}: the entries");
@@ -3576,7 +3600,7 @@ fn record_contract_parity() {
         // SAFETY: valid pointers.
         assert!(unsafe { rr_dr60_record_change(c_rec.as_ptr(), len, 0, &mut c) });
         assert_eq!(
-            (c.position, c.control, c.reserved),
+            (c.position, c.control, c.stream),
             (
                 run.changes[0].position,
                 run.changes[0].control,
@@ -3683,7 +3707,7 @@ fn record_contract_parity() {
                 after: e.after,
                 tag: e.tag,
                 control: e.control,
-                reserved: e.stream,
+                stream: e.stream,
             })
             .collect();
         for i in [0u64, 100, 150, 3000] {

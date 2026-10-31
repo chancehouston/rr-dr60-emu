@@ -62,6 +62,10 @@ static RrDr60Settings settings_011(uint32_t host_rate_hz) {
 
 static int failures = 0;
 
+/* Spec 022 D1: every struct the library fills starts with its size (the compatible prefix-fill
+ * rule); a zero or uninitialized `struct_size` is refused at run time. */
+#define SIZED(T, name) T name = { .struct_size = (uint32_t)sizeof(T) }
+
 /* FNV-1a 64 over the little-endian bytes of n floats (the harness's smoke_reference::fnv1a64). */
 static uint64_t fnv_floats(const float *x, size_t n) {
   uint64_t h = 0xcbf29ce484222325ULL;
@@ -132,7 +136,7 @@ static void manifest_line(const char *key, const char *value) {
 }
 
 static void print_manifest(void) {
-  RrDr60ManifestHeader h;
+  RrDr60ManifestHeader h = { .struct_size = sizeof h }; /* every struct the library fills starts like this (0.22) */
   if (rr_dr60_manifest_header(&h) != RR_DR60_STATUS_OK) return;
   printf("rr_dr60 manifest\n");
   manifest_line("library_version", h.library_version);
@@ -145,7 +149,7 @@ static void print_manifest(void) {
   manifest_line("assumptions_link", h.assumptions_link);
   manifest_line("sources_link", h.sources_link);
   for (uint32_t n = 1; n <= rr_dr60_manifest_stage_count(); n++) {
-    RrDr60StageEntry e;
+    RrDr60StageEntry e = { .struct_size = sizeof e };
     if (rr_dr60_manifest_stage(n, &e) != RR_DR60_STATUS_OK) return;
     printf("\nstage %u %s\n", e.number, e.identifier);
     manifest_line("name", e.name);
@@ -218,9 +222,9 @@ static int print_meters(void) {
   if (rr_dr60_create(&s, &p) != RR_DR60_STATUS_OK) return 1;
   for (size_t pos = 0; pos < MN; pos += MBLOCK) {
     size_t n = MN - pos < MBLOCK ? MN - pos : MBLOCK;
-    RrDr60BlockInfo info;
+    SIZED(RrDr60BlockInfo, info);
     if (rr_dr60_process(p, min_ + pos, mout + pos, n, &info) != RR_DR60_STATUS_OK) return 1;
-    RrDr60Meters m;
+    SIZED(RrDr60Meters, m);
     memset(&m, 0, sizeof m);
     m.struct_size = (uint32_t)sizeof m;
     if (rr_dr60_meters(p, &m) != RR_DR60_STATUS_OK) return 1;
@@ -251,7 +255,7 @@ static int print_meters(void) {
 static uint32_t control_index(const char *identifier) {
   uint32_t n = rr_dr60_control_count();
   for (uint32_t i = 0; i < n; i++) {
-    RrDr60Control c;
+    SIZED(RrDr60Control, c);
     if (rr_dr60_control(i, &c) == RR_DR60_STATUS_OK && strcmp(c.identifier, identifier) == 0) return i;
   }
   return UINT32_MAX;
@@ -293,7 +297,7 @@ static int print_changes(void) {
   printf("one-pass\n");
   for (size_t pos = 0; pos < CN; pos += CBLOCK) {
     size_t n = CN - pos < CBLOCK ? CN - pos : CBLOCK;
-    RrDr60BlockInfo info;
+    SIZED(RrDr60BlockInfo, info);
     size_t count = 0;
     if (rr_dr60_process_with_events_and_changes(p, cin + pos, cout + pos, n, &info, NULL, 0, entries,
                                                 RR_DR60_MAX_CHANGES_PER_CALL, &count) != RR_DR60_STATUS_OK)
@@ -304,9 +308,9 @@ static int print_changes(void) {
   printf("digest %016llx\n", (unsigned long long)h);
   /* Record the same input, then play it with changes. */
   if (rr_dr60_start_recording(p) != RR_DR60_STATUS_OK) return 1;
-  RrDr60RecordInfo rinfo;
+  SIZED(RrDr60RecordInfo, rinfo);
   if (rr_dr60_record(p, cin, CN, &rinfo, NULL, 0) != RR_DR60_STATUS_OK) return 1;
-  RrDr60StopOutcome so;
+  SIZED(RrDr60StopOutcome, so);
   if (rr_dr60_stop_recording(p, &so, NULL, 0) != RR_DR60_STATUS_OK) return 1;
   if (rr_dr60_schedule_change(p, RR_DR60_STREAM_PLAYBACK, 500, volume, 0.8, 3) != RR_DR60_STATUS_OK) return 1;
   if (rr_dr60_schedule_change(p, RR_DR60_STREAM_PLAYBACK, 900, speed, 5.0, 4) != RR_DR60_STATUS_OK) return 1;
@@ -314,7 +318,7 @@ static int print_changes(void) {
   printf("playback\n");
   h = 0xcbf29ce484222325ULL;
   for (;;) {
-    RrDr60PlayInfo info;
+    SIZED(RrDr60PlayInfo, info);
     size_t count = 0;
     if (rr_dr60_play_with_changes(p, cout, CBLOCK, &info, entries, RR_DR60_MAX_CHANGES_PER_CALL, &count) != RR_DR60_STATUS_OK)
       return 1;
@@ -353,13 +357,13 @@ static int print_battery(void) {
     uint64_t h = 0xcbf29ce484222325ULL;
     for (size_t pos = 0; pos < BN; pos += BBLOCK) {
       size_t n = BN - pos < BBLOCK ? BN - pos : BBLOCK;
-      RrDr60BlockInfo info;
+      SIZED(RrDr60BlockInfo, info);
       size_t count = 0;
       if (rr_dr60_process_with_events_and_changes(p, bin + pos, bout + pos, n, &info, NULL, 0, entries,
                                                   RR_DR60_MAX_CHANGES_PER_CALL, &count) != RR_DR60_STATUS_OK)
         return 1;
       for (size_t k = 0; k < count; k++) print_entry(&entries[k]);
-      RrDr60Meters m;
+      SIZED(RrDr60Meters, m);
       memset(&m, 0, sizeof m);
       m.struct_size = (uint32_t)sizeof m;
       if (rr_dr60_meters(p, &m) != RR_DR60_STATUS_OK) return 1;
@@ -419,7 +423,7 @@ static int print_bypass(void) {
   uint64_t h = 0xcbf29ce484222325ULL;
   for (size_t pos = 0; pos < YN; pos += YBLOCK) {
     size_t n = YN - pos < YBLOCK ? YN - pos : YBLOCK;
-    RrDr60BlockInfo info;
+    SIZED(RrDr60BlockInfo, info);
     size_t count = 0;
     if (rr_dr60_process_with_events_and_changes(p, yin + pos, yout + pos, n, &info, NULL, 0, entries,
                                                 RR_DR60_MAX_CHANGES_PER_CALL, &count) != RR_DR60_STATUS_OK)
@@ -478,7 +482,7 @@ static int print_record(void) {
   RrDr60ChangeEntry ch[RR_DR60_MAX_CHANGES_PER_CALL];
   for (size_t pos = 0; pos < PN; pos += PBLOCK) {
     size_t n = PN - pos < PBLOCK ? PN - pos : PBLOCK;
-    RrDr60RecordInfo info;
+    SIZED(RrDr60RecordInfo, info);
     size_t count = 0;
     uint64_t total = 0;
     if (rr_dr60_record_with_changes(p, pin + pos, n, &info, ev, PEV, ch, RR_DR60_MAX_CHANGES_PER_CALL, &count, &total) !=
@@ -488,14 +492,14 @@ static int print_record(void) {
     for (size_t k = 0; k < info.events; k++) events[n_events++] = ev[k];
     for (size_t k = 0; k < count; k++) changes[n_changes++] = ch[k];
   }
-  RrDr60StopOutcome so;
+  SIZED(RrDr60StopOutcome, so);
   size_t count = 0;
   uint64_t total = 0;
   if (rr_dr60_stop_recording_with_changes(p, &so, ev, PEV, ch, RR_DR60_MAX_CHANGES_PER_CALL, &count, &total) !=
       RR_DR60_STATUS_OK)
     return 1;
-  if (!so.kept || so.flush.events > PEV) return 1;
-  for (size_t k = 0; k < so.flush.events; k++) events[n_events++] = ev[k];
+  if (!so.kept || so.flush_events > PEV) return 1;
+  for (size_t k = 0; k < so.flush_events; k++) events[n_events++] = ev[k];
   for (size_t k = 0; k < count; k++) changes[n_changes++] = ch[k];
   RrDr60RunData run;
   memset(&run, 0, sizeof run);
@@ -582,7 +586,7 @@ static int print_record_changes(void) {
   printf("record\n");
   for (size_t pos = 0; pos < CN; pos += CBLOCK) {
     size_t n = CN - pos < CBLOCK ? CN - pos : CBLOCK;
-    RrDr60RecordInfo info;
+    SIZED(RrDr60RecordInfo, info);
     size_t count = 0;
     uint64_t total = 0;
     if (rr_dr60_record_with_changes(p, cin + pos, n, &info, NULL, 0, entries, RR_DR60_MAX_CHANGES_PER_CALL, &count,
@@ -590,7 +594,7 @@ static int print_record_changes(void) {
       return 1;
     for (size_t k = 0; k < count; k++) print_entry(&entries[k]);
   }
-  RrDr60StopOutcome so;
+  SIZED(RrDr60StopOutcome, so);
   size_t count = 0;
   uint64_t total = 0;
   if (rr_dr60_stop_recording_with_changes(p, &so, NULL, 0, entries, RR_DR60_MAX_CHANGES_PER_CALL, &count, &total) !=
@@ -618,7 +622,7 @@ static int print_record_changes(void) {
   h = 0xcbf29ce484222325ULL;
   for (size_t pos = 0; pos < CN; pos += CBLOCK) {
     size_t n = CN - pos < CBLOCK ? CN - pos : CBLOCK;
-    RrDr60BlockInfo info;
+    SIZED(RrDr60BlockInfo, info);
     size_t count2 = 0;
     if (rr_dr60_process_with_events_and_changes(p, cin + pos, cout + pos, n, &info, NULL, 0, entries,
                                                 RR_DR60_MAX_CHANGES_PER_CALL, &count2) != RR_DR60_STATUS_OK)
@@ -635,7 +639,7 @@ static void print_controls(void) {
   uint32_t n = rr_dr60_control_count();
   printf("control_count: %u\n", n);
   for (uint32_t i = 0; i < n; i++) {
-    RrDr60Control c;
+    SIZED(RrDr60Control, c);
     if (rr_dr60_control(i, &c) != RR_DR60_STATUS_OK) return;
     printf("\n[%u] %s\n", i, c.identifier);
     printf("name: %s\n", c.name);
@@ -667,7 +671,7 @@ static void print_controls(void) {
       case RR_DR60_CONTROL_VALUE_TYPE_CHOICE:
         printf("value: choice\noptions: ");
         for (uint32_t k = 0; k < c.option_count; k++) {
-          RrDr60ControlOption o;
+          SIZED(RrDr60ControlOption, o);
           if (rr_dr60_control_option(i, k, &o) == RR_DR60_STATUS_OK) printf("%s%s=%u", k ? ", " : "", o.identifier, o.value);
         }
         if (c.has_default) printf("\ndefault: %u\n", c.choice_default);
@@ -943,8 +947,7 @@ int main(int argc, char **argv) {
   CHECK(rr_dr60_max_events(p, 7 * FS, &capacity) == RR_DR60_STATUS_OK && capacity >= 1, "max_events");
   RrDr60VasEvent *events = (RrDr60VasEvent *)malloc(capacity * sizeof *events);
   CHECK(events != NULL, "malloc");
-  RrDr60BlockInfo info;
-  memset(&info, 0, sizeof info);
+  SIZED(RrDr60BlockInfo, info);
   CHECK(rr_dr60_process_with_events(p, vin, vout, 7 * FS, &info, events, capacity) == RR_DR60_STATUS_OK,
         "process_with_events");
   /* Kept: burst + hang time (1 s) + burst minus onset (20 ms), minus the end-of-stream latency. */
@@ -1012,12 +1015,13 @@ int main(int argc, char **argv) {
      * 48 kHz (483 + 1440, 40.06 ms). */
     CHECK(rr_dr60_latency_samples(a, &latency_default) == RR_DR60_STATUS_OK && latency_default == 1923,
           "default latency %u samples (must be 1923 with the codec on, 008 FR-004)", latency_default);
-    RrDr60EngineState st;
+    SIZED(RrDr60EngineState, st);
     memset(&st, 0xEE, sizeof st);
+    st.struct_size = sizeof st; /* painted, then sized (spec 022) */
     CHECK(rr_dr60_get_state(a, &st) == RR_DR60_STATUS_OK && st.state == RR_DR60_STATE_IDLE &&
               st.route == RR_DR60_ROUTE_SPEAKER && st.current_recording == 0 && !st.speaker_muted,
           "idle state");
-    RrDr60MemoryStatus ms;
+    SIZED(RrDr60MemoryStatus, ms);
     CHECK(rr_dr60_memory_status(a, &ms) == RR_DR60_STATUS_OK && ms.count == 0 && ms.used_samples == 0 &&
               ms.remaining_samples == 21600000ULL && ms.max_recordings == 99 && ms.slots_remaining == 99,
           "default memory figures (S-001: 60 min, 99 items; device samples, A-026)");
@@ -1032,24 +1036,25 @@ int main(int argc, char **argv) {
     CHECK(ev != NULL, "malloc");
     size_t stored = 0, nevents = 0;
     for (size_t at = 0; at < FS; at += 480) {
-      RrDr60RecordInfo ri;
+      SIZED(RrDr60RecordInfo, ri);
       CHECK(rr_dr60_record(a, sq + at, 480, &ri, ev, cap) == RR_DR60_STATUS_OK, "record block %zu", at / 480);
       CHECK(!ri.stopped, "stopped inside the loop");
       stored += ri.stored;
       nevents += ri.events;
     }
-    RrDr60StopOutcome so;
+    SIZED(RrDr60StopOutcome, so);
     memset(&so, 0xEE, sizeof so);
+    so.struct_size = sizeof so; /* painted, then sized (spec 022) */
     CHECK(rr_dr60_stop_recording(a, &so, ev, cap) == RR_DR60_STATUS_OK, "stop_recording");
-    stored += so.flush.stored;
+    stored += so.flush_stored;
     /* Spec 008 FR-013: a whole number of frames; the kept samples run to the last frame's
      * look-ahead (length + 60); the frame count and the silence fed are the Rust path's. */
     CHECK(so.kept && so.number == 1 && so.length_samples % 120 == 0 &&
-              so.length_samples == so.flush.frames_total * 120 && stored == so.length_samples + 60,
+              so.length_samples == so.flush_frames_total * 120 && stored == so.length_samples + 60,
           "kept number %u, length %llu, frames %llu, stored %zu", so.number, (unsigned long long)so.length_samples,
-          (unsigned long long)so.flush.frames_total, stored);
-    CHECK(so.flush.frames_total == RR_DR60_SMOKE_FRAMES && so.silence_fed_samples == RR_DR60_SMOKE_SILENCE_FED,
-          "frames %llu, silence fed %llu (Rust: %d, %d)", (unsigned long long)so.flush.frames_total,
+          (unsigned long long)so.flush_frames_total, stored);
+    CHECK(so.flush_frames_total == RR_DR60_SMOKE_FRAMES && so.silence_fed_samples == RR_DR60_SMOKE_SILENCE_FED,
+          "frames %llu, silence fed %llu (Rust: %d, %d)", (unsigned long long)so.flush_frames_total,
           (unsigned long long)so.silence_fed_samples, RR_DR60_SMOKE_FRAMES, RR_DR60_SMOKE_SILENCE_FED);
     CHECK(nevents == 0, "a continuous tone has no VAS events (%zu)", nevents);
     free(ev);
@@ -1064,7 +1069,7 @@ int main(int argc, char **argv) {
     CHECK(rr_dr60_get_encoding(a, &enc) == RR_DR60_STATUS_OK && enc == RR_DR60_ENCODING_FRAMES, "encoding %u", enc);
     size_t len = 0, written = 0;
     /* Form version 2 (spec 008 FR-010): 52 + 10 bytes per frame. */
-    CHECK(rr_dr60_export_len(a, 1, &len) == RR_DR60_STATUS_OK && len == 52 + 10 * (size_t)so.flush.frames_total,
+    CHECK(rr_dr60_export_len(a, 1, &len) == RR_DR60_STATUS_OK && len == 52 + 10 * (size_t)so.flush_frames_total,
           "export_len %zu", len);
     uint8_t small[10];
     memset(small, 0xAA, sizeof small);
@@ -1127,7 +1132,7 @@ int main(int argc, char **argv) {
             "playing state %d", h);
       uint64_t decoded = 0, last_index = 0;
       for (;;) {
-        RrDr60PlayInfo pi;
+        SIZED(RrDr60PlayInfo, pi);
         CHECK(*counts[h] + 480 <= 8 * (size_t)FS, "playback longer than expected");
         CHECK(rr_dr60_play(handles[h], outs[h] + *counts[h], 480, &pi) == RR_DR60_STATUS_OK, "play %d", h);
         *counts[h] += pi.produced;
@@ -1189,10 +1194,10 @@ int main(int argc, char **argv) {
       CHECK(rr_dr60_earphone_gain_db(1.0f) == 0.0f, "earphone gain at position 1: 0 dB (A-042)");
       CHECK(rr_dr60_start_recording(r) == RR_DR60_STATUS_OK, "start_recording (route cases)");
       for (size_t at = 0; at < FS; at += 480) {
-        RrDr60RecordInfo ri;
+        SIZED(RrDr60RecordInfo, ri);
         CHECK(rr_dr60_record(r, sq + at, 480, &ri, NULL, 0) == RR_DR60_STATUS_OK, "record (route cases) %zu", at / 480);
       }
-      RrDr60StopOutcome rso;
+      SIZED(RrDr60StopOutcome, rso);
       CHECK(rr_dr60_stop_recording(r, &rso, NULL, 0) == RR_DR60_STATUS_OK && rso.kept && rso.number == 1,
             "stop_recording (route cases)");
       static const uint32_t routes[4] = {RR_DR60_ROUTE_SPEAKER, RR_DR60_ROUTE_SPEAKER, RR_DR60_ROUTE_EARPHONE,
@@ -1207,7 +1212,7 @@ int main(int argc, char **argv) {
         CHECK(rr_dr60_start_playback(r, 1) == RR_DR60_STATUS_OK, "start_playback (route case %d)", k);
         size_t nr = 0;
         for (;;) {
-          RrDr60PlayInfo pi;
+          SIZED(RrDr60PlayInfo, pi);
           CHECK(nr + 480 <= 8 * (size_t)FS, "route playback longer than expected");
           CHECK(rr_dr60_play(r, pr + nr, 480, &pi) == RR_DR60_STATUS_OK, "play (route case %d)", k);
           nr += pi.produced;
@@ -1233,7 +1238,7 @@ int main(int argc, char **argv) {
       RrDr60Pipeline *t = NULL;
       CHECK(rr_dr60_create(&spk_tap, &t) == RR_DR60_STATUS_OK && t != NULL, "create (speaker tap)");
       CHECK(rr_dr60_set_route(t, RR_DR60_ROUTE_EARPHONE) == RR_DR60_STATUS_OK, "earphone route on a speaker-tap handle");
-      RrDr60BlockInfo bi;
+      SIZED(RrDr60BlockInfo, bi);
       CHECK(rr_dr60_process(t, sq, pr, 480, &bi) == RR_DR60_STATUS_TAP_NOT_ON_ROUTE && bi.produced == 0,
             "process with the speaker tap on the earphone route: 24");
       CHECK(rr_dr60_set_route(t, RR_DR60_ROUTE_SPEAKER) == RR_DR60_STATUS_OK &&
@@ -1268,10 +1273,10 @@ int main(int argc, char **argv) {
         CHECK(rr_dr60_create(&cfgs[h], &handles2[h]) == RR_DR60_STATUS_OK && handles2[h] != NULL, "create (010 case %d)", h);
         CHECK(rr_dr60_start_recording(handles2[h]) == RR_DR60_STATUS_OK, "start_recording (010 case %d)", h);
         for (size_t at = 0; at < FS; at += 480) {
-          RrDr60RecordInfo ri;
+          SIZED(RrDr60RecordInfo, ri);
           CHECK(rr_dr60_record(handles2[h], fsq + at, 480, &ri, NULL, 0) == RR_DR60_STATUS_OK, "record (010) %zu", at / 480);
         }
-        RrDr60StopOutcome cso;
+        SIZED(RrDr60StopOutcome, cso);
         CHECK(rr_dr60_stop_recording(handles2[h], &cso, NULL, 0) == RR_DR60_STATUS_OK && cso.kept && cso.number == 1,
               "stop_recording (010 case %d)", h);
       }
@@ -1286,7 +1291,7 @@ int main(int argc, char **argv) {
         size_t nc = 0;
         int bounded = 1;
         for (;;) {
-          RrDr60PlayInfo pi;
+          SIZED(RrDr60PlayInfo, pi);
           CHECK(nc + 480 <= 8 * (size_t)FS, "clamp playback longer than expected");
           CHECK(rr_dr60_play(handles2[0], pc + nc, 480, &pi) == RR_DR60_STATUS_OK, "play (clamp case %d)", k);
           for (size_t i = 0; i < pi.produced; i++) bounded &= fabsf(pc[nc + i]) <= 1.0f;
@@ -1315,7 +1320,7 @@ int main(int argc, char **argv) {
             "option-off playback");
       int exceeded = 0;
       for (;;) {
-        RrDr60PlayInfo pi;
+        SIZED(RrDr60PlayInfo, pi);
         CHECK(rr_dr60_play(handles2[1], pc, 480, &pi) == RR_DR60_STATUS_OK, "play (option off)");
         for (size_t i = 0; i < pi.produced; i++) exceeded |= fabsf(pc[i]) > 1.0f;
         if (pi.finished) break;
@@ -1333,7 +1338,7 @@ int main(int argc, char **argv) {
       for (int block = 0;; block++) {
         if (block == 10) CHECK(rr_dr60_set_volume(handles2[1], 1.0f) == RR_DR60_STATUS_OK, "set_volume 1.0 (011)");
         if (block == 11) CHECK(rr_dr60_set_volume(handles2[1], 0.4f) == RR_DR60_STATUS_OK, "set_volume 0.4 (011)");
-        RrDr60PlayInfo pi;
+        SIZED(RrDr60PlayInfo, pi);
         CHECK(nr2 + 480 <= 8 * (size_t)FS, "transition playback longer than expected");
         CHECK(rr_dr60_play(handles2[1], pc + nr2, 480, &pi) == RR_DR60_STATUS_OK, "play (011)");
         nr2 += pi.produced;
@@ -1363,7 +1368,7 @@ int main(int argc, char **argv) {
                 RR_DR60_SPEED_RATIO_DENOMINATOR == 5 && RR_DR60_SPEED_RATIO_NUMERATOR_1 == 3 &&
                 RR_DR60_SPEED_RATIO_NUMERATOR_5 == 7,
             "the speed defines (013 FR-002)");
-      CHECK(sizeof(RrDr60PlayInfo) == 40 || sizeof(void *) != 8, "RrDr60PlayInfo is 40 bytes since 0.13 (013 FR-012)");
+      CHECK(sizeof(RrDr60PlayInfo) == 48 || sizeof(void *) != 8, "RrDr60PlayInfo is 48 bytes since 0.22 (40 since 0.13; 022 R-03)");
       uint8_t lvl = 0;
       CHECK(rr_dr60_get_playback_speed(handles2[1], &lvl) == RR_DR60_STATUS_OK && lvl == 3, "default level 3 (013 FR-001)");
       CHECK(rr_dr60_set_playback_speed(handles2[1], 0) == RR_DR60_STATUS_INVALID_SPEED_LEVEL &&
@@ -1383,7 +1388,7 @@ int main(int argc, char **argv) {
       CHECK(ps != NULL, "malloc");
       for (int block = 0;; block++) {
         if (block == 10) CHECK(rr_dr60_set_playback_speed(handles2[1], 1) == RR_DR60_STATUS_OK, "level 1 (013)");
-        RrDr60PlayInfo pi;
+        SIZED(RrDr60PlayInfo, pi);
         CHECK(ns + 480 <= 3 * (size_t)FS, "speed playback longer than expected");
         CHECK(rr_dr60_play(handles2[1], ps + ns, 480, &pi) == RR_DR60_STATUS_OK, "play (013)");
         CHECK(pi.place >= last_place, "the place never decreases (013 FR-009)");
@@ -1426,7 +1431,7 @@ int main(int argc, char **argv) {
     int full = 0;
     for (int round = 0; round < 3 && !full; round++) {
       for (size_t at = 0; at < FS && !full; at += 4800) {
-        RrDr60RecordInfo ri;
+        SIZED(RrDr60RecordInfo, ri);
         CHECK(rr_dr60_record(c, sq + at, 4800, &ri, NULL, 0) == RR_DR60_STATUS_OK, "record into 1 s");
         total += ri.stored;
         if (ri.stopped) {
@@ -1482,7 +1487,7 @@ int main(int argc, char **argv) {
     CHECK(rr_dr60_create(&m, &mq) == RR_DR60_STATUS_OK && mq != NULL, "create (0.12 default)");
     size_t mn = 0;
     for (size_t at = 0; at < (size_t)(FS + FS / 2); at += 480) {
-      RrDr60BlockInfo bi;
+      SIZED(RrDr60BlockInfo, bi);
       CHECK(rr_dr60_process(mq, min_ + at, mout, 480, &bi) == RR_DR60_STATUS_OK, "process (0.12 default)");
       memcpy(mall + mn, mout, bi.produced * sizeof(float));
       mn += bi.produced;
@@ -1505,11 +1510,11 @@ int main(int argc, char **argv) {
       CHECK(rr_dr60_start_recording(mq) == RR_DR60_STATUS_OK, "start recording %d", r);
       for (size_t at = 0; at < (size_t)FS; at += 480)
         CHECK(rr_dr60_record(mq, zeros, 480, NULL, NULL, 0) == RR_DR60_STATUS_OK, "record silence");
-      RrDr60StopOutcome mso;
+      SIZED(RrDr60StopOutcome, mso);
       CHECK(rr_dr60_stop_recording(mq, &mso, NULL, 0) == RR_DR60_STATUS_OK && mso.kept, "stop recording %d", r);
       CHECK(rr_dr60_start_playback(mq, mso.number) == RR_DR60_STATUS_OK, "play recording %u", mso.number);
       for (;;) {
-        RrDr60PlayInfo pi;
+        SIZED(RrDr60PlayInfo, pi);
         CHECK(mlen[r] + 480 <= 8 * (size_t)FS, "hiss playback longer than expected");
         CHECK(rr_dr60_play(mq, mplay[r] + mlen[r], 480, &pi) == RR_DR60_STATUS_OK, "play (hiss)");
         mlen[r] += pi.produced;
@@ -1529,8 +1534,8 @@ int main(int argc, char **argv) {
 
   /* Spec 007 US3: the stage manifest through the C API (contracts/c-api.md › Smoke test). */
   {
-    RrDr60ManifestHeader h;
-    RrDr60StageEntry e;
+    SIZED(RrDr60ManifestHeader, h);
+    SIZED(RrDr60StageEntry, e);
     const char *id = NULL;
     const char *kept = NULL;
     CHECK(rr_dr60_manifest_stage_count() == 15, "stage count %u", rr_dr60_manifest_stage_count());
@@ -1565,15 +1570,16 @@ int main(int argc, char **argv) {
   }
 
   /* Spec 008 FR-003 (contracts/c-api.md): the codec's constants, handle-less. */
-  RrDr60SpeechCodecInfo ci;
+  SIZED(RrDr60SpeechCodecInfo, ci);
   memset(&ci, 0xEE, sizeof ci);
+  ci.struct_size = sizeof ci; /* painted, then sized (spec 022) */
   CHECK(rr_dr60_speech_codec_info(NULL) == RR_DR60_STATUS_NULL_POINTER, "speech_codec_info(NULL)");
   CHECK(rr_dr60_speech_codec_info(&ci) == RR_DR60_STATUS_OK && ci.frame_samples == 120 && ci.frame_ms == 20 &&
             ci.bits_per_frame == 80 && ci.delay_samples == 180 && ci.model_version[0] == 0 &&
             ci.model_version[1] == 8 && ci.model_version[2] == 0 && ci.reserved == 0,
         "speech_codec_info: %u samples, %u ms, %u bits, delay %u, model %u.%u.%u", ci.frame_samples, ci.frame_ms,
         ci.bits_per_frame, ci.delay_samples, ci.model_version[0], ci.model_version[1], ci.model_version[2]);
-  CHECK(sizeof ci == 24, "RrDr60SpeechCodecInfo is %zu bytes (must be 24)", sizeof ci);
+  CHECK(sizeof ci == 28, "RrDr60SpeechCodecInfo is %zu bytes (must be 28 since 0.22)", sizeof ci);
   printf("speech codec: %u samples/frame (%u ms), %u bits/frame, delay %u samples, model %u.%u.%u\n", ci.frame_samples,
          ci.frame_ms, ci.bits_per_frame, ci.delay_samples, ci.model_version[0], ci.model_version[1], ci.model_version[2]);
 

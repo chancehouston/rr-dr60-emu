@@ -92,4 +92,6 @@ What moves the version (the guide, the CHANGELOG): a frozen struct's bytes, a fu
 
 ## Figures and restatements
 
-*(Filled at implementation: the sizes as `size_of` pins them, the smoke's three figures, the Miri run's result, the A/B label's figures.)*
+- **The Miri gate (T007, 2026-10-31)**: `cargo +nightly miri test -p rr_dr60_ffi --lib -- abi_tests::write_sized abi_tests::readout_prefix abi_tests::default_is abi_tests::published` (Miri on nightly, installed for the run). The first run **found the hazard hardware B3 predicted**: with `MaybeUninit::<T>::zeroed()` the buffer reaches the helper through a typed move, and Miri reported the padding byte at offset 4 of `RrDr60BlockInfo` uninitialized after the fill (`abi_tests.rs:109`, the painted-padding oracle). The helper now zeroes an `uninit()` buffer in place (`write_bytes(0, 1)` through the raw pointer) and the five tests pass under Miri (66 s). The 0xAA smoke could not have seen it (the native build copies zeros).
+- The sizes as `size_of` pins them: 40, 48, 88, 48, 20, 48, 28, 72, 80, 120, 24 (the eleven); the smoke's `SIZED` count: 42 declarations (40 unsized plus two Meters that were sized by hand).
+- *(To fill: the smoke's three timing figures, the A/B label's figures.)*

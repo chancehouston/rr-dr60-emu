@@ -60,7 +60,7 @@ private func recordAndWrite(raw: [Int32], schedule: [(UInt64, UInt32, Double)]) 
     var total: UInt64 = 0
     #expect(isOK(rr_dr60_stop_recording_with_changes(p, &outcome, &ev, 64, &ch, UInt(ch.count), &count, &total)))
     #expect(outcome.kept)
-    events.append(contentsOf: ev.prefix(Int(outcome.flush.events)))
+    events.append(contentsOf: ev.prefix(Int(outcome.flush_events)))
     changes.append(contentsOf: ch.prefix(Int(count)))
     var run = RrDr60RunData()
     run.struct_size = UInt32(MemoryLayout<RrDr60RunData>.size)
