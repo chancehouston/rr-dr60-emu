@@ -56,7 +56,7 @@
 
 **Rationale.** D9, FR-009.
 
-**Figures (2026-10-30, a solo run of `scripts/ab-timing.sh 13defc7 crossfade`, this machine, 45 runs × 3 alternations).** Level 3: 13defc7 26.23 ns, the working tree 26.34 ns per host sample, **+0.10 ns (+0.40 %)**; level 5: 28.87 → 28.91 ns, **+0.04 ns (+0.15 %)**; both PASS at the 3 % budget. A change every 200 ms (3 → 5 → 1 → 3): 28.48 ns per host sample, +2.14 ns (+8.13 %) over level 3; the worst 4096-sample block 218.2 µs of the 85 333 µs budget. The CI runner's figures come from the PR's `ab-timing` label (ceiling 5 %).
+**Figures (2026-10-30, a solo run of `scripts/ab-timing.sh 13defc7 crossfade`, this machine, 45 runs × 3 alternations).** Level 3: 13defc7 26.23 ns, the working tree 26.34 ns per host sample, **+0.10 ns (+0.40 %)**; level 5: 28.87 → 28.91 ns, **+0.04 ns (+0.15 %)**; both PASS at the 3 % budget. A change every 200 ms (3 → 5 → 1 → 3): 28.48 ns per host sample, +2.14 ns (+8.13 %) over level 3; the worst 4096-sample block 218.2 µs of the 85 333 µs budget. On the CI runner (x86-64, PR #49's `ab-timing` label, run 41165761605): level 3 61.89 → 62.44 ns, **+0.56 ns (+0.90 %)**; level 5 65.80 → 66.86 ns, **+1.06 ns (+1.61 %)**; both PASS at the 5 % ceiling; a change every 200 ms 65.55 ns, +3.10 ns (+4.97 %) over level 3, the worst block 361.5 µs of 85 333.
 
 ## R-09: The design script and the records
 
