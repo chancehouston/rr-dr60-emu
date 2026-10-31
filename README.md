@@ -13,7 +13,7 @@ The RR-DR60 is a pocket digital voice recorder Panasonic sold in the late 1990s.
 
 | | |
 |---|---|
-| **Version** | 0.18.0, pre-alpha. Not yet released or published to crates.io; the API may still change before 1.0. |
+| **Version** | 0.21.0, pre-alpha. Not yet released or published to crates.io; the API may still change before 1.0. |
 | **Signal chain** | 13 of the 15 stages are modeled and on by default (the power supply as the battery's effect on the speaker amplifier's clip ceiling, a user-set value). Not modeled: noise reduction (no evidence the device has it) and the clock. |
 | **Accuracy** | Every modeled stage is built from documents (the service manual, the owner's manual, datasheets) plus recorded assumptions. **No stage has been checked against a real unit**; see [Accuracy](#accuracy). |
 | **Platforms** | Rust library (`no_std`), C API, and a Swift package for iOS and macOS. Bit-identical output on Linux, macOS, Windows, the iOS simulator and an iOS device. |
@@ -40,7 +40,7 @@ What you hear, in the model's default configuration:
 - **Low-rate speech coding.** A 4 kbit/s CELP-class coder gives speech a slightly watery, buzzy texture and renders everything else (music, noise, tones) through a speech model. It models the *class* of coder the device used, not the device's own coder, which is undocumented.
 - **A small speaker.** Playback goes through the volume control and power amplifier (which clips above its ceiling) to a small-speaker resonance, or to the earphone output. The amplifier runs from the two cells, so its clip ceiling follows a **battery voltage** value: fresh cells by default, lower cells clip loud playback sooner and lower, quiet playback is unchanged. Playback can run at the device's five speeds, 0.6× to 1.4×, with the pitch following.
 
-Each stage can be switched off or tapped on its own, for example to hear the codec alone.
+Each stage can be switched off or tapped on its own, for example to hear the codec alone; the four playback-side stages (the codec output filter, the volume and amplifier, the speaker, the earphone output) can also be switched **while a recording plays**, as a 20 ms blend (since 0.21, an emulator convention).
 
 ## Quick start
 

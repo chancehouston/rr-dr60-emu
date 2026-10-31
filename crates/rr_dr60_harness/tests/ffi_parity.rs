@@ -3781,3 +3781,163 @@ fn record_contract_parity() {
         }
     }
 }
+
+/// Spec 021 (tasks.md T019): the four switches through `rr_dr60_schedule_change` land and blend
+/// bit-identically to the Rust path; the refusals' statuses; the level function's four cells;
+/// status 36 and the bound.
+#[test]
+fn bypass_parity() {
+    use rr_dr60::changes::MAX_CHANGES_PER_CALL;
+    use rr_dr60::{ChangeEntry, Route, Stream};
+    use rr_dr60_ffi::{
+        RrDr60ChangeEntry, RrDr60PlayInfo, rr_dr60_import, rr_dr60_play_with_changes,
+        rr_dr60_schedule_change, rr_dr60_set_route, rr_dr60_set_volume,
+        rr_dr60_stage11_bypass_level_db, rr_dr60_start_playback,
+    };
+    use rr_dr60_harness::bypass_checks as bp;
+    assert_eq!(RrDr60Status::StageNotConfigured as u32, 36);
+    assert_eq!(rr_dr60_ffi::RR_DR60_MAX_CHANGES_PER_CALL, 142);
+    assert_eq!(MAX_CHANGES_PER_CALL, 142);
+    // The level function, no handle.
+    for (route, c_route, pos) in [
+        (Route::Earphone, 1u32, rr_dr60::output::VOLUME_REFERENCE),
+        (Route::Earphone, 1, 1.0f32),
+        (Route::Speaker, 0, rr_dr60::output::VOLUME_REFERENCE),
+        (Route::Speaker, 0, 1.0),
+    ] {
+        let got = rr_dr60_stage11_bypass_level_db(c_route, pos);
+        assert_eq!(
+            got.to_bits(),
+            rr_dr60::output::stage11_bypass_level_db(route, pos).to_bits()
+        );
+    }
+    for &rate in configs::measurement_rates() {
+        let s = bp::settings(bp::DEFAULT_CHAIN, rate);
+        let cs = configs::c_settings(&s);
+        let stored = bp::stored_tone(1000.0, 0.8);
+        let mut p = bp::engine(
+            &|s| Pipeline::new(s).unwrap(),
+            s,
+            &stored,
+            Route::Speaker,
+            0.5,
+        );
+        let mut bytes = vec![0u8; p.export_len(1).unwrap()];
+        let _ = p.export(1, &mut bytes).unwrap();
+        let h = create(&cs);
+        let mut imported = 0u32;
+        // SAFETY: a live handle and the exported bytes.
+        assert_eq!(
+            unsafe { rr_dr60_import(h, bytes.as_ptr(), bytes.len(), &mut imported) },
+            RrDr60Status::Ok
+        );
+        // SAFETY: a live handle.
+        assert_eq!(unsafe { rr_dr60_set_route(h, 0) }, RrDr60Status::Ok);
+        // SAFETY: a live handle.
+        assert_eq!(unsafe { rr_dr60_set_volume(h, 0.5) }, RrDr60Status::Ok);
+        let n = bp::n_fade(12, rate) as u64;
+        let sched = [
+            (200u64, 23u32, 0.0f64, 1u64),
+            (200 + n / 2, 23, 1.0, 2),
+            (200 + 2 * n, 5, 0.0, 3),
+            (200 + 3 * n, 22, 0.0, 4),
+        ];
+        for (pos, c, v, tag) in sched {
+            p.schedule_change(Stream::Playback, pos, c, v, tag).unwrap();
+            // SAFETY: a live handle.
+            assert_eq!(
+                unsafe { rr_dr60_schedule_change(h, 0, pos, c, v, tag) },
+                RrDr60Status::Ok,
+                "{rate} Hz"
+            );
+        }
+        // The refusals' statuses.
+        // SAFETY: a live handle.
+        assert_eq!(
+            unsafe { rr_dr60_schedule_change(h, 1, 0, 5, 0.0, 9) },
+            RrDr60Status::ControlNotOnStream
+        );
+        // SAFETY: a live handle.
+        assert_eq!(
+            unsafe { rr_dr60_schedule_change(h, 0, 0, 23, 0.5, 9) },
+            RrDr60Status::InvalidArgument
+        ); // InvalidControlValue maps to InvalidArgument
+        {
+            let mut off = s;
+            off.output.speaker_enabled = false;
+            let g = create(&configs::c_settings(&off));
+            // SAFETY: a live handle.
+            assert_eq!(
+                unsafe { rr_dr60_schedule_change(g, 0, 0, 23, 0.0, 9) },
+                RrDr60Status::StageNotConfigured
+            );
+            // SAFETY: destroying the handle once.
+            unsafe { rr_dr60_destroy(g) };
+        }
+        p.start_playback(1).unwrap();
+        // SAFETY: a live handle.
+        assert_eq!(unsafe { rr_dr60_start_playback(h, 1) }, RrDr60Status::Ok);
+        let mut rust = Vec::new();
+        let mut c_out = Vec::new();
+        let mut rust_log = Vec::new();
+        let mut c_log = Vec::new();
+        let mut y = vec![0.0f32; 512];
+        let mut log = vec![ChangeEntry::default(); MAX_CHANGES_PER_CALL];
+        let mut clog = vec![RrDr60ChangeEntry::default(); MAX_CHANGES_PER_CALL];
+        loop {
+            let info = p.play_with_changes(&mut y, &mut log).unwrap();
+            rust.extend_from_slice(&y[..info.produced]);
+            rust_log.extend_from_slice(&log[..info.changes]);
+            let mut ci = RrDr60PlayInfo::default();
+            let mut count = 0usize;
+            // SAFETY: a live handle and valid buffers.
+            let st = unsafe {
+                rr_dr60_play_with_changes(
+                    h,
+                    y.as_mut_ptr(),
+                    512,
+                    &mut ci,
+                    clog.as_mut_ptr(),
+                    MAX_CHANGES_PER_CALL,
+                    &mut count,
+                )
+            };
+            assert_eq!(st, RrDr60Status::Ok);
+            assert_eq!(ci.produced, info.produced);
+            c_out.extend_from_slice(&y[..ci.produced]);
+            c_log.extend_from_slice(&clog[..count]);
+            if info.finished {
+                assert!(ci.finished);
+                break;
+            }
+        }
+        assert_eq!(rust.len(), c_out.len(), "{rate} Hz");
+        assert!(
+            rust.iter()
+                .zip(&c_out)
+                .all(|(a, b)| a.to_bits() == b.to_bits()),
+            "{rate} Hz: the C path"
+        );
+        assert_eq!(rust_log.len(), c_log.len());
+        for (r, c) in rust_log.iter().zip(&c_log) {
+            assert_eq!(
+                (
+                    r.position,
+                    r.control,
+                    r.before.to_bits(),
+                    r.after.to_bits(),
+                    r.tag
+                ),
+                (
+                    c.position,
+                    c.control,
+                    c.before.to_bits(),
+                    c.after.to_bits(),
+                    c.tag
+                )
+            );
+        }
+        // SAFETY: destroying the handle once.
+        unsafe { rr_dr60_destroy(h) };
+    }
+}

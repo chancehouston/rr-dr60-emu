@@ -80,7 +80,7 @@ jobs:
         run: scripts/check-traceability.sh
       - name: Golden files with default features (shipped configuration, no op-count)
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test -p rr_dr60_harness --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test golden_speed --test golden_meters --test golden_changes --test golden_record_changes --test golden_battery --test golden_record
+        run: cargo test -p rr_dr60_harness --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test golden_speed --test golden_meters --test golden_changes --test golden_record_changes --test golden_battery --test golden_record --test golden_bypass
       - name: Timing checks (release; FR-015 bounded work, SC-006; 008 SC-006 and the frame-byte digest)
         if: matrix.os == 'ubuntu-latest'
         # One test at a time: the timing tests measure wall-clock cost and worst blocks, so running
@@ -156,7 +156,7 @@ jobs:
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - name: Golden files and determinism
-        run: cargo test -p rr_dr60_harness --all-features --target ${{ matrix.target }} --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test golden_speed --test golden_meters --test golden_changes --test golden_record_changes --test golden_battery --test golden_record --test determinism
+        run: cargo test -p rr_dr60_harness --all-features --target ${{ matrix.target }} --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test golden_speed --test golden_meters --test golden_changes --test golden_record_changes --test golden_battery --test golden_record --test golden_bypass --test determinism
 
   ios:
     name: ios (simulator + builds)
@@ -168,7 +168,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Golden files and determinism in the iOS simulator
         # .cargo/config.toml routes aarch64-apple-ios-sim binaries through scripts/ios-sim-runner.sh.
-        run: cargo test -p rr_dr60_harness --target aarch64-apple-ios-sim --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test golden_speed --test golden_meters --test golden_changes --test golden_record_changes --test golden_battery --test golden_record --test determinism
+        run: cargo test -p rr_dr60_harness --target aarch64-apple-ios-sim --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test golden_speed --test golden_meters --test golden_changes --test golden_record_changes --test golden_battery --test golden_record --test golden_bypass --test determinism
       - name: Build the C API library for iOS device and Intel simulator
         run: |
           cargo build -p rr_dr60_ffi --release --target aarch64-apple-ios

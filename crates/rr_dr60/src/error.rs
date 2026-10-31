@@ -200,6 +200,14 @@ pub enum Error {
         /// Why.
         reason: &'static str,
     },
+    /// A playback-stage switch (spec 021 D4, FR-004) scheduled for a stage that does not run on
+    /// the stream: its setting was off at construction, or the one-pass's configured tap stops
+    /// before it. Nothing is stored. Build the engine with the stage on (and a tap at or after
+    /// it) and switch it with the schedule instead.
+    StageNotConfigured {
+        /// The control manifest index (5, 22, 23 or 24).
+        control: u32,
+    },
 }
 
 /// Inclusive range of `memory.capacity_s`, in seconds: one second to 24 hours (engineering
@@ -403,6 +411,16 @@ impl fmt::Display for Error {
             }
             Error::InconsistentRun { reason } => {
                 write!(f, "inconsistent run data: {reason}")
+            }
+            Error::StageNotConfigured { control } => {
+                // Spec 021 (product M5): the identifier and the stage from the control manifest.
+                let (id, stage) = crate::controls::controls()
+                    .get(control as usize)
+                    .map_or(("?", 0), |e| (e.identifier, e.stage));
+                write!(
+                    f,
+                    "control {control} ({id}, stage {stage}) does not run on this stream: its setting was off at construction or the one-pass's tap stops before it; build the engine with the stage on (and a tap at or after it) and switch it with schedule_change instead"
+                )
             }
         }
     }

@@ -7,11 +7,13 @@ use rr_dr60_harness::checks::standard;
 use rr_dr60_harness::golden;
 use sha2::{Digest, Sha256};
 
-/// SHA-256 of `golden/golden-record-v1.json` as blessed once by spec 020 (T015). The golden
-/// window is closed for the feature: a moved hash is a defect, never a re-bless; a later form
-/// version is a new file.
+/// SHA-256 of `golden/golden-record-v1.json` as blessed by spec 020 (T015) and re-blessed once
+/// by spec 021 (T001's version bump showed the `recording_digest` line follows the library
+/// version in the stored form's header, so the golden now normalizes it as
+/// `<version-dependent>`; every data line is unchanged). The golden window is closed for the
+/// feature: a moved hash is a defect, never a re-bless; a later form version is a new file.
 const GOLDEN_RECORD_V1_SHA256: &str =
-    "0620eb30e3d659734b58e5ee91fd53d6e95b30aa704aeb2004d6e10d5b7761be"; // blessed 2026-10-31 (020 T015)
+    "026f1ca3aa98cdcaecef584adf604938550d6eab0fb7e2cde565ea3733e4c8ec"; // re-blessed 2026-10-31 by spec 021 (the digest line normalized; was 0620eb30…61be, blessed 2026-10-31, 020 T015)
 
 #[test]
 fn golden_record_v1_unchanged() {

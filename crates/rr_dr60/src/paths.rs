@@ -328,6 +328,11 @@ pub(crate) struct PlaybackHalf {
     pub(crate) playback: PlaybackStage,
     /// Stage 10 runs: enabled and, when the tap is honoured, the tap is after playback.
     run_playback: bool,
+    /// Spec 021 D3: the live bypass fade (120 device samples, A-045's length); the filter keeps
+    /// running while bypassed.
+    fade: crate::stages::fade::Fade,
+    #[cfg(any(test, feature = "__test-hooks"))]
+    pub(crate) bypass_mut: crate::stages::fade::BypassMutation,
 }
 
 impl PlaybackHalf {
@@ -339,17 +344,69 @@ impl PlaybackHalf {
             // Spec 009 FR-011: the output-chain taps run stage 10 too (009 T013 adds the chain).
             run_playback: settings.playback_stage_enabled
                 && (!honour_tap || settings.tap.is_after_stage_10()),
+            fade: crate::stages::fade::Fade::new(crate::speed::CROSSFADE_SAMPLES), // A-045
+            #[cfg(any(test, feature = "__test-hooks"))]
+            bypass_mut: crate::stages::fade::BypassMutation::default(),
         }
     }
 
-    /// One stored device sample, widened exactly, through stage 10 if it runs.
+    /// One stored device sample, widened exactly, through stage 10 if it runs; spec 021 FR-002:
+    /// its contribution selected or blended by the live bypass fade (the filter runs regardless,
+    /// so a return is seamless).
     #[inline]
     pub(crate) fn process(&mut self, d: f64) -> f64 {
-        if self.run_playback {
-            self.playback.process(d)
-        } else {
-            d
+        use crate::stages::fade;
+        if !self.run_playback {
+            return d;
         }
+        let out = self.fade.step();
+        #[cfg(any(test, feature = "__test-hooks"))]
+        {
+            let m = self.bypass_mut;
+            let y = if m.stage_cold && out == fade::FadeOut::Bypassed {
+                d
+            } else {
+                self.playback.process(d)
+            };
+            if let fade::FadeOut::Blend(_) = out {
+                let k = self.fade.phase();
+                let w = if m.fade_linear {
+                    self.fade.weight_linear(k)
+                } else {
+                    self.fade.weight(k)
+                };
+                return if m.weight_inverted {
+                    d + w * (y - d)
+                } else {
+                    y + w * (d - y)
+                };
+            }
+            fade::apply(out, y, d)
+        }
+        #[cfg(not(any(test, feature = "__test-hooks")))]
+        {
+            let y = self.playback.process(d);
+            fade::apply(out, y, d)
+        }
+    }
+
+    /// Spec 021 D2, D5: stage 10's switch landing (`bypassed` the value 0; `at_once` on the
+    /// stream's first produced sample). The caller checked [`runs`](Self::runs).
+    pub(crate) fn land(&mut self, bypassed: bool, at_once: bool) {
+        #[cfg(any(test, feature = "__test-hooks"))]
+        let at_once = at_once || self.bypass_mut.fade_step;
+        self.fade.land(bypassed, at_once);
+    }
+
+    /// Snaps stage 10's switch to `bypassed` at rest (spec 021 research R-11).
+    pub(crate) fn snap(&mut self, bypassed: bool) {
+        self.fade.snap(bypassed);
+    }
+
+    /// The value in force or being approached (true = bypassed).
+    #[cfg(any(test, feature = "__test-hooks"))]
+    pub(crate) fn bypass_target(&self) -> bool {
+        self.fade.target_bypassed()
     }
 
     /// Stage 10 runs.
@@ -368,6 +425,8 @@ impl PlaybackHalf {
 
     pub(crate) fn reset(&mut self) {
         self.playback.reset();
+        // Spec 021 research R-11: a fade in progress ends at its target.
+        self.fade.snap(self.fade.target_bypassed());
     }
 }
 
@@ -969,6 +1028,10 @@ impl RecordPath {
     }
 }
 
+/// Spec 021 research R-03: the stage-10 trace's reserved length (the hooks build).
+#[cfg(feature = "__test-hooks")]
+const STAGE10_TRACE_CAPACITY: usize = 8192; // engineering target (021 R-03)
+
 /// The playback path: a [`PlaybackHalf`] and the device-to-host conversion (spec 006 FR-002;
 /// research R-01, R-06).
 #[derive(Clone, Debug)]
@@ -999,6 +1062,13 @@ pub(crate) struct PlaybackPath {
     /// Spec 015 (research R-01): the stream's clock, schedule, last applied values, pending
     /// plain change, landed readings and staging log.
     pub(crate) ctl: crate::changes::StreamState,
+    /// Spec 021 research R-04, R-05: which of stages 11 – 13 this path's chain reaches
+    /// (construction-time), the mirror's and the refusal's predicate.
+    pub(crate) reach: [bool; 3],
+    /// Spec 021 (test hooks, research R-03): stage 10's output per device sample pushed in the
+    /// last play call, the first 8192; reserved at construction, never grown.
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) stage10_trace: alloc::vec::Vec<f64>,
 }
 
 impl PlaybackPath {
@@ -1032,9 +1102,42 @@ impl PlaybackPath {
                 crate::speed::DEFAULT_LEVEL,
                 crate::battery::DEFAULT_BATTERY_VOLTS,
             ),
+            reach: [false; 3],
+            #[cfg(feature = "__test-hooks")]
+            stage10_trace: alloc::vec::Vec::with_capacity(STAGE10_TRACE_CAPACITY),
         };
+        path.reach = [
+            path.chain.reaches(11),
+            path.chain.reaches(12),
+            path.chain.reaches(13),
+        ];
         path.derive_figures(plan);
         path
+    }
+
+    /// Spec 021 D4: whether `stage` (10 … 13) runs on this path (the refusal's predicate).
+    pub(crate) fn runs_stage(&self, stage: u8) -> bool {
+        match stage {
+            10 => self.half.runs(),
+            11..=13 => self.reach[usize::from(stage - 11)],
+            _ => false,
+        }
+    }
+
+    /// Spec 021 research R-11: every switch this path runs snapped to `settings`' values at
+    /// rest (the engine's `reset`, `start_playback`'s adopt), and the stream's start values set.
+    pub(crate) fn adopt_bypass(&mut self, settings: &Settings) {
+        let b = crate::changes::bypassed_of(settings);
+        for (i, &v) in b.iter().enumerate() {
+            if self.reach[i] {
+                self.chain.snap_bypass(11 + i as u8, v);
+            }
+        }
+        let s10 = !settings.playback_stage_enabled;
+        if self.half.runs() {
+            self.half.snap(s10);
+        }
+        self.ctl.set_start_bypass(b, s10);
     }
 
     /// Spec 015 research R-02: the apply point for the sample about to be produced, when due:
@@ -1045,10 +1148,22 @@ impl PlaybackPath {
     pub(crate) fn apply_if_due(&mut self, speed: &mut dyn FnMut(u8)) {
         if self.ctl.due() {
             let chain = &mut self.chain;
+            let half = &mut self.half;
             self.ctl.apply_due(&mut |a| match a {
                 crate::changes::Apply::Chain(r, v) => chain.set_controls(r, v),
                 crate::changes::Apply::Level(l) => speed(l),
                 crate::changes::Apply::Battery(b) => chain.set_battery(b), // 018
+                // Spec 021: a stage switch (validated at the schedule call: the stage runs here).
+                crate::changes::Apply::Bypass {
+                    stage: 10,
+                    bypassed,
+                    at_once,
+                } => half.land(bypassed, at_once),
+                crate::changes::Apply::Bypass {
+                    stage,
+                    bypassed,
+                    at_once,
+                } => chain.land_bypass(stage, bypassed, at_once),
             });
         }
     }
@@ -1179,6 +1294,10 @@ impl PlaybackPath {
     #[inline]
     fn push_wide(&mut self, d: f64) {
         let y = self.half.process(d);
+        #[cfg(feature = "__test-hooks")]
+        if self.stage10_trace.len() < self.stage10_trace.capacity() {
+            self.stage10_trace.push(y); // within the reserved capacity: no allocation
+        }
         match &mut self.up {
             None => self.pending = Some(y),
             Some(up) => up.push_device(y),
@@ -1292,6 +1411,85 @@ pub(crate) mod figures {
     pub(crate) const H10_L1: f64 = 2.65;
     /// The largest interpolator branch's L1 norm at 48 kHz (006 research R-02, review P2).
     pub(crate) const MAX_INTERPOLATOR_BRANCH_L1: f64 = 2.33;
+}
+
+#[cfg(test)]
+mod half_bypass_tests {
+    //! Spec 021 T005: stage 10's live bypass in the playback half (research R-03).
+    use super::*;
+    use crate::stages::fade::Fade;
+
+    fn stim(n: usize) -> impl Iterator<Item = f64> {
+        (0..n).map(|i| if (i / 2) % 2 == 0 { 0.5 } else { -0.5 })
+    }
+
+    #[test]
+    fn half_bypass_equals_configured_off_and_returns() {
+        let s = Settings::new(6000);
+        let mut off = s;
+        off.playback_stage_enabled = false;
+        let mut live = PlaybackHalf::new(&s, false);
+        let twin = PlaybackHalf::new(&off, false);
+        let mut all_on = PlaybackHalf::new(&s, false);
+        assert!(live.runs() && !twin.runs());
+        let n = 120usize;
+        for (i, x) in stim(3000).enumerate() {
+            if i == 200 {
+                live.land(true, false);
+            }
+            if i == 200 + n + 400 {
+                live.land(false, false);
+            }
+            let y = live.process(x);
+            let a = all_on.process(x);
+            if i >= 200 + n - 1 && i < 200 + n + 400 {
+                assert_eq!(
+                    y.to_bits(),
+                    x.to_bits(),
+                    "bypassed at {i}: the input itself"
+                );
+            }
+            if i < 200 || i >= 200 + 2 * n + 400 - 1 {
+                assert_eq!(y.to_bits(), a.to_bits(), "all-on at {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn half_blend_identity() {
+        let s = Settings::new(6000);
+        let mut live = PlaybackHalf::new(&s, false);
+        let mut all_on = PlaybackHalf::new(&s, false);
+        let f = Fade::new(120);
+        for (i, x) in stim(400).enumerate() {
+            if i == 100 {
+                live.land(true, false);
+            }
+            let y = live.process(x);
+            let a = all_on.process(x);
+            if (100..219).contains(&i) {
+                let w = f.weight((i - 99) as u32);
+                assert_eq!(y, a + w * (x - a), "sample {i}");
+            }
+        }
+        assert_eq!(f.weight(60), 0.5);
+    }
+
+    #[test]
+    fn half_runs_is_the_reach_and_reset_snaps() {
+        let mut s = Settings::new(48_000);
+        s.tap = Tap::AfterPlayback;
+        assert!(PlaybackHalf::new(&s, true).runs());
+        s.tap = Tap::AfterAgc;
+        assert!(!PlaybackHalf::new(&s, true).runs());
+        let s = Settings::new(6000);
+        let mut h = PlaybackHalf::new(&s, false);
+        h.land(true, false);
+        h.process(0.1);
+        h.reset();
+        assert!(h.bypass_target());
+        assert_eq!(h.process(0.25).to_bits(), 0.25f64.to_bits());
+    }
 }
 
 /// 006 T013 (spec 006 FR-001, FR-002, FR-007, FR-016; research R-01, R-06; plan review P10):

@@ -568,6 +568,9 @@ impl Pipeline {
             self.speed_level,
             self.battery_volts,
         );
+        // Spec 021 D2 (research R-05): the switches adopted from the settings (a one-pass
+        // landing reaches the player here), at rest, no entry.
+        self.player.adopt_bypass(&self.settings);
         if let Some(dec) = &mut self.decoder {
             dec.reset();
         }
@@ -624,6 +627,8 @@ impl Pipeline {
         let mut place_trace = core::mem::take(&mut self.speed_place_trace);
         #[cfg(feature = "__test-hooks")]
         place_trace.clear();
+        #[cfg(feature = "__test-hooks")]
+        self.player.stage10_trace.clear(); // 021 research R-03: the half's outputs of this call
         let Pipeline {
             memory,
             player,
@@ -764,6 +769,11 @@ impl Pipeline {
 
     /// Spec 015 research R-07: the readings follow the changes the playback stream landed.
     fn take_landed_play(&mut self) {
+        Pipeline::take_landed_bypass(
+            &mut self.player.ctl,
+            &mut self.settings,
+            &mut self.bypass_tags,
+        ); // 021
         let ctl = &mut self.player.ctl;
         if let Some(r) = ctl.landed_route.take() {
             self.route = r;
@@ -3688,5 +3698,236 @@ mod record_tests {
             p.processing_record_len(1, &run).unwrap_err(),
             Error::RecordingInProgress
         );
+    }
+}
+
+#[cfg(test)]
+mod bypass_tests {
+    //! Spec 021 T007: the switches through the engine (research R-04, R-05, R-11).
+    extern crate std;
+    use crate::__test_hooks::player_bypass_targets;
+    use crate::settings::Tap;
+    use crate::{ChangeEntry, Error, Pipeline, Settings, Stream, VasEvent};
+    use std::vec::Vec;
+
+    fn settings(rate: u32) -> Settings {
+        let mut s = Settings::new(rate);
+        s.vas.enabled = false;
+        s.speech_codec_enabled = false;
+        s
+    }
+
+    fn square(n: usize) -> Vec<f32> {
+        (0..n)
+            .map(|i| if (i / 3) % 2 == 0 { 0.25 } else { -0.25 })
+            .collect()
+    }
+
+    fn recorded(s: Settings) -> Pipeline {
+        let mut p = Pipeline::new(s).unwrap();
+        p.start_recording().unwrap();
+        let x = square(s.host_rate_hz as usize);
+        let mut ev = [VasEvent::default(); 8];
+        let _ = p.record(&x, &mut ev).unwrap();
+        let _ = p.stop_recording(&mut ev).unwrap();
+        p
+    }
+
+    fn play_n(p: &mut Pipeline, n: usize) -> Vec<ChangeEntry> {
+        let mut out = std::vec![0.0f32; n];
+        let mut ch = [ChangeEntry::default(); 16];
+        let info = p.play_with_changes(&mut out, &mut ch).unwrap();
+        ch[..info.changes.min(16)].to_vec()
+    }
+
+    #[test]
+    fn bypass_value_must_be_0_or_1() {
+        let mut p = Pipeline::new(settings(6000)).unwrap();
+        for v in [0.5, 2.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(matches!(
+                p.schedule_change(Stream::Playback, 0, 23, v, 0),
+                Err(Error::InvalidControlValue { control: 23, .. })
+            ));
+        }
+        assert_eq!(p.pending_changes(Stream::Playback).unwrap(), 0);
+        p.schedule_change(Stream::Playback, 0, 23, 0.0, 0).unwrap();
+        p.schedule_change(Stream::Playback, 1, 23, 1.0, 0).unwrap();
+    }
+
+    #[test]
+    fn stage_10_is_playback_only_and_record_refuses() {
+        let mut p = Pipeline::new(settings(6000)).unwrap();
+        assert!(matches!(
+            p.schedule_change(Stream::OnePass, 0, 5, 0.0, 0),
+            Err(Error::ControlNotOnStream { control: 5, .. })
+        ));
+        for c in [5, 22, 23, 24] {
+            assert!(matches!(
+                p.schedule_change(Stream::Record, 0, c, 0.0, 0),
+                Err(Error::ControlNotOnStream { .. })
+            ));
+        }
+        p.schedule_change(Stream::OnePass, 0, 22, 0.0, 0).unwrap();
+        p.schedule_change(Stream::Playback, 0, 5, 0.0, 0).unwrap();
+    }
+
+    #[test]
+    fn non_running_stage_refused() {
+        let mut s = settings(48_000);
+        s.output.speaker_enabled = false;
+        let mut p = Pipeline::new(s).unwrap();
+        for v in [0.0, 1.0] {
+            assert!(matches!(
+                p.schedule_change(Stream::Playback, 0, 23, v, 0),
+                Err(Error::StageNotConfigured { control: 23 })
+            ));
+        }
+        let at = |tap: Tap, control: u32| {
+            let mut s = settings(48_000);
+            s.tap = tap;
+            let mut p = Pipeline::new(s).unwrap();
+            p.schedule_change(Stream::OnePass, 0, control, 0.0, 0)
+        };
+        assert!(matches!(
+            at(Tap::AfterVolumeAmp, 23),
+            Err(Error::StageNotConfigured { control: 23 })
+        ));
+        assert!(matches!(
+            at(Tap::AfterVolumeAmp, 24),
+            Err(Error::StageNotConfigured { control: 24 })
+        ));
+        assert!(at(Tap::AfterVolumeAmp, 22).is_ok());
+        assert!(matches!(
+            at(Tap::AfterSpeaker, 24),
+            Err(Error::StageNotConfigured { .. })
+        ));
+        assert!(at(Tap::AfterSpeaker, 23).is_ok());
+        assert!(matches!(
+            at(Tap::AfterEarphone, 23),
+            Err(Error::StageNotConfigured { .. })
+        ));
+        for c in [22, 23, 24] {
+            assert!(matches!(
+                at(Tap::AfterPlayback, c),
+                Err(Error::StageNotConfigured { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn status_text_names_identifier_and_stage() {
+        let text = std::format!("{}", Error::StageNotConfigured { control: 23 });
+        assert!(text.contains("output.speaker_enabled") && text.contains("stage 12"));
+        assert!(text.contains("schedule_change"));
+    }
+
+    #[test]
+    fn landing_writes_settings_and_logs() {
+        let mut p = recorded(settings(6000));
+        p.start_playback(1).unwrap();
+        p.schedule_change(Stream::Playback, 10, 23, 0.0, 7).unwrap();
+        p.schedule_change(Stream::Playback, 20, 5, 0.0, 8).unwrap();
+        let log = play_n(&mut p, 100);
+        assert!(!p.settings().output.speaker_enabled);
+        assert!(!p.settings().playback_stage_enabled);
+        let e = log.iter().find(|e| e.control == 23).unwrap();
+        assert_eq!(
+            (e.position, e.before, e.after, e.tag, e.stream),
+            (10, 1.0, 0.0, 7, 1)
+        );
+        let e10 = log.iter().find(|e| e.control == 5).unwrap();
+        assert_eq!(
+            (e10.position, e10.before, e10.after, e10.tag),
+            (20, 1.0, 0.0, 8)
+        );
+        assert_eq!(player_bypass_targets(&p), ([false, true, false], true));
+    }
+
+    #[test]
+    fn one_pass_mirrors_at_next_call_for_reached_stages() {
+        let mut p = recorded(settings(6000));
+        p.start_playback(1).unwrap();
+        p.schedule_change(Stream::Playback, 10, 23, 0.0, 7).unwrap();
+        play_n(&mut p, 100);
+        p.stop_playback().unwrap();
+        let x = square(64);
+        let mut y = std::vec![0.0f32; 64];
+        let mut ev = [VasEvent::default(); 4];
+        let mut ch = [ChangeEntry::default(); 16];
+        let info = p
+            .process_with_events_and_changes(&x, &mut y, &mut ev, &mut ch)
+            .unwrap();
+        let first = ch[0];
+        assert!(info.changes >= 1);
+        assert_eq!(
+            (
+                first.position,
+                first.control,
+                first.before,
+                first.after,
+                first.tag,
+                first.stream
+            ),
+            (0, 23, 1.0, 0.0, 7, 2)
+        );
+        // A stage the one-pass's tap does not reach is skipped: settings still reflect it.
+        let mut s = settings(6000);
+        s.tap = Tap::AfterVolumeAmp;
+        let mut p = recorded(s);
+        p.start_playback(1).unwrap();
+        p.schedule_change(Stream::Playback, 10, 23, 0.0, 7).unwrap();
+        play_n(&mut p, 100);
+        p.stop_playback().unwrap();
+        let info = p
+            .process_with_events_and_changes(&x, &mut y, &mut ev, &mut ch)
+            .unwrap();
+        assert!(!ch[..info.changes.min(16)].iter().any(|e| e.control == 23));
+        assert!(!p.settings().output.speaker_enabled);
+    }
+
+    #[test]
+    fn start_playback_adopts_without_entry() {
+        let mut p = recorded(settings(6000));
+        p.schedule_change(Stream::OnePass, 0, 23, 0.0, 3).unwrap();
+        let x = square(64);
+        let mut y = std::vec![0.0f32; 64];
+        let _ = p.process(&x, &mut y).unwrap();
+        assert!(!p.settings().output.speaker_enabled);
+        p.start_playback(1).unwrap();
+        let log = play_n(&mut p, 100);
+        assert!(!log.iter().any(|e| e.control == 23));
+        assert_eq!(player_bypass_targets(&p).0, [false, true, false]);
+    }
+
+    #[test]
+    fn reset_reapplies_all_four_and_reconfigure_takes_s() {
+        let fresh = Pipeline::new(settings(48_000)).unwrap();
+        let mut p = recorded(settings(48_000));
+        p.start_playback(1).unwrap();
+        p.schedule_change(Stream::Playback, 0, 5, 0.0, 1).unwrap();
+        p.schedule_change(Stream::Playback, 0, 24, 0.0, 2).unwrap();
+        play_n(&mut p, 256);
+        p.stop_playback().unwrap();
+        p.reset();
+        assert_eq!(player_bypass_targets(&p), ([false, false, true], true));
+        assert!(
+            p.one_pass.play.half.bypass_target(),
+            "the one-pass's stage 10 too"
+        );
+        assert!(p.one_pass.play.chain.bypass_target(13));
+        assert_eq!(p.latency_samples(), fresh.latency_samples());
+        // reconfigure(settings()) builds the stages off: the on-change is refused (the trap).
+        let s = *p.settings();
+        p.reconfigure(s).unwrap();
+        assert!(matches!(
+            p.schedule_change(Stream::Playback, 0, 24, 1.0, 0),
+            Err(Error::StageNotConfigured { control: 24 })
+        ));
+        let mut on = s;
+        on.playback_stage_enabled = true;
+        on.output.earphone_enabled = true;
+        p.reconfigure(on).unwrap();
+        p.schedule_change(Stream::Playback, 0, 24, 0.0, 0).unwrap();
+        assert_eq!(player_bypass_targets(&p), ([false, false, false], false));
     }
 }

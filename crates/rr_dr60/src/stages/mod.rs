@@ -6,6 +6,8 @@
 
 pub(crate) mod biquad;
 pub(crate) mod clamp;
+// Spec 021: the live stage bypass's crossfade, one per playback-side stage (10 – 13).
+pub(crate) mod fade;
 pub(crate) mod first_order;
 pub(crate) mod limiter;
 // Spec 012: stages 1 – 2 (the capsule and the microphone amplifier) at the host rate.

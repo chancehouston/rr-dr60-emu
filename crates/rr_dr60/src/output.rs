@@ -72,6 +72,25 @@ pub fn earphone_gain_db(position: f32) -> f32 {
     db(chain::g_ear(f64::from(position)))
 }
 
+/// Spec 021 D11 (research R-07): the level change when stage 11 (the volume control and power
+/// amplifier) is **bypassed live** at `position` on `route`, in dB; positive means louder when
+/// bypassed. The bypassed branch is the stage's input at unity, so the change is the negative of
+/// the stage's own scalar: on the speaker route −20·log10 of the loaded law's gain over the
+/// clip ceiling (−21.5 dB at position 1, 0.0 at [`VOLUME_REFERENCE`]), on the earphone route
+/// −[`earphone_gain_db`] (+19.2 dB at [`VOLUME_REFERENCE`], 0.0 at position 1); +∞ at position
+/// 0. Stated for levels below the amplifier's knee (above it the on-branch is clipped). The
+/// neutral positions, where a bypass changes no level: the speaker route's reference position,
+/// the earphone route's position 1. For 0 ≤ position ≤ 1 (the range the volume setter accepts;
+/// the law's domain). Computed from the committed law (A-044, A-031, A-043), not measured; the
+/// device has no stage switches. Real-time safe.
+pub fn stage11_bypass_level_db(route: crate::Route, position: f32) -> f32 {
+    let p = f64::from(position);
+    match route {
+        crate::Route::Earphone => -db(chain::k_ear(p)),
+        _ => -db(chain::k_spk(p)),
+    }
+}
+
 /// The output chain's settle at a host rate, in host samples: the samples the playback drain
 /// grows by when any output stage runs (spec 009 research R-08: the 32 Hz corner's state
 /// decaying by 100 dB; about 58 ms). `None` for an unsupported rate.

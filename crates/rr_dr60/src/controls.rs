@@ -359,7 +359,7 @@ control_table! {
         description: "Switches the codec's input band-pass filter off, passing the lows and the top edge it removes; the device's sample rate still limits the top.",
     },
     {
-        identifier: "playback_stage_enabled", name: "Codec output filter", kind: EmulatorOption, timing: Idle,
+        identifier: "playback_stage_enabled", name: "Codec output filter", kind: EmulatorOption, timing: Live,
         paths: [PLAYBACK, ONE_PASS], stage: 10,
         value: switch(true), unit: "",
         sources: [], assumptions: ["A-027"],
@@ -483,21 +483,21 @@ control_table! {
         description: "Switches the speech coder off, removing its coding artifacts from recordings.",
     },
     {
-        identifier: "output.volume_amp_enabled", name: "Volume and power amplifier", kind: EmulatorOption, timing: Idle,
+        identifier: "output.volume_amp_enabled", name: "Volume and power amplifier", kind: EmulatorOption, timing: Live,
         paths: [PLAYBACK, ONE_PASS], stage: 11,
         value: switch(true), unit: "",
         sources: [], assumptions: ["A-031"],
         description: "Switches the volume control and speaker amplifier off: unity gain and no clipping, and the volume control has no effect.",
     },
     {
-        identifier: "output.speaker_enabled", name: "Speaker", kind: EmulatorOption, timing: Idle,
+        identifier: "output.speaker_enabled", name: "Speaker", kind: EmulatorOption, timing: Live,
         paths: [PLAYBACK, ONE_PASS], stage: 12,
         value: switch(true), unit: "",
         sources: [], assumptions: ["A-010"],
         description: "Switches the small speaker's modeled tone off on the speaker route, removing its midrange resonance.",
     },
     {
-        identifier: "output.earphone_enabled", name: "Earphone output", kind: EmulatorOption, timing: Idle,
+        identifier: "output.earphone_enabled", name: "Earphone output", kind: EmulatorOption, timing: Live,
         paths: [PLAYBACK, ONE_PASS], stage: 13,
         value: switch(true), unit: "",
         sources: [], assumptions: ["A-032"],

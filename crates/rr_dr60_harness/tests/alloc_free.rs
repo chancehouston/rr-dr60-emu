@@ -1278,3 +1278,86 @@ fn record_contract_allocate_nothing() {
     }
     MEASURING.with(|m| m.set(false));
 }
+
+/// Spec 021 FR-010 (tasks.md T018): scheduling a stage switch, its landing, the blend, the
+/// mirror and a refusal allocate nothing in a call, in Rust and through the C API.
+#[test]
+fn bypass_allocate_nothing() {
+    use rr_dr60::Stream;
+    use rr_dr60_ffi::{
+        RrDr60PlayInfo, rr_dr60_play, rr_dr60_schedule_change, rr_dr60_start_playback,
+    };
+    use rr_dr60_harness::bypass_checks as bp;
+    let _turn = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let x = bp::stored_tone(1000.0, 0.5);
+    let mut output = vec![0.0f32; 256];
+    for &rate in configs::measurement_rates() {
+        let s = bp::settings(bp::DEFAULT_CHAIN, rate);
+        let (mut p, _) = configs::stored_recording(&|s| Pipeline::new(s).unwrap(), s, &x);
+        let c = configs::c_settings(&s);
+        let (q, _) = configs::stored_recording(&|s| Pipeline::new(s).unwrap(), s, &x);
+        let mut bytes = vec![0u8; q.export_len(1).unwrap()];
+        let _ = q.export(1, &mut bytes).unwrap();
+        let mut handle: *mut RrDr60Pipeline = core::ptr::null_mut();
+        // SAFETY: a valid settings struct and an out-pointer.
+        assert_eq!(unsafe { rr_dr60_create(&c, &mut handle) }, RrDr60Status::Ok);
+        // SAFETY: a live handle and the exported bytes.
+        assert_eq!(
+            unsafe {
+                rr_dr60_ffi::rr_dr60_import(
+                    handle,
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    core::ptr::null_mut(),
+                )
+            },
+            RrDr60Status::Ok
+        );
+        let host = bp::host_tone(1000.0, 0.02, rate);
+        let mut y = vec![0.0f32; host.len()];
+        p.start_playback(1).unwrap();
+        // SAFETY: a live handle.
+        assert_eq!(
+            unsafe { rr_dr60_start_playback(handle, 1) },
+            RrDr60Status::Ok
+        );
+        let mut info = RrDr60PlayInfo::default();
+        MEASURING.with(|m| m.set(true));
+        let before = counts();
+        p.schedule_change(Stream::Playback, 10, bp::CONTROL_STAGE_12, 0.0, 1)
+            .unwrap();
+        p.schedule_change(Stream::Playback, 100, bp::CONTROL_STAGE_12, 1.0, 2)
+            .unwrap(); // a reversal
+        p.schedule_change(Stream::Playback, 300, bp::CONTROL_STAGE_10, 0.0, 3)
+            .unwrap();
+        let refused = p.schedule_change(Stream::OnePass, 0, bp::CONTROL_STAGE_10, 0.0, 4);
+        let _ = p.play(&mut output).unwrap();
+        let _ = p.play(&mut output).unwrap();
+        // SAFETY: the handle is live; the buffer is 256 samples.
+        let st = unsafe {
+            [
+                rr_dr60_schedule_change(handle, 0, 10, 23, 0.0, 1),
+                rr_dr60_schedule_change(handle, 0, 100, 23, 1.0, 2),
+                rr_dr60_play(handle, output.as_mut_ptr(), 256, &mut info),
+                rr_dr60_play(handle, output.as_mut_ptr(), 256, &mut info),
+            ]
+        };
+        let after = counts();
+        MEASURING.with(|m| m.set(false));
+        assert!(refused.is_err());
+        assert!(st.iter().all(|&s| s == RrDr60Status::Ok), "{st:?}");
+        assert_eq!(after, before, "{rate} Hz: the bypass allocated (playback)");
+        p.stop_playback().unwrap();
+        // The one-pass: the mirror landing at the call's first sample and a blend.
+        MEASURING.with(|m| m.set(true));
+        let before = counts();
+        p.schedule_change(Stream::OnePass, 5, bp::CONTROL_STAGE_13, 0.0, 5)
+            .unwrap();
+        let _ = p.process(&host, &mut y).unwrap();
+        let after = counts();
+        MEASURING.with(|m| m.set(false));
+        assert_eq!(after, before, "{rate} Hz: the bypass allocated (one-pass)");
+        // SAFETY: destroying the handle once.
+        unsafe { rr_dr60_destroy(handle) };
+    }
+}
