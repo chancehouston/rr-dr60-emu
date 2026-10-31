@@ -1,10 +1,10 @@
 # Quickstart: Processing Record (spec 020)
 
-- Core: `cargo test -p rr_dr60 record digest timeline counter_tests` (the grammar, the FNV vectors, the maps' arithmetic, the counter constructor).
-- Story 1: `cargo test -p rr_dr60_harness --test us1_record_contract -- --nocapture` (the record written and re-rendered at the measurement rates; the effective changes and the playback twin; the round trip; the dirty-engine counter identity).
-- Story 2: `cargo test -p rr_dr60_harness --test us2_record_read -- --nocapture` (the doctored set: every refusal and flag; the imported origin; the incomplete run).
-- Story 3: `cargo test -p rr_dr60_harness --test us3_record_timeline -- --nocapture` (the burst markers, the VAS-bypassed oracle, map (c) against the trace).
-- Seven rates: `cargo test -p rr_dr60_harness --test record_contract_matrix -- --nocapture`; edge cases `--test record_contract_edge_cases`; mutants `--test mutation record_contract::`; goldens `--test golden_record` (`RR_DR60_BLESS=record` once); `--test ffi_parity record_parity`, `--test alloc_free record`, `--test determinism record`.
-- The recipe: `cargo run -p rr_dr60_harness --example re_render -- <record.txt> <raw.i24> ` prints both digests; the C smoke `crates/rr_dr60_ffi/tests/c/run_smoke.sh` (`smoke --record`); `cd swift && swift test`.
-- Cost: `scripts/ab-timing.sh 01a61ca record_contract` (solo; 3 %, `RR_DR60_RECORD_CONTRACT_COST_CEILING` 0.05 on the label job).
-- Records: the thirteen audio guards and every smoke hash unmoved; `RR_DR60_BLESS=manifest …` once for the version line; the guide scan `cargo test -p rr_dr60_harness --test us2_cross_check guide_record`.
+- Core: `cargo test -p rr_dr60 -- record:: digest:: timeline:: counter_tests` (the grammar and the pure writer/reader, the FNV vectors, the maps' arithmetic, the counter constructor and the block lifecycle).
+- Story 1: `cargo test -p rr_dr60_harness --test us1_record_contract -- --nocapture` (the record written and re-rendered at the measurement rates; the named deltas and the playback twin; the round trip write → read → rewrite; the dirty-engine counter identity with the one-pass after reset).
+- Story 2: `cargo test -p rr_dr60_harness --test us2_record_read -- --nocapture` (the doctored set: every refusal and flag; the imported origin; the short run).
+- Story 3: `cargo test -p rr_dr60_harness --test us3_record_timeline -- --nocapture` (the burst markers with the shared detector, the VAS-bypassed oracle, the impulse latency, the codec-on correlation, map (c) against the trace on ten corner cases).
+- Seven rates: `cargo test -p rr_dr60_harness --test record_contract_matrix -- --nocapture`; edge cases `--test record_contract_edge_cases`; mutants `--test mutation record_contract::`; the golden `--test golden_record` (`RR_DR60_BLESS=record` once; the version lines normalized); `--test ffi_parity record_contract`, `--test alloc_free record_contract`, `--test determinism record_contract`.
+- The recipe: `cargo run -p rr_dr60_harness --example re_render -- --demo /tmp/rc` writes `record.txt` and `input.i24`, then `… --example re_render -- /tmp/rc/record.txt /tmp/rc/input.i24` prints both digests; the C smoke `crates/rr_dr60_ffi/tests/c/run_smoke.sh` (`smoke --record` against `examples/record_rows.rs`); `cd swift && swift test` (`ReRenderTests`).
+- Cost: `scripts/ab-timing.sh 01a61ca record_contract` (solo; the record path, the one-pass, playback at levels 3 and 5, each 3 %; `RR_DR60_RECORD_CONTRACT_COST_CEILING` 0.05 on the label job).
+- Records: the thirteen audio guards and every smoke hash unmoved; `RR_DR60_BLESS=manifest …` once for the version line; the guide scan `cargo test -p rr_dr60_harness --test us2_cross_check guide_record_contract`.
