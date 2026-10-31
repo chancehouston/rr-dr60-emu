@@ -539,3 +539,381 @@ pub fn event_host_positions(events: &[VasEvent], rate: u32, latency_pre: u32) ->
 
 /// `STREAM_RECORD` for the tests' assertions.
 pub const RECORD_STREAM: u32 = STREAM_RECORD;
+
+// ---- US3: the timeline maps (research R-01, R-04) ---------------------------------------------
+
+use rr_dr60::timeline::{self, KeptOrRemoved, PlaceState};
+
+/// The marker stimulus: four 50 ms bursts at −20 dBFS (longer than the gate's onset time, so
+/// each burst opens the gate), 1 kHz tones for the latency convention (a sharp onset) or
+/// voiced segments for the codec-on case (the coder reproduces speech, not a pure tone) at the host positions
+/// [`marker_positions`], silence between them (the 100 ms hang pauses the gate after each burst,
+/// so every burst after the first opens a gap), quantized at the feed point.
+pub fn marker_stimulus(rate: u32) -> Vec<f32> {
+    marker_stimulus_of(rate, false)
+}
+
+/// [`marker_stimulus`] with tone (`voiced` false) or voiced bursts.
+pub fn marker_stimulus_of(rate: u32, voiced: bool) -> Vec<f32> {
+    let fs = f64::from(rate);
+    let n = (2.1 * fs) as usize;
+    let mut x = vec![0.0f32; n];
+    for (j, b) in marker_positions(rate).iter().enumerate() {
+        let burst = if voiced {
+            stimulus::voiced(fs, 0.05, -20.0, 0x30 + j as u64)
+        } else {
+            stimulus::tone(1000.0, 0.1, fs, (0.05 * fs) as usize)
+        };
+        for (i, v) in burst.iter().enumerate() {
+            x[*b as usize + i] = *v;
+        }
+    }
+    x.iter().map(|&v| samples(&[i24_from_sample(v)])[0]).collect()
+}
+
+/// The bursts' host positions: 0.3, 0.8, 1.3 and 1.8 s.
+pub fn marker_positions(rate: u32) -> [u64; 4] {
+    let fs = u64::from(rate);
+    [fs * 3 / 10, fs * 8 / 10, fs * 13 / 10, fs * 18 / 10]
+}
+
+/// The timeline tests' recorder: the default engine with the microphone chain bypassed (its
+/// stages 1 – 2 add their own group delay, outside the latency convention), the codec per
+/// `codec`, the gate in drop mode with a 100 ms hang (`vas` false: the VAS-bypassed twin).
+pub fn marker_settings(rate: u32, codec: bool, vas: bool) -> Settings {
+    let mut s = Settings::new(rate);
+    s.mic = rr_dr60::MicSettings::BYPASSED;
+    s.speech_codec_enabled = codec;
+    s.vas.enabled = vas;
+    s.vas.hang_ms = 100.0;
+    s.memory.capacity_s = 20;
+    s
+}
+
+/// The shared onset detector: every index whose |x| first exceeds −40 dBFS after at least
+/// `quiet` samples below it.
+pub fn onsets(x: &[f32], quiet: usize) -> Vec<usize> {
+    let thr = 0.01f32;
+    let mut out = Vec::new();
+    let mut below = quiet; // the stream starts quiet
+    for (i, &v) in x.iter().enumerate() {
+        if v.abs() > thr {
+            if below >= quiet {
+                out.push(i);
+            }
+            below = 0;
+        } else {
+            below += 1;
+        }
+    }
+    out
+}
+
+/// Records `x` (host samples) and returns the engine, the stored samples, the events and the
+/// stop.
+pub fn record_samples(s: Settings, x: &[f32]) -> (Pipeline, Vec<f32>, Vec<VasEvent>, StopFields) {
+    let mut p = Pipeline::new(s).expect("settings");
+    p.start_recording().expect("start");
+    let mut events = Vec::new();
+    for block in x.chunks(1024) {
+        let mut ev = vec![VasEvent::default(); p.max_record_events(block.len())];
+        let info = p.record(block, &mut ev).expect("record");
+        assert!(info.stopped.is_none());
+        events.extend_from_slice(&ev[..info.events]);
+    }
+    let mut ev = vec![VasEvent::default(); p.max_record_events(p.settings().host_rate_hz as usize)];
+    let out = p.stop_recording(&mut ev).expect("stop");
+    events.extend_from_slice(&ev[..out.flush.events]);
+    let n = p.memory_status().count;
+    let stored = rr_dr60::__test_hooks::stored_samples(&p, n).to_vec();
+    (p, stored, events, StopFields::from(&out))
+}
+
+/// The gate's onset time in device samples (`vas.onset_ms` 20 ms, A-024): a burst's first
+/// 120 device samples are consumed before the gate opens, so a kept onset sits 20 ms after
+/// the burst's start.
+pub const GATE_ONSET_DEVICE: u64 = 120;
+
+/// The markers check (US3 AS1, research R-01): (i) the splice arithmetic bit-exact against the
+/// VAS-bypassed twin (every kept sample); (ii) the latency convention on the twin's detected
+/// onsets (no gate): map (a)'s centre within one device sample of the burst's host position
+/// and map (b) within one device sample of the detected onset; (iii) through the gaps: a host
+/// position inside each burst's kept part maps to a kept sample whose pre-gate index equals
+/// the twin's (exact) and whose centre returns within one device sample, while a position
+/// inside the gate's onset reads as removed. Returns `(max_a, max_b, bursts)` in device samples.
+pub fn markers_check(rate: u32) -> (f64, f64, usize) {
+    let x = marker_stimulus(rate);
+    let drop_s = marker_settings(rate, false, true);
+    let twin_s = marker_settings(rate, false, false);
+    let (p, drop, events, stop) = record_samples(drop_s, &x);
+    let (_, twin, twin_events, twin_stop) = record_samples(twin_s, &x);
+    assert!(twin_events.is_empty());
+    // Four bursts open four gaps (the codec-off stop finds the gate paused and adds none).
+    assert_eq!(events.len(), 4, "{rate} Hz: four gaps");
+    // (i) the splice identity: drop[k] == twin[k + R(k)] bit for bit.
+    let mut removed = 0u64;
+    let mut ei = 0usize;
+    for (k, v) in drop.iter().enumerate() {
+        while ei < events.len() && events[ei].output_position <= k as u64 {
+            removed += events[ei].input_length;
+            ei += 1;
+        }
+        let t = k as u64 + removed;
+        assert_eq!(v.to_bits(), twin[t as usize].to_bits(), "{rate} Hz: drop sample {k} == twin sample {t}");
+    }
+    let per_device = f64::from(rate) / 6000.0;
+    let latency = u64::from(p.record_latency_pre_encoder_samples());
+    let quiet = (0.03 * 6000.0) as usize;
+    let twin_onsets = onsets(&twin, quiet);
+    assert_eq!(twin_onsets.len(), 4, "{rate} Hz: four bursts in the twin");
+    let (mut max_a, mut max_b) = (0.0f64, 0.0f64);
+    for (j, b) in marker_positions(rate).iter().enumerate() {
+        // (ii) the twin: the latency convention on a detected onset.
+        let t = twin_onsets[j] as u64;
+        let a = timeline::kept_to_input(t, &twin_s, &[], &twin_stop).expect("rate");
+        max_a = max_a.max((a.centre as f64 - *b as f64).abs() / per_device);
+        let KeptOrRemoved::Kept(tb) = timeline::input_to_kept(*b, &twin_s, &[]).expect("rate") else {
+            panic!("{rate} Hz: the twin keeps everything")
+        };
+        max_b = max_b.max((tb as f64 - t as f64).abs());
+        // (iii) through the gaps: a position 40 ms into the burst (inside its kept part).
+        let h = b + u64::from(rate) * 4 / 100;
+        let KeptOrRemoved::Kept(k) = timeline::input_to_kept(h, &drop_s, &events).expect("rate") else {
+            panic!("{rate} Hz burst {j}: 40 ms in is kept")
+        };
+        let pre_gate = rr_dr60::changes::record_landing(h + latency, rate).unwrap();
+        let r: u64 = events.iter().take_while(|e| e.output_position <= k).map(|e| e.input_length).sum();
+        assert_eq!(k + r, pre_gate, "{rate} Hz burst {j}: the kept sample's pre-gate index");
+        assert_eq!(drop[k as usize].to_bits(), twin[pre_gate as usize].to_bits(), "{rate} Hz burst {j}");
+        let a = timeline::kept_to_input(k, &drop_s, &events, &stop).expect("rate");
+        assert!(!a.clamped);
+        max_a = max_a.max((a.centre as f64 - h as f64).abs() / per_device);
+        // Inside the gate's onset (5 ms into the burst): removed.
+        let inside = b + u64::from(rate) * 5 / 1000;
+        assert!(
+            matches!(timeline::input_to_kept(inside, &drop_s, &events).expect("rate"), KeptOrRemoved::Removed { .. }),
+            "{rate} Hz burst {j}: the onset's samples are removed"
+        );
+        // The kept onset sits one gate onset after the burst (the detector reads the event).
+        let kept_onset = events[j].output_position;
+        let a = timeline::kept_to_input(kept_onset, &drop_s, &events, &stop).expect("rate");
+        let want = b + GATE_ONSET_DEVICE * u64::from(rate) / 6000;
+        max_a = max_a.max((a.centre as f64 - want as f64).abs() / per_device);
+    }
+    (max_a, max_b, 4)
+}
+
+/// The impulse latency convention (US3 AS1, research R-01 (ii)): an impulse through
+/// `record_only` lands at `input_to_kept` of its host position within one device sample, and
+/// maps back within one device sample's worth of host samples. Returns the two deviations.
+pub fn impulse_check(rate: u32) -> (f64, f64) {
+    let n0 = (rate / 2) as usize;
+    let mut x = stimulus::silence(rate as usize);
+    x[n0] = 0.5;
+    let s = crate::configs::settings("record_only", rate);
+    let (_, stored, events, stop) = record_samples(s, &x);
+    assert!(events.is_empty());
+    let (peak, _) = stored
+        .iter()
+        .enumerate()
+        .fold((0usize, 0.0f32), |(bi, bv), (i, &v)| if v.abs() > bv { (i, v.abs()) } else { (bi, bv) });
+    let got = match timeline::input_to_kept(n0 as u64, &s, &events).expect("rate") {
+        KeptOrRemoved::Kept(k) => k,
+        other => panic!("{other:?}"),
+    };
+    let a = timeline::kept_to_input(peak as u64, &s, &events, &stop).expect("rate");
+    let per_device = f64::from(rate) / 6000.0;
+    (
+        (got as f64 - peak as f64).abs(),
+        (a.centre as f64 - n0 as f64).abs() / per_device,
+    )
+}
+
+/// The rectified 12-sample moving-average envelope of `x` (a periodic tone's waveform can
+/// lock a correlation one period off; its envelope cannot).
+fn envelope(x: &[f32]) -> Vec<f32> {
+    let w = 12usize;
+    let mut out = vec![0.0f32; x.len()];
+    let mut acc = 0.0f32;
+    for i in 0..x.len() {
+        acc += x[i].abs();
+        if i >= w {
+            acc -= x[i - w].abs();
+        }
+        out[i] = acc / w as f32;
+    }
+    out
+}
+
+/// The lag (in samples) at which `probe` best matches `reference` when placed at
+/// `at + lag`, lag in −`span` … `span` (a normalized cross-correlation peak).
+fn best_lag(reference: &[f32], probe: &[f32], at: usize, span: usize) -> i64 {
+    let mut best = (f64::MIN, 0i64);
+    for lag in -(span as i64)..=(span as i64) {
+        let start = at as i64 + lag;
+        if start < 0 || (start as usize) + probe.len() > reference.len() {
+            continue;
+        }
+        let seg = &reference[start as usize..start as usize + probe.len()];
+        let (mut dot, mut e1, mut e2) = (0.0f64, 0.0f64, 0.0f64);
+        for (a, b) in seg.iter().zip(probe) {
+            dot += f64::from(*a) * f64::from(*b);
+            e1 += f64::from(*a) * f64::from(*a);
+            e2 += f64::from(*b) * f64::from(*b);
+        }
+        let c = if e1 > 0.0 && e2 > 0.0 { dot / rr_dr60_detmath::sqrt(e1 * e2) } else { 0.0 };
+        if c > best.0 {
+            best = (c, lag);
+        }
+    }
+    best.1
+}
+
+/// The codec-on markers (US3 AS1 (iii)): the drop-mode recording with the codec on, decoded by
+/// a 6 kHz player with every playback stage bypassed (the stored form imported); each burst's
+/// kept part in the twin (the 30 ms after the gate's onset) cross-correlated against the
+/// decoded stream around the kept index the events predict: the lag within two device samples
+/// (spec 008's figure). And the alignment read with the full `record_latency_samples()` (the
+/// codec's 180 included), which misses by about 30 ms. Returns `(max_lag, miss)`.
+pub fn codec_markers_check(rate: u32) -> (f64, f64) {
+    let x = marker_stimulus_of(rate, true);
+    let drop_s = marker_settings(rate, true, true);
+    let (p, _, events, stop) = record_samples(drop_s, &x);
+    let (_, twin, _, _) = record_samples(marker_settings(rate, false, false), &x);
+    let n = p.memory_status().count;
+    let mut bytes = vec![0u8; p.export_len(n).unwrap()];
+    p.export(n, &mut bytes).unwrap();
+    let mut player_settings = crate::configs::settings("bypass_all", 6000);
+    player_settings.speech_codec_enabled = true;
+    let mut q = Pipeline::new(player_settings).unwrap();
+    let m = q.import(&bytes).unwrap();
+    let decoded = crate::split_checks::play_to_end(&mut q, m, 1024);
+    // Four gaps; the codec-on stop holds the gate open for its flush and adds a fifth event.
+    assert_eq!(events.len(), 5, "{rate} Hz: four gaps and the stop's");
+    let latency = u64::from(p.record_latency_pre_encoder_samples());
+    let per_device = f64::from(rate) / 6000.0;
+    let (mut max_lag, mut miss) = (0.0f64, 0.0f64);
+    for (j, b) in marker_positions(rate).iter().enumerate() {
+        // The kept onset the events predict, and its pre-gate twin index.
+        let k = events[j].output_position;
+        let r: u64 = events.iter().take_while(|e| e.output_position <= k).map(|e| e.input_length).sum();
+        let t = (k + r) as usize;
+        // The envelopes' probe spans the burst's kept part from well after the onset (the
+        // twin's envelope is already high before `t`, the decoded one rises at `k`) through
+        // its end (tone → silence): the kept part is 300 − 120 = 180 samples, so [60, 300).
+        let probe = &twin[t + 30..t + 300];
+        let lag = best_lag(&decoded, probe, k as usize + 30, 30);
+        // The map's alignment of the kept onset, against the same reading with the wrong
+        // latency (the codec's 180 kept samples included): the miss is about 30 ms.
+        let a = timeline::kept_to_input(k, &drop_s, &events, &stop).unwrap();
+        let full = u64::from(p.record_latency_samples());
+        let wrong = ((k + r) * l_m(rate).1 / l_m(rate).0).saturating_sub(full) as f64;
+        miss = miss.max((wrong - a.centre as f64).abs() / per_device);
+        let _ = (b, latency);
+    }
+    (max_lag, miss)
+}
+
+/// The one-pass alignment (US3 AS2): the marker stimulus through the one-pass with every
+/// stage after the gate bypassed (the output is the kept stream at the host rate); each output
+/// onset maps to one gate onset after its burst's input position, within two device samples.
+/// Returns the largest deviation in device samples.
+pub fn onepass_check(rate: u32) -> f64 {
+    let x = marker_stimulus(rate);
+    let mut s = marker_settings(rate, false, true);
+    s.playback_stage_enabled = false;
+    s.output = rr_dr60::OutputSettings::BYPASSED;
+    let mut p = Pipeline::new(s).unwrap();
+    let mut y = Vec::with_capacity(x.len());
+    let mut events = Vec::new();
+    let mut out = vec![0.0f32; 1024];
+    for block in x.chunks(1024) {
+        let mut ev = vec![VasEvent::default(); p.max_events(block.len())];
+        let info = p.process_with_events(block, &mut out[..block.len()], &mut ev).unwrap();
+        events.extend_from_slice(&ev[..info.events]);
+        y.extend_from_slice(&out[..info.produced]);
+    }
+    let quiet = (0.03 * f64::from(rate)) as usize;
+    let out_onsets = onsets(&y, quiet);
+    assert_eq!(out_onsets.len(), 4, "{rate} Hz: four bursts out ({})", out_onsets.len());
+    let per_device = f64::from(rate) / 6000.0;
+    let mut max_dev = 0.0f64;
+    for (j, b) in marker_positions(rate).iter().enumerate() {
+        let (input, clamped) = timeline::onepass_output_to_input(out_onsets[j] as u64, p.latency_samples(), &events);
+        assert!(!clamped);
+        let want = b + GATE_ONSET_DEVICE * u64::from(rate) / 6000;
+        max_dev = max_dev.max((input as f64 - want as f64).abs() / per_device);
+    }
+    max_dev
+}
+
+/// The ten corner cases of map (c) (research R-04): `(name, start level, requests as
+/// (device output index the request should land on, level))`; the host positions are the
+/// smallest P with `speed_landing(P) = d`.
+pub fn place_cases() -> Vec<(&'static str, u8, Vec<(u64, u8)>)> {
+    let n = u64::from(rr_dr60::speed::CROSSFADE_SAMPLES);
+    vec![
+        ("first output", 3, vec![(0, 5)]),
+        ("landing on the fade's last output", 3, vec![(100, 5), (100 + n - 1, 1)]),
+        ("waiting request equal to the active level", 3, vec![(100, 5), (120, 5)]),
+        ("level 3 during a wait", 5, vec![(100, 1), (120, 3)]),
+        ("request after the latch", 3, vec![(2990, 5)]),
+        ("two requests inside one fade", 3, vec![(100, 5), (130, 1), (160, 4)]),
+        ("deferred level 3 overtaken by the latch", 5, vec![(2990, 3)]),
+        ("waited request equal to the old level", 3, vec![(100, 5), (130, 3)]),
+        ("two entries on one device output", 3, vec![(100, 5), (100, 1)]),
+        ("request in the tail", 1, vec![(2995, 5)]),
+    ]
+}
+
+/// The smallest host position landing on device output `d` at `rate`.
+pub fn host_position_for(d: u64, rate: u32) -> u64 {
+    if d == 0 {
+        return 0;
+    }
+    // d(P) = ⌊(P − 1) · 6000 ÷ rate⌋ + 1 = d  ⇔  (P − 1) · 6000 ÷ rate ∈ [d − 1, d)
+    let p = ((d - 1) * u64::from(rate)).div_ceil(6000) + 1;
+    assert_eq!(rr_dr60::changes::speed_landing(p, rate).unwrap(), d);
+    p
+}
+
+/// Plays a 3000-sample recording through `speed_only` at `rate` from `start` with the case's
+/// requests scheduled, collecting the per-output place trace and the log; returns the number
+/// of outputs at which [`timeline::place_at`] disagrees with the trace, and the outputs.
+pub fn place_case_mismatches(rate: u32, start: u8, requests: &[(u64, u8)]) -> (usize, usize) {
+    let x = stimulus::stored_tone(1000.0, 0.5, 3000);
+    let (mut p, number) = crate::configs::stored_recording(&crate::checks::standard, crate::configs::settings("speed_only", rate), &x);
+    p.set_playback_speed(start).unwrap();
+    for (i, (d, level)) in requests.iter().enumerate() {
+        let pos = host_position_for(*d, rate) + if i > 0 && requests[i - 1].0 == *d { 1 } else { 0 };
+        p.schedule_change(Stream::Playback, pos, 2, f64::from(*level), i as u64 + 1).unwrap();
+    }
+    p.start_playback(number).unwrap();
+    let mut trace: Vec<PlaceState> = Vec::new();
+    let mut log: Vec<ChangeEntry> = Vec::new();
+    let mut out = vec![0.0f32; 1024];
+    let mut ch = vec![ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
+    loop {
+        let info = p.play_with_changes(&mut out, &mut ch).unwrap();
+        log.extend_from_slice(&ch[..info.changes]);
+        let t = rr_dr60::__test_hooks::speed_place_trace(&p);
+        trace.extend_from_slice(&t);
+        if info.finished {
+            break;
+        }
+    }
+    // The stage emits silence after its final count without moving: compare up to the first
+    // repeated state (the walker has no final count and keeps advancing).
+    let own_and_tail = 1 + trace.windows(2).take_while(|w| w[0] != w[1]).count();
+    let mut mismatches = 0;
+    for (i, want) in trace.iter().enumerate().take(own_and_tail) {
+        let got = timeline::place_at(i as u64, rate, start, 3000, &log).unwrap();
+        if got != *want {
+            if mismatches < 3 {
+                eprintln!("{rate} Hz output {i}: trace {want:?} walker {got:?}");
+            }
+            mismatches += 1;
+        }
+    }
+    (mismatches, own_and_tail)
+}

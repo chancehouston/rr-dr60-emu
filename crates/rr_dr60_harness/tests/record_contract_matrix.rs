@@ -41,3 +41,20 @@ fn deltas_at_every_rate() {
         }
     }
 }
+
+#[test]
+fn maps_at_every_rate() {
+    println!("rate     map(a)  map(b)  impulse(b) impulse(a) codec  one-pass");
+    for rate in rates() {
+        let (a, b, _) = rc::markers_check(rate);
+        let (ib, ia) = rc::impulse_check(rate);
+        let (c, miss) = rc::codec_markers_check(rate);
+        let o = rc::onepass_check(rate);
+        println!("{rate:6}   {a:5.2}   {b:5.2}   {ib:5.2}      {ia:5.2}      {c:5.2}  {o:5.2}");
+        assert!(a <= 1.0 && b <= 1.0 && ib <= 1.0 && ia <= 1.0 && c <= 2.0 && o <= 2.0 && miss >= 100.0, "{rate} Hz");
+        for (name, start, requests) in rc::place_cases() {
+            let (m, _) = rc::place_case_mismatches(rate, start, &requests);
+            assert_eq!(m, 0, "{rate} Hz: {name}");
+        }
+    }
+}
