@@ -2400,8 +2400,10 @@ RrDr60Status rr_dr60_kept_to_input(const struct RrDr60Settings *settings,
                                    struct RrDr60InputAlignment *out);
 
 // Map (b) (spec 020 D8): the kept device sample host-input sample `p` reaches
-// (`*out_kept`, `*out_removed_by_event` = UINT64_MAX), or the voice-activation event that
-// removed it (`*out_removed_by_event` its index, `*out_kept` 0).
+// (`*out_kept`, `*out_removed_by_event` = UINT64_MAX), the voice-activation event that
+// removed it in drop mode (`*out_removed_by_event` its index, `*out_kept` 0), or in mute mode
+// the stored region that muted it (`*out_kept` the stored sample, `*out_removed_by_event` the
+// region's event index). Not clamped at the end: compare against the stop fields.
 //
 // # Safety
 //
@@ -2414,8 +2416,9 @@ RrDr60Status rr_dr60_input_to_kept(const struct RrDr60Settings *settings,
                                    uint64_t *out_removed_by_event);
 
 // The one-pass's clocks (spec 020 D8): the input-clock position output-clock `position`
-// aligns with, through the one-pass's `latency` (`rr_dr60_latency_samples`) and its
-// `event_count` voice-activation events; `*out_clamped` when the result was clamped at 0.
+// aligns with, through the one-pass's `latency` (`rr_dr60_latency_samples`) and, with the gate
+// in `drop` mode (`vas_enabled` and `vas_mode` drop), its `event_count` voice-activation events
+// (in mute mode nothing is removed); `*out_clamped` when the result was clamped at 0.
 //
 // # Safety
 //
@@ -2424,6 +2427,7 @@ RrDr60Status rr_dr60_onepass_output_to_input(uint64_t position,
                                              uint32_t latency,
                                              const struct RrDr60VasEvent *events,
                                              uintptr_t event_count,
+                                             bool drop,
                                              uint64_t *out_input,
                                              bool *out_clamped);
 
