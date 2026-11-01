@@ -57,7 +57,7 @@ use rr_dr60::{
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 90;
+pub const RR_DR60_VERSION_MINOR: u32 = 91;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -177,6 +177,13 @@ pub enum RrDr60Status {
     /// `rr_dr60_set_playback_speed_mode`, `rr_dr60_playback_length_samples_in_mode` or
     /// `rr_dr60_place_at_in_mode` with a mode other than 0 or 1 (spec 023 D9).
     InvalidSpeedMode = 38, // spec 023 D9, FR-008: appended
+    /// `rr_dr60_settings_control_value` or `rr_dr60_set_settings_control_value` with the index
+    /// of a live control (route, volume, playback speed, battery voltage, speed mode), which is
+    /// not a settings field: read or set it on the engine (spec 025 D3).
+    NotASetting = 39, // spec 025 D7: appended
+    /// `rr_dr60_set_control_value` with the index of a settings field: change it with a settings
+    /// structure and `rr_dr60_reconfigure` or with `rr_dr60_schedule_change` (spec 025 D4).
+    NotAPlainLiveControl = 40, // spec 025 D7: appended
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -945,6 +952,11 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
         // Spec 023 contracts/api.md: status 38.
         Error::InvalidSpeedMode { .. } => {
             (RrDr60Status::InvalidSpeedMode, RrDr60SettingField::None)
+        }
+        // Spec 025 contracts/api.md: statuses 39 and 40.
+        Error::NotASetting { .. } => (RrDr60Status::NotASetting, RrDr60SettingField::None),
+        Error::NotAPlainLiveControl { .. } => {
+            (RrDr60Status::NotAPlainLiveControl, RrDr60SettingField::None)
         }
         _ => (RrDr60Status::InvalidArgument, RrDr60SettingField::None),
     }
@@ -4350,6 +4362,9 @@ unsafe fn control_id(
     }
 }
 
+mod settings_read;
+pub use settings_read::*;
+
 #[cfg(test)]
 mod abi_tests;
 
@@ -4483,7 +4498,7 @@ mod tests {
         assert_eq!(d.reserved_010_tail, [0; 7]);
         assert_eq!(d.reserved_012, [0; 2]);
         assert_eq!(d.mic_hiss_offset_db, 0.0); // 012 FR-003
-        assert_eq!(RR_DR60_VERSION_MINOR, 90);
+        assert_eq!(RR_DR60_VERSION_MINOR, 91);
         let mut stale = rr_dr60_settings_default(48_000);
         stale.struct_size = 112; // a 0.10 or 0.11 caller (spec 012 FR-012)
         assert_eq!(

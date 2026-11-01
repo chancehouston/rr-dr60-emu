@@ -52,7 +52,7 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 90
+#define RR_DR60_VERSION_MINOR 91
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
@@ -339,6 +339,13 @@ enum RrDr60Status
   // `rr_dr60_set_playback_speed_mode`, `rr_dr60_playback_length_samples_in_mode` or
   // `rr_dr60_place_at_in_mode` with a mode other than 0 or 1 (spec 023 D9).
   RR_DR60_STATUS_INVALID_SPEED_MODE = 38,
+  // `rr_dr60_settings_control_value` or `rr_dr60_set_settings_control_value` with the index
+  // of a live control (route, volume, playback speed, battery voltage, speed mode), which is
+  // not a settings field: read or set it on the engine (spec 025 D3).
+  RR_DR60_STATUS_NOT_A_SETTING = 39,
+  // `rr_dr60_set_control_value` with the index of a settings field: change it with a settings
+  // structure and `rr_dr60_reconfigure` or with `rr_dr60_schedule_change` (spec 025 D4).
+  RR_DR60_STATUS_NOT_A_PLAIN_LIVE_CONTROL = 40,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -1403,6 +1410,27 @@ typedef struct RrDr60PlaceState {
   // The old branch's place for a blend sample, in fifths; 0 otherwise.
   uint64_t old_place_fifths;
 } RrDr60PlaceState;
+
+// A control's value by its manifest index (spec 025 D2), filled by `rr_dr60_control_value`
+// and `rr_dr60_settings_control_value` and read by the two set functions. `struct_size` first
+// (spec 022's rule; 24 bytes). The value sits in the field of its `value_type`
+// (`RrDr60ControlValueType`): a switch as 0 or 1, an integer and a choice's engine value in
+// `int_value`, a continuous value in `float_value`; the other field and `reserved` are zero
+// on output and ignored on input. The structure holds integers and floats only, never a
+// `bool` or an enumeration, so every bit pattern a caller passes is a valid value.
+typedef struct RrDr60ControlReading {
+  // `sizeof(RrDr60ControlReading)`; set by the caller before every call.
+  uint32_t struct_size;
+  // The value type, an `RrDr60ControlValueType` value.
+  uint32_t value_type;
+  // A switch (0 or 1), an integer (exact over the whole `uint64_t` range: the seed) or a
+  // choice's engine value.
+  uint64_t int_value;
+  // A continuous value, single precision as the engine stores it.
+  float float_value;
+  // Zero on output; ignored on input.
+  uint32_t reserved;
+} RrDr60ControlReading;
 
 // `RR_DR60_TAP_AFTER_PLAYBACK` under the stage's name: after stage 10, before the output chain
 // (version 0.8's default output; spec 009 FR-011).
@@ -2659,6 +2687,104 @@ RrDr60Status rr_dr60_place_at_in_mode(uint64_t index,
 void rr_dr60_samples_from_i24(const int32_t *src,
                               float *dst,
                               uintptr_t count);
+
+// Writes the engine's settings into `*out` (spec 025 D1): the last value set or landed on any
+// stream for every setting; each stream uses a landed value from its next produced sample or
+// adopts it at its next start; a scheduled change that has not landed is not in it. A read
+// confirms a `rr_dr60_reconfigure` exactly; that a live value took effect is confirmed by its
+// change-log entry. `out->struct_size` must equal `sizeof(RrDr60Settings)`; the structure is
+// filled in place, its padding zero. Nothing is written on a refusal. Real-time safe.
+//
+// # Safety
+//
+// `pipeline` must be NULL or a live handle; `out` NULL or a writable `RrDr60Settings`.
+RrDr60Status rr_dr60_get_settings(struct RrDr60Pipeline *pipeline, struct RrDr60Settings *out);
+
+// Writes the current value of control `index` (the control manifest's order) into `*out`
+// (spec 025 D2): a setting as `rr_dr60_get_settings` reads it, a live control exactly as its
+// getter returns it (the last valid set or landed value, not the knob's position during a
+// transition or the level heard). Refusals in order, nothing written: a NULL or poisoned
+// handle, a NULL `out` (`NULL_POINTER`), a refused `struct_size` (`INVALID_ARGUMENT`), an
+// index at or past the count (`NO_SUCH_CONTROL`). Real-time safe.
+//
+// # Safety
+//
+// `pipeline` must be NULL or a live handle; `out` NULL or a writable `RrDr60ControlReading`
+// of its `struct_size`.
+RrDr60Status rr_dr60_control_value(struct RrDr60Pipeline *pipeline,
+                                   uint32_t index,
+                                   struct RrDr60ControlReading *out);
+
+// Reads setting `index` of a caller's settings structure into `*out` (spec 025 D3): only the
+// mapped field is read, through its offset, so a structure holding an invalid value elsewhere
+// can still be read. Refusals in order, nothing written: a NULL pointer (`NULL_POINTER`), a
+// settings `struct_size` other than `sizeof(RrDr60Settings)` or a refused reading size
+// (`INVALID_ARGUMENT`), an index at or past the count (`NO_SUCH_CONTROL`), a live control
+// (`NOT_A_SETTING`), a stored switch byte other than 0 or 1 (`INVALID_ARGUMENT`: the reading
+// cannot carry it). Every other stored value is returned as stored, so a repair screen can show
+// it: a choice that is not an option (`tap = 99`), a non-finite float or an integer wider than
+// the engine's field may then fail the write's representability check or the validator, which
+// names the field. `out` must not overlap `settings`. Takes no handle: safe on any thread with
+// its own buffers. Real-time safe.
+//
+// # Safety
+//
+// `settings` must be NULL or readable for `sizeof(RrDr60Settings)` bytes; `out` NULL or a
+// writable `RrDr60ControlReading` of its `struct_size`.
+RrDr60Status rr_dr60_settings_control_value(const struct RrDr60Settings *settings,
+                                            uint32_t index,
+                                            struct RrDr60ControlReading *out);
+
+// Writes setting `index` of a caller's settings structure from `*reading` (spec 025 D3):
+// only the mapped field is written, through its offset (the reserved slots, the padding and
+// every other field untouched, so a structure with an invalid value elsewhere can be repaired
+// by index); the reading is copied first (the pointers may alias). The write checks
+// representability only: the reading's value type is the control's, a switch is 0 or 1, a
+// choice one of the options, a continuous value finite (−0.0 written as 0.0), an integer
+// within the engine's field (`vas.sensitivity` 0 … 255, the memory fields `uint32_t`, the seed
+// `uint64_t`); ranges are `rr_dr60_settings_validate`'s, which names the field. Refusals in
+// order, nothing written: a NULL pointer (`NULL_POINTER`), a settings `struct_size` other than
+// `sizeof(RrDr60Settings)` or a reading size below 24 or above `RR_DR60_MAX_STRUCT_SIZE`
+// (`INVALID_ARGUMENT`), an index at or past the count (`NO_SUCH_CONTROL`), a live control
+// (`NOT_A_SETTING`), an unrepresentable reading (`INVALID_ARGUMENT`). Takes no handle: safe on
+// any thread with its own buffers. Real-time safe.
+//
+// # Safety
+//
+// `settings` must be NULL or readable and writable for `sizeof(RrDr60Settings)` bytes;
+// `reading` NULL or readable for its `struct_size` bytes.
+RrDr60Status rr_dr60_set_settings_control_value(struct RrDr60Settings *settings,
+                                                uint32_t index,
+                                                const struct RrDr60ControlReading *reading);
+
+// Sets live control `index` from `*reading` through its plain setter (spec 025 D4): route,
+// volume, playback speed, battery voltage or speed mode, with the setter's validation and
+// timing (the same entry in the change log as the plain setter). Refusals in order, nothing
+// changed: a NULL or poisoned handle, a NULL `reading` (`NULL_POINTER`), a reading size below
+// 24 or above `RR_DR60_MAX_STRUCT_SIZE` (`INVALID_ARGUMENT`), an index at or past the count
+// (`NO_SUCH_CONTROL`), a settings field (`NOT_A_PLAIN_LIVE_CONTROL`: change those with a
+// settings structure and `rr_dr60_reconfigure` or with `rr_dr60_schedule_change`), an
+// unrepresentable reading (a wrong type, a non-option, a non-finite value, a level above 255:
+// `INVALID_ARGUMENT`; so a NaN volume by index is `INVALID_ARGUMENT` where
+// `rr_dr60_set_volume` returns `INVALID_VOLUME`), then the setter's `INVALID_VOLUME`,
+// `INVALID_SPEED_LEVEL` or `INVALID_BATTERY_VOLTS`. Real-time safe.
+//
+// # Safety
+//
+// `pipeline` must be NULL or a live handle; `reading` NULL or readable for its `struct_size`.
+RrDr60Status rr_dr60_set_control_value(struct RrDr60Pipeline *pipeline,
+                                       uint32_t index,
+                                       const struct RrDr60ControlReading *reading);
+
+// The control index of a field `rr_dr60_settings_validate` names (spec 025 D6), so an app
+// highlights the row the validator refused. `field` is an `RrDr60SettingField` value passed as
+// `uint32_t`: `NONE`, `STRUCT_SIZE`, the retired 5 and 6 and any unknown value are
+// `NO_SUCH_CONTROL`; a NULL `out_index` is `NULL_POINTER`. Real-time safe.
+//
+// # Safety
+//
+// `out_index` must be NULL or writable.
+RrDr60Status rr_dr60_setting_field_control(uint32_t field, uint32_t *out_index);
 
 #ifdef __cplusplus
 }  // extern "C"
