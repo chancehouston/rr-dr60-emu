@@ -735,6 +735,7 @@ impl SpeedStage {
                     old_scaler: self.scaler,
                 });
             }
+            #[cfg(feature = "__test-hooks")]
             if self.active == K_IDENTITY && swap {
                 // The mutant (the plan's first rule): the current hop finishes with the
                 // identity in place of the current frame (a swap at a weight near one).

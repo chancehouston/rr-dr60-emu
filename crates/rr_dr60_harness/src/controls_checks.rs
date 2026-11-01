@@ -956,7 +956,13 @@ pub fn options_vs_header(entries: &[ControlEntry], header: &str) -> Vec<String> 
                 o.identifier.to_uppercase(),
                 o.value
             );
-            if !header.contains(&want) {
+            // Spec 023: a choice carried by defines (the mode is a `uint32_t`, not an enum).
+            let want_define = format!(
+                "#define RR_DR60_{prefix}_{} {}",
+                o.identifier.to_uppercase(),
+                o.value
+            );
+            if !header.contains(&want) && !header.lines().any(|l| l.trim_end() == want_define) {
                 f.push(format!(
                     "{id}: option {}={} not in the header as {want:?}",
                     o.identifier, o.value
