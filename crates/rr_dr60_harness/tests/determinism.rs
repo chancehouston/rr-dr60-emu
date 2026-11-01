@@ -421,8 +421,15 @@ fn manifest_canonical_text_is_identical_on_every_target() {
     // Spec 007 SC-004 (research R-09): the manifest's canonical text equals the committed golden
     // text on every CI target (the golden-matrix and ios jobs run this file), and (US1
     // scenario 3) it is unchanged after audio has been processed.
-    let path = rr_dr60_harness::manifest_checks::golden_text_path();
-    let want = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    // Built into the test binary, so the check also runs on a physical device, where the
+    // repository's path does not exist (the 2026-11-01 device run read a Mac path).
+    let want = include_str!("../golden/manifest-v1.txt").to_string();
+    assert_eq!(
+        want,
+        std::fs::read_to_string(rr_dr60_harness::manifest_checks::golden_text_path())
+            .unwrap_or_else(|_| want.clone()),
+        "the embedded golden is the committed file"
+    );
     assert_eq!(
         rr_dr60_harness::manifest_checks::render(rr_dr60::manifest()),
         want
@@ -440,8 +447,14 @@ fn manifest_canonical_text_is_identical_on_every_target() {
 fn control_manifest_canonical_text_is_identical_on_every_target() {
     // Spec 014 FR-012, SC-004: the control manifest's canonical text equals the committed
     // golden on every CI target, also after audio has been processed.
-    let path = rr_dr60_harness::controls_checks::golden_controls_path();
-    let want = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    // Built into the test binary (see the stage manifest's test above).
+    let want = include_str!("../golden/control-manifest-v1.txt").to_string();
+    assert_eq!(
+        want,
+        std::fs::read_to_string(rr_dr60_harness::controls_checks::golden_controls_path())
+            .unwrap_or_else(|_| want.clone()),
+        "the embedded golden is the committed file"
+    );
     let render = || rr_dr60_harness::controls_checks::render_controls(rr_dr60::controls());
     assert_eq!(render(), want);
     let mut p = rr_dr60::Pipeline::new(rr_dr60::Settings::new(48_000)).unwrap();
