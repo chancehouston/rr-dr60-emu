@@ -14,9 +14,12 @@ use crate::controls::{CONTROL_COUNT, mode_code, mode_from_code, tap_code, tap_fr
 #[cfg(test)]
 use crate::controls::{ControlValue, controls};
 use crate::error::{Error, Setting};
+use crate::pipeline::Pipeline;
+use crate::settings::Route;
 use crate::settings::{
     AgcSettings, MemorySettings, MicSettings, OutputSettings, Settings, VasSettings,
 };
+use crate::speed::SpeedMode;
 
 /// A control's value in its manifest value type (spec 025 D2).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -418,6 +421,121 @@ pub(crate) fn index_of(t: Target) -> u32 {
         .expect("every target is in the table") as u32
 }
 
+const fn route_code(r: Route) -> u32 {
+    match r {
+        Route::Speaker => 0,
+        Route::Earphone => 1,
+    }
+}
+
+const fn route_from_code(c: u32) -> Option<Route> {
+    match c {
+        0 => Some(Route::Speaker),
+        1 => Some(Route::Earphone),
+        _ => None,
+    }
+}
+
+const fn speed_mode_code(m: SpeedMode) -> u32 {
+    match m {
+        SpeedMode::PitchWithSpeed => 0,
+        SpeedMode::PitchKept => 1,
+    }
+}
+
+const fn speed_mode_from_code(c: u32) -> Option<SpeedMode> {
+    match c {
+        0 => Some(SpeedMode::PitchWithSpeed),
+        1 => Some(SpeedMode::PitchKept),
+        _ => None,
+    }
+}
+
+/// The value of live control `l` on `p`.
+fn live_value(p: &Pipeline, l: LiveControl) -> ControlReading {
+    match l {
+        L::Route => ControlReading::Choice(route_code(p.route())),
+        L::Volume => ControlReading::Continuous(p.volume()),
+        L::SpeedLevel => ControlReading::Integer(u64::from(p.playback_speed())),
+        L::SpeedMode => ControlReading::Choice(speed_mode_code(p.playback_speed_mode())),
+        L::Battery => ControlReading::Continuous(p.battery_volts()),
+    }
+}
+
+/// Sets live control `l` on `p` by its plain setter (research R-04: direct conversions, never
+/// an f64 round trip). `wrap` is the wide-integer mutant (a level above 255 wrapped).
+fn set_live(
+    p: &mut Pipeline,
+    l: LiveControl,
+    index: u32,
+    r: ControlReading,
+    wrap: bool,
+) -> Result<(), Error> {
+    match (l, r) {
+        (L::Route, ControlReading::Choice(c)) => {
+            p.set_route(route_from_code(c).ok_or_else(|| refuse(index, r))?);
+            Ok(())
+        }
+        (L::Volume, ControlReading::Continuous(_)) => p.set_volume(finite(index, r)?),
+        (L::SpeedLevel, ControlReading::Integer(n)) => {
+            let level = if wrap {
+                n as u8
+            } else {
+                u8::try_from(n).map_err(|_| refuse(index, r))?
+            };
+            p.set_playback_speed(level)
+        }
+        (L::SpeedMode, ControlReading::Choice(c)) => {
+            p.set_playback_speed_mode(speed_mode_from_code(c).ok_or_else(|| refuse(index, r))?);
+            Ok(())
+        }
+        (L::Battery, ControlReading::Continuous(_)) => p.set_battery_volts(finite(index, r)?),
+        _ => Err(refuse(index, r)),
+    }
+}
+
+impl Pipeline {
+    /// The value of control `index` on this engine (spec 025 D4): a settings field as
+    /// [`settings`](Self::settings) holds it (the last value set or landed, applied by a stream
+    /// from its next produced sample), or a live control's last valid setting. Real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NoSuchControl`] past the manifest.
+    pub fn control_value(&self, index: u32) -> Result<ControlReading, Error> {
+        #[cfg(feature = "__test-hooks")]
+        return __hooks::control_value_with(MapMutation::default(), self, index);
+        #[cfg(not(feature = "__test-hooks"))]
+        match target(index)? {
+            Target::Setting(a) => Ok(get(self.settings(), a)),
+            Target::Live(l) => Ok(live_value(self, l)),
+        }
+    }
+
+    /// Sets one of the five live controls by index through its plain setter (spec 025 D4):
+    /// route, volume, playback speed, battery voltage, speed mode. The value is converted
+    /// directly (a continuous value finite, −0.0 stored as 0.0; a level within `u8`; a choice one
+    /// of the options), then the setter validates its range. Real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NoSuchControl`]; [`Error::NotAPlainLiveControl`] for a settings field (change
+    /// those with [`reconfigure`](Self::reconfigure) or
+    /// [`schedule_change`](Self::schedule_change)); [`Error::InvalidControlValue`] for a value
+    /// the control cannot represent (a wrong type, a non-option, a non-finite value, a level
+    /// above 255); the setter's own [`Error::InvalidVolume`], [`Error::InvalidSpeedLevel`] or
+    /// [`Error::InvalidBatteryVolts`]. The value is unchanged on any error.
+    pub fn set_control_value(&mut self, index: u32, reading: ControlReading) -> Result<(), Error> {
+        #[cfg(feature = "__test-hooks")]
+        return __hooks::set_control_value_with(MapMutation::default(), self, index, reading);
+        #[cfg(not(feature = "__test-hooks"))]
+        match target(index)? {
+            Target::Setting(_) => Err(Error::NotAPlainLiveControl { control: index }),
+            Target::Live(l) => set_live(self, l, index, reading, false),
+        }
+    }
+}
+
 /// The mapping's mutants (spec 025 research R-07): each a named fault the tests must catch.
 #[cfg(feature = "__test-hooks")]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -428,8 +546,11 @@ pub struct MapMutation {
     pub attack_release_swapped: bool,
     /// The speaker and earphone switches swapped.
     pub speaker_earphone_swapped: bool,
-    /// A too-wide integer wrapped (`as u8`) instead of refused.
+    /// A too-wide integer wrapped (`as u8`) instead of refused (the sensitivity and the
+    /// playback speed level).
     pub wide_integer_wraps: bool,
+    /// The engine read returns a live control's default instead of its live value.
+    pub default_not_live: bool,
 }
 
 /// The mutation hooks (research R-07).
@@ -490,6 +611,38 @@ pub mod __hooks {
                 set(s, a, index, reading)
             }
             Target::Live(_) => Err(Error::NotASetting { control: index }),
+        }
+    }
+
+    /// `Pipeline::control_value` with mutant `m`.
+    pub fn control_value_with(
+        m: MapMutation,
+        p: &Pipeline,
+        index: u32,
+    ) -> Result<ControlReading, Error> {
+        match mutated_target(m, index)? {
+            Target::Setting(a) => Ok(get(p.settings(), mutate(m, a))),
+            Target::Live(l) if m.default_not_live => Ok(match l {
+                L::Route => ControlReading::Choice(0),
+                L::Volume => ControlReading::Continuous(crate::output::VOLUME_REFERENCE),
+                L::SpeedLevel => ControlReading::Integer(3),
+                L::SpeedMode => ControlReading::Choice(0),
+                L::Battery => ControlReading::Continuous(crate::battery::DEFAULT_BATTERY_VOLTS),
+            }),
+            Target::Live(l) => Ok(live_value(p, l)),
+        }
+    }
+
+    /// `Pipeline::set_control_value` with mutant `m`.
+    pub fn set_control_value_with(
+        m: MapMutation,
+        p: &mut Pipeline,
+        index: u32,
+        reading: ControlReading,
+    ) -> Result<(), Error> {
+        match target(index)? {
+            Target::Setting(_) => Err(Error::NotAPlainLiveControl { control: index }),
+            Target::Live(l) => set_live(p, l, index, reading, m.wide_integer_wraps),
         }
     }
 }
@@ -800,6 +953,26 @@ mod tests {
     #[test]
     fn mutants_change_what_they_name() {
         use super::__hooks::*;
+        let mut p = engine();
+        let lvl = index_of(Target::Live(L::SpeedLevel));
+        let wrap = MapMutation {
+            wide_integer_wraps: true,
+            ..MapMutation::default()
+        };
+        set_control_value_with(wrap, &mut p, lvl, ControlReading::Integer(259)).unwrap();
+        assert_eq!(p.playback_speed(), 3, "259 wraps to the valid level 3");
+        assert!(set_control_value_with(wrap, &mut p, lvl, ControlReading::Integer(261)).is_ok());
+        assert_eq!(p.playback_speed(), 5);
+        let vol = index_of(Target::Live(L::Volume));
+        p.set_volume(0.7).unwrap();
+        let stale = MapMutation {
+            default_not_live: true,
+            ..MapMutation::default()
+        };
+        assert_ne!(
+            control_value_with(stale, &p, vol).unwrap(),
+            p.control_value(vol).unwrap()
+        );
         let base = Settings::new(48_000);
         let attack = index_of(Target::Setting(S::AgcAttack));
         let m = MapMutation {
@@ -833,5 +1006,124 @@ mod tests {
         let mut s = base;
         set_settings_value_with(m, &mut s, spk, ControlReading::Switch(false)).unwrap();
         assert!(!s.output.earphone_enabled && s.output.speaker_enabled);
+    }
+
+    fn engine() -> Pipeline {
+        Pipeline::new(Settings::new(48_000)).unwrap()
+    }
+
+    #[test]
+    fn control_value_defaults() {
+        let p = engine();
+        for (i, e) in controls().iter().enumerate() {
+            let r = p.control_value(i as u32).unwrap();
+            let expected = match e.value {
+                ControlValue::Switch { default } => Some(ControlReading::Switch(default)),
+                ControlValue::Integer { default, .. } => Some(ControlReading::Integer(default)),
+                ControlValue::Continuous { default, .. } => {
+                    Some(ControlReading::Continuous(default))
+                }
+                ControlValue::Choice { default, .. } => default.map(ControlReading::Choice),
+            };
+            match expected {
+                Some(x) => assert_eq!(r, x, "{}", e.identifier),
+                None => assert_eq!(r, ControlReading::Choice(48_000), "{}", e.identifier),
+            }
+        }
+        assert!(matches!(
+            p.control_value(31),
+            Err(Error::NoSuchControl { control: 31 })
+        ));
+    }
+
+    #[test]
+    fn set_control_value_statuses() {
+        let mut p = engine();
+        let vol = index_of(Target::Live(L::Volume));
+        let lvl = index_of(Target::Live(L::SpeedLevel));
+        let bat = index_of(Target::Live(L::Battery));
+        let route = index_of(Target::Live(L::Route));
+        let mode = index_of(Target::Live(L::SpeedMode));
+        assert!(matches!(
+            p.set_control_value(vol, ControlReading::Continuous(1.5)),
+            Err(Error::InvalidVolume { .. })
+        ));
+        assert!(matches!(
+            p.set_control_value(vol, ControlReading::Continuous(f32::NAN)),
+            Err(Error::InvalidControlValue { .. })
+        ));
+        assert!(matches!(
+            p.set_control_value(vol, ControlReading::Integer(1)),
+            Err(Error::InvalidControlValue { .. })
+        ));
+        assert!(matches!(
+            p.set_control_value(lvl, ControlReading::Integer(0)),
+            Err(Error::InvalidSpeedLevel { level: 0 })
+        ));
+        assert!(matches!(
+            p.set_control_value(lvl, ControlReading::Integer(6)),
+            Err(Error::InvalidSpeedLevel { level: 6 })
+        ));
+        assert!(matches!(
+            p.set_control_value(lvl, ControlReading::Integer(259)),
+            Err(Error::InvalidControlValue { .. })
+        ));
+        assert!(matches!(
+            p.set_control_value(bat, ControlReading::Continuous(2.0)),
+            Err(Error::InvalidBatteryVolts { .. })
+        ));
+        assert!(matches!(
+            p.set_control_value(route, ControlReading::Choice(2)),
+            Err(Error::InvalidControlValue { .. })
+        ));
+        assert!(matches!(
+            p.set_control_value(mode, ControlReading::Choice(2)),
+            Err(Error::InvalidControlValue { .. })
+        ));
+        assert!(matches!(
+            p.set_control_value(10, ControlReading::Continuous(-3.0)),
+            Err(Error::NotAPlainLiveControl { control: 10 })
+        ));
+        assert!(matches!(
+            p.set_control_value(31, ControlReading::Integer(0)),
+            Err(Error::NoSuchControl { control: 31 })
+        ));
+        // Nothing changed.
+        let fresh = engine();
+        for i in 0..CONTROL_COUNT as u32 {
+            assert_eq!(p.control_value(i).unwrap(), fresh.control_value(i).unwrap());
+        }
+        // The accepted values land in the getters.
+        p.set_control_value(vol, ControlReading::Continuous(0.5))
+            .unwrap();
+        p.set_control_value(lvl, ControlReading::Integer(5))
+            .unwrap();
+        p.set_control_value(bat, ControlReading::Continuous(2.4))
+            .unwrap();
+        p.set_control_value(route, ControlReading::Choice(1))
+            .unwrap();
+        p.set_control_value(mode, ControlReading::Choice(1))
+            .unwrap();
+        assert_eq!(p.volume(), 0.5);
+        assert_eq!(p.playback_speed(), 5);
+        assert_eq!(p.battery_volts(), 2.4);
+        assert_eq!(p.route(), Route::Earphone);
+        assert_eq!(p.playback_speed_mode(), SpeedMode::PitchKept);
+        assert_eq!(
+            p.control_value(vol).unwrap(),
+            ControlReading::Continuous(0.5)
+        );
+    }
+
+    #[test]
+    fn set_control_value_neg_zero() {
+        let mut p = engine();
+        let vol = index_of(Target::Live(L::Volume));
+        p.set_control_value(vol, ControlReading::Continuous(-0.0))
+            .unwrap();
+        assert_eq!(p.volume().to_bits(), 0.0f32.to_bits());
+        // The plain setter keeps its own behaviour (documented): −0.0 stored as given.
+        p.set_volume(-0.0).unwrap();
+        assert_eq!(p.volume().to_bits(), (-0.0f32).to_bits());
     }
 }
