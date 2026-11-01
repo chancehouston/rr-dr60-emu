@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-01
 
-**Status**: Draft reviewed 2026-11-01 (coach 1 – 16, hardware B1 – B11, product M1 – M7, applied at the defaults below); the owner's spec sign-off next (the nine review questions carry defaults, listed under Clarifications).
+**Status**: **Held by the owner 2026-11-01** ("let's put a hold on this feature; we will come back to it"): the draft is reviewed (coach 1 – 16, hardware B1 – B11, product M1 – M7, applied at the defaults below) and not signed off; the nine review questions carry defaults, listed under Clarifications, for the resumption. The engine moves to 0.90.0 first, then the prototype app is reviewed.
 
 **Input**: User description: "024 an insertable component slot and the first free component, a band filter (the owner's request 2026-11-01: make our first insertable so the engine has that feature; include one basic fx plugin for free in the initial release; other plugins later). … Decisions for sign-off D1 – D12, the measurable properties and the oracles" (the full text in the session of 2026-11-01).
 
