@@ -38,7 +38,7 @@
 - [X] T012 [P] `swift/Sources/RRDR60/ControlReading.swift` (R-09) and `swift/Tests/RRDR60Tests/ControlReadingTests.swift`; `scripts/build-xcframework.sh && cd swift && swift test`.
 - [X] T013 `.github/workflows/ci.yml`: the second promise step (f5a02452728f3d0687c033689266a5bbdf88c6db) and the Miri filter; run both promise steps locally.
 - [X] T014 The records (records.md): the guide paragraph verbatim and a guide wording check in `us2_cross_check`, the C block re-blessed, the CHANGELOG, the README's C list, CLAUDE.md (status entry, reports commands), the traceability audit; the bench spec's pointer (ic-recorder-app).
-- [ ] T015 The full gate: fmt, clippy, the feature-less `-D warnings` build, the iOS build, the header drift check, `cargo test --all-features` (count), the MSRV build, the C smoke, the simulator goldens, `swift test`, Miri, coverage (within 1 point of 96.73 %); the guards and smoke hashes unmoved (T002).
+- [X] T015 The full gate: fmt, clippy, the feature-less `-D warnings` build, the iOS build, the header drift check, `cargo test --all-features` (count), the MSRV build, the C smoke, the simulator goldens, `swift test`, Miri, coverage (within 1 point of 96.73 %); the guards and smoke hashes unmoved (T002).
 - [X] T016 The post-implementation reviews (coach, hardware), applied at the defaults; the gate re-run.
 - [ ] T017 The PR, CI green, `/speckit-converge`, the owner merges; the post-merge records; the memory bookmark; bench 001's plan resumes.
 
