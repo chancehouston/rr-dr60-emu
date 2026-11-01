@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-01
 
-**Status**: Draft reviewed 2026-11-01 (coach 1 – 13, hardware B1 – B9, product M1 – M5, applied at the defaults below); `/speckit-clarify` next, then the owner's sign-off.
+**Status**: Draft reviewed 2026-11-01 (coach 1 – 13, hardware B1 – B9, product M1 – M5, applied at the defaults below); clarified 2026-11-01 (five questions, every answer the recommended one); the owner's sign-off next.
 
 **Input**: The owner's decision of 2026-11-01 in the test bench's `/speckit-clarify` (ic-recorder-app, spec 001, question 1: "engine first"): the engine gains a read of the settings it is running with and access to every control by the control manifest's index, so the bench can confirm an Apply from the engine's own read and build its controls without a hand-written table. The first engine feature after 0.90.0 (a 0.9x minor: 0.91.0); spec 024 stays held.
 
@@ -28,6 +28,14 @@ The owner reads this section first. Each decision gives the recommendation; the 
 
 ## Clarifications
 
+### Session 2026-11-01 (/speckit-clarify)
+
+- Q: How should the reading structure store a fractional value, as a single-precision float or a double? → A: **An integer field and a single-precision float field** (D2 as drafted).
+- Q: Should the applied-settings read mean what the engine is configured to do, with the change log confirming a live value took effect? → A: **Yes, configured; the log confirms** (D1 as drafted).
+- Q: Should an integer too large for the engine's field be refused at the write or clamped? → A: **Refused at the write** (D3 as drafted).
+- Q: Should setting a control by index on a running engine be limited to the five live controls with a plain setter? → A: **Yes, only the five** (D4 as drafted).
+- Q: Should the engine translate the validator's field into the control's index? → A: **Yes** (D6 as drafted).
+
 ### Session 2026-11-01 (the owner's request)
 
 - The test bench (ic-recorder-app spec 001) needs to confirm an Apply from the engine's own read and to build its controls from the manifest without a hand-written accessor table; the owner chose to add both in the engine before bench 001 continues.
@@ -35,7 +43,7 @@ The owner reads this section first. Each decision gives the recommendation; the 
 ### Session 2026-11-01 (the draft reviews: coach 1 – 13, hardware B1 – B9, product M1 – M5)
 
 - **The mapping** (coach 1, hardware B5): the record's table covered 24 of 26 settings with a string match that a new field does not break; D5 makes the mapping exhaustive and its oracle independent (the one-hot test, the C byte comparison).
-- **The reading's layout** (coach 2, hardware B7): an integer field and a single-precision float field (the control manifest's own form), switches in the integer field; the reviewers' alternative, a double and an integer, is listed for `/speckit-clarify`.
+- **The reading's layout** (coach 2, hardware B7): an integer field and a single-precision float field (the control manifest's own form), switches in the integer field; the alternative, a double and an integer, was declined at `/speckit-clarify`.
 - **Integer width and the conversion rule** (coach 3, hardware B2, B3): representability includes the Rust field's width, one rule in both languages; continuous values follow spec 015 R-04.
 - **Refusal order** (coach 4); **the read's semantics and spec 021's trap** (coach 5, hardware B4); **the live getters' exact meaning** (coach 6); **the field-local C write** (hardware B1); **the settings read built in place** (coach 8, hardware B6); **threads** (coach 10, hardware B8); **the promise script's two revisions and the unchanged constants** (coach 9); **the field-to-control lookup** (coach 11, D6); **the host rate** (coach 12); **the records and the figures** (coach 13); **named tests and mutants** (coach 7, hardware B5: in the plan); **the identifier lookup, the default reading, the guide's wording** (product M1, M2, M4); **no settings-to-text call now** (product M3: a session restores from the processing record's read-out, presets in the app's own form keyed by identifier).
 
