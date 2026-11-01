@@ -427,6 +427,14 @@ def main() -> int:
     if check or "--crossfade" in sys.argv:
         crossfade_report(bound)
 
+    # Spec 023: the pitch-kept option (a sibling module; `--pitch-kept` prints, `--check` pins,
+    # `--write` regenerates `speed_window.rs`).
+    if check or "--pitch-kept" in sys.argv or "--write" in sys.argv:
+        import pitch_kept
+
+        print()
+        pitch_kept.report(bound, write="--write" in sys.argv)
+
     if check:
         if failures:
             print("\nCHECK FAILED:")

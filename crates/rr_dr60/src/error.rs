@@ -111,6 +111,12 @@ pub enum Error {
         /// The rejected level.
         level: u8,
     },
+    /// A playback speed mode value other than 0 or 1 through the C API or a schedule (spec 023
+    /// FR-001); the mode is unchanged.
+    InvalidSpeedMode {
+        /// The rejected value.
+        mode: u32,
+    },
     /// A processing call with a named route tap ([`Tap::AfterSpeaker`](crate::Tap::AfterSpeaker)
     /// or [`Tap::AfterEarphone`](crate::Tap::AfterEarphone)) while the other route is selected
     /// (spec 009 FR-011); nothing was processed. The route output tap
@@ -367,6 +373,9 @@ impl fmt::Display for Error {
             }
             Error::InvalidSpeedLevel { level } => {
                 write!(f, "invalid playback speed level {level}: expected 1 to 5")
+            }
+            Error::InvalidSpeedMode { mode } => {
+                write!(f, "invalid playback speed mode {mode}: expected 0 or 1")
             }
             Error::ScheduleFull { stream } => {
                 write!(

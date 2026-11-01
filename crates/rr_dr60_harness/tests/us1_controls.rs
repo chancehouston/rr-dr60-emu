@@ -46,12 +46,13 @@ fn thirty_entries_in_order() {
     }
     // Spec 018: a control added after 0.14 is appended, so no stored index moves.
     want.push("battery_volts".into());
+    want.push("playback_speed_mode".into()); // spec 023: appended at 30
     let got: Vec<String> = controls()
         .iter()
         .map(|e| e.identifier.to_string())
         .collect();
     assert_eq!(got, want);
-    assert_eq!(got.len(), 30); // 014: 29; spec 018 appends `battery_volts` at index 29
+    assert_eq!(got.len(), 31); // 014: 29; spec 018 appends `battery_volts` at 29; 023 the mode at 30
 }
 
 #[test]
@@ -130,6 +131,7 @@ fn literal_kinds_and_timing() {
             "output.earphone_enabled",
             "mic.hiss_offset_db",
             "battery_volts",
+            "playback_speed_mode",
         ]
     );
     // Spec 017 FR-010: the live entries are the output-clock controls (three, four since spec

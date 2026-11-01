@@ -418,6 +418,8 @@ pub(crate) const LIVE_SPEED: u32 = 2;
 /// The control manifest's index of `battery_volts` (spec 018: appended after the 0.14 entries,
 /// so no earlier index moves; pinned by a test against the manifest).
 pub(crate) const LIVE_BATTERY: u32 = 29;
+/// Spec 023 D1: the playback speed mode, appended (index 30).
+pub(crate) const LIVE_SPEED_MODE: u32 = 30;
 /// The control manifest's indices of the four playback-side stage switches (spec 021 FR-001;
 /// pinned by a test against the manifest): stage 10 `playback_stage_enabled`, stages 11 – 13
 /// `output.volume_amp_enabled`, `output.speaker_enabled`, `output.earphone_enabled`.
@@ -476,6 +478,11 @@ pub(crate) struct StreamState {
     pub(crate) landed_route: Option<crate::Route>,
     pub(crate) landed_volume: Option<f32>,
     pub(crate) landed_level: Option<u8>,
+    /// Spec 023: the speed mode (0 pitch with speed, 1 pitch kept), as the level: last applied,
+    /// pending plain, landed.
+    last_mode: u8,
+    pending_mode: Option<u8>,
+    pub(crate) landed_mode: Option<u8>,
     /// Spec 018: the battery value (volts), as the volume: last applied, pending plain, landed.
     last_battery: f32,
     pending_battery: f32,
@@ -504,6 +511,8 @@ pub(crate) enum Apply {
     Chain(crate::Route, f32),
     /// `speed.request(level)`.
     Level(u8),
+    /// `speed.request_mode(mode)` (spec 023).
+    SpeedMode(u8),
     /// `chain.set_battery(volts)` (spec 018).
     Battery(f32),
     /// Spec 021: a playback-stage switch (10 … 13) landing: `bypassed` the value 0, `at_once`
@@ -531,6 +540,9 @@ impl StreamState {
             landed_route: None,
             landed_volume: None,
             landed_level: None,
+            last_mode: 0,
+            pending_mode: None,
+            landed_mode: None,
             last_battery: battery,
             pending_battery: battery,
             landed_battery: None,
@@ -553,11 +565,13 @@ impl StreamState {
         self.produced = 0;
         self.plain_pending = false;
         self.pending_level = None;
+        self.pending_mode = None;
         self.next_apply = self.arm(self.schedule.earliest());
         self.log_len = 0;
         self.landed_route = None;
         self.landed_volume = None;
         self.landed_level = None;
+        self.landed_mode = None;
         self.landed_battery = None;
         self.landed_bypass = [None; 3];
         self.landed_stage10 = None;
@@ -598,6 +612,19 @@ impl StreamState {
         self.last_volume = volume;
         self.last_level = level;
         self.last_battery = battery;
+    }
+
+    /// Spec 023 D1: the stream's speed mode becomes `mode`, no entry (`start_playback`'s
+    /// adopt; the engine's `reset`).
+    pub(crate) fn set_start_mode(&mut self, mode: u8) {
+        self.last_mode = mode;
+    }
+
+    /// Spec 023: the plain mode pending for this call (the player only; `None` elsewhere).
+    #[inline]
+    pub(crate) fn begin_call_mode(&mut self, mode: Option<u8>) {
+        self.pending_mode = mode;
+        self.landed_mode = None;
     }
 
     /// A processing call's entry: the plain change pending (today's entry-time controls), the
@@ -697,6 +724,15 @@ impl StreamState {
                     self.landed_level = Some(l);
                 }
             }
+            if let Some(m) = self.pending_mode.take() {
+                apply(Apply::SpeedMode(m));
+                if m != self.last_mode {
+                    let before = self.before(f64::from(self.last_mode), f64::from(m));
+                    self.push(pos, LIVE_SPEED_MODE, before, f64::from(m), 0);
+                    self.last_mode = m;
+                    self.landed_mode = Some(m);
+                }
+            }
         }
         while let Some(e) = self.schedule.pop_due(pos) {
             match e.control {
@@ -735,6 +771,15 @@ impl StreamState {
                     self.push(pos, LIVE_BATTERY, before, f64::from(b), e.tag);
                     self.last_battery = b;
                     self.landed_battery = Some(b);
+                }
+                LIVE_SPEED_MODE => {
+                    // Spec 023 D1: the mode (exactly 0 or 1, validated at the schedule call).
+                    let m = e.value as u8;
+                    apply(Apply::SpeedMode(m));
+                    let before = self.before(f64::from(self.last_mode), e.value);
+                    self.push(pos, LIVE_SPEED_MODE, before, f64::from(m), e.tag);
+                    self.last_mode = m;
+                    self.landed_mode = Some(m);
                 }
                 // Spec 021 FR-001: the four playback-stage switches (the value 1 on, 0 bypassed);
                 // a landing of the value in force is a no-op entry (before == after).
@@ -856,6 +901,10 @@ mod index_tests {
         assert_eq!(c[LIVE_VOLUME as usize].identifier, "volume");
         assert_eq!(c[LIVE_SPEED as usize].identifier, "playback_speed");
         assert_eq!(c[LIVE_BATTERY as usize].identifier, "battery_volts"); // 018: appended
+        assert_eq!(
+            c[LIVE_SPEED_MODE as usize].identifier,
+            "playback_speed_mode"
+        ); // 023: appended
         // Spec 021 FR-001: the four playback-stage switches.
         assert_eq!(
             c[LIVE_STAGE_10 as usize].identifier,
@@ -904,6 +953,99 @@ mod bypass_stream_tests {
     #[test]
     fn max_changes_per_call_is_142() {
         assert_eq!(MAX_CHANGES_PER_CALL, 2 * 64 + 3 + 8 + 3);
+    }
+
+    /// Spec 023 (research R-07, coach 4): the bound stays 142 (the one-pass attains it and the
+    /// mode is refused there); the player's attained count is 64 + 4 plain (route, volume,
+    /// level, battery) + the mode = 69, under the bound.
+    #[test]
+    fn max_changes_per_call_stays_142_player_attains_69() {
+        assert_eq!(MAX_CHANGES_PER_CALL, 142);
+        let mut st = state();
+        st.begin_call(crate::Route::Earphone, 0.25, Some(5), 2.5);
+        st.begin_call_mode(Some(1));
+        for i in 0..64u64 {
+            st.schedule.insert(0, LIVE_VOLUME, 0.1, i + 1).unwrap();
+        }
+        st.rearm();
+        let got = run_to(&mut st, 0);
+        assert_eq!(
+            got.len(),
+            64 + 4,
+            "the chain pair is one apply, two entries"
+        );
+        let mut log = [ChangeEntry::default(); MAX_CHANGES_PER_CALL];
+        assert_eq!(st.drain_log(&mut log), 69);
+        assert!(69 < MAX_CHANGES_PER_CALL);
+    }
+
+    /// Spec 023 D1: a scheduled mode landing is applied as `Apply::SpeedMode`, logged with the
+    /// stream word and tag and chained (before = the mode in force), and read as landed; a
+    /// plain change (the setter) lands at the call's first sample with tag 0.
+    #[test]
+    fn mode_landing_logged() {
+        let mut st = state();
+        st.schedule.insert(5, LIVE_SPEED_MODE, 1.0, 9).unwrap();
+        st.rearm();
+        assert_eq!(run_to(&mut st, 5), [Apply::SpeedMode(1)]);
+        let mut log = [ChangeEntry::default(); 4];
+        assert_eq!(st.drain_log(&mut log), 1);
+        assert_eq!(
+            (
+                log[0].position,
+                log[0].control,
+                log[0].before,
+                log[0].after,
+                log[0].tag,
+                log[0].stream
+            ),
+            (5, LIVE_SPEED_MODE, 0.0, 1.0, 9, Stream::Playback.word())
+        );
+        assert_eq!(st.landed_mode, Some(1));
+        // The plain setter: pending for the call, applied at its first sample, tag 0, chained.
+        let mut st = state();
+        st.set_start_mode(1);
+        st.begin_call(crate::Route::Speaker, 0.5, Some(3), 3.0);
+        st.begin_call_mode(Some(0));
+        let got = run_to(&mut st, 0);
+        assert!(got.contains(&Apply::SpeedMode(0)));
+        let mut log = [ChangeEntry::default(); 8];
+        let n = st.drain_log(&mut log);
+        let e = log[..n]
+            .iter()
+            .find(|e| e.control == LIVE_SPEED_MODE)
+            .unwrap();
+        assert_eq!((e.before, e.after, e.tag), (1.0, 0.0, 0));
+        assert_eq!(st.landed_mode, Some(0));
+    }
+
+    /// Spec 023 (spec 015's rules): a plain mode equal to the value in force is applied (the
+    /// stage's request is idempotent) but not logged and not landed; a scheduled landing of
+    /// the value in force is a no-op entry (before == after); the reset clears the pending mode.
+    #[test]
+    fn mode_same_value_rules() {
+        let mut st = state();
+        st.begin_call(crate::Route::Speaker, 0.5, Some(3), 3.0);
+        st.begin_call_mode(Some(0));
+        let got = run_to(&mut st, 0);
+        assert!(got.contains(&Apply::SpeedMode(0)));
+        let mut log = [ChangeEntry::default(); 8];
+        let n = st.drain_log(&mut log);
+        assert!(log[..n].iter().all(|e| e.control != LIVE_SPEED_MODE));
+        assert_eq!(st.landed_mode, None);
+        let mut st = state();
+        st.schedule.insert(3, LIVE_SPEED_MODE, 0.0, 2).unwrap();
+        st.rearm();
+        run_to(&mut st, 3);
+        let n = st.drain_log(&mut log);
+        assert_eq!(n, 1);
+        assert_eq!((log[0].before, log[0].after, log[0].tag), (0.0, 0.0, 2));
+        let mut st = state();
+        st.begin_call(crate::Route::Speaker, 0.5, Some(3), 3.0);
+        st.begin_call_mode(Some(1));
+        st.reset();
+        assert_eq!(st.pending_mode, None);
+        assert!(run_to(&mut st, 0).is_empty());
     }
 
     #[test]
@@ -1512,12 +1654,18 @@ mod record_tests {
         for c in LIVE_RECORD {
             assert_eq!(clock_of(c).unwrap(), Clock::Input);
         }
-        for c in [LIVE_ROUTE, LIVE_VOLUME, LIVE_SPEED, LIVE_BATTERY] {
+        for c in [
+            LIVE_ROUTE,
+            LIVE_VOLUME,
+            LIVE_SPEED,
+            LIVE_BATTERY,
+            LIVE_SPEED_MODE,
+        ] {
             assert_eq!(clock_of(c).unwrap(), Clock::Output);
         }
         assert!(matches!(
             clock_of(crate::controls::CONTROL_COUNT as u32),
-            Err(Error::NoSuchControl { control: 30 }) // 29 before spec 018
+            Err(Error::NoSuchControl { control: 31 }) // 29 before spec 018, 30 before spec 023
         ));
         assert_eq!(Clock::Input as u32, 0);
         assert_eq!(Clock::Output as u32, 1);

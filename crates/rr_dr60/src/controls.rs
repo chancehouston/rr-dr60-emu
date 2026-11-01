@@ -25,8 +25,9 @@
 use crate::manifest::{bytes_eq, chars, ends_with_dot, ids_ok};
 use crate::settings::{Tap, VasMode};
 
-/// The number of entries: three live controls and 26 settings (014 FR-001).
-pub const CONTROL_COUNT: usize = 30; // FR-001; spec 018: `battery_volts` appended at 29
+/// The number of entries: three live controls and 26 settings (014 FR-001), then the appended
+/// live controls (spec 018's battery voltage, spec 023's speed mode).
+pub const CONTROL_COUNT: usize = 31; // FR-001; spec 018: `battery_volts` appended at 29; spec 023: `playback_speed_mode` at 30
 
 /// What kind of adjustment an entry is (014 FR-003; the owner's decisions of 2026-10-29).
 #[non_exhaustive]
@@ -339,7 +340,7 @@ control_table! {
         paths: [PLAYBACK], stage: 9,
         value: integer(1, 5, 3), unit: "level",
         sources: ["S-001", "S-012"], assumptions: ["A-054"],
-        description: "Plays recordings slower or faster than normal; the model lets the pitch follow the speed.",
+        description: "Plays recordings slower or faster than normal; whether the pitch follows the speed is the speed mode's choice.",
     },
     {
         identifier: "host_rate_hz", name: "Host sample rate", kind: HostParameter, timing: HostFixed,
@@ -539,6 +540,14 @@ control_table! {
         value: continuous(2.2, 3.0, 3.0), unit: "V",
         sources: ["S-002", "S-006", "S-017"], assumptions: ["A-056"],
         description: "Sets the played unit's cell voltage: the lower the cells, the lower the speaker amplifier's clip ceiling; set by the user, never read from the host device.",
+    },
+    // Spec 023 D1: appended at 30 (the same order rule).
+    {
+        identifier: "playback_speed_mode", name: "Playback speed mode", kind: ModelInternal, timing: Live,
+        paths: [PLAYBACK], stage: 9,
+        value: choice([("pitch_with_speed", 0), ("pitch_kept", 1)], Some(0)), unit: "",
+        sources: ["S-001", "S-012"], assumptions: ["A-054"],
+        description: "Chooses whether slow and fast playback moves the pitch with the speed (the modeled default) or keeps it by time-scaling the decoded stream.",
     },
 }
 
@@ -754,7 +763,7 @@ mod tests {
 
     const LIVE: [&str; 3] = ["route", "volume", "playback_speed"];
     /// Spec 018: entries added after 0.14 are appended in their order (indices are stable).
-    const APPENDED: [&str; 1] = ["battery_volts"];
+    const APPENDED: [&str; 2] = ["battery_volts", "playback_speed_mode"]; // 018, 023
 
     /// 014 FR-007: the mapped identifiers plus the live ones equal the table exactly, in
     /// FR-001's order (live first, then the settings' declaration order).
@@ -922,6 +931,7 @@ mod tests {
             "volume" => Def::F(crate::output::VOLUME_REFERENCE),
             "playback_speed" => Def::I(u64::from(crate::speed::DEFAULT_LEVEL)),
             "battery_volts" => Def::F(crate::battery::DEFAULT_BATTERY_VOLTS), // spec 018
+            "playback_speed_mode" => Def::C(Some(crate::speed::SpeedMode::default() as u32)), // spec 023
             "host_rate_hz" => Def::C(None),
             "record_stage_enabled" => Def::B(s.record_stage_enabled),
             "playback_stage_enabled" => Def::B(s.playback_stage_enabled),

@@ -558,6 +558,46 @@ pub mod __test_hooks {
     /// Spec 021 (research R-09): the live stage bypass's mutants.
     pub use crate::stages::fade::BypassMutation;
 
+    /// Spec 023 (research R-12): the pitch-kept mode's mutants, each a rejected alternative or
+    /// a removed rule (false everywhere: as committed).
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct PitchMutation {
+        /// Every shift 0 (a plain overlap-add: the rows collapse by about 30 dB).
+        pub no_search: bool,
+        /// The previous frame dropped at each hop: the continuation restarts at the place.
+        pub restart_overlap: bool,
+        /// D12's rejected first rule: into level 3 the hop finishes with the identity in place
+        /// of the current frame (a swap at a weight near one) instead of the fade.
+        pub into3_swap: bool,
+        /// The onset's previous half reads zeros: a fade-in instead of the bit-exact onset.
+        pub onset_fade: bool,
+        /// A symmetric Hann (period N − 1): the overlapping pair no longer sums to 1.
+        pub window_sum_off: bool,
+        /// The search window halved (Δ = 20).
+        pub delta_narrow: bool,
+        /// The search matches the nominal frame instead of the continuation.
+        pub match_nominal: bool,
+        /// The search scans −Δ … +Δ in ascending order (a tie picks −40, not 0).
+        pub tie_break_outward_off: bool,
+        /// The grid's origin not anchored at the output that leaves level 3 (the previous
+        /// frame at the place itself: a doubled onset).
+        pub grid_unanchored: bool,
+        /// A mode change applies at once, no fade.
+        pub mode_step: bool,
+    }
+
+    /// Spec 023 (research R-12): the time-scaler's per-frame shifts since the playback's start
+    /// (the first 8192; the anchor's 0 first), the golden's digest.
+    pub fn pitch_shift_trace(pipeline: &crate::Pipeline) -> alloc::vec::Vec<i32> {
+        pipeline.speed.shift_trace.clone()
+    }
+
+    /// Spec 023 (research R-06): T_c(own, origin), the pitch-kept tail.
+    pub fn pitch_kept_tail(own: u64, origin: u64) -> u64 {
+        crate::stages::speed::pitch_kept_tail(own, origin)
+    }
+
     /// Spec 021 (research R-03): the rate conversion's delay D in host samples at `rate`
     /// (0 at the identity rate), the bound on stage 10's host-output settle; `None` for an
     /// unsupported rate.

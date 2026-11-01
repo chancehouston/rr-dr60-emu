@@ -263,6 +263,12 @@ fn refuse_if_active(state: State) -> Result<(), Error> {
     }
 }
 
+/// The mode of a logged value (0 or 1, validated at the schedule call and the setter).
+#[inline]
+fn mode_of(m: u8) -> crate::speed::SpeedMode {
+    crate::speed::SpeedMode::from_u32(u32::from(m)).unwrap_or_default()
+}
+
 impl Pipeline {
     /// The refusal the one-pass calls and `reconfigure` give while a path is active.
     pub(crate) fn refuse_if_active(&self) -> Result<(), Error> {
@@ -568,6 +574,7 @@ impl Pipeline {
             self.speed_level,
             self.battery_volts,
         );
+        self.player.ctl.set_start_mode(self.speed_mode as u8); // 023 D1
         // Spec 021 D2 (research R-05): the switches adopted from the settings (a one-pass
         // landing reaches the player here), at rest, no entry.
         self.player.adopt_bypass(&self.settings);
@@ -578,7 +585,7 @@ impl Pipeline {
         // host's level; the total (⌈(K′ + T)·m/l⌉ + the drain) is fixed when its place reaches K
         // (research R-05), so it starts unknown.
         let k = span.len as u64 * self.memory.encoding().unit_samples() as u64;
-        self.speed.reset(self.speed_level, k);
+        self.speed.reset(self.speed_level, self.speed_mode, k);
         self.transport.cursor = Cursor {
             span,
             offset: 0,
@@ -617,6 +624,7 @@ impl Pipeline {
             Some(self.speed_level),
             self.battery_volts,
         );
+        self.player.begin_call_mode(Some(self.speed_mode as u8)); // 023 D1
         let mut produced = 0;
         let mut frames = 0;
         #[cfg(feature = "__test-hooks")]
@@ -682,7 +690,10 @@ impl Pipeline {
         while produced < output.len() && player.ctl.produced < cursor.total {
             // Spec 015 research R-02: the apply point at the top of host sample `produced`,
             // before any pull for it (a speed request then reaches the pull d(P)).
-            player.apply_if_due(&mut |level| speed.request(level));
+            player.apply_if_due(&mut |r| match r {
+                crate::paths::SpeedRequest::Level(l) => speed.request(l),
+                crate::paths::SpeedRequest::Mode(m) => speed.request_mode(mode_of(m)), // 023
+            });
             let y = loop {
                 if let Some(y) = player.next_wide() {
                     break player.emit_applied(y);
@@ -783,6 +794,9 @@ impl Pipeline {
         }
         if let Some(l) = ctl.landed_level.take() {
             self.speed_level = l;
+        }
+        if let Some(m) = ctl.landed_mode.take() {
+            self.speed_mode = mode_of(m); // 023
         }
         if let Some(b) = ctl.landed_battery.take() {
             self.battery_volts = b; // 018
@@ -1248,6 +1262,38 @@ impl Pipeline {
         let numerator = crate::stages::speed::numerator(level);
         let own = (5 * k).div_ceil(u64::from(numerator)); // 013 FR-005: ⌈5K ÷ k⌉
         let tail = crate::stages::speed::tail_len(k, numerator); // 013 R-04
+        let pre_drain = (u128::from(own + tail) * u128::from(m)).div_ceil(u128::from(l)) as u64;
+        Ok(pre_drain + u64::from(self.player.drain_len_host_samples()))
+    }
+
+    /// The host samples [`play`](Self::play) produces for recording `number` played at a
+    /// constant playback speed `level` in `mode` (spec 023 D4): in the default mode
+    /// [`playback_length_samples`](Self::playback_length_samples); in pitch-kept mode
+    /// ⌈(⌈5K ÷ k⌉ + T_c) · m ÷ l⌉ with the tail T_c = 120 − (⌈5K ÷ k⌉ mod 60), or 60 when the
+    /// remainder is 0 (60 … 119 device samples; 0 at level 3), plus
+    /// [`drain_samples`](Self::drain_samples). Exact for a playback started in `mode` at
+    /// `level` with no change. Real-time safe.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidSpeedLevel`] (checked first), then [`Error::NoSuchRecording`].
+    pub fn playback_length_samples_in_mode(
+        &self,
+        number: u32,
+        level: u8,
+        mode: crate::speed::SpeedMode,
+    ) -> Result<u64, Error> {
+        if mode == crate::speed::SpeedMode::PitchWithSpeed || level == crate::speed::DEFAULT_LEVEL {
+            return self.playback_length_samples(number, level);
+        }
+        if !(1..=crate::speed::LEVEL_COUNT).contains(&level) {
+            return Err(Error::InvalidSpeedLevel { level });
+        }
+        let k = self.recording_length(number)?;
+        let (l, m) = self.plan_l_m;
+        let numerator = crate::stages::speed::numerator(level);
+        let own = (5 * k).div_ceil(u64::from(numerator)); // 013 FR-005: ⌈5K ÷ k⌉
+        let tail = crate::stages::speed::pitch_kept_tail(own, 0); // 023 R-06
         let pre_drain = (u128::from(own + tail) * u128::from(m)).div_ceil(u128::from(l)) as u64;
         Ok(pre_drain + u64::from(self.player.drain_len_host_samples()))
     }

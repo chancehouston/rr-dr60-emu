@@ -137,6 +137,13 @@ pub(crate) fn l_m(plan: &RatePlan) -> (u64, u64) {
 /// What the record half did with one device sample (research R-01). The kept value is the
 /// 64-bit post-VAS sample; [`RecordPath::push`] narrows it (FR-009), and the test-only
 /// un-narrowed route (`push_wide`) passes it on as it is.
+/// What the player's apply point asks the speed control (spec 013 a level, spec 023 a mode).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SpeedRequest {
+    Level(u8),
+    Mode(u8),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum RecordOut {
     /// Kept (recording).
@@ -1145,14 +1152,15 @@ impl PlaybackPath {
     /// chain pair goes to the output chain, a level to `speed` (the player's closure; the
     /// one-pass passes one that ignores it, the speed being playback-only).
     #[inline]
-    pub(crate) fn apply_if_due(&mut self, speed: &mut dyn FnMut(u8)) {
+    pub(crate) fn apply_if_due(&mut self, speed: &mut dyn FnMut(SpeedRequest)) {
         if self.ctl.due() {
             let chain = &mut self.chain;
             let half = &mut self.half;
             self.ctl.apply_due(&mut |a| match a {
                 crate::changes::Apply::Chain(r, v) => chain.set_controls(r, v),
-                crate::changes::Apply::Level(l) => speed(l),
-                crate::changes::Apply::Battery(b) => chain.set_battery(b), // 018
+                crate::changes::Apply::Level(l) => speed(SpeedRequest::Level(l)),
+                crate::changes::Apply::SpeedMode(m) => speed(SpeedRequest::Mode(m)), // 023
+                crate::changes::Apply::Battery(b) => chain.set_battery(b),           // 018
                 // Spec 021: a stage switch (validated at the schedule call: the stage runs here).
                 crate::changes::Apply::Bypass {
                     stage: 10,
@@ -1216,6 +1224,12 @@ impl PlaybackPath {
         self.ctl.begin_call(route, volume, level, battery);
         #[cfg(feature = "__test-hooks")]
         self.ctl.mutant_pop_all_now();
+    }
+
+    /// Spec 023: the plain mode pending for this call (the player; after `begin_call`).
+    #[inline]
+    pub(crate) fn begin_call_mode(&mut self, mode: Option<u8>) {
+        self.ctl.begin_call_mode(mode);
     }
 
     /// The lifecycle rule (spec 015 D3): the stream starts with these values, no entry.

@@ -41,6 +41,54 @@ pub const CROSSFADE_SAMPLES: u32 = 120; // 019 FR-002: an engine convention (A-0
 /// beside [`output::VOLUME_TRANSITION_MS`](crate::output::VOLUME_TRANSITION_MS).
 pub const CROSSFADE_MS: u32 = 20; // 019 FR-002
 
+/// The playback speed **mode** (spec 023 D1): how the five levels change the speed. The default
+/// moves the pitch with the speed (A-054's mechanism (b), a resampling); the pitch-kept mode
+/// time-scales the decoded stream at the 6 kHz device rate (a waveform-similarity overlap-add
+/// with frames of 20 ms), **an engine convention, not a device behavior**: the device's speed
+/// method is undocumented (A-054). Level 3 is the identity in both. A live control of the
+/// playback stream (the control manifest's `playback_speed_mode`, index 30), set with
+/// [`Pipeline::set_playback_speed_mode`](crate::Pipeline::set_playback_speed_mode).
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum SpeedMode {
+    /// The pitch moves with the speed (the modeled default; 0 in C).
+    #[default]
+    PitchWithSpeed = 0, // S-001, S-012, A-054 (023 D1: the modeled default)
+    /// The pitch is kept while the speed changes (1 in C).
+    PitchKept = 1,
+}
+
+impl SpeedMode {
+    /// The mode for a C value (0 or 1), or `None`.
+    pub fn from_u32(value: u32) -> Option<Self> {
+        match value {
+            0 => Some(Self::PitchWithSpeed),
+            1 => Some(Self::PitchKept),
+            _ => None,
+        }
+    }
+}
+
+/// The number of speed modes (spec 023 D1).
+pub const MODE_COUNT: u32 = 2; // 023 D1
+
+/// The time-scaler's analysis frame in device samples (spec 023 D2, research R-02): 20 ms.
+pub const FRAME_SAMPLES: u32 = 120; // engineering target (023 R-02); an engine convention (A-054)
+/// The time-scaler's synthesis hop in device samples: half a frame, 50 % overlap (spec 023 D2).
+pub const HOP_SAMPLES: u32 = 60; // engineering target (023 R-02)
+/// The time-scaler's search window, ± stored samples (spec 023 D2, research R-03): 6.67 ms,
+/// coherent for fundamentals of 75 Hz and above; below the hop, which makes the tail provable
+/// (research R-06).
+pub const SEARCH_SAMPLES: u32 = 40; // engineering target (023 R-03, R-06)
+/// The samples the similarity search correlates over (spec 023 D2): the overlap region.
+pub const CORRELATION_SAMPLES: u32 = 60; // engineering target (023 R-03)
+/// The most device samples the pitch-kept tail adds after a recording's own part, before the
+/// drain (spec 023 D4, research R-06: 120 − ((own − origin) mod 60), or 60).
+pub const MAX_PITCH_KEPT_TAIL_SAMPLES: u32 = 120; // 023 R-06 (a grid bound; Δ < Ss)
+/// The most device samples the audio heard in pitch-kept mode can sit from the place the
+/// progress reports (spec 023 D5: Δ + 59·|1 − r| at levels 1 and 5; 52 at 2 and 4).
+pub const MAX_PITCH_KEPT_OFFSET_SAMPLES: u32 = 64; // 023 R-05 (the plan review's coach 3)
+
 /// The speed ratio of `level` (1 … 5) as a number, for display only; `None` for any other
 /// level. The engine counts places in exact fifths and never uses this value.
 pub fn ratio(level: u8) -> Option<f64> {

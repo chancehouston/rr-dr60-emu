@@ -1228,8 +1228,8 @@ mod tests {
     use alloc::vec::Vec;
     use std::string::String;
 
-    /// The table is the manifest's settings except the two identity lines and the four live
-    /// controls, in manifest order.
+    /// The table is the manifest's settings except the two identity lines and the five live
+    /// controls (spec 023's mode included), in manifest order.
     #[test]
     fn setting_table_matches_the_manifest() {
         let want: Vec<&str> = controls()
@@ -1238,7 +1238,11 @@ mod tests {
                 !matches!(e.identifier, "host_rate_hz" | "seed")
                     && !matches!(
                         e.identifier,
-                        "route" | "volume" | "playback_speed" | "battery_volts"
+                        "route"
+                            | "volume"
+                            | "playback_speed"
+                            | "battery_volts"
+                            | "playback_speed_mode"
                     )
             })
             .map(|e| e.identifier)

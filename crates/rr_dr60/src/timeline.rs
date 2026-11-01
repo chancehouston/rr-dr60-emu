@@ -260,6 +260,12 @@ struct Walker {
     held: Option<PlaceState>,
     /// The last computed state.
     last: PlaceState,
+    /// Spec 023: the mode in force and the request (0 pitch with speed, 1 pitch kept), and the
+    /// time-scaler's grid: anchored, and the outputs since the anchor (its `n`).
+    mode: u8,
+    requested_mode: u8,
+    sc_active: bool,
+    sc_n: u64,
 }
 
 const K_IDENTITY: u32 = 5; // 013 FR-002: level 3's ratio 5/5 (A-054)
@@ -279,6 +285,10 @@ impl Walker {
             final_count: None,
             held: None,
             last: PlaceState::default(),
+            mode: 0,
+            requested_mode: 0,
+            sc_active: false,
+            sc_n: 0,
         }
     }
 
@@ -292,7 +302,10 @@ impl Walker {
         self.latched = true;
         let d = u64::from(crate::speed::LOOKAHEAD_SAMPLES);
         let mut remaining = 0u64;
-        if self.active != K_IDENTITY {
+        if self.active != K_IDENTITY && self.mode == 1 {
+            // Spec 023 research R-06: the grid bound T_c from the hop in progress.
+            remaining = crate::stages::speed::pitch_kept_tail(self.sc_n, 0);
+        } else if self.active != K_IDENTITY {
             let mut p5 = self.p5;
             loop {
                 let (i, ph) = (p5 / 5, p5 % 5);
@@ -315,9 +328,32 @@ impl Walker {
         }
         let old = self.active;
         self.active = self.requested;
+        if self.mode == 1 {
+            // Spec 023 D5, D12: between levels 1, 2, 4 and 5 no fade; into level 3 a fade from
+            // the frozen scaler; out of level 3 the grid anchors (no fade).
+            if self.active == K_IDENTITY {
+                if self.started {
+                    self.fade = Some((old, self.p5, 0));
+                }
+                self.sc_active = false;
+            }
+            return;
+        }
         if self.started {
             self.fade = Some((old, self.p5, 0));
         }
+    }
+
+    /// Spec 023 D5: the mode request under the shared wait rule; at level 3 at once.
+    fn apply_mode_request(&mut self) {
+        if self.latched || self.requested_mode == self.mode || self.fade.is_some() {
+            return;
+        }
+        self.mode = self.requested_mode;
+        if self.active != K_IDENTITY && self.started {
+            self.fade = Some((self.active, self.p5, 0));
+        }
+        self.sc_active = false;
     }
 
     /// One output: the state it was computed under; past the final count the held state (the
@@ -333,6 +369,15 @@ impl Walker {
             return h;
         }
         self.apply_request();
+        self.apply_mode_request(); // 023
+        if self.mode == 1 && self.active != K_IDENTITY {
+            // The time-scaler's grid: anchored at this output when it is not (023 R-02).
+            if !self.sc_active {
+                self.sc_active = true;
+                self.sc_n = 0;
+            }
+            self.sc_n += 1;
+        }
         let mut st = PlaceState {
             place_fifths: self.p5,
             level: level_of(self.active),
@@ -422,6 +467,94 @@ pub fn place_at(
                 break;
             }
             w.requested = crate::stages::speed::numerator(level);
+            pending.next();
+        }
+        st = w.step();
+    }
+    Ok(st)
+}
+
+/// Map (c) in a playback speed mode (spec 023 research R-06b): as [`place_at`] for a playback
+/// started in `start_mode` (0 pitch with speed, 1 pitch kept) at `start_level`, replaying the
+/// `playback_speed` **and** `playback_speed_mode` entries of `entries` (a level change in
+/// pitch-kept mode has no blend; a mode change, and a change into level 3 in pitch-kept mode,
+/// blend over 120 outputs with the old branch's own place reported; the pitch-kept final
+/// count is the own part plus the grid tail T_c). With `start_mode` 0 and no mode entry it
+/// equals [`place_at`].
+///
+/// # Errors
+///
+/// [`Error::UnsupportedHostRate`]; [`Error::InvalidSpeedLevel`] for an entry whose value is
+/// not a level 1 … 5; [`Error::InvalidSpeedMode`] for `start_mode` or a mode entry not 0 or 1.
+pub fn place_at_in_mode(
+    index: u64,
+    host_rate_hz: u32,
+    start_level: u8,
+    start_mode: u32,
+    unit_count: u64,
+    entries: &[ChangeEntry],
+) -> Result<PlaceState, Error> {
+    if !(1..=5).contains(&start_level) {
+        return Err(Error::InvalidSpeedLevel { level: start_level });
+    }
+    if start_mode > 1 {
+        return Err(Error::InvalidSpeedMode { mode: start_mode });
+    }
+    let (speed_control, mode_control) =
+        (crate::changes::LIVE_SPEED, crate::changes::LIVE_SPEED_MODE);
+    let mut w = Walker::new(start_level, unit_count);
+    w.mode = start_mode as u8;
+    w.requested_mode = w.mode;
+    let mut pending = entries
+        .iter()
+        .filter(|e| e.control == speed_control || e.control == mode_control)
+        .map(|e| {
+            if e.control == speed_control {
+                let level = e.after as u8;
+                if !(1..=5).contains(&level) || f64::from(level) != e.after {
+                    return Err(Error::InvalidSpeedLevel { level });
+                }
+                Ok((speed_landing(e.position, host_rate_hz)?, false, level))
+            } else {
+                if !(e.after == 0.0 || e.after == 1.0) {
+                    return Err(Error::InvalidSpeedMode {
+                        mode: if e.after.is_finite() && e.after >= 0.0 && e.after < 4294967296.0 {
+                            e.after as u32
+                        } else {
+                            u32::MAX
+                        },
+                    });
+                }
+                Ok((
+                    speed_landing(e.position, host_rate_hz)?,
+                    true,
+                    e.after as u8,
+                ))
+            }
+        })
+        .collect::<Result<alloc::vec::Vec<_>, Error>>()?
+        .into_iter()
+        .peekable();
+    let mut st = PlaceState::default();
+    for i in 0..=index {
+        while let Some(&(d, is_mode, v)) = pending.peek() {
+            if d > i {
+                break;
+            }
+            if is_mode {
+                w.requested_mode = v;
+                // The stage applies a mode at once at level 3 with nothing pending (D5).
+                if w.active == K_IDENTITY
+                    && w.requested == K_IDENTITY
+                    && w.fade.is_none()
+                    && !w.latched
+                {
+                    w.mode = v;
+                    w.sc_active = false;
+                }
+            } else {
+                w.requested = crate::stages::speed::numerator(v);
+            }
             pending.next();
         }
         st = w.step();
