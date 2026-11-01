@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-31
 
-**Status**: Spec approved by the owner 2026-10-31 (D1 – D11, D11 free via the curated-values rule); plan reviewed 2026-10-31 (coach 1 – 16, hardware B1 – B8, product M1 – M9); D12 approved by the owner 2026-10-31 (the into-3 fade); plan approved 2026-10-31; tasks; implemented 2026-10-31 (the post-implementation coach and hardware reviews applied)
+**Status**: Spec approved by the owner 2026-10-31 (D1 – D11, D11 free via the curated-values rule); plan reviewed 2026-10-31 (coach 1 – 16, hardware B1 – B8, product M1 – M9); D12 approved by the owner 2026-10-31 (the into-3 fade); plan approved 2026-10-31; tasks; implemented 2026-10-31 (the post-implementation coach and hardware reviews applied); merged 2026-11-01 (PR #57, merge commit d6cf258), `/speckit-converge` found no gap
 
 **Input**: User description: "023 pitch-kept playback speed as an option (mechanism c1; the owner's road to 1.0, decisions.md 2026-10-31). As an app user reviewing a recording, I want to slow a playback down (or speed it up) at the device's five levels without the voice dropping or rising in pitch, selectable as an option beside the modeled default, so that a slowed passage keeps its pitch; as an app developer I want it as one more live control with the same live-change, scheduling, logging, length and progress rules the speed level already has."
 
