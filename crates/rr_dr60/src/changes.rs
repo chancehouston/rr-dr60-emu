@@ -975,8 +975,9 @@ mod bypass_stream_tests {
             "the chain pair is one apply, two entries"
         );
         let mut log = [ChangeEntry::default(); MAX_CHANGES_PER_CALL];
-        assert_eq!(st.drain_log(&mut log), 69);
-        assert!(69 < MAX_CHANGES_PER_CALL);
+        let drained = st.drain_log(&mut log);
+        assert_eq!(drained, 69);
+        assert!(drained < MAX_CHANGES_PER_CALL);
     }
 
     /// Spec 023 D1: a scheduled mode landing is applied as `Apply::SpeedMode`, logged with the

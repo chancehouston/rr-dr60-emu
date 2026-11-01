@@ -93,6 +93,17 @@ impl Change {
         }
     }
 
+    /// Spec 023: a mode change on the playback stream.
+    pub fn mode(position: u64, mode: rr_dr60::speed::SpeedMode, tag: u64) -> Self {
+        Self {
+            stream: Stream::Playback,
+            position,
+            control: control_index("playback_speed_mode"),
+            value: f64::from(mode as u32),
+            tag,
+        }
+    }
+
     /// Applies this change as the plain setter would (the block-size-1 oracle).
     pub fn apply_plain(&self, p: &mut Pipeline) {
         if self.control == route_control() {
@@ -106,6 +117,11 @@ impl Change {
         } else if self.control == control_index("battery_volts") {
             p.set_battery_volts(self.value as f32)
                 .expect("a valid battery value");
+        } else if self.control == control_index("playback_speed_mode") {
+            // Spec 023: the mode (0 or 1).
+            p.set_playback_speed_mode(
+                rr_dr60::speed::SpeedMode::from_u32(self.value as u32).expect("a valid mode"),
+            );
         } else {
             p.set_playback_speed(self.value as u8)
                 .expect("a valid level");

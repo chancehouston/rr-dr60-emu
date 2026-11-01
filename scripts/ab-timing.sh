@@ -24,6 +24,9 @@
 #     RR_DR60_RECORD_COST_CEILING on the runner; one knee change per block and the worst block
 #     reported).
 #   HEAD_TEST = bypass: spec 021's all-on player and one-pass against the baseline (3 %, RR_DR60_BYPASS_COST_CEILING).
+#   HEAD_TEST = pitch: spec 023's default mode at levels 3 and 5 against the baseline (023 FR-009: 3 %,
+#     RR_DR60_PITCH_DEFAULT_COST_CEILING on the runner; the pitch-kept per-level ratios printed and
+#     asserted by the test at 3 ×, RR_DR60_PITCH_COST_CEILING on the runner).
 #   HEAD_TEST = record_contract: spec 020's record path, one-pass and playback levels 3 and 5 against the
 #     baseline (020 FR-008: each within 3 %; RR_DR60_RECORD_CONTRACT_COST_CEILING on the runner).
 #   HEAD_TEST = crossfade: spec 019's speed-change crossfade against the baseline (019 FR-009: the
@@ -247,6 +250,61 @@ PY
   states_status=$?
   printf '%s\n' "$states_out" | grep "bypass states"
   [ "$states_status" -eq 0 ] || { echo "ab-timing: bypass_states_timing failed (the worst block over the budget)" >&2; exit 1; }
+  exit $status
+fi
+
+if [ "$head_test" = "pitch" ]; then
+  # Spec 023 FR-009: the default mode against the baseline (0.22 has no mode: the test's
+  # pitch-kept part is compiled out there by `--cfg no_speed_mode`). `tests/pitch_timing.rs` is
+  # copied into the baseline worktree; each build prints the fastest-of-45 figure at the default
+  # mode's levels 3 and 5. Asserted: both within the ceiling (3 % by default,
+  # RR_DR60_PITCH_DEFAULT_COST_CEILING on the CI runner: 0.05); exits 1 when over. The head's
+  # pitch-kept figures (the per-level ratio against the default mode's increment, asserted by the
+  # test at 3 ×, RR_DR60_PITCH_COST_CEILING on the runner) print afterwards.
+  cp "$root/crates/rr_dr60_harness/tests/pitch_timing.rs" "$work/base/crates/rr_dr60_harness/tests/"
+  xbin_of() {
+    (cd "$1" && RUSTFLAGS="${3:-}" cargo test -q -p rr_dr60_harness --release --test "$2" --no-run --message-format=json 2>/dev/null) |
+      python3 -c 'import json,sys
+name = sys.argv[1]
+for l in sys.stdin:
+    try: m = json.loads(l)
+    except ValueError: continue
+    if m.get("reason") == "compiler-artifact" and m.get("target", {}).get("name") == name and m.get("executable"):
+        print(m["executable"])' "$2" | tail -1
+  }
+  echo "building the baseline ($baseline) and the working tree (pitch) ..." >&2
+  base_bin="$(xbin_of "$work/base" pitch_timing "--cfg no_speed_mode")"
+  head_bin="$(xbin_of "$root" pitch_timing)"
+  [ -x "$base_bin" ] && [ -x "$head_bin" ] || { echo "ab-timing: a build failed" >&2; exit 1; }
+  : >"$work/base.txt"
+  : >"$work/head.txt"
+  for i in 1 2 3; do
+    echo "round $i of 3" >&2
+    "$base_bin" --ignored --exact pitch_cost --nocapture --test-threads=1 2>/dev/null | grep -oE 'level[35]_ns=[0-9.]+' >>"$work/base.txt"
+    "$head_bin" --ignored --exact pitch_cost --nocapture --test-threads=1 2>/dev/null | tee "$work/head-full.txt" | grep -oE 'level[35]_ns=[0-9.]+' >>"$work/head.txt"
+  done
+  python3 - "$work/base.txt" "$work/head.txt" "$baseline" "${RR_DR60_PITCH_DEFAULT_COST_CEILING:-0.03}" <<'PY'
+import re, sys
+def best(path):
+    out = {}
+    for line in open(path):
+        m = re.search(r"(\w+)=([\d.]+)", line.strip())
+        if m:
+            out[m.group(1)] = min(out.get(m.group(1), float("inf")), float(m.group(2)))
+    return out
+b, h, rev, ceiling = best(sys.argv[1]), best(sys.argv[2]), sys.argv[3], float(sys.argv[4])
+print(f"A/B pitch (the default mode) vs {rev}, 48 kHz, 4096 blocks, speaker route, codec bypassed (023 FR-009; fastest of 45 runs × 3 alternations):")
+ok = True
+for key, name in [("level3_ns", "level 3"), ("level5_ns", "level 5")]:
+    bb, hh = b[key], h[key]
+    good = hh / bb - 1 <= ceiling
+    ok = ok and good
+    print(f"  {name}: {rev} {bb:.2f} ns, working tree {hh:.2f} ns per host sample, {hh - bb:+.2f} ns ({100 * (hh / bb - 1):+.2f} %; ceiling {100 * ceiling:.0f} %) {'PASS' if good else 'FAIL'}")
+sys.exit(0 if ok else 1)
+PY
+  status=$?
+  echo "the head's pitch-kept figures (the last run; the ratio asserted by the test):" >&2
+  grep 'pitch-kept' "$work/head-full.txt" || true
   exit $status
 fi
 

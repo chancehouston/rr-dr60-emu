@@ -71,6 +71,15 @@ The owner reads this section first. Each decision gives the recommendation; the 
 - **Spec 019 D7 is amended** (coach 18) and the records list widened (product M7, coach 18).
 - **Considered, not adopted**: a crossfade for level changes in pitch-kept mode (the overlap-add is continuous; the frame-fed change has no click mechanism); a decoder-domain method; a fractional-shift refinement; bounding the click doubling (reported until a capture or an app fixes a target).
 
+### Session 2026-10-31 (implementation restatements)
+
+- **The lazy pulls read the continuation too** (research R-01, D2): at a hop boundary the time-scaler pulls the candidates' span and the continuation segment, whichever reaches further (on the slow levels the continuation lies past the span). Found by the harness reference on the vowel; the square-wave pin of the design script could not see it. No change to any published figure; the shift digests of the script's square are unchanged.
+- **A frozen old scaler records no shift**: the per-frame shift trace is the live branch's; a mode or into-3 blend's old branch continues its hops silently (research R-05, R-12).
+- **The schedule's refusal split** (FR-001, contracts/api.md): on control 30 a whole number other than 0 or 1 is `InvalidSpeedMode` (status 38); a non-integral or non-finite value is `InvalidControlValue`.
+- **A plain set before `start_playback` is adopted at the start with no entry** (spec 015 D3, as the level); a plain set during a playback lands at the next call's first sample with tag 0 (US2 AS3 as implemented).
+- **The reading A/B's mutant oracle** (US2 AS2): the restarted-overlap mutant fails the 1 dB bound on at least one of the six level pairs (asserted as a count), not on every pair: on some pairs the restart reads within the bound.
+- **The golden's stimuli are 2 s** (D8): the schedules' last change must land before the end at the fast levels; the entry count stays 420 (7 rates × 4 stimuli × 2 configurations × 7 runs + the speed-only 28).
+
 ## Overview
 
 Since 0.13 the engine plays a recording at the device's five speeds, the pitch moving with the speed, because the modeled mechanism is a resampling of the decoded stream. A listener who slows a playback to follow a passage hears the voice about nine semitones lower at level 1; this option keeps the pitch while changing the speed. The device's own mechanism is unknown (A-054); the research leans weakly toward a pitch-keeping device, of a class this option does not model. The feature adds the pitch-kept behavior as a selectable option beside the modeled default, as one more live control with the rules the speed level already has, without changing what the default engine sounds like. Every description of it says what it is: an engine convention, a time-scaling of the decoded stream, with artifacts of its own; neither mode adds anything to a recording or removes anything from it beyond those artifacts.

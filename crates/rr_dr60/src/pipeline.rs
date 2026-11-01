@@ -854,14 +854,16 @@ impl Pipeline {
                 value
             }
             LIVE_SPEED_MODE => {
-                // Spec 023 FR-001: exactly 0 or 1.
+                // Spec 023 FR-001 (contracts/api.md): exactly 0.0 or 1.0; a whole number
+                // outside them is an invalid mode, anything else an invalid control value.
                 if !(value == 0.0 || value == 1.0) {
-                    return Err(Error::InvalidSpeedMode {
-                        mode: if value.is_finite() && (0.0..=4294967295.0).contains(&value) {
-                            value as u32
-                        } else {
-                            u32::MAX
-                        },
+                    let whole = value.is_finite()
+                        && (0.0..=4294967295.0).contains(&value)
+                        && f64::from(value as u32) == value;
+                    return Err(if whole {
+                        Error::InvalidSpeedMode { mode: value as u32 }
+                    } else {
+                        Error::InvalidControlValue { control, value }
                     });
                 }
                 value + 0.0

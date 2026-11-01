@@ -132,8 +132,11 @@ class Scaler:
             if self.mutant == "restart_overlap":
                 self.prev_a, self.prev_s = (self.p5 // 5) - SS, 0
             self.cur_a = self.p5 // 5
-            self.pull(self.cur_a + self.delta + LC - 1)
-            self.cur_s = self.search(self.cur_a, self.prev_a + self.prev_s + SS)
+            cont = self.prev_a + self.prev_s + SS
+            # The candidates' span and the continuation (restated at implementation: on the
+            # slow levels the continuation reaches past the span).
+            self.pull(max(self.cur_a + self.delta + LC - 1, cont + LC - 1))
+            self.cur_s = self.search(self.cur_a, cont)
             self.shifts.append(self.cur_s)
         n %= SS
         j1 = self.prev_a + self.prev_s + SS + n

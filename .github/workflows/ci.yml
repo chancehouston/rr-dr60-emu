@@ -122,6 +122,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: The 0.22 ABI promise (spec 023 FR-008, US2 AS6)
+        # 0.22's C smoke, compiled against 0.22's header, linked to this library: exit 0 and
+        # every mode byte-identical to the current smoke's.
+        run: scripts/abi-promise.sh 12a3c45
       - name: Install toolchain from rust-toolchain.toml
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
@@ -157,7 +161,7 @@ jobs:
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - name: Golden files and determinism
-        run: cargo test -p rr_dr60_harness --all-features --target ${{ matrix.target }} --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test golden_speed --test golden_meters --test golden_changes --test golden_record_changes --test golden_battery --test golden_record --test golden_bypass --test determinism
+        run: cargo test -p rr_dr60_harness --all-features --target ${{ matrix.target }} --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test golden_speed --test golden_meters --test golden_changes --test golden_record_changes --test golden_battery --test golden_record --test golden_bypass --test golden_pitch_kept --test determinism
 
   ios:
     name: ios (simulator + builds)
@@ -169,7 +173,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Golden files and determinism in the iOS simulator
         # .cargo/config.toml routes aarch64-apple-ios-sim binaries through scripts/ios-sim-runner.sh.
-        run: cargo test -p rr_dr60_harness --target aarch64-apple-ios-sim --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test golden_speed --test golden_meters --test golden_changes --test golden_record_changes --test golden_battery --test golden_record --test golden_bypass --test determinism
+        run: cargo test -p rr_dr60_harness --target aarch64-apple-ios-sim --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test golden_speed --test golden_meters --test golden_changes --test golden_record_changes --test golden_battery --test golden_record --test golden_bypass --test golden_pitch_kept --test determinism
       - name: Build the C API library for iOS device and Intel simulator
         run: |
           cargo build -p rr_dr60_ffi --release --target aarch64-apple-ios

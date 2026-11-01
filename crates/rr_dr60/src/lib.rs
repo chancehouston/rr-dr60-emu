@@ -561,7 +561,6 @@ pub mod __test_hooks {
     /// Spec 023 (research R-12): the pitch-kept mode's mutants, each a rejected alternative or
     /// a removed rule (false everywhere: as committed).
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-    #[non_exhaustive]
     pub struct PitchMutation {
         /// Every shift 0 (a plain overlap-add: the rows collapse by about 30 dB).
         pub no_search: bool,
@@ -596,6 +595,12 @@ pub mod __test_hooks {
     /// Spec 023 (research R-06): T_c(own, origin), the pitch-kept tail.
     pub fn pitch_kept_tail(own: u64, origin: u64) -> u64 {
         crate::stages::speed::pitch_kept_tail(own, origin)
+    }
+
+    /// Spec 023 (research R-02): the time-scaler's window table as the engine holds it (120
+    /// entries, `speed_window.rs`): the published bits the harness reference shares.
+    pub fn pitch_window() -> alloc::vec::Vec<f64> {
+        crate::stages::speed_window::WINDOW.to_vec()
     }
 
     /// Spec 021 (research R-03): the rate conversion's delay D in host samples at `rate`

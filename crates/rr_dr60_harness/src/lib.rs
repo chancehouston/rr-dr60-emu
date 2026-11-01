@@ -23,6 +23,7 @@ pub mod meters_checks;
 pub mod mic_checks;
 pub mod output_checks;
 pub mod output_clamp_checks;
+pub mod pitch_checks;
 pub mod record_checks;
 pub mod record_contract_checks;
 pub mod report;

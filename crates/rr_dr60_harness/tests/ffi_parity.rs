@@ -4649,3 +4649,247 @@ fn abi_pass_parity() {
     };
     assert_eq!(e.stream, 2);
 }
+
+/// Spec 023 (tasks.md T015): the mode through the C API: the setter and getter, status 38, the
+/// two defines, the length helper in both modes, `rr_dr60_place_at_in_mode` on a log, the
+/// refusals, and a playback with the mode set by the setter and scheduled at a position
+/// bit-identical between the Rust and C paths on a square-wave stimulus at the measurement
+/// rates, the logs equal.
+#[test]
+fn pitch_parity() {
+    use rr_dr60::changes::MAX_CHANGES_PER_CALL;
+    use rr_dr60::speed::SpeedMode;
+    use rr_dr60::{ChangeEntry, Route, Stream};
+    use rr_dr60_ffi::{
+        RrDr60ChangeEntry, RrDr60PlaceState, RrDr60PlayInfo, rr_dr60_get_playback_speed_mode,
+        rr_dr60_import, rr_dr60_place_at_in_mode, rr_dr60_play_with_changes,
+        rr_dr60_playback_length_samples_in_mode, rr_dr60_schedule_change,
+        rr_dr60_set_playback_speed, rr_dr60_set_playback_speed_mode, rr_dr60_set_route,
+        rr_dr60_start_playback,
+    };
+    use rr_dr60_harness::pitch_checks as pc;
+    assert_eq!(RrDr60Status::InvalidSpeedMode as u32, 38);
+    assert_eq!(rr_dr60_ffi::RR_DR60_SPEED_MODE_PITCH_WITH_SPEED, 0);
+    assert_eq!(rr_dr60_ffi::RR_DR60_SPEED_MODE_PITCH_KEPT, 1);
+    assert_eq!(rr_dr60_ffi::RR_DR60_MAX_CHANGES_PER_CALL, 142);
+    let stored = pc::square17(9000);
+    for &rate in configs::measurement_rates() {
+        let s = configs::settings("speed_default_no_codec", rate);
+        let cs = configs::c_settings(&s);
+        let mut p = pc::engine(
+            &|s| Pipeline::new(s).unwrap(),
+            "speed_default_no_codec",
+            rate,
+            &stored,
+        );
+        let mut bytes = vec![0u8; p.export_len(1).unwrap()];
+        let _ = p.export(1, &mut bytes).unwrap();
+        let h = create(&cs);
+        let mut imported = 0u32;
+        // SAFETY: a live handle and the exported bytes.
+        assert_eq!(
+            unsafe { rr_dr60_import(h, bytes.as_ptr(), bytes.len(), &mut imported) },
+            RrDr60Status::Ok
+        );
+        p.set_route(Route::Speaker);
+        // SAFETY: a live handle.
+        assert_eq!(unsafe { rr_dr60_set_route(h, 0) }, RrDr60Status::Ok);
+        // The setter, the getter and the refusal.
+        p.set_playback_speed(1).unwrap();
+        p.set_playback_speed_mode(SpeedMode::PitchKept);
+        let mut mode = 9u32;
+        // SAFETY: a live handle and a writable out-pointer.
+        unsafe {
+            assert_eq!(rr_dr60_set_playback_speed(h, 1), RrDr60Status::Ok);
+            assert_eq!(rr_dr60_set_playback_speed_mode(h, 1), RrDr60Status::Ok);
+            assert_eq!(
+                rr_dr60_set_playback_speed_mode(h, 2),
+                RrDr60Status::InvalidSpeedMode
+            );
+            assert_eq!(
+                rr_dr60_get_playback_speed_mode(h, &mut mode),
+                RrDr60Status::Ok
+            );
+        }
+        assert_eq!(mode, p.playback_speed_mode() as u32);
+        // The length helper in both modes at the five levels.
+        for level in 1..=5u8 {
+            for (m, mode) in [(0u32, SpeedMode::PitchWithSpeed), (1, SpeedMode::PitchKept)] {
+                let want = p.playback_length_samples_in_mode(1, level, mode).unwrap();
+                let mut got = 0u64;
+                // SAFETY: a live handle and a writable out-pointer.
+                assert_eq!(
+                    unsafe { rr_dr60_playback_length_samples_in_mode(h, 1, level, m, &mut got) },
+                    RrDr60Status::Ok
+                );
+                assert_eq!(got, want, "{rate} Hz L{level} mode {m}");
+                if m == 0 {
+                    assert_eq!(want, p.playback_length_samples(1, level).unwrap());
+                }
+            }
+        }
+        // The schedule: a level change and two mode changes; the refusals.
+        let n = u64::from(rate) / 50;
+        let sched = [
+            (200u64, 2u32, 5.0f64, 1u64),
+            (200 + 3 * n, 30, 0.0, 2),
+            (200 + 6 * n, 30, 1.0, 3),
+            (200 + 9 * n, 2, 2.0, 4),
+        ];
+        for (pos, c, v, tag) in sched {
+            p.schedule_change(Stream::Playback, pos, c, v, tag).unwrap();
+            // SAFETY: a live handle.
+            assert_eq!(
+                unsafe { rr_dr60_schedule_change(h, 0, pos, c, v, tag) },
+                RrDr60Status::Ok,
+                "{rate} Hz"
+            );
+        }
+        // SAFETY: a live handle.
+        unsafe {
+            assert_eq!(
+                rr_dr60_schedule_change(h, 1, 0, 30, 1.0, 9),
+                RrDr60Status::ControlNotOnStream
+            );
+            assert_eq!(
+                rr_dr60_schedule_change(h, 2, 0, 30, 1.0, 9),
+                RrDr60Status::ControlNotOnStream
+            );
+            assert_eq!(
+                rr_dr60_schedule_change(h, 0, 0, 30, 0.5, 9),
+                RrDr60Status::InvalidArgument
+            ); // InvalidControlValue
+            assert_eq!(
+                rr_dr60_schedule_change(h, 0, 0, 30, 2.0, 9),
+                RrDr60Status::InvalidSpeedMode
+            );
+        }
+        p.start_playback(1).unwrap();
+        // SAFETY: a live handle.
+        assert_eq!(unsafe { rr_dr60_start_playback(h, 1) }, RrDr60Status::Ok);
+        let mut rust = Vec::new();
+        let mut c_out = Vec::new();
+        let mut rust_log = Vec::new();
+        let mut c_log = Vec::new();
+        let mut y = vec![0.0f32; 512];
+        let mut log = vec![ChangeEntry::default(); MAX_CHANGES_PER_CALL];
+        let mut clog = vec![RrDr60ChangeEntry::default(); MAX_CHANGES_PER_CALL];
+        loop {
+            let info = p.play_with_changes(&mut y, &mut log).unwrap();
+            rust.extend_from_slice(&y[..info.produced]);
+            rust_log.extend_from_slice(&log[..info.changes]);
+            let mut ci = RrDr60PlayInfo::default();
+            let mut count = 0usize;
+            // SAFETY: a live handle and valid buffers.
+            let st = unsafe {
+                rr_dr60_play_with_changes(
+                    h,
+                    y.as_mut_ptr(),
+                    512,
+                    &mut ci,
+                    clog.as_mut_ptr(),
+                    MAX_CHANGES_PER_CALL,
+                    &mut count,
+                )
+            };
+            assert_eq!(st, RrDr60Status::Ok);
+            assert_eq!(ci.produced, info.produced);
+            assert_eq!(ci.place, info.place);
+            c_out.extend_from_slice(&y[..ci.produced]);
+            c_log.extend_from_slice(&clog[..count]);
+            if info.finished {
+                assert!(ci.finished);
+                break;
+            }
+        }
+        assert_eq!(rust.len(), c_out.len(), "{rate} Hz");
+        assert!(
+            rust.iter()
+                .zip(&c_out)
+                .all(|(a, b)| a.to_bits() == b.to_bits()),
+            "{rate} Hz: the C path"
+        );
+        assert_eq!(rust_log.len(), c_log.len());
+        assert_eq!(rust_log.len(), 4, "{rate} Hz: every change logged");
+        for (r, c) in rust_log.iter().zip(&c_log) {
+            assert_eq!(
+                (
+                    r.position,
+                    r.control,
+                    r.before.to_bits(),
+                    r.after.to_bits(),
+                    r.tag,
+                    r.stream
+                ),
+                (
+                    c.position,
+                    c.control,
+                    c.before.to_bits(),
+                    c.after.to_bits(),
+                    c.tag,
+                    c.stream
+                )
+            );
+        }
+        // Map (c) in a mode on the log: the C struct equals the Rust state at several outputs.
+        let k = p.recording_length(1).unwrap();
+        for index in [0u64, 500, 2000, 5000, 20_000] {
+            for start_mode in [0u32, 1] {
+                let want =
+                    rr_dr60::timeline::place_at_in_mode(index, rate, 1, start_mode, k, &rust_log)
+                        .unwrap();
+                let mut st = RrDr60PlaceState::default();
+                // SAFETY: valid pointers and the count.
+                let status = unsafe {
+                    rr_dr60_place_at_in_mode(
+                        index,
+                        rate,
+                        1,
+                        start_mode,
+                        k,
+                        c_log.as_ptr(),
+                        c_log.len(),
+                        &mut st,
+                    )
+                };
+                assert_eq!(status, RrDr60Status::Ok);
+                assert_eq!(
+                    (
+                        st.level,
+                        st.fading,
+                        st.latched,
+                        st.place_fifths,
+                        st.old_place_fifths
+                    ),
+                    (
+                        u32::from(want.level),
+                        u32::from(want.fading),
+                        u32::from(want.latched),
+                        want.place_fifths,
+                        want.old_place_fifths
+                    ),
+                    "{rate} Hz output {index} mode {start_mode}"
+                );
+            }
+            let mut st = RrDr60PlaceState::default();
+            // SAFETY: valid pointers and the count.
+            assert_eq!(
+                unsafe {
+                    rr_dr60_place_at_in_mode(
+                        index,
+                        rate,
+                        1,
+                        2,
+                        k,
+                        c_log.as_ptr(),
+                        c_log.len(),
+                        &mut st,
+                    )
+                },
+                RrDr60Status::InvalidSpeedMode
+            );
+        }
+        // SAFETY: destroying the handle once.
+        unsafe { rr_dr60_destroy(h) };
+    }
+}

@@ -258,9 +258,12 @@ pub(crate) struct SpeedStage {
     /// Spec 023: the per-frame shifts since the playback's start (the golden's digest).
     #[cfg(feature = "__test-hooks")]
     pub(crate) shift_trace: alloc::vec::Vec<i32>,
-    /// The `into3_swap` mutant's remaining outputs in the hop.
+    /// The `into3_swap` mutant's remaining outputs in the hop and its own copy of the frame
+    /// pair (the stage's scaler is idle at level 3).
     #[cfg(feature = "__test-hooks")]
     scaler_swap_remaining: u32,
+    #[cfg(feature = "__test-hooks")]
+    scaler_swap: TimeScaler,
 }
 
 impl SpeedStage {
@@ -296,6 +299,8 @@ impl SpeedStage {
             shift_trace: alloc::vec::Vec::with_capacity(SHIFT_TRACE_CAPACITY),
             #[cfg(feature = "__test-hooks")]
             scaler_swap_remaining: 0,
+            #[cfg(feature = "__test-hooks")]
+            scaler_swap: TimeScaler::IDLE,
         }
     }
 
@@ -306,7 +311,8 @@ impl SpeedStage {
         // At level 3 with nothing pending the mode applies at once (D5: neither mechanism
         // sounds there), here rather than in the general step, so the steady identity's fast
         // path stays untouched (research R-01).
-        if self.active == K_IDENTITY
+        if mode != self.mode
+            && self.active == K_IDENTITY
             && self.requested == K_IDENTITY
             && self.fade.is_none()
             && !self.latched
@@ -341,7 +347,7 @@ impl SpeedStage {
     /// Anchors the time-scaler at the current place: the grid's origin is this output, the
     /// previous frame the natural continuation one hop back at shift 0, the current frame at
     /// the place with shift 0 (research R-02: the first frame has no continuation to match).
-    fn anchor(&mut self, sc: &mut TimeScaler) {
+    fn anchor(&mut self, sc: &mut TimeScaler, record: bool) {
         let a0 = (self.p5 / 5) as i64;
         *sc = TimeScaler {
             active: true,
@@ -360,9 +366,11 @@ impl SpeedStage {
             sc.prev_a = a0; // the previous frame at the place itself: a doubled onset
         }
         #[cfg(feature = "__test-hooks")]
-        if self.shift_trace.len() < self.shift_trace.capacity() {
+        if record && self.shift_trace.len() < self.shift_trace.capacity() {
             self.shift_trace.push(0);
         }
+        #[cfg(not(feature = "__test-hooks"))]
+        let _ = record;
     }
 
     /// The similarity search at a hop boundary (research R-03): the candidates' span and the
@@ -433,9 +441,10 @@ impl SpeedStage {
         sc: &mut TimeScaler,
         p5: u64,
         src: &mut impl FnMut() -> Option<f32>,
+        record: bool,
     ) -> f64 {
         if !sc.active {
-            self.anchor(sc);
+            self.anchor(sc, record);
         }
         if sc.n > 0 && sc.n as usize % HOP == 0 {
             sc.prev_a = sc.cur_a;
@@ -446,10 +455,17 @@ impl SpeedStage {
                 sc.prev_s = 0;
             }
             sc.cur_a = (p5 / 5) as i64;
-            self.pull_through(sc.cur_a + SEARCH + CORR as i64 - 1, src);
-            sc.cur_s = self.search(sc.cur_a, sc.prev_a + i64::from(sc.prev_s) + HOP as i64);
+            let cont = sc.prev_a + i64::from(sc.prev_s) + HOP as i64;
+            // The search reads the candidates' span (through cur_a + Δ + Lc − 1) and the
+            // continuation (through cont + Lc − 1; on the slow levels past the span: restated
+            // at implementation, research R-01).
+            self.pull_through(
+                (sc.cur_a + SEARCH + CORR as i64 - 1).max(cont + CORR as i64 - 1),
+                src,
+            );
+            sc.cur_s = self.search(sc.cur_a, cont);
             #[cfg(feature = "__test-hooks")]
-            if self.shift_trace.len() < self.shift_trace.capacity() {
+            if record && self.shift_trace.len() < self.shift_trace.capacity() {
                 self.shift_trace.push(sc.cur_s);
             }
         }
@@ -739,11 +755,10 @@ impl SpeedStage {
             if self.active == K_IDENTITY && swap {
                 // The mutant (the plan's first rule): the current hop finishes with the
                 // identity in place of the current frame (a swap at a weight near one).
-                self.scaler.cur_a = (self.p5 / 5) as i64 - (self.scaler.n as usize % HOP) as i64;
-                self.scaler.cur_s = 0;
+                self.scaler_swap = self.scaler;
                 self.scaler_swap_remaining = (HOP - self.scaler.n as usize % HOP) as u32;
             }
-            if self.active == K_IDENTITY && !swap {
+            if self.active == K_IDENTITY {
                 self.scaler = TimeScaler::IDLE;
             }
             return;
@@ -858,6 +873,7 @@ impl SpeedStage {
         if self.active == K_IDENTITY && self.mutation.lookahead_at_level_3 {
             self.pull_through(i + D as i64, src); // the mutant: look-ahead at level 3
         }
+        let had_fade = self.fade.is_some();
         let old = self.fade.map(|f| {
             let io = (f.old_p5 / 5) as i64;
             let base_old = if f.old_k == K_IDENTITY {
@@ -877,14 +893,11 @@ impl SpeedStage {
             if self.scaler_swap_remaining > 0 {
                 // The `into3_swap` mutant: the hop finishes with the identity as the current
                 // frame (the plan's first rule).
+                let sw = self.scaler_swap;
                 let m = HOP - self.scaler_swap_remaining as usize;
-                let j1 = self.scaler.prev_a + i64::from(self.scaler.prev_s) + HOP as i64 + m as i64;
+                let j1 = sw.prev_a + i64::from(sw.prev_s) + HOP as i64 + m as i64;
                 self.scaler_swap_remaining -= 1;
-                let y = self.x(j1) * self.window(HOP + m) + self.x(i) * self.window(m);
-                if self.scaler_swap_remaining == 0 {
-                    self.scaler = TimeScaler::IDLE;
-                }
-                y
+                self.x(j1) * self.window(HOP + m) + self.x(i) * self.window(m)
             } else {
                 self.x(i)
             }
@@ -895,7 +908,7 @@ impl SpeedStage {
             // ring; its pulls are lazy (research R-01).
             let p5 = self.p5;
             let mut sc = self.scaler;
-            let y = self.scaler_output(&mut sc, p5, src);
+            let y = self.scaler_output(&mut sc, p5, src, true);
             self.scaler = sc;
             y
         } else {
@@ -916,7 +929,7 @@ impl SpeedStage {
                         // Spec 023 research R-05: the frozen scaler continues its own hops at
                         // its own place.
                         let mut sc = f.old_scaler;
-                        let y = self.scaler_output(&mut sc, f.old_p5, src);
+                        let y = self.scaler_output(&mut sc, f.old_p5, src, false);
                         f.old_scaler = sc;
                         y
                     } else {
@@ -949,6 +962,13 @@ impl SpeedStage {
         };
         if !latch_after {
             self.latch(); // the total is known as soon as the place reaches K (research R-05)
+        }
+        // Spec 023 D5 (restated at implementation): a mode request that waited for a blend
+        // applies when the blend ends, here, before the next output, since at level 3 the next
+        // output may take the steady identity's fast path, which tests nothing (the plain
+        // re-request of a block-size-1 run masked it; the 4096-block partition caught it).
+        if had_fade && self.fade.is_none() && self.requested_mode != self.mode {
+            self.apply_mode_request();
         }
         out
     }
@@ -1679,7 +1699,7 @@ mod tests {
                 let mut p5 = st.p5;
                 let mut none = || None::<f32>;
                 for n in 0..4 * FRAME {
-                    let v = st.scaler_output(&mut sc, p5, &mut none);
+                    let v = st.scaler_output(&mut sc, p5, &mut none, true);
                     assert_eq!(v.to_bits(), 0.0f64.to_bits(), "K={k} L{level} past {n}");
                     p5 += u64::from(numerator(level));
                 }
@@ -2026,7 +2046,10 @@ mod tests {
             SpeedMode::PitchWithSpeed,
         );
         // `st[n]` is the state after output n; a blend started at output s runs through output
-        // s + N − 1 and a waiting request lands on output s + N.
+        // s + N − 1 and a waiting request lands on output s + N: a level request through the
+        // general step's apply (visible after output s + N), a mode request at the blend's end
+        // (visible after output s + N − 1, applied before output s + N: the fast path at level 3
+        // tests nothing, so the stage applies it when the blend ends).
         assert!(st[s].2 && st[s + n_fade - 2].2 && !st[s + n_fade - 1].2);
         assert!(st[s..s + n_fade].iter().all(|t| t.0 == 3));
         assert_eq!(st[s + n_fade].0, 7, "the level lands at the blend's end");
@@ -2045,9 +2068,16 @@ mod tests {
                 .iter()
                 .all(|t| t.1 == SpeedMode::PitchKept && t.2)
         );
-        assert_eq!(st[sw + n_fade - 1].1, SpeedMode::PitchKept);
-        assert_eq!(st[sw + n_fade].1, SpeedMode::PitchWithSpeed);
-        assert!(!st[sw + n_fade].2, "a mode change at level 3 is at once");
+        assert_eq!(st[sw + n_fade - 2].1, SpeedMode::PitchKept);
+        assert_eq!(
+            st[sw + n_fade - 1].1,
+            SpeedMode::PitchWithSpeed,
+            "applied at the blend's end"
+        );
+        assert!(
+            !st[sw + n_fade - 1].2 && !st[sw + n_fade].2,
+            "a mode change at level 3 is at once"
+        );
         // (3) a mode blend, then a second mode request inside it: the latest wins at the end.
         let st = probe(
             &[
@@ -2057,12 +2087,15 @@ mod tests {
             SpeedMode::PitchWithSpeed,
         );
         assert!(
-            st[s..s + n_fade]
+            st[s..s + n_fade - 1]
                 .iter()
                 .all(|t| t.1 == SpeedMode::PitchKept)
         );
-        assert_eq!(st[s + n_fade].1, SpeedMode::PitchWithSpeed);
-        assert!(st[s + n_fade].2, "the second change blends in turn");
+        assert_eq!(st[s + n_fade - 1].1, SpeedMode::PitchWithSpeed);
+        assert!(
+            st[s + n_fade - 1].2 && st[s + n_fade].2,
+            "the second change blends in turn"
+        );
         // (4) a level request in the default mode (019's blend), then a mode request inside it.
         let st = probe(
             &[
@@ -2076,10 +2109,14 @@ mod tests {
                 .iter()
                 .all(|t| t.1 == SpeedMode::PitchWithSpeed && t.2)
         );
-        assert_eq!(st[s + n_fade - 1].1, SpeedMode::PitchWithSpeed);
-        assert_eq!(st[s + n_fade].1, SpeedMode::PitchKept);
+        assert_eq!(st[s + n_fade - 2].1, SpeedMode::PitchWithSpeed);
+        assert_eq!(
+            st[s + n_fade - 1].1,
+            SpeedMode::PitchKept,
+            "applied at the level blend's end"
+        );
         assert!(
-            st[s + n_fade].2,
+            st[s + n_fade - 1].2 && st[s + n_fade].2,
             "the mode change blends after the level's blend"
         );
     }
@@ -2110,9 +2147,10 @@ mod tests {
         }
     }
 
-    /// 023 R-01: the pulls are lazy: the anchor's hop reads one sample per output (pulled =
-    /// m + 1), a hop boundary pulls the candidates' span through cur_a + 99, and a synthesis
-    /// output pulls through max(j_prev, j_cur).
+    /// 023 R-01 (restated at implementation): the pulls are lazy: the anchor's hop reads one
+    /// sample per output (pulled = m + 1), a hop boundary pulls the candidates' span through
+    /// cur_a + 99 and the continuation through cont + 59 (whichever is further), and a
+    /// synthesis output pulls through max(j_prev, j_cur).
     #[test]
     fn lazy_pulls() {
         let x = noise(3000);
@@ -2126,7 +2164,7 @@ mod tests {
         }
         let _ = st.next(&mut src); // output 60: the first hop boundary
         assert_eq!(st.scaler.cur_a, 36);
-        assert_eq!(st.pulled, 36 + 99 + 1);
+        assert_eq!(st.pulled, 36 + 99 + 1); // cont = 60: cont + 59 = 119 < 135
         for m in 1..HOP {
             let _ = st.next(&mut src);
             let sc = st.scaler;
@@ -2134,6 +2172,12 @@ mod tests {
             let j2 = sc.cur_a + i64::from(sc.cur_s) + m as i64;
             assert_eq!(st.pulled, (136).max(j1.max(j2) + 1) as u64, "m={m}");
         }
+        // The second hop (output 120): cur_a = 72, cont = 36 + 24 + 60 = 120 (the first hop's
+        // shift is 24 on noise): the continuation reaches 179, past the span's 171.
+        let _ = st.next(&mut src);
+        let sc = st.scaler;
+        assert_eq!((sc.cur_a, sc.prev_a, sc.prev_s), (72, 36, 24));
+        assert_eq!(st.pulled, 120 + 59 + 1);
     }
 
     /// 023 R-12: each of the ten mutants changes what it names (the committed output or shift
