@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-01
 
-**Status**: Draft reviewed 2026-11-01 (coach 1 – 13, hardware B1 – B9, product M1 – M5, applied at the defaults below); clarified 2026-11-01 (five questions, every answer the recommended one); the owner's sign-off next.
+**Status**: Draft reviewed 2026-11-01 (coach 1 – 13, hardware B1 – B9, product M1 – M5, applied at the defaults below); clarified 2026-11-01 (five questions, every answer the recommended one); **spec approved by the owner 2026-11-01 (D1 – D11)**; the plan next.
 
 **Input**: The owner's decision of 2026-11-01 in the test bench's `/speckit-clarify` (ic-recorder-app, spec 001, question 1: "engine first"): the engine gains a read of the settings it is running with and access to every control by the control manifest's index, so the bench can confirm an Apply from the engine's own read and build its controls without a hand-written table. The first engine feature after 0.90.0 (a 0.9x minor: 0.91.0); spec 024 stays held.
 
