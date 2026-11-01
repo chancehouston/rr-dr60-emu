@@ -109,7 +109,7 @@ fn codec_stages_us3_scenario_1() {
         assert_eq!(e.confidence, Confidence::Low, "stage {n}");
         // Restated 2026-10-17 by spec 013 (/speckit-analyze F2): stage 9 carries the playback
         // speed control (A-054) at model version 0.13.0; stage 7 stays at 0.8.0.
-        let version = if n == 9 { "0.19.0" } else { "0.8.0" }; // spec 019: the crossfade moved stage 9
+        let version = if n == 9 { "0.23.0" } else { "0.8.0" }; // spec 019 the crossfade, spec 023 the mode moved stage 9
         assert_eq!(e.model_version, version, "stage {n}");
         assert!(
             !e.coverage.is_empty() && !e.controls.is_empty(),
@@ -146,8 +146,10 @@ fn codec_stages_us3_scenario_1() {
         dec.assumptions.contains(&"A-054"),
         "stage 9 cites A-054 (spec 013 FR-011)"
     );
+    // Spec 023 FR-006: `Tap::AfterDecoder` moved to the tap's rustdoc (the note is at 116 of
+    // 120 characters); the mode's control is named instead.
     for item in [
-        "Tap::AfterDecoder",
+        "playback_speed_mode", // spec 023 FR-006
         "PlayInfo.frames",
         "PlayInfo.frame_index",
         "set_playback_speed", // spec 013 FR-011

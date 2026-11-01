@@ -304,6 +304,31 @@ pub struct GoldenEntry {
     /// in bypass-file entries only; absent (and not serialized) in the earlier files.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bypass: Option<BypassGolden>,
+    /// Spec 023 (research R-12): the pitch-kept run: the start mode, the schedule, the level and
+    /// mode entries, the produced count and the per-frame shift digest. Present in
+    /// pitch-kept-file entries only; absent (and not serialized) in the earlier files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pitch: Option<PitchGolden>,
+}
+
+/// Spec 023 (research R-12): the pitch-kept part of a golden entry.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PitchGolden {
+    /// The playback speed mode set before `start_playback` (0 pitch with speed, 1 pitch kept).
+    pub mode: u32,
+    /// The playback speed level set before `start_playback`.
+    pub level: u8,
+    /// The schedule: (position in host output samples, control, value, tag); empty for a
+    /// constant run.
+    pub schedule: Vec<(u64, u32, f64, u64)>,
+    /// The level and mode entries of the log: (position, control, before, after, tag, stream).
+    pub log: Vec<(u64, u32, f64, f64, u64, u32)>,
+    /// The produced count.
+    pub produced: u64,
+    /// The time-scaler's frames (the shift trace's length; 0 when no grid ran).
+    pub frames: u64,
+    /// FNV-1a 64 over the shifts as i32 LE (hex).
+    pub shifts_fnv1a64: String,
 }
 
 /// Spec 020: the record part of a golden entry (plan review, coach 11): the record's text with
@@ -540,6 +565,7 @@ pub fn entry(stimulus: &str, config: &str, host_rate_hz: u32, output: &[f32]) ->
         battery: None,
         record_contract: None,
         bypass: None,
+        pitch: None,
     }
 }
 
@@ -3199,6 +3225,264 @@ pub fn path_record_contract() -> PathBuf {
 /// entry.
 pub fn path_battery() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-battery-v1.json")
+}
+
+// ---- Spec 023: the pitch-kept golden (research R-12) -------------------------------------------
+
+/// The stimuli of the pitch-kept golden, in sorted order: stored 6 kHz streams imported into
+/// the target engine (2 s each: the schedules' last change must land before the end at the
+/// fast levels).
+pub const PITCH_STIMULI: [&str; 4] = ["glide_2s", "tone_1k_2s", "tone_offgrid_2s", "vowel_2s"];
+
+fn pitch_stimulus(name: &str) -> Vec<f32> {
+    use crate::pitch_checks as pc;
+    match name {
+        "glide_2s" => pc::glide(2.0),
+        "tone_1k_2s" => pc::tone(1000.0, 2.0),
+        "tone_offgrid_2s" => pc::tone(pc::OFFGRID_HZ, 2.0),
+        "vowel_2s" => pc::vowel(2.0),
+        other => panic!("unknown pitch stimulus {other:?}"),
+    }
+}
+
+/// A pitch golden run: the output, the log, the shifts and the schedule as listed.
+type PitchRun = (
+    Vec<f32>,
+    Vec<rr_dr60::ChangeEntry>,
+    Vec<i32>,
+    Vec<(u64, u32, f64, u64)>,
+);
+/// A run to make: (name, start level, start mode, requests).
+type PitchRunSpec = (String, u8, u32, Vec<(usize, u32, f64)>);
+
+/// The schedules (requests at call indices of `rate ÷ 50` host samples): the level changes in
+/// pitch-kept mode, the mode changes at level 1, and both.
+pub fn pitch_schedule(name: &str) -> (u8, u32, Vec<(usize, u32, f64)>) {
+    match name {
+        "levels" => (
+            1,
+            1,
+            vec![(20, 2, 5.0), (45, 2, 2.0), (70, 2, 3.0), (90, 2, 4.0)],
+        ),
+        "modes" => (1, 0, vec![(20, 30, 1.0), (50, 30, 0.0), (80, 30, 1.0)]),
+        "both" => (
+            1,
+            1,
+            vec![
+                (20, 2, 4.0),
+                (20, 30, 0.0),
+                (45, 30, 1.0),
+                (60, 2, 3.0),
+                (80, 2, 2.0),
+            ],
+        ),
+        other => panic!("unknown pitch schedule {other:?}"),
+    }
+}
+
+/// Spec 023 D8 (research R-12): the pitch-kept file, 420 entries: at the seven rates, the four
+/// stimuli in `speed_default` (the codec on) and `speed_default_no_codec`, each at the four
+/// pitch-kept levels and under the three schedules (392), plus the speed-only set at 6 kHz (28).
+/// With `bless`, asserts each level's default-mode twin bit-identical to the untouched engine,
+/// every constant length equal to the mode-aware helper, every scheduled change landing before
+/// the end, and the speed-only entries bit-exact against the independent reference with the
+/// same shift sequence.
+pub fn generate_pitch(make: Make<'_>, bless: bool) -> GoldenFile {
+    use crate::changes_checks::{self as cc, Change, Partition, Source};
+    use crate::pitch_checks::{self as pc, Req};
+    use crate::speed_checks as sc;
+    use rr_dr60::speed::SpeedMode;
+    let mut entries = Vec::new();
+    let mode_of = |m: u32| SpeedMode::from_u32(m).unwrap();
+    let digest = |shifts: &[i32]| {
+        let mut h = rr_dr60::digest::Fnv1a64::new();
+        for s in shifts {
+            h.update(&s.to_le_bytes());
+        }
+        format!("{:016x}", h.finish())
+    };
+    let mut push = |stim: &str,
+                    config: String,
+                    rate: u32,
+                    y: &[f32],
+                    level: u8,
+                    mode: u32,
+                    schedule: Vec<(u64, u32, f64, u64)>,
+                    log: &[rr_dr60::ChangeEntry],
+                    shifts: &[i32]| {
+        let mut e = entry(stim, &config, rate, y);
+        let log: Vec<(u64, u32, f64, f64, u64, u32)> = log
+            .iter()
+            .filter(|c| c.control == 2 || c.control == 30)
+            .map(|c| (c.position, c.control, c.before, c.after, c.tag, c.stream))
+            .collect();
+        e.pitch = Some(PitchGolden {
+            mode,
+            level,
+            schedule,
+            log,
+            produced: y.len() as u64,
+            frames: shifts.len() as u64,
+            shifts_fnv1a64: digest(shifts),
+        });
+        entries.push(e);
+    };
+    let run_sched = |p: &mut rr_dr60::Pipeline,
+                     call: usize,
+                     level: u8,
+                     mode: u32,
+                     sched: &[(usize, u32, f64)]|
+     -> PitchRun {
+        p.set_playback_speed(level).unwrap();
+        p.set_playback_speed_mode(mode_of(mode));
+        let changes: Vec<Change> = sched
+            .iter()
+            .enumerate()
+            .map(|(i, &(c, control, v))| Change {
+                stream: rr_dr60::Stream::Playback,
+                position: (c * call) as u64,
+                control,
+                value: v,
+                tag: i as u64 + 1,
+            })
+            .collect();
+        let run = cc::run_scheduled(p, Source::Playback(1), &changes, Partition::Fixed(call));
+        let shifts = rr_dr60::__test_hooks::pitch_shift_trace(p);
+        let listed = changes
+            .iter()
+            .map(|c| (c.position, c.control, c.value, c.tag))
+            .collect();
+        (run.out, run.log, shifts, listed)
+    };
+    for rate in configs::all_rates() {
+        let call = (rate / 50) as usize;
+        for stim in PITCH_STIMULI {
+            let x = pitch_stimulus(stim);
+            for config in ["speed_default", "speed_default_no_codec"] {
+                let settings = configs::settings(config, rate);
+                let (mut p, n) = configs::stored_recording(make, settings, &x);
+                assert_eq!(n, 1);
+                p.set_route(rr_dr60::Route::Speaker);
+                let drain = u64::from(p.drain_samples());
+                for level in pc::LEVELS {
+                    let (y, log, shifts, _) = run_sched(&mut p, call, level, 1, &[]);
+                    if bless {
+                        let tag = format!("{stim} {config} {rate} level {level}");
+                        let helper = p
+                            .playback_length_samples_in_mode(1, level, SpeedMode::PitchKept)
+                            .unwrap();
+                        assert_eq!(y.len() as u64, helper, "{tag}: the helper (023 FR-005)");
+                        // The default-mode twin equals the untouched engine's playback.
+                        let (d, _, _, _) = run_sched(&mut p, call, level, 0, &[]);
+                        let plain = sc::play(&mut p, 1, call, &[(0, level)]);
+                        assert_eq!(sc::mismatches(&d, &plain.out), 0, "{tag}: the default twin");
+                    }
+                    push(
+                        stim,
+                        format!("{config}_kept_l{level}"),
+                        rate,
+                        &y,
+                        level,
+                        1,
+                        vec![],
+                        &log,
+                        &shifts,
+                    );
+                }
+                for sched in ["levels", "modes", "both"] {
+                    let (level, mode, requests) = pitch_schedule(sched);
+                    let (y, log, shifts, listed) = run_sched(&mut p, call, level, mode, &requests);
+                    if bless {
+                        let end = y.len() as u64 - drain;
+                        assert!(
+                            listed
+                                .iter()
+                                .all(|&(pos, ..)| pos + 2 * u64::from(rate) / 50 < end),
+                            "{stim} {config} {rate} {sched}: a change or its blend after the end"
+                        );
+                        assert_eq!(
+                            cc::entries_of(&log, 2).len() + cc::entries_of(&log, 30).len(),
+                            requests.len(),
+                            "{stim} {config} {rate} {sched}: every change logged"
+                        );
+                    }
+                    push(
+                        stim,
+                        format!("{config}_sched_{sched}"),
+                        rate,
+                        &y,
+                        level,
+                        mode,
+                        listed,
+                        &log,
+                        &shifts,
+                    );
+                }
+            }
+        }
+    }
+    // The speed-only set at 6 kHz, asserted against the reference at bless time.
+    let only = configs::settings("speed_only", 6000);
+    for stim in PITCH_STIMULI {
+        let x = pitch_stimulus(stim);
+        let (mut p, n) = configs::stored_recording(make, only, &x);
+        assert_eq!(n, 1);
+        let runs: Vec<PitchRunSpec> = pc::LEVELS
+            .iter()
+            .map(|&l| (format!("speed_only_kept_l{l}"), l, 1, vec![]))
+            .chain(["levels", "modes", "both"].iter().map(|s| {
+                let (level, mode, req) = pitch_schedule(s);
+                (format!("speed_only_sched_{s}"), level, mode, req)
+            }))
+            .collect();
+        for (name, level, mode, requests) in runs {
+            let (y, log, shifts, listed) = run_sched(&mut p, 120, level, mode, &requests);
+            if bless {
+                let dev: Vec<(usize, Req)> = requests
+                    .iter()
+                    .map(|&(c, control, v)| {
+                        (
+                            c * 120,
+                            if control == 2 {
+                                Req::Level(v as u8)
+                            } else {
+                                Req::Mode(mode_of(v as u32))
+                            },
+                        )
+                    })
+                    .collect();
+                let (mism, eq, a, b) =
+                    pc::against_reference(make, "speed_only", &x, level, mode_of(mode), &dev);
+                assert_eq!(mism, 0, "{stim} {name}: against the reference (023 R-09)");
+                assert!(eq, "{stim} {name}: the shifts ({a} vs {b})");
+            }
+            push(stim, name, 6000, &y, level, mode, listed, &log, &shifts);
+        }
+    }
+    entries.sort_by(|a, b| {
+        (&a.stimulus, &a.config, a.host_rate_hz).cmp(&(&b.stimulus, &b.config, b.host_rate_hz))
+    });
+    GoldenFile {
+        format: "rr_dr60-golden".into(),
+        version: 1,
+        library_version: env!("CARGO_PKG_VERSION").into(),
+        entries,
+    }
+}
+
+/// The committed spec 023 pitch-kept golden file, embedded at compile time.
+///
+/// # Panics
+///
+/// If the embedded file is not valid JSON.
+pub fn committed_pitch() -> GoldenFile {
+    serde_json::from_str(include_str!("../golden/golden-pitch-kept-v1.json"))
+        .expect("valid embedded pitch-kept golden file")
+}
+
+/// The path of the spec 023 pitch-kept golden file.
+pub fn path_pitch() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("golden/golden-pitch-kept-v1.json")
 }
 
 #[cfg(test)]

@@ -1361,3 +1361,89 @@ fn bypass_allocate_nothing() {
         unsafe { rr_dr60_destroy(handle) };
     }
 }
+
+/// Spec 023 FR-007 (tasks.md T014): setting and scheduling the mode, its landing, the blend, a
+/// level change in pitch-kept mode (the search) and a refusal allocate nothing in a call, in
+/// Rust and through the C API.
+#[test]
+fn pitch_allocate_nothing() {
+    use rr_dr60::Stream;
+    use rr_dr60::speed::SpeedMode;
+    use rr_dr60_ffi::{
+        RrDr60PlayInfo, rr_dr60_play, rr_dr60_schedule_change, rr_dr60_set_playback_speed_mode,
+        rr_dr60_start_playback,
+    };
+    use rr_dr60_harness::pitch_checks as pc;
+    let _turn = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let x = pc::vowel(0.5);
+    let mut output = vec![0.0f32; 256];
+    for &rate in configs::measurement_rates() {
+        let s = configs::settings("speed_default_no_codec", rate);
+        let (mut p, _) = configs::stored_recording(&|s| Pipeline::new(s).unwrap(), s, &x);
+        let c = configs::c_settings(&s);
+        let (q, _) = configs::stored_recording(&|s| Pipeline::new(s).unwrap(), s, &x);
+        let mut bytes = vec![0u8; q.export_len(1).unwrap()];
+        let _ = q.export(1, &mut bytes).unwrap();
+        let mut handle: *mut RrDr60Pipeline = core::ptr::null_mut();
+        // SAFETY: a valid settings struct and an out-pointer.
+        assert_eq!(unsafe { rr_dr60_create(&c, &mut handle) }, RrDr60Status::Ok);
+        // SAFETY: a live handle and the exported bytes.
+        assert_eq!(
+            unsafe {
+                rr_dr60_ffi::rr_dr60_import(
+                    handle,
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    core::ptr::null_mut(),
+                )
+            },
+            RrDr60Status::Ok
+        );
+        p.set_playback_speed(1).unwrap();
+        p.start_playback(1).unwrap();
+        // SAFETY: a live handle.
+        unsafe {
+            assert_eq!(
+                rr_dr60_ffi::rr_dr60_set_playback_speed(handle, 1),
+                RrDr60Status::Ok
+            );
+            assert_eq!(rr_dr60_start_playback(handle, 1), RrDr60Status::Ok);
+        }
+        let mut info = RrDr60PlayInfo::default();
+        MEASURING.with(|m| m.set(true));
+        let before = counts();
+        p.set_playback_speed_mode(SpeedMode::PitchKept);
+        p.schedule_change(Stream::Playback, 300, 2, 5.0, 1).unwrap();
+        p.schedule_change(Stream::Playback, 600, 30, 0.0, 2)
+            .unwrap();
+        p.schedule_change(Stream::Playback, 900, 30, 1.0, 3)
+            .unwrap();
+        let refused = p.schedule_change(Stream::OnePass, 0, 30, 1.0, 4);
+        for _ in 0..6 {
+            let _ = p.play(&mut output).unwrap();
+        }
+        // SAFETY: the handle is live; the buffer is 256 samples.
+        let st = unsafe {
+            [
+                rr_dr60_set_playback_speed_mode(handle, 1),
+                rr_dr60_schedule_change(handle, 0, 300, 2, 5.0, 1),
+                rr_dr60_schedule_change(handle, 0, 600, 30, 0.0, 2),
+                rr_dr60_schedule_change(handle, 0, 900, 30, 1.0, 3),
+                rr_dr60_play(handle, output.as_mut_ptr(), 256, &mut info),
+                rr_dr60_play(handle, output.as_mut_ptr(), 256, &mut info),
+                rr_dr60_play(handle, output.as_mut_ptr(), 256, &mut info),
+                rr_dr60_play(handle, output.as_mut_ptr(), 256, &mut info),
+                rr_dr60_play(handle, output.as_mut_ptr(), 256, &mut info),
+                rr_dr60_play(handle, output.as_mut_ptr(), 256, &mut info),
+            ]
+        };
+        let after = counts();
+        MEASURING.with(|m| m.set(false));
+        assert!(refused.is_err());
+        assert!(st.iter().all(|&s| s == RrDr60Status::Ok), "{st:?}");
+        assert_eq!(after, before, "{rate} Hz: the pitch-kept mode allocated");
+        p.stop_playback().unwrap();
+        // SAFETY: destroying the handle once.
+        unsafe { rr_dr60_destroy(handle) };
+    }
+}

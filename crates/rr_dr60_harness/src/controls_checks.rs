@@ -14,7 +14,13 @@ use rr_dr60::{
 use crate::manifest_checks::denylist_hit;
 
 /// The three live controls (014 FR-001), in order.
-pub const LIVE: [&str; 4] = ["route", "volume", "playback_speed", "battery_volts"]; // 018: a fourth
+pub const LIVE: [&str; 5] = [
+    "route",
+    "volume",
+    "playback_speed",
+    "battery_volts",
+    "playback_speed_mode",
+]; // 018: a fourth; 023: a fifth
 
 // ---- Canonical text (014 FR-012; research R-07) ----------------------------------------------
 
@@ -144,6 +150,7 @@ pub fn engine_default(id: &str, s: &Settings) -> Option<Val> {
         "volume" => Val::F(rr_dr60::output::VOLUME_REFERENCE),
         "playback_speed" => Val::I(u64::from(rr_dr60::speed::DEFAULT_LEVEL)),
         "battery_volts" => Val::F(rr_dr60::battery::DEFAULT_BATTERY_VOLTS), // spec 018
+        "playback_speed_mode" => Val::C(Some(rr_dr60::speed::SpeedMode::default() as u32)), // spec 023
         "host_rate_hz" => Val::C(None),
         "record_stage_enabled" => Val::B(s.record_stage_enabled),
         "playback_stage_enabled" => Val::B(s.playback_stage_enabled),
@@ -283,6 +290,16 @@ fn live_accepts(p: &mut Pipeline, id: &str, v: Val) -> Option<bool> {
         ("playback_speed", Val::I(x)) => Some(p.set_playback_speed(x.min(255) as u8).is_ok()),
         // Spec 018: the battery value, a plain setter like the volume (output clock).
         ("battery_volts", Val::F(x)) => Some(p.set_battery_volts(x).is_ok()),
+        // Spec 023: the mode, a plain setter taking the enum (the C path maps 0/1).
+        ("playback_speed_mode", Val::C(Some(m))) => {
+            Some(match rr_dr60::speed::SpeedMode::from_u32(m) {
+                Some(mode) => {
+                    p.set_playback_speed_mode(mode);
+                    true
+                }
+                None => false,
+            })
+        }
         // Spec 017: the eight record-side values change live through the schedule only, on the
         // record stream while recording and on the one-pass otherwise (there is no plain
         // setter); the value is validated as the setting.
@@ -921,7 +938,12 @@ pub fn setters(
 /// enumeration value of the same name.
 pub fn options_vs_header(entries: &[ControlEntry], header: &str) -> Vec<String> {
     let mut f = Vec::new();
-    for (id, prefix) in [("tap", "TAP"), ("vas.mode", "VAS_MODE"), ("route", "ROUTE")] {
+    for (id, prefix) in [
+        ("tap", "TAP"),
+        ("vas.mode", "VAS_MODE"),
+        ("route", "ROUTE"),
+        ("playback_speed_mode", "SPEED_MODE"), // spec 023
+    ] {
         let Some(ControlValue::Choice { options, .. }) =
             entries.iter().find(|e| e.identifier == id).map(|e| e.value)
         else {
@@ -934,7 +956,13 @@ pub fn options_vs_header(entries: &[ControlEntry], header: &str) -> Vec<String> 
                 o.identifier.to_uppercase(),
                 o.value
             );
-            if !header.contains(&want) {
+            // Spec 023: a choice carried by defines (the mode is a `uint32_t`, not an enum).
+            let want_define = format!(
+                "#define RR_DR60_{prefix}_{} {}",
+                o.identifier.to_uppercase(),
+                o.value
+            );
+            if !header.contains(&want) && !header.lines().any(|l| l.trim_end() == want_define) {
                 f.push(format!(
                     "{id}: option {}={} not in the header as {want:?}",
                     o.identifier, o.value
@@ -988,6 +1016,18 @@ fn default_line<'a>(id: &str, sources: &'a [(String, String)]) -> Option<&'a str
         "battery_volts" => file("battery.rs")?
             .lines()
             .find(|l| l.contains("pub const DEFAULT_BATTERY_VOLTS")),
+        // Spec 023: the enum's `#[default]` variant line carries the control's tags.
+        "playback_speed_mode" => {
+            let f = file("speed.rs")?;
+            let mut previous = "";
+            for l in f.lines() {
+                if l.trim_start().starts_with("PitchWithSpeed") {
+                    return (previous.trim() == "#[default]").then_some(l);
+                }
+                previous = l;
+            }
+            None
+        }
         "host_rate_hz" => settings
             .lines()
             .find(|l| l.contains("pub const SUPPORTED_HOST_RATES")),

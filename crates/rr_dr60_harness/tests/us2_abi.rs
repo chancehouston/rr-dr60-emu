@@ -101,13 +101,15 @@ fn git(args: &[&str]) -> Option<std::process::Output> {
         .ok()
 }
 
-/// US3 AS1 (SC-003): the core crates are untouched since 0.21's merge.
+/// US3 AS1 (SC-003): the core crates are untouched between 0.21's merge and 0.22's (restated
+/// by spec 023, which moves the core: the pin reads the two revisions, not the tree).
 #[test]
 fn us3_core_untouched() {
     let Some(out) = git(&[
         "diff",
         "--quiet",
         "81f14dd",
+        "12a3c45",
         "--",
         "crates/rr_dr60",
         "crates/rr_dr60_detmath",
@@ -116,10 +118,13 @@ fn us3_core_untouched() {
         return;
     };
     if !out.status.success() && out.status.code() != Some(1) {
-        eprintln!("git diff could not run (no 81f14dd?): skipped");
+        eprintln!("git diff could not run (no 81f14dd or 12a3c45?): skipped");
         return;
     }
-    assert!(out.status.success(), "the core crates differ from 81f14dd");
+    assert!(
+        out.status.success(),
+        "the core crates differ between 81f14dd and 12a3c45"
+    );
 }
 
 /// US3 AS2 (SC-003): the fifteen golden guards read from the golden tests' sources are the
@@ -195,8 +200,9 @@ fn us3_guards_unmoved() {
     }
 }
 
-/// US3 AS4: the header differs from 0.21's by the listed additions only: two functions, one
-/// status, four defines; no struct removed, none added.
+/// US3 AS4: 0.22's header differs from 0.21's by the listed additions only: two functions, one
+/// status, four defines; no struct removed, none added (restated by spec 023, which appends to
+/// the header: both headers are read from their merge revisions).
 #[test]
 fn us3_header_diff_listed() {
     let Some(out) = git(&["show", "81f14dd:crates/rr_dr60_ffi/include/rr_dr60.h"]) else {
@@ -208,11 +214,14 @@ fn us3_header_diff_listed() {
         return;
     }
     let old = String::from_utf8(out.stdout).unwrap();
-    let new = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../rr_dr60_ffi/include/rr_dr60.h"
-    ))
-    .unwrap();
+    let Some(out) = git(&["show", "12a3c45:crates/rr_dr60_ffi/include/rr_dr60.h"]) else {
+        return;
+    };
+    if !out.status.success() {
+        eprintln!("12a3c45 unavailable: skipped");
+        return;
+    }
+    let new = String::from_utf8(out.stdout).unwrap();
     let names = |src: &str, prefix: &str| -> std::collections::BTreeSet<String> {
         src.lines()
             .filter_map(|l| {

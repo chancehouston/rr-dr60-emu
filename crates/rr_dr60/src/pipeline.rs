@@ -151,6 +151,9 @@ pub struct Pipeline {
     /// The playback speed level (spec 013 FR-001): not a setting; kept through reset and
     /// reconfigure; copied into the speed control at every play call.
     pub(crate) speed_level: u8,
+    /// The playback speed mode (spec 023 D1): not a setting; kept through reset and
+    /// reconfigure; copied into the speed control at every play call.
+    pub(crate) speed_mode: crate::speed::SpeedMode,
     /// The player's speed control (spec 013; A-054), between the decoder and stage 10; reset at
     /// every `start_playback`.
     pub(crate) speed: SpeedStage,
@@ -465,6 +468,7 @@ struct LiveStart {
     route: Route,
     volume: f32,
     speed_level: u8,
+    speed_mode: crate::speed::SpeedMode, // 023
     battery_volts: f32,
 }
 
@@ -514,6 +518,7 @@ impl Pipeline {
                 route: Route::default(),
                 volume: crate::output::VOLUME_REFERENCE, // A-043
                 speed_level: crate::speed::DEFAULT_LEVEL, // 013 FR-001 (S-001: level 3)
+                speed_mode: crate::speed::SpeedMode::default(), // 023 D1 (A-054: the modeled default)
                 battery_volts: crate::battery::DEFAULT_BATTERY_VOLTS, // 018 FR-001 (A-056: nominal)
             },
         ))
@@ -534,6 +539,7 @@ impl Pipeline {
             route,
             volume,
             speed_level,
+            speed_mode,
             battery_volts,
         } = live;
         let mut one_pass = OnePass::new(&settings, plan);
@@ -562,6 +568,7 @@ impl Pipeline {
             player: {
                 let mut p = PlaybackPath::new(&settings, plan, false);
                 p.set_start_values(route, volume, speed_level, battery_volts); // 015 D3, 018
+                p.ctl.set_start_mode(speed_mode as u8); // 023 D1
                 p.ctl.set_stream(Stream::Playback); // 020 D9
                 p
             },
@@ -573,6 +580,7 @@ impl Pipeline {
             encoder: settings.speech_codec_enabled.then(SpeechEncoder::new),
             decoder: settings.speech_codec_enabled.then(SpeechDecoder::new),
             speed_level,
+            speed_mode,
             speed: SpeedStage::new(speed_level),
             #[cfg(feature = "__test-hooks")]
             speed_trace: alloc::vec::Vec::with_capacity(SPEED_TRACE_CAPACITY), // never grown: a play call pushes within it
@@ -751,7 +759,8 @@ impl Pipeline {
         tag: u64,
     ) -> Result<(), Error> {
         use crate::changes::{
-            LIVE_BATTERY, LIVE_ROUTE, LIVE_SPEED, LIVE_VOLUME, record_value, slot_of,
+            LIVE_BATTERY, LIVE_ROUTE, LIVE_SPEED, LIVE_SPEED_MODE, LIVE_VOLUME, record_value,
+            slot_of,
         };
         // Spec 017 FR-001: a record-side value, on the record stream or the one-pass, in the
         // input clock; validated as the setting.
@@ -803,7 +812,7 @@ impl Pipeline {
         }
         let on_stream = match control {
             LIVE_ROUTE | LIVE_VOLUME | LIVE_BATTERY => true,
-            LIVE_SPEED => stream == Stream::Playback,
+            LIVE_SPEED | LIVE_SPEED_MODE => stream == Stream::Playback, // 023 D1
             _ => false,
         };
         if !on_stream {
@@ -843,6 +852,21 @@ impl Pipeline {
                     });
                 }
                 value
+            }
+            LIVE_SPEED_MODE => {
+                // Spec 023 FR-001 (contracts/api.md): exactly 0.0 or 1.0; a whole number
+                // outside them is an invalid mode, anything else an invalid control value.
+                if !(value == 0.0 || value == 1.0) {
+                    let whole = value.is_finite()
+                        && (0.0..=4294967295.0).contains(&value)
+                        && f64::from(value as u32) == value;
+                    return Err(if whole {
+                        Error::InvalidSpeedMode { mode: value as u32 }
+                    } else {
+                        Error::InvalidControlValue { control, value }
+                    });
+                }
+                value + 0.0
             }
             _ => {
                 if !(value == 0.0 || value == 1.0) {
@@ -1084,6 +1108,30 @@ impl Pipeline {
     /// The playback speed level (spec 013 FR-001): the last valid setting, default 3.
     pub fn playback_speed(&self) -> u8 {
         self.speed_level
+    }
+
+    /// Sets the playback speed mode (spec 023 D1; the control manifest's `playback_speed_mode`):
+    /// [`SpeedMode::PitchWithSpeed`](crate::speed::SpeedMode::PitchWithSpeed), the modeled
+    /// default (the pitch moves with the speed), or
+    /// [`SpeedMode::PitchKept`](crate::speed::SpeedMode::PitchKept), a time-domain time-scaling
+    /// of the decoded stream at the device rate that keeps the pitch (an engine convention, not
+    /// a device behavior; A-054's open question). Level 3 is the identity in both modes. Live
+    /// like the level: from the first device-rate sample a [`play`](Self::play) call computes
+    /// after it was set, as a 20 ms crossfade between the two mechanisms from the common place
+    /// (at once at level 3, where neither sounds; a request during a crossfade waits for its
+    /// end; past the recording's end the mode of the current playback no longer changes). The
+    /// level's length and progress rules hold in both modes
+    /// ([`playback_length_samples_in_mode`](Self::playback_length_samples_in_mode)). Applies to
+    /// `play` only. Kept by [`reset`](Self::reset) and [`reconfigure`](Self::reconfigure). Read
+    /// it back with [`playback_speed_mode`](Self::playback_speed_mode). Real-time safe.
+    pub fn set_playback_speed_mode(&mut self, mode: crate::speed::SpeedMode) {
+        self.speed_mode = mode;
+    }
+
+    /// The playback speed mode (spec 023 D1): the last valid setting, default
+    /// [`SpeedMode::PitchWithSpeed`](crate::speed::SpeedMode::PitchWithSpeed).
+    pub fn playback_speed_mode(&self) -> crate::speed::SpeedMode {
+        self.speed_mode
     }
 
     /// The report of a refused in-place call: nothing produced, the stream's paused state.
@@ -1329,6 +1377,7 @@ impl Pipeline {
             self.speed_level,
             self.battery_volts,
         );
+        self.player.ctl.set_start_mode(self.speed_mode as u8); // 023 D1
         // Spec 021 research R-11: every switch re-applied from the settings (the landed values)
         // at rest on both streams, the one-pass's stage 10 included; no entry.
         self.one_pass.play.adopt_bypass(&self.settings);
@@ -1381,6 +1430,7 @@ impl Pipeline {
                 route: self.route,
                 volume: self.volume,
                 speed_level: self.speed_level, // 013 FR-001: kept by reconfigure
+                speed_mode: self.speed_mode,   // 023 D1: kept by reconfigure
                 battery_volts: self.battery_volts, // 018 FR-001: kept by reconfigure
             },
         );
@@ -1549,6 +1599,22 @@ impl Pipeline {
     ) -> Result<Self, Error> {
         let mut p = Self::new(settings)?;
         p.speed.mutation = *m;
+        Ok(p)
+    }
+
+    /// Test-only (hidden): an engine whose speed control carries the pitch-kept mutant `m`
+    /// (spec 023 research R-12).
+    ///
+    /// # Errors
+    ///
+    /// As [`Pipeline::new`].
+    #[doc(hidden)]
+    pub fn __with_pitch_mutation(
+        settings: Settings,
+        m: &crate::__test_hooks::PitchMutation,
+    ) -> Result<Self, Error> {
+        let mut p = Self::new(settings)?;
+        p.speed.pitch_mutation = *m;
         Ok(p)
     }
 

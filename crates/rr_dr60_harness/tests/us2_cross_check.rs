@@ -1200,6 +1200,20 @@ fn readme_speed_statements() {
         "bit-identical",
         "rr_dr60_set_playback_speed",
         "RR_DR60_STATUS_INVALID_SPEED_LEVEL",
+        // Spec 023: both modes, the convention, the figures, the mode-aware helper, the C names.
+        "playback_speed_mode",
+        "pitch_kept",
+        "time-scaling",
+        "engine convention",
+        "not a device behavior",
+        "0.03 %",
+        "±64 device samples",
+        "playback_length_samples_in_mode",
+        "set_playback_speed_mode",
+        "rr_dr60_set_playback_speed_mode",
+        "RR_DR60_STATUS_INVALID_SPEED_MODE",
+        "RR_DR60_SPEED_MODE_PITCH_KEPT",
+        "one-pass and record streams",
     ] {
         assert!(
             section.contains(phrase),

@@ -51,6 +51,7 @@ For "Kind", see the table in the summary. "Perceived" is what a listener notices
 | Output route | `set_route` | Device control (the earphone jack, S-001) | Speaker / Earphone; Speaker | Playback and one-pass | Large. The speaker route has the small-speaker resonance near 750 Hz and the amplifier's 159 Hz corner. The earphone route is flatter and about 18.6 dB quieter at the reference position (A-042). | Takes the volume at once on change. Survives `reset` and `reconfigure`. |
 | Volume position | `set_volume` | Device control | 0 – 1; 0.1335 (`VOLUME_REFERENCE`, A-043) | Playback and one-pass | Loudness. Above the reference position, full-scale material clips on the speaker route: 10 % THD at +2.3 dB over (A-031). | 20 ms smoothstep transition (A-045). A change during a transition restarts from rest, so a stream of updates lags: about 19 ms at 60 Hz, about 105 ms at one update per 64-sample block (O-13). |
 | Playback speed level | `set_playback_speed` | Device control (SPEED CONTROL, S-001) | 1 – 5 = 0.6 / 0.8 / 1.0 / 1.2 / 1.4; 3 | `play` only | Tempo and pitch together (mechanism (b), A-054, low confidence; the research leans weakly toward a device that keeps pitch). A level change is a 20 ms crossfade of the old and the new level, the engine's convention (spec 019, engine 0.19.0; the device's own behavior at a change is open, capture P1); a constant level is bit-identical to 0.12. | Level 3 is bit-identical to 0.12. Kept by `reset` and `reconfigure`. |
+| Playback speed mode | `set_playback_speed_mode` | Model internal (spec 023, engine 0.23.0; A-054's open question) | `pitch_with_speed` (default) / `pitch_kept` | `play` only | The pitch following the speed (the modeled default) or kept by a time-scaling of the decoded stream at the 6 kHz device rate, an engine convention; a mode change blends over 20 ms; in pitch-kept mode a level change is frame-fed (no blend), a change into level 3 blends. | Free via curated values; the raw switch in the Workbench. Kept by `reset` and `reconfigure`. |
 
 ### 1b. Construction-time settings (`Settings`, via `new` / `reconfigure`)
 
@@ -96,7 +97,7 @@ For "Kind", see the table in the summary. "Perceived" is what a listener notices
 | Speaker template (750 Hz, Q 1.8, +4.5 dB shelf); earphone corners | A-010, A-032 | No |
 | Amplifier clip ceiling 1.15 V; gain law | A-031, A-044 | **Yes, candidate**: battery state scales the ceiling (A-056). *Modeled by spec 018 (engine 0.18.0, 2026-10-30): the static law as a live unit condition, `battery_volts`, 2.2 – 3.0 V, default 3.0 V (factor 1); the sag stays not modeled.* |
 | Volume transition 20 ms, smoothstep | A-045 (an engine convention) | No. A programmed fade is a separate candidate (section 4). |
-| Speed ratios and mechanism (b) | A-054 | **Yes, candidate**: a pitch-kept mode (c1). |
+| Speed ratios and mechanism (b) | A-054 | **Built** (spec 023, engine 0.23.0): a pitch-kept mode as a second, selectable mechanism; the default unchanged. |
 | Recording counter (hiss stream key) | A-049 | State, not a control |
 
 ### 1d. Not modeled, with a control attached
@@ -104,7 +105,7 @@ For "Kind", see the table in the summary. "Perceived" is what a listener notices
 | Candidate | Basis | Status |
 |---|---|---|
 | Battery state on the speaker route | A-056 (static law: ceiling ∝ V+ − 1.6 V; −0.3 dB fresh to −9.1 dB at 10 h; plus 0.9 – 2.5 dB sag on loud passages) | The owner put it into this discussion on 2026-10-17. Audible only on material that reaches the ceiling: at the reference volume, −20 dBFS speech keeps about 11 dB of headroom even at 10 h. *Modeled by spec 018 (engine 0.18.0, 2026-10-30): the static law as a live unit condition, `battery_volts`, 2.2 – 3.0 V, default 3.0 V (factor 1); the sag stays not modeled.* |
-| Pitch-kept slow/fast (mechanism c1) | A-054 (the research leans weakly toward it), S-018 | Follow-up to spec 013. |
+| Pitch-kept slow/fast (mechanism c1) | A-054 (the research leans weakly toward it), S-018 | Built by spec 023 (engine 0.23.0) as a selectable mode, an engine convention. |
 | Crossfade on a speed-level change | spec 013 B2 (the step at 2 kHz to or from level 5 is −0.7 … −1.9 dB re the tone) | Built by spec 019 (engine 0.19.0): a 20 ms smoothstep crossfade, always on, an engine convention; a request during a blend lands at its end. |
 | 10 SEC REVIEW and seek | S-002 control S11 | Not modeled. `play` has no seek. |
 | Start-of-item transients | A-057 | Waits for capture P3 (owner, 2026-10-17). |
@@ -124,7 +125,7 @@ User value is my judgement from the personas (personas.md) and the dossier. No i
 | 4 | Hiss offset, battery state ("unit condition") | Recorder-mode users, creators | Free (recommended: a unit condition is a device fact, not a model knob) | Live is pleasant; between recordings is enough for the hiss offset (it is a record-path value). The battery is playback-side and can be live. |
 | 5 | Limiter knee, release, attack; VAS threshold, hang, onset | Recorder-mode enthusiasts (a small, loud minority, personas job 5) | Workbench | Between recordings for recordings. Live in a monitoring toy (one-pass). |
 | 6 | Stage bypass and A/B ("with / without the speaker") | Enthusiasts, creators | Workbench | Playback-side stages: live with a crossfade. Record-side stages: an offline re-render, not live. *Built as spec 021 (engine 0.21.0, 2026-10-31): the four playback-side switches (stages 10 – 13) live through the schedule with a 20 ms blend, the stage kept warm; 11 – 13 on the player and the one-pass, 10 on the player. Record-side "with / without" stays spec 020's offline re-render.* |
-| 7 | Pitch-kept slow playback | Investigators reviewing recordings | Free if a capture shows the device keeps pitch (then it is the device); otherwise an emulator option, Workbench | Live during playback |
+| 7 | Pitch-kept slow playback | Investigators reviewing recordings | **Built** (spec 023, engine 0.23.0) as `playback_speed_mode`, kind model internal; free via curated values (presets), the raw switch in the Workbench; if a capture shows the device keeps pitch it becomes the device default by a CHANGELOG-recorded assumption change | Live during playback (built) |
 | 8 | Expanded memory | Heavy users | O-2 | Idle |
 
 Never live: the speech codec on/off (it fixes the memory's encoding and the latency), the memory capacity, the host rate, the seed, and any bypass of a stage that carries latency (stage 4 and the rate conversion change `latency_samples`).
@@ -149,7 +150,7 @@ The common pattern is spec 011's: a setter that is validated, real-time safe and
 | Playback-stage bypass, live (10, 11, 12, 13) | Playback | Both branches computed for a 20 ms crossfade. The filters are minimum-phase with no reported latency, so the branches align. | Built (spec 021, engine 0.21.0): the bypassed stage keeps running (warm); `reset` re-applies the landed values at once; `reconfigure(s)` takes `s`. | Same | M |
 | Record-side "with / without" | Offline | A second pipeline renders the raw capture again with one setting changed. The engine already guarantees this is deterministic. | None | Given | None in the engine. App work, plus O-3 (the raw capture must be kept). Derived cost: about 0.5 min per hour of audio on the development machine (from 1.23 µs per device sample at 48 kHz, spec 008). **Not measured on a phone.** |
 | Between-recordings apply | Idle | A real-time-safe apply of the settings that change no allocation (everything except the host rate, the memory capacity and the codec) | Path state resets anyway (A-037) | Bit-identical to `reconfigure` | S. Or first measure `reconfigure` on an iPhone; if it is a few ms, document it and skip the spec. |
-| Pitch-kept speed (c1) | `play` | A time-scale modification at 6 kHz in the decoder domain, deterministic | A new mode setting | Constant-level goldens | L |
+| Pitch-kept speed (c1) | `play` | **Built** (spec 023): a waveform-similarity overlap-add on the decoded stream at 6 kHz, deterministic; a live control `playback_speed_mode` | The mode control (index 30) | The fifteen earlier goldens unmoved; a sixteenth for the mode | Done |
 
 ### 2c. Two engine gaps that matter more than any one control
 
@@ -225,7 +226,7 @@ These words apply to control names, preset names, AI prompts, AI tool descriptio
 | Control descriptions | "Moves the voice-activation threshold 3 dB per level" | "Picks up more", "listens for", "detects" |
 | AI tool description | "Sets the recorder's controls within their ranges" | "Finds the best settings for capturing…" |
 | The battery control | "Battery voltage (V) / hours of use; lowers the speaker's clip ceiling". The engine's own instance of the rule is the control manifest's sentence (spec 018): "Sets the played unit's cell voltage: the lower the cells, the lower the speaker amplifier's clip ceiling; set by the user, never read from the host device." Preset names, in the app and never the engine, every value an engine constant: "Fresh (as modeled)" (`DEFAULT_BATTERY_VOLTS`), "Half used (4 h of recording, 2.52 V)" (trajectory row 3), "Nearly flat (10 h, 2.22 V)" (row 6), "NiMH pair (2.45 V)" (`NIMH_PAIR_VOLTS`); no dB in the label, the detail view prints `ceiling_db`. | Any link between battery level and events, presence or "drain". Battery drain is a well-known trope in this category. The control is set by the user only, never by a sensor, a timer or the phone's own battery. Never "dying", "drained", "draining" or anything tying the value to activity. |
-| Speed | "Plays at 0.6× with the pitch lowered" / "kept" | "Slow down to reveal hidden voices" |
+| Speed | "Plays at 0.6× with the pitch lowered" / "Plays at 0.6× with the pitch kept (engine option)" | "Slow down to reveal hidden voices" |
 
 ## 4. Recommended sequence of engine specs
 
@@ -260,7 +261,7 @@ Each item below is small and independently testable, with the WHY and the tier i
 8. **021: Live playback-stage bypass with a crossfade** (M; Workbench A/B for stages 10 – 13).
    - *Built as spec 021 (engine 0.21.0, 2026-10-31) at the recommended scope: all four playback-side switches live through the schedule, a 20 ms output/input blend per stage with the stage kept warm, reverse-from-phase; a bypass equals the configured-off engine and a return equals the all-on run where no stateful stage follows, within −100 dBFS otherwise, at seven rates; refused for a stage the stream does not run (status 36). Stage 11 keeps its configured-off meaning (the owner's D11): a documented level change by route and position, the app compensating. Workbench; the mechanism (the schedule and the log) free as before.*
 9. **Later, gated:**
-   - pitch-kept speed (c1), L, after capture P1 or an app request;
+   - pitch-kept speed (c1): built (spec 023, engine 0.23.0);
    - playback seek and 10 SEC REVIEW, S – M, a device feature, free;
    - start-of-item transients, after P3;
    - the clip indicator (spec 010's review), if the inside's design wants it; it fits inside 016.

@@ -1998,3 +1998,274 @@ mod bypass {
         let _ = cell;
     }
 }
+
+mod pitch {
+    //! Spec 023 (research R-12; tasks.md T014): the ten mutants of the pitch-kept mode, each
+    //! caught by its named oracle; the committed engine passes every one.
+    use rr_dr60::__test_hooks::PitchMutation;
+    use rr_dr60::speed::SpeedMode;
+    use rr_dr60::{Pipeline, Settings};
+    use rr_dr60_harness::checks::{MeasurementResult, assert_all, standard};
+    use rr_dr60_harness::pitch_checks::{self as pc, Req};
+
+    fn failed(results: &[MeasurementResult]) -> Vec<&'static str> {
+        results
+            .iter()
+            .filter(|r| !r.passed)
+            .map(|r| r.property)
+            .collect()
+    }
+
+    fn mutant(m: PitchMutation) -> impl Fn(Settings) -> Pipeline {
+        move |s| Pipeline::__with_pitch_mutation(s, &m).unwrap()
+    }
+
+    /// The reference disagrees with the mutant (mismatches, or the shifts) on `x` with `sched`.
+    fn reference_catches(
+        m: PitchMutation,
+        x: &[f32],
+        level: u8,
+        mode: SpeedMode,
+        sched: &[(usize, Req)],
+    ) -> bool {
+        let (mism, eq, _, _) =
+            pc::against_reference(&mutant(m), "speed_only", x, level, mode, sched);
+        mism > 0 || !eq
+    }
+
+    /// No search: the off-grid tone's spurious rows collapse (the 28 dB rows fail).
+    #[test]
+    fn no_search_is_caught_by_the_spurious_rows() {
+        let m = mutant(PitchMutation {
+            no_search: true,
+            ..PitchMutation::default()
+        });
+        let f = failed(&pc::tone_rows(&m, 6000));
+        assert!(
+            f.contains(&"spurious products re the tone, the worst 100 ms window (20 - 3000 Hz)"),
+            "{f:?}"
+        );
+        assert_all(&pc::tone_rows(&standard, 6000));
+    }
+
+    /// The restarted overlap fails the reading A/B's mutant row (the level-change oracle) and
+    /// the reference.
+    #[test]
+    fn restart_overlap_is_caught() {
+        let m = PitchMutation {
+            restart_overlap: true,
+            ..PitchMutation::default()
+        };
+        assert!(reference_catches(
+            m,
+            &pc::vowel(1.0),
+            1,
+            SpeedMode::PitchKept,
+            &[]
+        ));
+        let rows = pc::level_change_rows(&standard);
+        let row = rows
+            .iter()
+            .find(|r| {
+                r.property
+                    .starts_with("level change: rows the restart_overlap mutant fails")
+            })
+            .unwrap();
+        assert!(row.passed && row.measured >= 1.0, "{row}");
+    }
+
+    /// The into-3 swap (D12's rejected rule) fails the reference on an into-3 schedule.
+    #[test]
+    fn into3_swap_is_caught() {
+        let m = PitchMutation {
+            into3_swap: true,
+            ..PitchMutation::default()
+        };
+        assert!(reference_catches(
+            m,
+            &pc::vowel(1.0),
+            1,
+            SpeedMode::PitchKept,
+            &[(1201, Req::Level(3))]
+        ));
+    }
+
+    /// The onset fade-in fails the bit-exact onset rows.
+    #[test]
+    fn onset_fade_is_caught_by_the_onset_rows() {
+        let m = mutant(PitchMutation {
+            onset_fade: true,
+            ..PitchMutation::default()
+        });
+        let f = failed(&pc::lengths(&m, 6000));
+        assert!(
+            f.contains(&"the first 60 device outputs differing from level 3's"),
+            "{f:?}"
+        );
+        assert_all(&pc::lengths(&standard, 6000));
+    }
+
+    /// The symmetric window fails the reference (the pair no longer sums to one).
+    #[test]
+    fn window_sum_off_is_caught() {
+        let m = PitchMutation {
+            window_sum_off: true,
+            ..PitchMutation::default()
+        };
+        assert!(reference_catches(
+            m,
+            &pc::vowel(1.0),
+            1,
+            SpeedMode::PitchKept,
+            &[]
+        ));
+    }
+
+    /// The halved search window fails the reference's shifts at level 5 (the continuation lies
+    /// 24 samples off the nominal position on the first hop).
+    #[test]
+    fn delta_narrow_is_caught() {
+        let m = PitchMutation {
+            delta_narrow: true,
+            ..PitchMutation::default()
+        };
+        assert!(reference_catches(
+            m,
+            &pc::vowel(1.0),
+            5,
+            SpeedMode::PitchKept,
+            &[]
+        ));
+    }
+
+    /// Matching the nominal frame instead of the continuation fails the reference's shifts.
+    #[test]
+    fn match_nominal_is_caught() {
+        let m = PitchMutation {
+            match_nominal: true,
+            ..PitchMutation::default()
+        };
+        assert!(reference_catches(
+            m,
+            &pc::vowel(1.0),
+            1,
+            SpeedMode::PitchKept,
+            &[]
+        ));
+    }
+
+    /// The ascending scan on exact silence picks −40 (the shifts differ; the output is silent
+    /// either way: the oracle is the shift trace).
+    #[test]
+    fn tie_break_outward_off_is_caught_on_silence() {
+        let z = vec![0.0f32; 2000];
+        let m = PitchMutation {
+            tie_break_outward_off: true,
+            ..PitchMutation::default()
+        };
+        let make = mutant(m);
+        let mut p = pc::engine(&make, "speed_only", 6000, &z);
+        let played = pc::play_modes(
+            &mut p,
+            64,
+            &[(0, Req::Level(1)), (0, Req::Mode(SpeedMode::PitchKept))],
+        );
+        assert!(
+            played.shifts[1..].iter().all(|s| *s == -40),
+            "{:?}",
+            &played.shifts[..6]
+        );
+        assert!(played.out.iter().all(|v| *v == 0.0));
+        let mut p = pc::engine(&standard, "speed_only", 6000, &z);
+        let played = pc::play_modes(
+            &mut p,
+            64,
+            &[(0, Req::Level(1)), (0, Req::Mode(SpeedMode::PitchKept))],
+        );
+        assert!(played.shifts.iter().all(|s| *s == 0));
+    }
+
+    /// The unanchored grid (the previous frame at the place itself) fails the onset rows and
+    /// the reference on a change out of level 3.
+    #[test]
+    fn grid_unanchored_is_caught() {
+        let m = PitchMutation {
+            grid_unanchored: true,
+            ..PitchMutation::default()
+        };
+        assert!(reference_catches(
+            m,
+            &pc::vowel(1.0),
+            3,
+            SpeedMode::PitchKept,
+            &[(640, Req::Level(1))]
+        ));
+        let f = failed(&pc::lengths(&mutant(m), 6000));
+        assert!(
+            f.contains(&"the first 60 device outputs differing from level 3's"),
+            "{f:?}"
+        );
+    }
+
+    /// The instant mode switch fails the mode blend's 30 dB rows (it is the step reference).
+    #[test]
+    fn mode_step_is_caught_by_the_blend_rows() {
+        let m = mutant(PitchMutation {
+            mode_step: true,
+            ..PitchMutation::default()
+        });
+        let f = failed(&pc::mode_change_rows(&m));
+        assert!(f.contains(&"mode change: blend click energy below the instant switch's (40 ms, both tones excluded)"), "{f:?}");
+        assert_all(&pc::mode_change_rows(&standard));
+    }
+
+    /// Every mutant leaves the default mode and level 3 untouched (the default twins).
+    #[test]
+    fn mutants_leave_the_default_mode_untouched() {
+        let x = pc::vowel(0.5);
+        for m in [
+            PitchMutation {
+                no_search: true,
+                ..PitchMutation::default()
+            },
+            PitchMutation {
+                window_sum_off: true,
+                ..PitchMutation::default()
+            },
+            PitchMutation {
+                mode_step: true,
+                ..PitchMutation::default()
+            },
+            PitchMutation {
+                grid_unanchored: true,
+                ..PitchMutation::default()
+            },
+        ] {
+            for level in [1u8, 3] {
+                let mut p = pc::engine(&mutant(m), "speed_only", 6000, &x);
+                let a = pc::play_modes(
+                    &mut p,
+                    64,
+                    &[
+                        (0, Req::Level(level)),
+                        (0, Req::Mode(SpeedMode::PitchWithSpeed)),
+                    ],
+                );
+                let mut q = pc::engine(&standard, "speed_only", 6000, &x);
+                let b = pc::play_modes(
+                    &mut q,
+                    64,
+                    &[
+                        (0, Req::Level(level)),
+                        (0, Req::Mode(SpeedMode::PitchWithSpeed)),
+                    ],
+                );
+                assert_eq!(
+                    rr_dr60_harness::speed_checks::mismatches(&a.out, &b.out),
+                    0,
+                    "{m:?} L{level}"
+                );
+            }
+        }
+    }
+}

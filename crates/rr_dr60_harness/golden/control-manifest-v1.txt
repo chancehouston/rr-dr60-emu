@@ -1,4 +1,4 @@
-control_count: 30
+control_count: 31
 
 [0] route
 name: Speaker or earphone
@@ -44,7 +44,7 @@ default: 3
 unit: level
 sources: S-001, S-012
 assumptions: A-054
-description: Plays recordings slower or faster than normal; the model lets the pitch follow the speed.
+description: Plays recordings slower or faster than normal; whether the pitch follows the speed is the speed mode's choice.
 
 [3] host_rate_hz
 name: Host sample rate
@@ -435,3 +435,17 @@ unit: V
 sources: S-002, S-006, S-017
 assumptions: A-056
 description: Sets the played unit's cell voltage: the lower the cells, the lower the speaker amplifier's clip ceiling; set by the user, never read from the host device.
+
+[30] playback_speed_mode
+name: Playback speed mode
+kind: model internal
+timing: live
+paths: playback
+stage: 9
+value: choice
+options: pitch_with_speed=0, pitch_kept=1
+default: 0
+unit: 
+sources: S-001, S-012
+assumptions: A-054
+description: Chooses whether slow and fast playback moves the pitch with the speed (the modeled default) or keeps it by time-scaling the decoded stream.

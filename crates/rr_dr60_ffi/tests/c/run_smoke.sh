@@ -52,6 +52,12 @@ echo "smoke --battery matches the Rust example"
 cargo run -q -p rr_dr60_harness --example bypass_rows > target/example-bypass.txt
 diff target/smoke-bypass.txt target/example-bypass.txt
 echo "smoke --bypass matches the Rust example"
+# Spec 023 FR-008: the C program's pitch-kept rows (the entries per call and the digests of the
+# two playbacks, the mode-aware lengths, map (c) in both modes) equal the Rust example's.
+./target/smoke --pitch > target/smoke-pitch.txt
+cargo run -q -p rr_dr60_harness --example pitch_rows > target/example-pitch.txt
+diff target/smoke-pitch.txt target/example-pitch.txt
+echo "smoke --pitch matches the Rust example"
 # Spec 020 (contracts/api.md): the C program's processing-record rows (the record's text, the
 # read-out, the rewrite, the digest check, the three maps, the feed-point rule) against the Rust
 # example `record_rows`.

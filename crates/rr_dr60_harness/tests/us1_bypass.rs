@@ -20,8 +20,8 @@ fn each(check: impl Fn(u32) -> Vec<MeasurementResult>) -> Vec<MeasurementResult>
 }
 
 /// US1 AS1 (FR-006): every pre-021 configuration is bit-identical to 0.20: the fourteen earlier
-/// golden files are byte-identical to the SHA constants their guards pin (re-read from the test
-/// sources), and the stepped build equals the standard build when nothing lands (the click
+/// golden files (and every later one but 021's own; the pitch-kept guard since spec 023) are
+/// byte-identical to the SHA constants their guards pin (re-read from the test sources), and the stepped build equals the standard build when nothing lands (the click
 /// reader's step reference is the engine itself; FR-007).
 #[test]
 fn as1_pre_021_configurations_unmoved() {
@@ -59,7 +59,12 @@ fn as1_pre_021_configurations_unmoved() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 14, "the fourteen earlier golden guards");
+    // Fourteen at 0.21; spec 023 added the pitch-kept guard (2026-10-31): the test reads every
+    // guard but 021's own, so it keeps checking later goldens too.
+    assert_eq!(
+        checked, 15,
+        "the fourteen earlier golden guards and the pitch-kept one"
+    );
     let mut rows = Vec::new();
     for &rate in configs::measurement_rates() {
         for cell in bp::cells().iter().filter(|c| c.exact).take(3) {

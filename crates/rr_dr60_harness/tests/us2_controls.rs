@@ -84,7 +84,14 @@ fn tokenizer_reads_the_committed_notes() {
             "route"
         ]
     );
-    assert_eq!(named(9), ["speech_codec_enabled", "playback_speed"]);
+    assert_eq!(
+        named(9),
+        [
+            "speech_codec_enabled",
+            "playback_speed",
+            "playback_speed_mode"
+        ] // 023
+    );
     assert_eq!(named(12), ["output.speaker_enabled"]);
     assert!(named(6).is_empty());
     assert_eq!(

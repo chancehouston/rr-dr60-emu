@@ -57,7 +57,7 @@ use rr_dr60::{
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 22;
+pub const RR_DR60_VERSION_MINOR: u32 = 23;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -174,6 +174,9 @@ pub enum RrDr60Status {
     /// app (a stale XCFramework, a mixed build), never a user condition: stop in a debug build,
     /// refuse to create an engine in a release build.
     AbiMismatch = 37, // spec 022 D3, FR-003: appended
+    /// `rr_dr60_set_playback_speed_mode`, `rr_dr60_playback_length_samples_in_mode` or
+    /// `rr_dr60_place_at_in_mode` with a mode other than 0 or 1 (spec 023 D9).
+    InvalidSpeedMode = 38, // spec 023 D9, FR-008: appended
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -938,6 +941,10 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
         // Spec 013 contracts/c-api.md: status 25.
         Error::InvalidSpeedLevel { .. } => {
             (RrDr60Status::InvalidSpeedLevel, RrDr60SettingField::None)
+        }
+        // Spec 023 contracts/api.md: status 38.
+        Error::InvalidSpeedMode { .. } => {
+            (RrDr60Status::InvalidSpeedMode, RrDr60SettingField::None)
         }
         _ => (RrDr60Status::InvalidArgument, RrDr60SettingField::None),
     }
@@ -3005,6 +3012,13 @@ pub const RR_DR60_SPEED_RATIO_NUMERATOR_4: u32 = 6; // A-054 (013 FR-002; pinned
 /// Level 5's speed ratio numerator: 7/5, the fastest (A-054).
 pub const RR_DR60_SPEED_RATIO_NUMERATOR_5: u32 = 7; // A-054 (013 FR-002; pinned)
 
+/// The playback speed mode (spec 023 D1): the pitch moves with the speed (the modeled default,
+/// A-054) …
+pub const RR_DR60_SPEED_MODE_PITCH_WITH_SPEED: u32 = 0; // 023 D9: equal to `SpeedMode::PitchWithSpeed` (pinned)
+/// … or is kept while the speed changes (a time-scaling of the decoded stream at the device
+/// rate; an engine convention, not a device behavior).
+pub const RR_DR60_SPEED_MODE_PITCH_KEPT: u32 = 1; // 023 D9: equal to `SpeedMode::PitchKept` (pinned)
+
 /// Sets the playback speed level (spec 013 FR-001; A-054): 1 (slowest) … 5 (fastest), 3 normal,
 /// the default, at 3/5, 4/5, 1, 6/5 and 7/5 of normal speed with the pitch moving with the speed
 /// (the modeled default; not measured). At level 3 a playback is bit-identical to 0.12's. Live:
@@ -3085,6 +3099,107 @@ pub unsafe extern "C" fn rr_dr60_playback_length_samples(
         return RrDr60Status::NullPointer;
     }
     match p.inner.playback_length_samples(number, level) {
+        Ok(len) => {
+            // SAFETY: out_samples is non-null and writable (caller contract).
+            unsafe { *out_samples = len };
+            RrDr60Status::Ok
+        }
+        Err(e) => status_from_error(e),
+    }
+}
+
+/// Sets the playback speed mode (spec 023 D1; the control manifest's `playback_speed_mode`,
+/// index 30): `RR_DR60_SPEED_MODE_PITCH_WITH_SPEED` (0, the modeled default: the pitch moves
+/// with the speed) or `RR_DR60_SPEED_MODE_PITCH_KEPT` (1: a time-domain time-scaling of the
+/// decoded stream at the device rate keeps the pitch; an engine convention, not a device
+/// behavior). Level 3 is the identity in both modes. Live like the level: from the first device
+/// sample an `rr_dr60_play` call computes after it, as a 20 ms crossfade between the two
+/// mechanisms (at once at level 3; a request during a crossfade waits for its end; once the
+/// place reaches the recording's end the mode of the current playback no longer changes).
+/// Applies to `rr_dr60_play` only. Survives `rr_dr60_reset` and `rr_dr60_reconfigure`.
+/// Real-time safe.
+///
+/// Returns `RR_DR60_STATUS_INVALID_SPEED_MODE` for a value other than 0 or 1; the mode is then
+/// unchanged.
+///
+/// # Safety
+///
+/// `pipeline` must be NULL or a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_set_playback_speed_mode(
+    pipeline: *mut RrDr60Pipeline,
+    mode: u32,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    match rr_dr60::speed::SpeedMode::from_u32(mode) {
+        Some(m) => {
+            p.inner.set_playback_speed_mode(m);
+            RrDr60Status::Ok
+        }
+        None => RrDr60Status::InvalidSpeedMode,
+    }
+}
+
+/// Writes the playback speed mode to `*out_mode` (spec 023 D1): the last valid setting, default
+/// `RR_DR60_SPEED_MODE_PITCH_WITH_SPEED`. Real-time safe.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_mode` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_get_playback_speed_mode(
+    pipeline: *mut RrDr60Pipeline,
+    out_mode: *mut u32,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out_mode.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: out_mode is non-null and writable (caller contract).
+    unsafe { *out_mode = p.inner.playback_speed_mode() as u32 };
+    RrDr60Status::Ok
+}
+
+/// Writes to `*out_samples` the host samples `rr_dr60_play` produces for recording `number`
+/// played at a constant speed `level` in `mode` (spec 023 D4): in mode 0
+/// `rr_dr60_playback_length_samples`; in mode 1 the own part plus the time-scaler's grid tail
+/// (60 … 119 device samples, none at level 3) and the drain. Exact for a playback started in
+/// that mode at that level with no change. Real-time safe.
+///
+/// Returns `RR_DR60_STATUS_INVALID_SPEED_MODE` (checked first), then
+/// `RR_DR60_STATUS_INVALID_SPEED_LEVEL`, then `RR_DR60_STATUS_NO_SUCH_RECORDING`.
+///
+/// # Safety
+///
+/// `pipeline` must be a live handle. `out_samples` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_playback_length_samples_in_mode(
+    pipeline: *mut RrDr60Pipeline,
+    number: u32,
+    level: u8,
+    mode: u32,
+    out_samples: *mut u64,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out_samples.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let Some(m) = rr_dr60::speed::SpeedMode::from_u32(mode) else {
+        return RrDr60Status::InvalidSpeedMode;
+    };
+    match p.inner.playback_length_samples_in_mode(number, level, m) {
         Ok(len) => {
             // SAFETY: out_samples is non-null and writable (caller contract).
             unsafe { *out_samples = len };
@@ -4368,7 +4483,7 @@ mod tests {
         assert_eq!(d.reserved_010_tail, [0; 7]);
         assert_eq!(d.reserved_012, [0; 2]);
         assert_eq!(d.mic_hiss_offset_db, 0.0); // 012 FR-003
-        assert_eq!(RR_DR60_VERSION_MINOR, 22);
+        assert_eq!(RR_DR60_VERSION_MINOR, 23);
         let mut stale = rr_dr60_settings_default(48_000);
         stale.struct_size = 112; // a 0.10 or 0.11 caller (spec 012 FR-012)
         assert_eq!(
@@ -4436,6 +4551,17 @@ mod tests {
             ],
             rr_dr60::speed::RATIO_NUMERATORS
         );
+        // Spec 023 D9: the mode defines are the enum's values; status 38 appended.
+        assert_eq!(
+            RR_DR60_SPEED_MODE_PITCH_WITH_SPEED,
+            rr_dr60::speed::SpeedMode::PitchWithSpeed as u32
+        );
+        assert_eq!(
+            RR_DR60_SPEED_MODE_PITCH_KEPT,
+            rr_dr60::speed::SpeedMode::PitchKept as u32
+        );
+        assert_eq!(rr_dr60::speed::MODE_COUNT, 2);
+        assert_eq!(RrDr60Status::InvalidSpeedMode as u32, 38);
         for p in [1.0f32, 0.5, 0.25, RR_DR60_VOLUME_REFERENCE, 0.1, 0.01] {
             assert_eq!(
                 rr_dr60_speaker_gain_db(p).to_bits(),
@@ -7931,6 +8057,70 @@ pub unsafe extern "C" fn rr_dr60_place_at(
     }
     match catch_unwind(|| timeline::place_at(index, host_rate_hz, start_level, unit_count, entries))
     {
+        // SAFETY: `out` non-null, its `struct_size` bytes writable (caller contract).
+        Ok(Ok(st)) => unsafe {
+            write_sized(out, PLACE_STATE_PUBLISHED, |t, _| {
+                t.level = u32::from(st.level);
+                t.fading = u32::from(st.fading);
+                t.latched = u32::from(st.latched);
+                t.place_fifths = st.place_fifths;
+                t.old_place_fifths = st.old_place_fifths;
+            })
+        },
+        Ok(Err(e)) => status_from_error(e),
+        Err(_) => panic_to_status(None),
+    }
+}
+
+/// Map (c) in a playback speed mode (spec 023 research R-06b): as `rr_dr60_place_at` for a
+/// playback started in `start_mode` (0 or 1), replaying the `playback_speed` and the
+/// `playback_speed_mode` entries of the log; `out->struct_size` must be set.
+///
+/// Returns `RR_DR60_STATUS_INVALID_SPEED_MODE` for `start_mode` above 1 or a mode entry not 0
+/// or 1.
+///
+/// # Safety
+///
+/// `entries` NULL with a count of 0 or readable; `out` writable for its `struct_size`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_place_at_in_mode(
+    index: u64,
+    host_rate_hz: u32,
+    start_level: u8,
+    start_mode: u32,
+    unit_count: u64,
+    entries: *const RrDr60ChangeEntry,
+    entry_count: usize,
+    out: *mut RrDr60PlaceState,
+) -> RrDr60Status {
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let entries: &[ChangeEntry] = if entries.is_null() {
+        if entry_count != 0 {
+            return RrDr60Status::NullPointer;
+        }
+        &[]
+    } else {
+        // SAFETY: readable for the count; the layouts match (the const assert).
+        unsafe { std::slice::from_raw_parts(entries.cast::<ChangeEntry>(), entry_count) }
+    };
+    if !(1..=5).contains(&start_level) {
+        return RrDr60Status::InvalidSpeedLevel;
+    }
+    if start_mode > 1 {
+        return RrDr60Status::InvalidSpeedMode;
+    }
+    match catch_unwind(|| {
+        timeline::place_at_in_mode(
+            index,
+            host_rate_hz,
+            start_level,
+            start_mode,
+            unit_count,
+            entries,
+        )
+    }) {
         // SAFETY: `out` non-null, its `struct_size` bytes writable (caller contract).
         Ok(Ok(st)) => unsafe {
             write_sized(out, PLACE_STATE_PUBLISHED, |t, _| {

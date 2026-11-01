@@ -52,7 +52,7 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 22
+#define RR_DR60_VERSION_MINOR 23
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
@@ -152,6 +152,14 @@
 
 // Level 5's speed ratio numerator: 7/5, the fastest (A-054).
 #define RR_DR60_SPEED_RATIO_NUMERATOR_5 7
+
+// The playback speed mode (spec 023 D1): the pitch moves with the speed (the modeled default,
+// A-054) …
+#define RR_DR60_SPEED_MODE_PITCH_WITH_SPEED 0
+
+// … or is kept while the speed changes (a time-scaling of the decoded stream at the device
+// rate; an engine convention, not a device behavior).
+#define RR_DR60_SPEED_MODE_PITCH_KEPT 1
 
 // `RR_DR60_CONTROL_PATH_*` bit: the record path (spec 014 FR-013).
 #define RR_DR60_CONTROL_PATH_RECORD 1
@@ -328,6 +336,9 @@ enum RrDr60Status
   // app (a stale XCFramework, a mixed build), never a user condition: stop in a debug build,
   // refuse to create an engine in a release build.
   RR_DR60_STATUS_ABI_MISMATCH = 37,
+  // `rr_dr60_set_playback_speed_mode`, `rr_dr60_playback_length_samples_in_mode` or
+  // `rr_dr60_place_at_in_mode` with a mode other than 0 or 1 (spec 023 D9).
+  RR_DR60_STATUS_INVALID_SPEED_MODE = 38,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -2025,6 +2036,51 @@ RrDr60Status rr_dr60_playback_length_samples(struct RrDr60Pipeline *pipeline,
                                              uint8_t level,
                                              uint64_t *out_samples);
 
+// Sets the playback speed mode (spec 023 D1; the control manifest's `playback_speed_mode`,
+// index 30): `RR_DR60_SPEED_MODE_PITCH_WITH_SPEED` (0, the modeled default: the pitch moves
+// with the speed) or `RR_DR60_SPEED_MODE_PITCH_KEPT` (1: a time-domain time-scaling of the
+// decoded stream at the device rate keeps the pitch; an engine convention, not a device
+// behavior). Level 3 is the identity in both modes. Live like the level: from the first device
+// sample an `rr_dr60_play` call computes after it, as a 20 ms crossfade between the two
+// mechanisms (at once at level 3; a request during a crossfade waits for its end; once the
+// place reaches the recording's end the mode of the current playback no longer changes).
+// Applies to `rr_dr60_play` only. Survives `rr_dr60_reset` and `rr_dr60_reconfigure`.
+// Real-time safe.
+//
+// Returns `RR_DR60_STATUS_INVALID_SPEED_MODE` for a value other than 0 or 1; the mode is then
+// unchanged.
+//
+// # Safety
+//
+// `pipeline` must be NULL or a live handle.
+RrDr60Status rr_dr60_set_playback_speed_mode(struct RrDr60Pipeline *pipeline, uint32_t mode);
+
+// Writes the playback speed mode to `*out_mode` (spec 023 D1): the last valid setting, default
+// `RR_DR60_SPEED_MODE_PITCH_WITH_SPEED`. Real-time safe.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_mode` must be NULL or writable.
+RrDr60Status rr_dr60_get_playback_speed_mode(struct RrDr60Pipeline *pipeline, uint32_t *out_mode);
+
+// Writes to `*out_samples` the host samples `rr_dr60_play` produces for recording `number`
+// played at a constant speed `level` in `mode` (spec 023 D4): in mode 0
+// `rr_dr60_playback_length_samples`; in mode 1 the own part plus the time-scaler's grid tail
+// (60 … 119 device samples, none at level 3) and the drain. Exact for a playback started in
+// that mode at that level with no change. Real-time safe.
+//
+// Returns `RR_DR60_STATUS_INVALID_SPEED_MODE` (checked first), then
+// `RR_DR60_STATUS_INVALID_SPEED_LEVEL`, then `RR_DR60_STATUS_NO_SUCH_RECORDING`.
+//
+// # Safety
+//
+// `pipeline` must be a live handle. `out_samples` must be NULL or writable.
+RrDr60Status rr_dr60_playback_length_samples_in_mode(struct RrDr60Pipeline *pipeline,
+                                                     uint32_t number,
+                                                     uint8_t level,
+                                                     uint32_t mode,
+                                                     uint64_t *out_samples);
+
 // The speaker route's gain in dB at a volume position under the circuit's loaded law (spec
 // 009 FR-003; A-044): 22.7 dB at 1, about 9.6 dB at 0.5, −∞ at 0; in volts of amplifier output
 // per volt of codec output, for a host's volume display. Needs no handle; real-time safe.
@@ -2574,6 +2630,25 @@ RrDr60Status rr_dr60_place_at(uint64_t index,
                               const struct RrDr60ChangeEntry *entries,
                               uintptr_t entry_count,
                               struct RrDr60PlaceState *out);
+
+// Map (c) in a playback speed mode (spec 023 research R-06b): as `rr_dr60_place_at` for a
+// playback started in `start_mode` (0 or 1), replaying the `playback_speed` and the
+// `playback_speed_mode` entries of the log; `out->struct_size` must be set.
+//
+// Returns `RR_DR60_STATUS_INVALID_SPEED_MODE` for `start_mode` above 1 or a mode entry not 0
+// or 1.
+//
+// # Safety
+//
+// `entries` NULL with a count of 0 or readable; `out` writable for its `struct_size`.
+RrDr60Status rr_dr60_place_at_in_mode(uint64_t index,
+                                      uint32_t host_rate_hz,
+                                      uint8_t start_level,
+                                      uint32_t start_mode,
+                                      uint64_t unit_count,
+                                      const struct RrDr60ChangeEntry *entries,
+                                      uintptr_t entry_count,
+                                      struct RrDr60PlaceState *out);
 
 // The feed-point rule (spec 020 D12): converts `count` 24-bit integer samples (−2²³ … 2²³ − 1
 // in an `int32_t`) to the engine's input, x ÷ 2²³, exact for every value.

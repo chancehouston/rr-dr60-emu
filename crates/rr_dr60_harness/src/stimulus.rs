@@ -396,6 +396,19 @@ pub fn noise(seed: u64, len: usize) -> Vec<f32> {
 /// the same configuration with the codec bypassed, so no cross-rate identity is needed.
 /// Synthetic: it is not speech and makes no claim about speech.
 pub fn voiced(fs: f64, seconds: f64, level_dbfs: f64, seed: u64) -> Vec<f32> {
+    voiced_with_f0(fs, seconds, level_dbfs, seed, None)
+}
+
+/// [`voiced`] with the pitch glide replaced by a steady fundamental `f0_hz` when given (spec
+/// 023 research R-09: the steady vowel at 130 Hz is the glide generator at a fixed f0; the
+/// formant sweep is unchanged). `None` keeps the glide.
+pub fn voiced_with_f0(
+    fs: f64,
+    seconds: f64,
+    level_dbfs: f64,
+    seed: u64,
+    f0_hz: Option<f64>,
+) -> Vec<f32> {
     let len = (fs * seconds) as usize;
     let mut rng = Pcg32::new(seed, 7);
     let mut res = [Resonator::default(); 3];
@@ -406,8 +419,7 @@ pub fn voiced(fs: f64, seconds: f64, level_dbfs: f64, seed: u64) -> Vec<f32> {
         let t = n as f64 / fs;
         let u = t / seconds; // 0..1
         // Pitch glide 90 → 220 → 90 Hz, exponential (one octave and a third each way).
-        let tri = if u < 0.5 { 2.0 * u } else { 2.0 - 2.0 * u };
-        let f0 = 90.0 * exp(tri * ln(220.0 / 90.0));
+        let f0 = f0_hz.unwrap_or_else(|| glide_f0(u));
         phase += f0 / fs;
         let mut excitation = 0.0;
         if phase >= 1.0 {
@@ -431,6 +443,14 @@ pub fn voiced(fs: f64, seconds: f64, level_dbfs: f64, seed: u64) -> Vec<f32> {
         out.push(y);
     }
     scale_to_level(&out, level_dbfs)
+}
+
+/// The glide's fundamental at fraction `u` (0 … 1) of the voiced stimulus: 90 → 220 → 90 Hz,
+/// exponential (one octave and a third each way).
+pub fn glide_f0(u: f64) -> f64 {
+    let u = u.clamp(0.0, 1.0);
+    let tri = if u < 0.5 { 2.0 * u } else { 2.0 - 2.0 * u };
+    90.0 * exp(tri * ln(220.0 / 90.0))
 }
 
 /// A synthetic **unvoiced-to-voiced** sequence (spec 008 FR-005, FR-006): 300 ms of resonator-

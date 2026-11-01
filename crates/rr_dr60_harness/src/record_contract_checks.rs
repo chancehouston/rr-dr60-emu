@@ -1289,3 +1289,107 @@ pub mod mutants {
         st
     }
 }
+
+/// Spec 023 (research R-06b): the walker's cases in a mode: (name, start level, start mode,
+/// requests at device outputs as (d, control, value)); control 2 a level, 30 a mode.
+pub type PlaceCaseInMode = (&'static str, u8, u32, Vec<(u64, u32, f64)>);
+
+/// The mode cases of map (c): level changes in pitch-kept mode (no blend), mode changes (a
+/// blend from the common place), an into-3 change in pitch-kept mode (the wait, then a blend),
+/// a mode change at level 3 (at once), a request past the latch, and both controls at one
+/// output.
+pub fn place_cases_in_mode() -> Vec<PlaceCaseInMode> {
+    vec![
+        (
+            "pitch-kept level changes",
+            1,
+            1,
+            vec![(100, 2, 5.0), (400, 2, 2.0), (700, 2, 4.0)],
+        ),
+        (
+            "mode blends",
+            1,
+            0,
+            vec![(100, 30, 1.0), (500, 30, 0.0), (900, 30, 1.0)],
+        ),
+        (
+            "into 3 in pitch-kept mode then out",
+            1,
+            1,
+            vec![(101, 2, 3.0), (600, 2, 5.0)],
+        ),
+        (
+            "mode change at level 3",
+            3,
+            0,
+            vec![(100, 30, 1.0), (300, 2, 1.0)],
+        ),
+        ("request past the latch", 5, 1, vec![(2990, 30, 0.0)]),
+        (
+            "both at one output",
+            2,
+            1,
+            vec![(100, 2, 4.0), (100, 30, 0.0), (500, 30, 1.0)],
+        ),
+        (
+            "level during a mode blend waits",
+            4,
+            0,
+            vec![(100, 30, 1.0), (130, 2, 1.0)],
+        ),
+    ]
+}
+
+/// Spec 023: `place_case_mismatches` in a mode, through `place_at_in_mode` with the mode's
+/// entries; the trace comes from the engine started at `start_level` in `start_mode`.
+pub fn place_case_mismatches_in_mode(
+    rate: u32,
+    start_level: u8,
+    start_mode: u32,
+    requests: &[(u64, u32, f64)],
+) -> (usize, usize) {
+    let x = stimulus::stored_tone(1000.0, 0.5, 3000);
+    let (mut p, number) = crate::configs::stored_recording(
+        &crate::checks::standard,
+        crate::configs::settings("speed_only", rate),
+        &x,
+    );
+    p.set_playback_speed(start_level).unwrap();
+    p.set_playback_speed_mode(rr_dr60::speed::SpeedMode::from_u32(start_mode).unwrap());
+    for (i, (d, control, value)) in requests.iter().enumerate() {
+        let pos = host_position_for(*d, rate)
+            + if i > 0 && requests[i - 1].0 == *d {
+                1
+            } else {
+                0
+            };
+        p.schedule_change(Stream::Playback, pos, *control, *value, i as u64 + 1)
+            .unwrap();
+    }
+    p.start_playback(number).unwrap();
+    let mut trace: Vec<PlaceState> = Vec::new();
+    let mut log: Vec<ChangeEntry> = Vec::new();
+    let mut out = vec![0.0f32; 1024];
+    let mut ch = vec![ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
+    loop {
+        let info = p.play_with_changes(&mut out, &mut ch).unwrap();
+        log.extend_from_slice(&ch[..info.changes]);
+        let t = rr_dr60::__test_hooks::speed_place_trace(&p);
+        trace.extend_from_slice(&t);
+        if info.finished {
+            break;
+        }
+    }
+    let mut mismatches = 0;
+    for (i, want) in trace.iter().enumerate() {
+        let got = timeline::place_at_in_mode(i as u64, rate, start_level, start_mode, 3000, &log)
+            .unwrap();
+        if got != *want {
+            if mismatches < 3 {
+                eprintln!("{rate} Hz output {i}: trace {want:?} walker {got:?}");
+            }
+            mismatches += 1;
+        }
+    }
+    (mismatches, trace.len())
+}

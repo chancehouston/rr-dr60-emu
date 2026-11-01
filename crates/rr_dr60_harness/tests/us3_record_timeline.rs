@@ -81,3 +81,24 @@ fn as3_place_at_against_the_trace() {
         }
     });
 }
+
+/// Spec 023 (research R-06b): map (c) in a mode: `place_at_in_mode` against the engine's own
+/// place trace on the mode cases (level changes in pitch-kept mode, mode blends, the into-3
+/// wait, level 3 at once, a request past the latch, both controls at one output, a waiting
+/// level request), at the measurement rates; `place_at` keeps the default-mode reading.
+#[test]
+fn as3_place_at_in_mode_against_the_trace() {
+    at(|rate| {
+        for (name, level, mode, requests) in rc::place_cases_in_mode() {
+            let (mismatches, n) = rc::place_case_mismatches_in_mode(rate, level, mode, &requests);
+            assert_eq!(mismatches, 0, "{rate} Hz: {name} ({n} outputs)");
+            assert!(n > 2000, "{rate} Hz: {name}: {n} outputs compared");
+        }
+        // The default-mode reading is unchanged: `place_at` equals `place_at_in_mode` at mode 0
+        // with level entries only.
+        for (name, start, requests) in rc::place_cases() {
+            let (mismatches, _) = rc::place_case_mismatches(rate, start, &requests);
+            assert_eq!(mismatches, 0, "{rate} Hz: {name}");
+        }
+    });
+}

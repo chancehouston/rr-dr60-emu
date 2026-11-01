@@ -38,14 +38,15 @@ fn as2_manifest_and_register() {
     );
     assert!(s9.description.contains("engine convention"));
     assert!(
-        s9.coverage.contains("the sound of a level change") && s9.coverage.contains("A-054"),
+        // "the sound of a level change" at 0.19; "a change's sound" since spec 023 (2026-10-31).
+        s9.coverage.contains("a change's sound") && s9.coverage.contains("A-054"),
         "stage 9's coverage: {}",
         s9.coverage
     );
-    assert_eq!(s9.model_version, "0.19.0");
+    assert_eq!(s9.model_version, "0.23.0"); // 0.19.0 until spec 023 moved stage 9
     assert_eq!(
         rr_dr60::controls().len(),
-        30,
+        31, // 30 until spec 023 appended the mode
         "the control manifest is unchanged"
     );
     let text =

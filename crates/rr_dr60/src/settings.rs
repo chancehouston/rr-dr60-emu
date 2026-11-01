@@ -42,7 +42,9 @@ pub enum Tap {
     /// After signal-chain stage 9 (the speech decoder), before stage 10: "the codec's output"
     /// (spec 008 FR-015). The speech encoder and decoder run in line with their 180-sample
     /// delay; stage 10 does not. With the speech codec bypassed this tap equals
-    /// [`Tap::AfterVas`]. Appended in 0.8.
+    /// [`Tap::AfterVas`]. Appended in 0.8. The playback speed control (spec 013) and its
+    /// mode (spec 023) act after the decoder, so the `play` calls' output at this tap carries
+    /// them; the stage manifest's stage 9 names the tap here (spec 023 FR-006).
     AfterDecoder,
     /// The selected route's output (spec 009 FR-011): after the speaker (stage 12) on the
     /// speaker route, after the earphone output (stage 13) on the earphone route, at the

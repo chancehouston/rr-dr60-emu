@@ -426,9 +426,9 @@ stage_table! {
         status: Assumed, path: Playback, confidence: Low,
         sources: ["S-001", "S-002", "S-003", "S-008", "S-009", "S-010", "S-011", "S-012", "S-018"],
         assumptions: ["A-004", "A-040", "A-041", "A-054"],
-        coverage: "the device's own decoder (frame length, look-ahead, codebooks); its speed method and the sound of a level change (A-054)",
-        controls: "speech_codec_enabled; set_playback_speed; Tap::AfterDecoder; PlayInfo.frames, PlayInfo.frame_index, PlayInfo.place",
-        model_version: "0.19.0",
+        coverage: "the device's own decoder (frame length, look-ahead, codebooks); its speed method, pitch and a change's sound (A-054)",
+        controls: "speech_codec_enabled; set_playback_speed; playback_speed_mode; PlayInfo.frames, PlayInfo.frame_index, PlayInfo.place",
+        model_version: "0.23.0",
     },
     {
         number: 10, identifier: "codec_output", name: "Codec output: DAC and reconstruction filter",

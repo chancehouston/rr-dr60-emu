@@ -449,6 +449,88 @@ static int print_bypass(void) {
   return 0;
 }
 
+/* Spec 023 FR-008 (tasks.md T015): the pitch-kept rows as the Rust example `pitch_rows` prints
+   them: a ±0.125 square (24 up, 24 down) for 1.5 s at 48 kHz recorded through the default
+   engine with the codec bypassed, played at level 1 in pitch-kept mode set by the setter (the
+   entries per 1024-sample call and the digest), then at level 1 in the default mode with the
+   mode scheduled to 1 at output 24000 (tag 5) and back to 0 at 48000 (tag 6); then the
+   mode-aware length helper at the five levels in both modes; then map (c) in both modes and the
+   default reading at four outputs on the second run's log. `run_smoke.sh` diffs the two. */
+static int play_pitch(RrDr60Pipeline *p, const char *name, RrDr60ChangeEntry *kept, size_t *n_kept) {
+  static float yout[1024];
+  RrDr60ChangeEntry entries[RR_DR60_MAX_CHANGES_PER_CALL];
+  printf("%s\n", name);
+  if (rr_dr60_start_playback(p, 1) != RR_DR60_STATUS_OK) return 1;
+  uint64_t h = 0xcbf29ce484222325ULL;
+  for (;;) {
+    SIZED(RrDr60PlayInfo, info);
+    size_t count = 0;
+    if (rr_dr60_play_with_changes(p, yout, 1024, &info, entries, RR_DR60_MAX_CHANGES_PER_CALL, &count) != RR_DR60_STATUS_OK)
+      return 1;
+    for (size_t k = 0; k < count; k++) {
+      print_entry(&entries[k]);
+      if (kept && *n_kept < 64) kept[(*n_kept)++] = entries[k];
+    }
+    h = digest_add(h, yout, info.produced);
+    if (info.finished) break;
+  }
+  printf("digest %016llx\n", (unsigned long long)h);
+  return 0;
+}
+
+static int print_pitch(void) {
+  enum { QRATE = 48000, QN = QRATE * 3 / 2 };
+  static float qin[QN];
+  for (size_t i = 0; i < QN; i++) qin[i] = (i % 48 < 24) ? 0.125f : -0.125f;
+  RrDr60Settings s = rr_dr60_settings_default(QRATE);
+  s.speech_codec_enabled = false;
+  printf("pitch\n");
+  RrDr60Pipeline *p = NULL;
+  if (rr_dr60_create(&s, &p) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_set_route(p, RR_DR60_ROUTE_SPEAKER) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_start_recording(p) != RR_DR60_STATUS_OK) return 1;
+  SIZED(RrDr60RecordInfo, rinfo);
+  if (rr_dr60_record(p, qin, QN, &rinfo, NULL, 0) != RR_DR60_STATUS_OK) return 1;
+  SIZED(RrDr60StopOutcome, so);
+  if (rr_dr60_stop_recording(p, &so, NULL, 0) != RR_DR60_STATUS_OK) return 1;
+  uint64_t k = 0;
+  if (rr_dr60_recording_length(p, 1, &k) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_set_playback_speed(p, 1) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_set_playback_speed_mode(p, RR_DR60_SPEED_MODE_PITCH_KEPT) != RR_DR60_STATUS_OK) return 1;
+  if (play_pitch(p, "kept", NULL, NULL)) return 1;
+  if (rr_dr60_set_playback_speed_mode(p, RR_DR60_SPEED_MODE_PITCH_WITH_SPEED) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_schedule_change(p, RR_DR60_STREAM_PLAYBACK, 24000, 30, 1.0, 5) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_schedule_change(p, RR_DR60_STREAM_PLAYBACK, 48000, 30, 0.0, 6) != RR_DR60_STATUS_OK) return 1;
+  RrDr60ChangeEntry kept[64];
+  size_t n_kept = 0;
+  if (play_pitch(p, "scheduled", kept, &n_kept)) return 1;
+  printf("lengths\n");
+  for (uint8_t level = 1; level <= 5; level++) {
+    for (uint32_t mode = 0; mode < 2; mode++) {
+      uint64_t len = 0;
+      if (rr_dr60_playback_length_samples_in_mode(p, 1, level, mode, &len) != RR_DR60_STATUS_OK) return 1;
+      printf("%u %u %llu\n", (unsigned)level, (unsigned)mode, (unsigned long long)len);
+    }
+  }
+  printf("place\n");
+  const uint64_t indices[4] = {0, 3000, 6100, 12000};
+  for (int i = 0; i < 4; i++) {
+    for (uint32_t mode = 0; mode < 2; mode++) {
+      SIZED(RrDr60PlaceState, st);
+      if (rr_dr60_place_at_in_mode(indices[i], QRATE, 1, mode, k, kept, n_kept, &st) != RR_DR60_STATUS_OK) return 1;
+      printf("%llu %u %u %u %u %llu %llu\n", (unsigned long long)indices[i], (unsigned)mode, (unsigned)st.level,
+             (unsigned)st.fading, (unsigned)st.latched, (unsigned long long)st.place_fifths,
+             (unsigned long long)st.old_place_fifths);
+    }
+    SIZED(RrDr60PlaceState, st);
+    if (rr_dr60_place_at(indices[i], QRATE, 1, k, kept, n_kept, &st) != RR_DR60_STATUS_OK) return 1;
+    printf("%llu default %u %u %u %llu %llu\n", (unsigned long long)indices[i], (unsigned)st.level, (unsigned)st.fading,
+           (unsigned)st.latched, (unsigned long long)st.place_fifths, (unsigned long long)st.old_place_fifths);
+  }
+  rr_dr60_destroy(p);
+  return 0;
+}
+
 /* Spec 017 SC-003: a scheduled recording and a one-pass with record-side changes, as the Rust
    example `record_changes_rows` prints them. */
 /* Spec 020 (contracts/api.md): the processing-record rows as the Rust example `record_rows`
@@ -1178,6 +1260,9 @@ int main(int argc, char **argv) {
   if (argc > 1 && strcmp(argv[1], "--bypass") == 0) {
     return print_bypass();
   }
+  if (argc > 1 && strcmp(argv[1], "--pitch") == 0) {
+    return print_pitch();
+  }
   if (argc > 1 && strcmp(argv[1], "--manifest") == 0) {
     print_manifest();
     return 0;
@@ -1839,6 +1924,19 @@ int main(int argc, char **argv) {
                 rr_dr60_set_playback_speed(handles2[1], 6) == RR_DR60_STATUS_INVALID_SPEED_LEVEL &&
                 rr_dr60_get_playback_speed(handles2[1], &lvl) == RR_DR60_STATUS_OK && lvl == 3,
             "refused levels leave the level unchanged (013 FR-001)");
+      /* Spec 023 D9: the mode's status and defines, the setter's refusal, the mode-aware helper. */
+      CHECK(RR_DR60_STATUS_INVALID_SPEED_MODE == 38, "status 38 (023 D9)");
+      CHECK(RR_DR60_SPEED_MODE_PITCH_WITH_SPEED == 0 && RR_DR60_SPEED_MODE_PITCH_KEPT == 1, "the mode defines (023 D9)");
+      uint32_t mode = 9;
+      CHECK(rr_dr60_get_playback_speed_mode(handles2[1], &mode) == RR_DR60_STATUS_OK && mode == 0, "default mode 0 (023 D1)");
+      CHECK(rr_dr60_set_playback_speed_mode(handles2[1], 2) == RR_DR60_STATUS_INVALID_SPEED_MODE &&
+                rr_dr60_get_playback_speed_mode(handles2[1], &mode) == RR_DR60_STATUS_OK && mode == 0,
+            "a refused mode leaves the mode unchanged (023 D9)");
+      uint64_t helper_kept = 0;
+      CHECK(rr_dr60_playback_length_samples_in_mode(handles2[1], 1, 5, RR_DR60_SPEED_MODE_PITCH_KEPT, &helper_kept) == RR_DR60_STATUS_OK &&
+                helper_kept > 0 &&
+                rr_dr60_playback_length_samples_in_mode(handles2[1], 1, 5, 7, &helper_kept) == RR_DR60_STATUS_INVALID_SPEED_MODE,
+            "the mode-aware length helper (023 D4, D9)");
       uint64_t helper = 0;
       CHECK(rr_dr60_set_route(handles2[1], RR_DR60_ROUTE_SPEAKER) == RR_DR60_STATUS_OK &&
                 rr_dr60_set_volume(handles2[1], 0.1f) == RR_DR60_STATUS_OK &&

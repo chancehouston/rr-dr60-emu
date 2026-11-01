@@ -1069,3 +1069,42 @@ fn bypass_same_calls_same_log() {
         assert_eq!(a.log, b.log, "{rate}: the one-pass log");
     }
 }
+
+/// Spec 023 FR-007: the same calls give the same output and the same log, with level and mode
+/// changes scheduled and set, at 6 and 48 kHz, codec off and on.
+#[test]
+fn pitch_same_calls_same_log() {
+    use rr_dr60::Route;
+    use rr_dr60::speed::SpeedMode;
+    use rr_dr60_harness::changes_checks::{self as cc, Change, Partition, Source};
+    use rr_dr60_harness::pitch_checks as pc;
+    let x = pc::glide(1.0);
+    for rate in [6000u32, 48_000] {
+        for config in ["speed_default_no_codec", "speed_default"] {
+            let n = u64::from(rate) / 50;
+            let p0 = u64::from(rate) / 4;
+            let played = |_: ()| {
+                let mut p = pc::engine(&|s| Pipeline::new(s).unwrap(), config, rate, &x);
+                p.set_route(Route::Speaker);
+                p.set_playback_speed(1).unwrap();
+                p.set_playback_speed_mode(SpeedMode::PitchKept);
+                let sched = [
+                    Change::speed(p0, 5, 1),
+                    Change::mode(p0 + n, SpeedMode::PitchWithSpeed, 2),
+                    Change::mode(p0 + 3 * n, SpeedMode::PitchKept, 3),
+                    Change::speed(p0 + 5 * n, 3, 4),
+                    Change::speed(p0 + 7 * n, 2, 5),
+                ];
+                let run =
+                    cc::run_scheduled(&mut p, Source::Playback(1), &sched, Partition::Irregular);
+                (run, rr_dr60::__test_hooks::pitch_shift_trace(&p))
+            };
+            let ((a, sa), (b, sb)) = (played(()), played(()));
+            assert!(cc::same(&a.out, &b.out), "{rate} {config}: the playback");
+            assert_eq!(a.log, b.log, "{rate} {config}: the log");
+            assert_eq!(sa, sb, "{rate} {config}: the shifts");
+            assert_eq!(cc::entries_of(&a.log, 30).len(), 2);
+            assert_eq!(cc::entries_of(&a.log, 2).len(), 3);
+        }
+    }
+}
