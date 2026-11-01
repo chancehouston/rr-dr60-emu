@@ -246,7 +246,15 @@ fn as6_promise_pointer() {
         "every 0.22 mode"
     );
     let ci = std::fs::read_to_string(format!("{root}/.github/workflows/ci.yml")).unwrap();
-    assert!(ci.contains("scripts/abi-promise.sh 12a3c45"), "the CI step");
+    assert!(
+        ci.contains("scripts/abi-promise.sh 12a3c45")
+            || ci.contains(
+                "scripts/abi-promise.sh 12a3c45"
+                    .replace("12a3c45", "12a3c4560855a87990d0d47a48a49d99355cdcfd")
+                    .as_str()
+            ),
+        "the CI step"
+    );
 }
 
 /// AS7 (FR-005): the one wait rule for the speed pair in the four orderings, against the

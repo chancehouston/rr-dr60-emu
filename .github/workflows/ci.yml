@@ -118,7 +118,7 @@ jobs:
       - name: The 0.22 ABI promise (spec 023 FR-008, US2 AS6)
         # 0.22's C smoke, compiled against 0.22's header, linked to this library: exit 0 and
         # every mode byte-identical to the current smoke's.
-        run: scripts/abi-promise.sh 12a3c45
+        run: scripts/abi-promise.sh 12a3c4560855a87990d0d47a48a49d99355cdcfd # 12a3c45, 0.22's merge (the full id: a shallow checkout fetches it)
 
   coverage:
     # Constitution III: workspace line coverage >= 80%, enforced as soon as the workspace exists.
