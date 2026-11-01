@@ -1237,6 +1237,97 @@ static void abi_cases(void) {
   }
 }
 
+/* `smoke --settings` (spec 025 T011): the rows as the Rust example `settings_rows` prints them:
+   the reading's size and offsets; every control's reading on a default engine at 48 kHz (floats
+   as bit patterns); for every setting the byte offsets a one-hot write by index changes in a
+   default structure (the C compiler's own layout), and the live controls by name. */
+static int print_settings(void) {
+  printf("reading %zu %zu %zu %zu %zu %zu\n", sizeof(RrDr60ControlReading), offsetof(RrDr60ControlReading, struct_size),
+         offsetof(RrDr60ControlReading, value_type), offsetof(RrDr60ControlReading, int_value),
+         offsetof(RrDr60ControlReading, float_value), offsetof(RrDr60ControlReading, reserved));
+  RrDr60Settings d = rr_dr60_settings_default(48000);
+  RrDr60Pipeline *p = NULL;
+  if (rr_dr60_create(&d, &p) != RR_DR60_STATUS_OK) return 1;
+  uint32_t count = rr_dr60_control_count();
+  for (uint32_t i = 0; i < count; i++) {
+    SIZED(RrDr60ControlReading, r);
+    if (rr_dr60_control_value(p, i, &r) != RR_DR60_STATUS_OK) return 1;
+    uint32_t bits;
+    memcpy(&bits, &r.float_value, 4);
+    printf("value %u %u %llu 0x%08x\n", i, r.value_type, (unsigned long long)r.int_value, bits);
+  }
+  for (uint32_t i = 0; i < count; i++) {
+    SIZED(RrDr60Control, c);
+    if (rr_dr60_control(i, &c) != RR_DR60_STATUS_OK) return 1;
+    SIZED(RrDr60ControlReading, cur);
+    RrDr60Status st = rr_dr60_settings_control_value(&d, i, &cur);
+    if (st == RR_DR60_STATUS_NOT_A_SETTING) {
+      printf("live %u %s\n", i, c.identifier);
+      continue;
+    }
+    if (st != RR_DR60_STATUS_OK) return 1;
+    SIZED(RrDr60ControlReading, w);
+    w.value_type = cur.value_type;
+    switch (cur.value_type) {
+      case 0: w.int_value = cur.int_value ? 0 : 1; break;
+      case 1: w.int_value = (uint64_t)i + 2; break;
+      case 2: w.float_value = (float)i + 0.5f; break;
+      default:
+        for (uint32_t k = 0; k < c.option_count; k++) {
+          SIZED(RrDr60ControlOption, o);
+          if (rr_dr60_control_option(i, k, &o) != RR_DR60_STATUS_OK) return 1;
+          if (o.value != cur.int_value) {
+            w.int_value = o.value;
+            break;
+          }
+        }
+    }
+    RrDr60Settings after = d;
+    if (rr_dr60_set_settings_control_value(&after, i, &w) != RR_DR60_STATUS_OK) return 1;
+    printf("setting %u %s", i, c.identifier);
+    const unsigned char *a = (const unsigned char *)&d, *b = (const unsigned char *)&after;
+    for (size_t k = 0; k < sizeof d; k++)
+      if (a[k] != b[k]) printf(" %zu", k);
+    printf("\n");
+  }
+  rr_dr60_destroy(p);
+  return 0;
+}
+
+/* Spec 025 D11: the idle cost of each new call (reported, CPU time). */
+static void settings_timing(void) {
+  RrDr60Settings d = rr_dr60_settings_default(48000);
+  RrDr60Pipeline *p = NULL;
+  CHECK(rr_dr60_create(&d, &p) == RR_DR60_STATUS_OK, "settings timing: create");
+  SIZED(RrDr60ControlReading, r);
+  SIZED(RrDr60ControlReading, v);
+  v.value_type = 2;
+  v.float_value = 0.4f;
+  RrDr60Settings out = d;
+  uint32_t idx = 0;
+  const size_t n = 1000000;
+  clock_t t[7];
+  t[0] = clock();
+  for (size_t i = 0; i < n; i++) rr_dr60_get_settings(p, &out);
+  t[1] = clock();
+  for (size_t i = 0; i < n; i++) rr_dr60_control_value(p, (uint32_t)(i % 31), &r);
+  t[2] = clock();
+  for (size_t i = 0; i < n; i++) rr_dr60_settings_control_value(&d, 3 + (uint32_t)(i % 26), &r);
+  t[3] = clock();
+  for (size_t i = 0; i < n; i++) rr_dr60_set_settings_control_value(&out, 10, &v);
+  t[4] = clock();
+  for (size_t i = 0; i < n; i++) rr_dr60_set_control_value(p, 1, &v);
+  t[5] = clock();
+  for (size_t i = 0; i < n; i++) rr_dr60_setting_field_control(4 + (uint32_t)(i % 13), &idx);
+  t[6] = clock();
+  CHECK(out.agc_knee_dbfs == 0.4f, "settings timing: the write landed");
+  printf("settings timing (reported): get_settings %.1f, control_value %.1f, settings_control_value %.1f, "
+         "set_settings_control_value %.1f, set_control_value %.1f, setting_field_control %.1f ns/call\n",
+         abi_ns_per_call(t[0], t[1], 1e6), abi_ns_per_call(t[1], t[2], 1e6), abi_ns_per_call(t[2], t[3], 1e6),
+         abi_ns_per_call(t[3], t[4], 1e6), abi_ns_per_call(t[4], t[5], 1e6), abi_ns_per_call(t[5], t[6], 1e6));
+  rr_dr60_destroy(p);
+}
+
 int main(int argc, char **argv) {
   if (argc > 1 && strcmp(argv[1], "--controls") == 0) {
     print_controls();
@@ -1269,6 +1360,9 @@ int main(int argc, char **argv) {
   }
   if (argc > 1 && strcmp(argv[1], "--abi") == 0) {
     return print_abi();
+  }
+  if (argc > 1 && strcmp(argv[1], "--settings") == 0) {
+    return print_settings();
   }
   static float in[N], out[N];
   for (size_t i = 0; i < N; i++) in[i] = (float)(0.1 * sin(2.0 * PI * 1000.0 * (double)i / FS));
@@ -2146,6 +2240,7 @@ int main(int argc, char **argv) {
          ci.frame_ms, ci.bits_per_frame, ci.delay_samples, ci.model_version[0], ci.model_version[1], ci.model_version[2]);
 
   abi_cases();
+  settings_timing();
 
   if (failures) {
     fprintf(stderr, "smoke: %d failure(s)\n", failures);
