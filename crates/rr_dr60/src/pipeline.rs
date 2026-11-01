@@ -1124,7 +1124,6 @@ impl Pipeline {
     /// ([`playback_length_samples_in_mode`](Self::playback_length_samples_in_mode)). Applies to
     /// `play` only. Kept by [`reset`](Self::reset) and [`reconfigure`](Self::reconfigure). Read
     /// it back with [`playback_speed_mode`](Self::playback_speed_mode). Real-time safe.
-    ///
     pub fn set_playback_speed_mode(&mut self, mode: crate::speed::SpeedMode) {
         self.speed_mode = mode;
     }

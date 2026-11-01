@@ -296,22 +296,9 @@ pub fn reference_output(
         if final_count.is_some_and(|f| outputs >= f) {
             break;
         }
-        // The level request (spec 013's deferred switch into 3; 019's wait; 023 D5, D12).
-        if !latched && requested != active && fade.is_none() && (requested != 5 || p5 % 5 == 0) {
-            let old = active;
-            active = requested;
-            if mode == SpeedMode::PitchKept {
-                if active == 5 {
-                    if started {
-                        fade = Some((old, p5, 0, SpeedMode::PitchKept, scaler));
-                    }
-                    scaler = Scaler::default();
-                }
-            } else if started {
-                fade = Some((old, p5, 0, SpeedMode::PitchWithSpeed, Scaler::default()));
-            }
-        }
-        // The mode request (023 D5): the shared wait rule; at level 3 at once.
+        // The mode request first (023 D5; hardware review B1): the shared wait rule; at level 3
+        // at once.
+        let fade_before = fade.is_some();
         if !latched && requested_mode != mode && fade.is_none() {
             let old_mode = mode;
             mode = requested_mode;
@@ -319,6 +306,27 @@ pub fn reference_output(
                 fade = Some((active, p5, 0, old_mode, scaler));
             }
             scaler = Scaler::default();
+        }
+        let mode_started_fade = !fade_before && fade.is_some();
+        // The level request (spec 013's deferred switch into 3; 019's wait; 023 D5, D12): a
+        // level landing with the mode's blend rides it, no fade of its own (B1).
+        if !latched
+            && requested != active
+            && (fade.is_none() || mode_started_fade)
+            && (requested != 5 || p5 % 5 == 0)
+        {
+            let old = active;
+            active = requested;
+            if mode == SpeedMode::PitchKept {
+                if active == 5 {
+                    if started && !mode_started_fade {
+                        fade = Some((old, p5, 0, SpeedMode::PitchKept, scaler));
+                    }
+                    scaler = Scaler::default();
+                }
+            } else if started && !mode_started_fade {
+                fade = Some((old, p5, 0, SpeedMode::PitchWithSpeed, Scaler::default()));
+            }
         }
         let y_new = if active == 5 {
             xs(x, (p5 / 5) as i64)
@@ -580,7 +588,7 @@ pub fn click_count(y: &[f32], thr: f32, sep: usize) -> usize {
 }
 
 /// The content offset bound of the current frame's branch from the shift trace (research
-/// R-08: max |s| + 59·|1 − k/5|), and the previous frame's continuation branch (reported).
+/// R-05: max |s| + 59·|1 − k/5|), and the previous frame's continuation branch (reported).
 pub fn content_offsets(shifts: &[i32], level: u8) -> (f64, f64) {
     let k = f64::from(numerator(level));
     let s = shifts
@@ -959,7 +967,7 @@ pub fn lengths(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
                 );
                 let stim = format!("stored {name}, L{level} PitchKept, {config}");
                 rows.push(row(
-                    "FR-005",
+                    "FR-004",
                     "produced − playback_length_samples_in_mode",
                     rate,
                     if codec {
@@ -1093,7 +1101,7 @@ pub fn level_change_rows(make: Make<'_>) -> Vec<MeasurementResult> {
         let m_db = reading(&mutated.out, s, 1200);
         let stim = format!("stored 1234.5 Hz -6 dBFS, L{a} -> L{b} at {s}, PitchKept");
         rows.push(row(
-            "FR-006",
+            "FR-005",
             "level change: the change window's spurious reading minus the held level's (A − B)",
             6000,
             "speed_only",
@@ -1103,7 +1111,7 @@ pub fn level_change_rows(make: Make<'_>) -> Vec<MeasurementResult> {
             Tolerance::AtMost(1.0), // 023 FR-006 (US2 AS2)
         ));
         rows.push(row(
-            "FR-006",
+            "FR-005",
             "level change: the restart_overlap mutant's A − B (reported; it fails the bound)",
             6000,
             "speed_only",
@@ -1120,7 +1128,7 @@ pub fn level_change_rows(make: Make<'_>) -> Vec<MeasurementResult> {
         let next_hop = s.div_ceil(SS) * SS;
         assert!(next_hop - s < SS + 1);
         rows.push(row(
-            "FR-006",
+            "FR-005",
             "level change: outputs until the next frame reads the new ratio",
             6000,
             "speed_only",
@@ -1131,15 +1139,111 @@ pub fn level_change_rows(make: Make<'_>) -> Vec<MeasurementResult> {
         ));
     }
     rows.push(row(
-        "FR-006",
+        "FR-005",
         "level change: rows the restart_overlap mutant fails (of six; the mutation test's oracle)",
         6000,
         "speed_only",
         "stored 1234.5 Hz -6 dBFS, the six pairs",
         mutant_failed as f64,
         "rows",
-        Tolerance::AtLeast(1.0), // 023 FR-006 (US2 AS2: the mutant fails the bound)
+        Tolerance::Exact(6.0), // 023 FR-005 (US2 AS2: the mutant fails the bound on every pair)
     ));
+    // The vowel pair (reported): the same A − B on voice at 1 → 5 and 5 → 1.
+    let v = vowel(2.0);
+    for (a, b) in [(1u8, 5u8), (5, 1)] {
+        let mut p = engine(make, "speed_only", 6000, &v);
+        let changed = play_6k_modes(
+            &mut p,
+            &[
+                (0, Req::Level(a)),
+                (0, Req::Mode(SpeedMode::PitchKept)),
+                (s, Req::Level(b)),
+            ],
+        );
+        let mut h = engine(make, "speed_only", 6000, &v);
+        let held = play_6k_modes(
+            &mut h,
+            &[(0, Req::Level(b)), (0, Req::Mode(SpeedMode::PitchKept))],
+        );
+        let f0 = 130.0;
+        let reading = |y: &[f32]| spurious_worst_window_db(&y[s..s + 1200], 6000, f0);
+        rows.push(row(
+            "FR-005",
+            "level change on the vowel: A − B re the fundamental (reported: voice fills the band)",
+            6000,
+            "speed_only",
+            format!("stored vowel 130 Hz -20 dBFS, L{a} -> L{b} at {s}, PitchKept"),
+            reading(&changed.out) - reading(&held.out),
+            "dB",
+            Tolerance::Report,
+        ));
+    }
+    // The into-3 fade (D12): its click energy against the instant switch (the `fade_step`
+    // build: the request applies at once, no fade) under spec 019's 40 ms reader with both
+    // tones (f·r and f) excluded, at least 30 dB, on the 1 kHz and the off-grid tone; and
+    // against the `into3_swap` mutant (the plan's first rule, a swap at a weight near one:
+    // itself a soft switch, reported).
+    let swap = |settings: Settings| {
+        Pipeline::__with_pitch_mutation(
+            settings,
+            &rr_dr60::__test_hooks::PitchMutation {
+                into3_swap: true,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    };
+    for (f, x) in [
+        (1000.0, tone(1000.0, 2.0)),
+        (OFFGRID_HZ, tone(OFFGRID_HZ, 2.0)),
+    ] {
+        for a in LEVELS {
+            let r = ratio(a);
+            // The switch lands at the first whole place at or after s.
+            let ka = numerator(a) as usize;
+            let mut sw = s;
+            while (sw * ka) % 5 != 0 {
+                sw += 1;
+            }
+            let sched = [
+                (0, Req::Level(a)),
+                (0, Req::Mode(SpeedMode::PitchKept)),
+                (s, Req::Level(3)),
+            ];
+            let mut p = engine(make, "speed_only", 6000, &x);
+            let fade = play_6k_modes(&mut p, &sched);
+            let mut q = recorded(&xf::stepped, configs::settings("speed_only", 6000), &x);
+            let step = play_6k_modes(&mut q, &sched);
+            let mut w = recorded(&swap, configs::settings("speed_only", 6000), &x);
+            let swapped = play_6k_modes(&mut w, &sched);
+            let ex = [f * r, f];
+            let half = N as f64 / 2.0;
+            let e_step = analysis::click_energy_in(&step.out, 6000, sw as f64, 0.04, &ex);
+            let e_swap = analysis::click_energy_in(&swapped.out, 6000, sw as f64 + half, 0.04, &ex);
+            let e_fade = analysis::click_energy_in(&fade.out, 6000, sw as f64 + half, 0.04, &ex);
+            let stim = format!("stored {f:.1} Hz -6 dBFS, L{a} -> L3 at {s}, PitchKept");
+            rows.push(row(
+                "FR-005",
+                "into level 3: fade click energy below the instant switch's (40 ms, both tones excluded)",
+                6000,
+                "speed_only",
+                stim.clone(),
+                db(e_step / e_fade) / 2.0,
+                "dB",
+                Tolerance::AtLeast(30.0), // 023 FR-005 (D12)
+            ));
+            rows.push(row(
+                "FR-005",
+                "into level 3: fade click energy below the into3_swap mutant's (reported: the swap is a soft switch)",
+                6000,
+                "speed_only",
+                stim,
+                db(e_swap / e_fade) / 2.0,
+                "dB",
+                Tolerance::Report,
+            ));
+        }
+    }
     rows
 }
 
@@ -1186,7 +1290,7 @@ pub fn mode_change_rows(make: Make<'_>) -> Vec<MeasurementResult> {
                 let e_hold = analysis::click_energy_in(&hold.out, 6000, s as f64 + half, 0.04, &ex);
                 let stim = format!("stored {f:.1} Hz -6 dBFS, L{level}, {from:?} -> {to:?} at {s}");
                 rows.push(row(
-                    "FR-006",
+                    "FR-005",
                     "mode change: blend click energy below the instant switch's (40 ms, both tones excluded)",
                     6000,
                     "speed_only",
@@ -1200,7 +1304,7 @@ pub fn mode_change_rows(make: Make<'_>) -> Vec<MeasurementResult> {
                     },
                 ));
                 rows.push(row(
-                    "FR-006",
+                    "FR-005",
                     "mode change: the blend's energy re the held mode's floor (reported)",
                     6000,
                     "speed_only",
@@ -1220,7 +1324,7 @@ pub fn mode_change_rows(make: Make<'_>) -> Vec<MeasurementResult> {
         let mut q = engine(make, "speed_only", 6000, &x);
         let plain = sc::play(&mut q, 1, 1, &[(0, 3)]);
         rows.push(row(
-            "FR-006",
+            "FR-005",
             "mode change at level 3: mismatches against the untouched engine",
             6000,
             "speed_only",
@@ -1233,7 +1337,7 @@ pub fn mode_change_rows(make: Make<'_>) -> Vec<MeasurementResult> {
     rows
 }
 
-/// The content offset (research R-08): from the shift trace, the current frame's branch within
+/// The content offset (research R-05): from the shift trace, the current frame's branch within
 /// 64 samples of the place at levels 1 and 5 and 52 at levels 2 and 4; the continuation
 /// branch's bound reported.
 pub fn offset_rows(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
@@ -1264,7 +1368,7 @@ pub fn offset_rows(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
                 stim.clone(),
                 cur,
                 "device samples",
-                Tolerance::AtMost(bound), // 023 R-08: ±64 (±52 at levels 2 and 4)
+                Tolerance::AtMost(bound), // 023 R-05: ±64 (±52 at levels 2 and 4)
             ));
             rows.push(row(
                 "FR-004",

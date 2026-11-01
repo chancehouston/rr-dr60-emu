@@ -6,7 +6,7 @@ Additive. The default mode is bit-identical to 0.22. **No struct changes; no pub
 
 - `speed::SpeedMode { PitchWithSpeed = 0, PitchKept = 1 }`, `speed::MODE_COUNT` (2).
 - `Pipeline::set_playback_speed_mode(mode: SpeedMode)`, `Pipeline::playback_speed_mode() -> SpeedMode` (kept by `reset`/`reconfigure`; playback only; a change during playback lands at the next produced sample as a plain change, logged with tag 0).
-- `schedule_change(Stream::Playback, position, 30, 0.0 | 1.0, tag)` (another value `InvalidControlValue`; the one-pass or record stream `ControlNotOnStream`).
+- `schedule_change(Stream::Playback, position, 30, 0.0 | 1.0, tag)` (a whole number other than 0 and 1 `InvalidSpeedMode`, anything else `InvalidControlValue`; the one-pass or record stream `ControlNotOnStream`).
 - `Pipeline::playback_length_samples_in_mode(number, level, mode) -> Result<u64, Error>` (exact in both modes; `playback_length_samples` keeps **the default mode's** meaning: its rustdoc and the header say so, and the guide tells an app to run progress on `place` and end on `finished`, never on a precomputed total; whether the old helper reads the current mode is a 0.9x candidate).
 - `timeline::place_at_in_mode(index, host_rate_hz, start_level, start_mode, unit_count, entries)` beside the unchanged `place_at` (which keeps the default-mode reading).
 - `Error::InvalidSpeedMode { mode: u32 }`.

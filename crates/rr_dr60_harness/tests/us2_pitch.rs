@@ -22,13 +22,13 @@ fn report(rows: &[rr_dr60_harness::checks::MeasurementResult]) {
     assert_all(rows);
 }
 
-/// AS1 (FR-006): the mode blend against the instant switch; level 3 at once.
+/// AS1 (FR-005): the mode blend against the instant switch; level 3 at once.
 #[test]
 fn as1_mode_blend() {
     report(&pc::mode_change_rows(&standard));
 }
 
-/// AS2 (FR-006): a level change in pitch-kept mode is frame-fed: the reading A/B.
+/// AS2 (FR-005): a level change in pitch-kept mode is frame-fed: the reading A/B.
 #[test]
 fn as2_level_change_reading_a_b() {
     report(&pc::level_change_rows(&standard));
@@ -249,7 +249,7 @@ fn as6_promise_pointer() {
     assert!(ci.contains("scripts/abi-promise.sh 12a3c45"), "the CI step");
 }
 
-/// AS7 (FR-004): the one wait rule for the speed pair in the four orderings, against the
+/// AS7 (FR-005): the one wait rule for the speed pair in the four orderings, against the
 /// reference (bit-exact) with the entries logged; a request past the latch is dropped and
 /// logged.
 #[test]

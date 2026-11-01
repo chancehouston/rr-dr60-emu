@@ -711,15 +711,19 @@ impl SpeedStage {
     /// Applies the requested level under the deferred-switch rule (FR-007) and the wait (spec
     /// 019 FR-005: not while a crossfade runs); a change starts a crossfade (research R-01).
     #[inline]
-    fn apply_request(&mut self) {
+    fn apply_request(&mut self, mode_started_fade: bool) {
         if self.latched || self.requested == self.active {
             return;
         }
         #[cfg(feature = "__test-hooks")]
-        let (step, no_wait) = (self.mutation.fade_step, self.mutation.fade_no_wait);
+        let (mut step, no_wait) = (self.mutation.fade_step, self.mutation.fade_no_wait);
         #[cfg(not(feature = "__test-hooks"))]
-        let (step, no_wait) = (false, false);
-        if self.fade.is_some() && !no_wait {
+        let (mut step, no_wait) = (false, false);
+        if mode_started_fade {
+            // Spec 023 (hardware review B1): the mode blend started on this output carries the
+            // transition; the level applies to the new branch's place with no fade of its own.
+            step = true;
+        } else if self.fade.is_some() && !no_wait {
             return; // the wait: the latest request applies when the fade ends
         }
         if self.requested == K_IDENTITY {
@@ -852,8 +856,13 @@ impl SpeedStage {
         if !latch_after {
             self.latch();
         }
-        self.apply_request();
-        self.apply_mode_request(); // spec 023
+        // Spec 023 (hardware review B1): the mode request applies first; a level request landing
+        // on the output where the mode just started a blend rides that blend (no fade of its
+        // own), so a mode and a level change at one position do not depend on their order.
+        let fade_before = self.fade.is_some();
+        self.apply_mode_request();
+        let mode_started_fade = !fade_before && self.fade.is_some();
+        self.apply_request(mode_started_fade);
         if latch_after {
             self.latch();
         }

@@ -172,9 +172,10 @@ fn very_short_recordings() {
                 assert_eq!(played.out.len() as u64, want, "K={k} L{level} {rate}");
                 let own =
                     (5 * kk).div_ceil(u64::from(rr_dr60_harness::speed_checks::numerator(level)));
-                // The stored length holds the stop's flush too (kk ≥ K): the own part is read
-                // against kk; the stated figures for K itself are checked below.
-                let _ = (own_l1, tail_l1);
+                if level == 1 && kk == k as u64 {
+                    assert_eq!(own, own_l1, "K={k}: own");
+                    assert_eq!(pc::tail_c(own), tail_l1, "K={k}: tail");
+                }
                 if rate == 6000 {
                     let drain = u64::from(p.drain_samples());
                     assert_eq!(
@@ -296,12 +297,30 @@ fn timeline_map_c_in_mode() {
             let want = place_at_in_mode(i as u64, rate, 1, 0, k, &log).unwrap();
             assert_eq!(*st, want, "{rate}: output {i}");
         }
-        // `place_at` reads the default mode: it differs from the trace once the mode landed
-        // and the level is not 3 (the final count and the blends differ).
+        // `place_at` keeps the default-mode reading: it follows the level entries only, so its
+        // level agrees and its blend state differs where the mode's rules differ (the level-5
+        // change at p0 + n lands during a mode blend: no blend of its own in the mode reading).
         let last = trace.len() as u64 - 1;
         let plain = place_at(last, rate, 1, k, &log).unwrap();
         let in_mode = place_at_in_mode(last, rate, 1, 0, k, &log).unwrap();
         assert_eq!(plain.level, in_mode.level);
+        // Over the schedule's span with the whole playback's log (the first call's log holds no
+        // entry at 48 kHz, where p0 lies past its 2048 outputs).
+        let mut q = pc::engine(&standard, "speed_only", rate, &x);
+        q.set_playback_speed(1).unwrap();
+        let full = cc::run_scheduled(&mut q, Source::Playback(1), &sched, Partition::Fixed(2048));
+        assert_eq!(full.log.len(), 5, "{rate}: every change logged");
+        let span = rr_dr60::changes::speed_landing(p0 + 6 * n, rate).unwrap();
+        let differing = (0..=span.max(last))
+            .filter(|&i| {
+                place_at(i, rate, 1, k, &full.log).unwrap()
+                    != place_at_in_mode(i, rate, 1, 0, k, &full.log).unwrap()
+            })
+            .count();
+        assert!(
+            differing > 0,
+            "{rate}: the readings differ (the mode blend)"
+        );
         assert!(matches!(
             place_at_in_mode(0, rate, 1, 2, k, &log),
             Err(Error::InvalidSpeedMode { mode: 2 })

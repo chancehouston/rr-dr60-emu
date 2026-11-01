@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 /// defect, never a re-bless; a later change to the time-scaler is a model change with a
 /// CHANGELOG entry.
 const GOLDEN_PITCH_V1_SHA256: &str =
-    "3674026fc4891adef7bdcdace7ab43aa4ad424638282ebbbbca26f2f98deaaa3";
+    "9406364a82fbb7b5549b5129d2c8ce09d6cac5e22ed1b80a370964708d384c61"; // blessed 2026-10-31 after the hardware review B1 (the same-position rule); the first bless, 3674026f…aaa3, was never committed as the guard
 
 #[test]
 fn golden_pitch_kept_v1_unchanged() {

@@ -13,7 +13,7 @@
 | `cur_a: i64`, `cur_s: i32` | the current frame's nominal analysis position (the place at the hop's first output, a whole stored sample) and its shift (−40 … 40) |
 | `prev_a: i64`, `prev_s: i32` | the previous frame's |
 
-Constants: N = 120, Ss = 60, Δ = 40 (< Ss: the tail proof's condition), Lc = 60, the window `w` (120, `speed_window.rs`: w[0 … 59] a periodic Hann, w[60 + n] = 1 − w[n] exactly); two contiguous f64 search buffers (140 + 60) reserved at construction. Output: `y = x[prev_a + prev_s + Ss + n]·w[Ss + n] + x[cur_a + cur_s + n]·w[n]`. At n = 60: `prev ← cur`, `cur_a ← ⌊place⌋`, `cur_s ← argmax_s c(s)` (outward order, strict). When `prev_a + prev_s + 60 == cur_a + cur_s` the output is `x[cur_a + cur_s + n]` itself (bit-exact continuation). Anchor: `prev_a = a₀ − 60`, `prev_s = cur_s = 0`. Pulls lazy: the search through `cur_a + 99`, the synthesis `max(j_prev, j_cur)`; the worst ring span 224 ≤ 256.
+Constants: N = 120, Ss = 60, Δ = 40 (< Ss: the tail proof's condition), Lc = 60, the window `w` (120, `speed_window.rs`: w[0 … 59] a periodic Hann, w[60 + n] = 1 − w[n] exactly); two contiguous f64 search buffers (140 + 60) reserved at construction. Output: `y = x[prev_a + prev_s + Ss + n]·w[Ss + n] + x[cur_a + cur_s + n]·w[n]`. At n = 60: `prev ← cur`, `cur_a ← ⌊place⌋`, `cur_s ← argmax_s c(s)` (outward order, strict). When `prev_a + prev_s + 60 == cur_a + cur_s` the output is `x[cur_a + cur_s + n]` itself (bit-exact continuation). Anchor: `prev_a = a₀ − 60`, `prev_s = cur_s = 0`. Pulls lazy: the search through `max(cur_a + 99, cont + 59) (restated at implementation: the continuation too)`, the synthesis `max(j_prev, j_cur)`; the worst ring span 224 ≤ 256.
 
 ## SpeedStage additions
 

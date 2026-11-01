@@ -10,7 +10,7 @@ name: CI
 #                 with default features, release timing, release-mode AGC and VAS matrices and
 #                 edge cases, C header drift (ubuntu)    — 001 T010, T038, T060; 002 T043; 003 T043
 #   coverage      >= 80% line coverage (Constitution III)                   — T010
-#   golden-matrix golden (001 + AGC + VAS + codec + output + clamp + volume ramp + mic + speed) + determinism on 6 desktop targets (FR-014) — T061
+#   golden-matrix golden (001 + AGC + VAS + codec + output + clamp + volume ramp + mic + speed + … + pitch-kept, 023) + determinism on 6 desktop targets (FR-014) — T061
 #   ios           golden (001 + AGC + VAS + codec + output + clamp + volume ramp + mic + speed) + determinism in the iOS simulator; iOS builds — T063
 #   msrv          full test suite on Rust 1.85                                — T065
 #   miri          the C layer's sized-struct helper under Miri (spec 022 T007; the padding oracle) — 022 hardware review
@@ -81,7 +81,7 @@ jobs:
         run: scripts/check-traceability.sh
       - name: Golden files with default features (shipped configuration, no op-count)
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test -p rr_dr60_harness --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test golden_speed --test golden_meters --test golden_changes --test golden_record_changes --test golden_battery --test golden_record --test golden_bypass
+        run: cargo test -p rr_dr60_harness --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test golden_speed --test golden_meters --test golden_changes --test golden_record_changes --test golden_battery --test golden_record --test golden_bypass --test golden_pitch_kept
       - name: Timing checks (release; FR-015 bounded work, SC-006; 008 SC-006 and the frame-byte digest)
         if: matrix.os == 'ubuntu-latest'
         # One test at a time: the timing tests measure wall-clock cost and worst blocks, so running

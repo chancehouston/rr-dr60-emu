@@ -105,7 +105,7 @@ For "Kind", see the table in the summary. "Perceived" is what a listener notices
 | Candidate | Basis | Status |
 |---|---|---|
 | Battery state on the speaker route | A-056 (static law: ceiling ∝ V+ − 1.6 V; −0.3 dB fresh to −9.1 dB at 10 h; plus 0.9 – 2.5 dB sag on loud passages) | The owner put it into this discussion on 2026-10-17. Audible only on material that reaches the ceiling: at the reference volume, −20 dBFS speech keeps about 11 dB of headroom even at 10 h. *Modeled by spec 018 (engine 0.18.0, 2026-10-30): the static law as a live unit condition, `battery_volts`, 2.2 – 3.0 V, default 3.0 V (factor 1); the sag stays not modeled.* |
-| Pitch-kept slow/fast (mechanism c1) | A-054 (the research leans weakly toward it), S-018 | Follow-up to spec 013. |
+| Pitch-kept slow/fast (mechanism c1) | A-054 (the research leans weakly toward it), S-018 | Built by spec 023 (engine 0.23.0) as a selectable mode, an engine convention. |
 | Crossfade on a speed-level change | spec 013 B2 (the step at 2 kHz to or from level 5 is −0.7 … −1.9 dB re the tone) | Built by spec 019 (engine 0.19.0): a 20 ms smoothstep crossfade, always on, an engine convention; a request during a blend lands at its end. |
 | 10 SEC REVIEW and seek | S-002 control S11 | Not modeled. `play` has no seek. |
 | Start-of-item transients | A-057 | Waits for capture P3 (owner, 2026-10-17). |
@@ -261,7 +261,7 @@ Each item below is small and independently testable, with the WHY and the tier i
 8. **021: Live playback-stage bypass with a crossfade** (M; Workbench A/B for stages 10 – 13).
    - *Built as spec 021 (engine 0.21.0, 2026-10-31) at the recommended scope: all four playback-side switches live through the schedule, a 20 ms output/input blend per stage with the stage kept warm, reverse-from-phase; a bypass equals the configured-off engine and a return equals the all-on run where no stateful stage follows, within −100 dBFS otherwise, at seven rates; refused for a stage the stream does not run (status 36). Stage 11 keeps its configured-off meaning (the owner's D11): a documented level change by route and position, the app compensating. Workbench; the mechanism (the schedule and the log) free as before.*
 9. **Later, gated:**
-   - pitch-kept speed (c1), L, after capture P1 or an app request;
+   - pitch-kept speed (c1): built (spec 023, engine 0.23.0);
    - playback seek and 10 SEC REVIEW, S – M, a device feature, free;
    - start-of-item transients, after P3;
    - the clip indicator (spec 010's review), if the inside's design wants it; it fits inside 016.

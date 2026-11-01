@@ -319,8 +319,11 @@ impl Walker {
         self.final_count = Some(self.outputs + remaining);
     }
 
-    fn apply_request(&mut self) {
-        if self.latched || self.requested == self.active || self.fade.is_some() {
+    fn apply_request(&mut self, mode_started_fade: bool) {
+        if self.latched
+            || self.requested == self.active
+            || (self.fade.is_some() && !mode_started_fade)
+        {
             return;
         }
         if self.requested == K_IDENTITY && self.p5 % 5 != 0 {
@@ -332,14 +335,14 @@ impl Walker {
             // Spec 023 D5, D12: between levels 1, 2, 4 and 5 no fade; into level 3 a fade from
             // the frozen scaler; out of level 3 the grid anchors (no fade).
             if self.active == K_IDENTITY {
-                if self.started {
+                if self.started && !mode_started_fade {
                     self.fade = Some((old, self.p5, 0));
                 }
                 self.sc_active = false;
             }
             return;
         }
-        if self.started {
+        if self.started && !mode_started_fade {
             self.fade = Some((old, self.p5, 0));
         }
     }
@@ -368,8 +371,12 @@ impl Walker {
             self.held = Some(h);
             return h;
         }
-        self.apply_request();
-        self.apply_mode_request(); // 023
+        // Spec 023 (hardware review B1): the mode first; a level landing with the mode's blend
+        // rides it.
+        let fade_before = self.fade.is_some();
+        self.apply_mode_request();
+        let mode_started_fade = !fade_before && self.fade.is_some();
+        self.apply_request(mode_started_fade);
         if self.mode == 1 && self.active != K_IDENTITY {
             // The time-scaler's grid: anchored at this output when it is not (023 R-02).
             if !self.sc_active {
