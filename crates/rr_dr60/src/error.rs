@@ -214,6 +214,18 @@ pub enum Error {
         /// The control manifest index (5, 22, 23 or 24).
         control: u32,
     },
+    /// A settings read or write by control index (spec 025 D3) of a live control, which is not
+    /// a settings field (route, volume, playback speed, battery, speed mode). Nothing changes.
+    NotASetting {
+        /// The control manifest index.
+        control: u32,
+    },
+    /// An engine read or write by control index (spec 025 D4) of a control that is not one of
+    /// the five live controls with a plain setter (a settings field). Nothing changes.
+    NotAPlainLiveControl {
+        /// The control manifest index.
+        control: u32,
+    },
 }
 
 /// Inclusive range of `memory.capacity_s`, in seconds: one second to 24 hours (engineering
@@ -429,6 +441,24 @@ impl fmt::Display for Error {
                 write!(
                     f,
                     "control {control} ({id}, stage {stage}) does not run on this stream: its setting was off at construction or the one-pass's tap stops before it; build the engine with the stage on (and a tap at or after it) and switch it with schedule_change instead"
+                )
+            }
+            Error::NotASetting { control } => {
+                let id = crate::controls::controls()
+                    .get(control as usize)
+                    .map_or("?", |e| e.identifier);
+                write!(
+                    f,
+                    "control {control} ({id}) is a live control, not a settings field: read or set it on the engine"
+                )
+            }
+            Error::NotAPlainLiveControl { control } => {
+                let id = crate::controls::controls()
+                    .get(control as usize)
+                    .map_or("?", |e| e.identifier);
+                write!(
+                    f,
+                    "control {control} ({id}) is a settings field, not a live control: read it from the settings and change it with reconfigure or schedule_change"
                 )
             }
         }
