@@ -177,6 +177,13 @@ pub enum RrDr60Status {
     /// `rr_dr60_set_playback_speed_mode`, `rr_dr60_playback_length_samples_in_mode` or
     /// `rr_dr60_place_at_in_mode` with a mode other than 0 or 1 (spec 023 D9).
     InvalidSpeedMode = 38, // spec 023 D9, FR-008: appended
+    /// `rr_dr60_settings_control_value` or `rr_dr60_set_settings_control_value` with the index
+    /// of a live control (route, volume, playback speed, battery voltage, speed mode), which is
+    /// not a settings field: read or set it on the engine (spec 025 D3).
+    NotASetting = 39, // spec 025 D7: appended
+    /// `rr_dr60_set_control_value` with the index of a settings field: change it with a settings
+    /// structure and `rr_dr60_reconfigure` or with `rr_dr60_schedule_change` (spec 025 D4).
+    NotAPlainLiveControl = 40, // spec 025 D7: appended
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -945,6 +952,11 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
         // Spec 023 contracts/api.md: status 38.
         Error::InvalidSpeedMode { .. } => {
             (RrDr60Status::InvalidSpeedMode, RrDr60SettingField::None)
+        }
+        // Spec 025 contracts/api.md: statuses 39 and 40.
+        Error::NotASetting { .. } => (RrDr60Status::NotASetting, RrDr60SettingField::None),
+        Error::NotAPlainLiveControl { .. } => {
+            (RrDr60Status::NotAPlainLiveControl, RrDr60SettingField::None)
         }
         _ => (RrDr60Status::InvalidArgument, RrDr60SettingField::None),
     }
@@ -4349,6 +4361,9 @@ unsafe fn control_id(
         Err(status) => status,
     }
 }
+
+mod settings_read;
+pub use settings_read::*;
 
 #[cfg(test)]
 mod abi_tests;
