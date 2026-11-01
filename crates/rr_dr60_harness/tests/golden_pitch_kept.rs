@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 /// after the matrix was green). The golden window is closed for the feature: a moved hash is a
 /// defect, never a re-bless; a later change to the time-scaler is a model change with a
 /// CHANGELOG entry.
-const GOLDEN_PITCH_V1_SHA256: &str =
+const GOLDEN_PITCH_KEPT_V1_SHA256: &str =
     "9406364a82fbb7b5549b5129d2c8ce09d6cac5e22ed1b80a370964708d384c61"; // blessed 2026-10-31 after the hardware review B1 (the same-position rule); the first bless, 3674026f…aaa3, was never committed as the guard
 
 #[test]
@@ -20,7 +20,7 @@ fn golden_pitch_kept_v1_unchanged() {
         .map(|b| format!("{b:02x}"))
         .collect();
     assert_eq!(
-        hex, GOLDEN_PITCH_V1_SHA256,
+        hex, GOLDEN_PITCH_KEPT_V1_SHA256,
         "golden-pitch-kept-v1.json changed; it must stay byte-identical to the spec 023 bless"
     );
 }
