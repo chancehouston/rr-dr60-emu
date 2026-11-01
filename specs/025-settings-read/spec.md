@@ -28,6 +28,15 @@ The owner reads this section first. Each decision gives the recommendation; the 
 
 ## Clarifications
 
+### Session 2026-11-01 (the plan reviews: coach 1 – 14, hardware B1 – B9, product M1 – M5; dated restatements)
+
+- **D5's Rust one-hot oracle is a core test**: the settings structures are `#[non_exhaustive]`, so only the core crate can destructure them exhaustively; the harness keeps the C one-hot.
+- **D6's lookup takes the raw field value** (`uint32_t`) and the core's `error::Setting`; 0, 3, the retired 5 and 6, and unknown values return `NO_SUCH_CONTROL`.
+- **D7's setter statuses by index** are `INVALID_VOLUME`, `INVALID_SPEED_LEVEL` and `INVALID_BATTERY_VOLTS`; a non-option route or mode, a level above 255 and a non-finite value are `INVALID_ARGUMENT` (`INVALID_SPEED_MODE` and a route status are unreachable by index); a NaN volume by index is `INVALID_ARGUMENT`, the plain setter's `INVALID_VOLUME`, documented.
+- **D10's Swift wrapper covers all six calls** (throwing wrappers, `ControlIndex`, `init?(defaultOf:)` nil for the host rate).
+- **D11: the reading stays out of the frozen `--abi` rows, the ABI example and the Swift ABI fixture** (the promise script diffs them byte for byte with 0.22 and 0.90); the new `--settings` mode prints it.
+- **Recorded, out of scope**: a C caller's `bool` byte other than 0 or 1 is undefined behavior in create, validate and reconfigure (since 0.1); the guide says so now and the fix is queued for the next ABI-touching feature.
+
 ### Session 2026-11-01 (/speckit-clarify)
 
 - Q: How should the reading structure store a fractional value, as a single-precision float or a double? → A: **An integer field and a single-precision float field** (D2 as drafted).
