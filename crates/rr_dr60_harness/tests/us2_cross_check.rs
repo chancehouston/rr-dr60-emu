@@ -1308,3 +1308,22 @@ fn guide_record_contract() {
         );
     }
 }
+
+#[test]
+fn guide_settings_read() {
+    // Spec 025 D11 (tasks.md T014): the guide's paragraph exists, says "read back" and
+    // "confirm", and avoids the denylist's words.
+    let text = std::fs::read_to_string(mc::repo_root().join("docs/guide.md")).unwrap();
+    let start = text
+        .find("**Reading and setting controls by index** (since 0.91).")
+        .expect("the guide's paragraph");
+    let end = text[start..].find("\n## ").map_or(text.len(), |i| start + i);
+    let section = text[start..end].to_lowercase();
+    assert!(section.contains("read back") && section.contains("confirm"));
+    assert!(section.contains("never by index") && section.contains("0 or 1 in `bool` fields"));
+    for word in [
+        "verif", "authentic", "proves", "genuine", "accurate", "honest", "reveal",
+    ] {
+        assert!(!section.contains(word), "the guide's paragraph uses {word:?}");
+    }
+}
