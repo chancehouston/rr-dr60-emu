@@ -226,15 +226,14 @@ pub unsafe extern "C" fn rr_dr60_control_value(
     if !unsafe { report_ok(out, READING_PUBLISHED) } {
         return RrDr60Status::InvalidArgument;
     }
-    let r = match {
-        let forced = take_forced_panic(p);
-        guarded(p, |inner| {
-            if forced {
-                panic!("rr_dr60__test_force_panic");
-            }
-            inner.control_value(index)
-        })
-    } {
+    let forced = take_forced_panic(p);
+    let result = guarded(p, |inner| {
+        if forced {
+            panic!("rr_dr60__test_force_panic");
+        }
+        inner.control_value(index)
+    });
+    let r = match result {
         Ok(r) => r,
         Err(status) => return status,
     };
@@ -429,15 +428,14 @@ pub unsafe extern "C" fn rr_dr60_set_control_value(
     let Some(r) = reading_of(&c) else {
         return RrDr60Status::InvalidArgument;
     };
-    match {
-        let forced = take_forced_panic(p);
-        guarded(p, |inner| {
-            if forced {
-                panic!("rr_dr60__test_force_panic");
-            }
-            inner.set_control_value(index, r)
-        })
-    } {
+    let forced = take_forced_panic(p);
+    let result = guarded(p, |inner| {
+        if forced {
+            panic!("rr_dr60__test_force_panic");
+        }
+        inner.set_control_value(index, r)
+    });
+    match result {
         Ok(()) => RrDr60Status::Ok,
         Err(status) => status,
     }
