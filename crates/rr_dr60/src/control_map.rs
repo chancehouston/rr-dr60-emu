@@ -191,12 +191,13 @@ pub(crate) fn target(index: u32) -> Result<Target, Error> {
 
 /// The compile-time completeness check (research R-01 (b)): every field of [`Settings`] and its
 /// sub-structures is named here with no `..`, so a new field fails to compile until it is
-/// mapped. Never called.
+/// mapped; the link from each field to its `SettingAccess` variant is the identifier test
+/// (`targets_match_manifest_by_index`) and the one-hot. Never called.
 #[allow(dead_code)]
 fn exhaustive(s: &Settings) {
     let Settings {
-        host_rate_hz: _,         // S::HostRate
-        record_stage_enabled: _, // S::RecordStage
+        host_rate_hz: _,
+        record_stage_enabled: _,
         playback_stage_enabled: _,
         adc_clamp_enabled: _,
         tap: _,
@@ -431,10 +432,42 @@ pub fn setting_control(field: Setting) -> u32 {
         Setting::MemoryMaxRecordings => S::MemoryMaxRecordings,
         Setting::MicHissOffsetDb => S::MicHissOffset,
     };
-    index_of(Target::Setting(a))
+    setting_index(a)
 }
 
+/// The manifest index of every settings field, by `SettingAccess` discriminant, computed at
+/// compile time (a field missing from `TARGETS` fails the build).
+const SETTING_INDEX: [u32; 26] = {
+    let mut out = [u32::MAX; 26];
+    let mut i = 0;
+    while i < TARGETS.len() {
+        if let Target::Setting(a) = TARGETS[i] {
+            out[a as usize] = i as u32;
+        }
+        i += 1;
+    }
+    let mut k = 0;
+    while k < 26 {
+        assert!(out[k] != u32::MAX, "every settings field has an index");
+        k += 1;
+    }
+    out
+};
+
+/// The manifest index of a settings field (constant data, no search).
+pub(crate) const fn setting_index(a: SettingAccess) -> u32 {
+    SETTING_INDEX[a as usize]
+}
+
+/// The control index of `host_rate_hz` (the validator's `HostRate` field; spec 025 D6).
+pub const HOST_RATE_CONTROL: u32 = setting_index(S::HostRate);
+/// The control index of `tap` (the validator's `Tap` field).
+pub const TAP_CONTROL: u32 = setting_index(S::Tap);
+/// The control index of `vas.mode` (the validator's `VasMode` field).
+pub const VAS_MODE_CONTROL: u32 = setting_index(S::VasMode);
+
 /// The index of a target in the manifest's order.
+#[cfg(test)]
 pub(crate) fn index_of(t: Target) -> u32 {
     TARGETS
         .iter()
@@ -944,6 +977,21 @@ mod tests {
             settings_value(&s, 31),
             Err(Error::NoSuchControl { control: 31 })
         ));
+    }
+
+    #[test]
+    fn index_constants_name_their_fields() {
+        assert_eq!(
+            controls()[HOST_RATE_CONTROL as usize].identifier,
+            "host_rate_hz"
+        );
+        assert_eq!(controls()[TAP_CONTROL as usize].identifier, "tap");
+        assert_eq!(controls()[VAS_MODE_CONTROL as usize].identifier, "vas.mode");
+        for t in TARGETS {
+            if let Target::Setting(a) = t {
+                assert_eq!(setting_index(a), index_of(t));
+            }
+        }
     }
 
     #[test]

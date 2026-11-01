@@ -148,8 +148,47 @@ fn live_reads_return_the_request() {
     p.set_control_value(29, ControlReading::Continuous(2.3))
         .unwrap(); // a 20 ms transition
     p.set_control_value(2, ControlReading::Integer(5)).unwrap();
-    let _ = p.play(&mut y).unwrap(); // mid-transition, mid-crossfade
+    let mut log = vec![rr_dr60::ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
+    let a = p.play_with_changes(&mut y, &mut log).unwrap(); // mid-transition, mid-crossfade
+    let first: Vec<_> = log[..a.changes]
+        .iter()
+        .map(|e| (e.control, e.after))
+        .collect();
+    assert!(
+        first.contains(&(2, 5.0)),
+        "the level change landed in this call: {first:?}"
+    );
     p.set_control_value(2, ControlReading::Integer(3)).unwrap(); // waits for the crossfade
+    // The request waits (spec 019: logged when made, applied at the crossfade's end): the next
+    // 32 host samples, inside the 120-device-sample crossfade, equal a twin without it.
+    let mut c = bp::engine(&standard, s, &stored, rr_dr60::Route::Speaker, 0.5);
+    c.start_playback(1).unwrap();
+    let mut u = vec![0.0f32; 64];
+    let _ = c.play(&mut u).unwrap();
+    c.set_volume(0.9).unwrap();
+    c.set_battery_volts(2.3).unwrap();
+    c.set_playback_speed(5).unwrap();
+    let _ = c.play(&mut u).unwrap();
+    let (mut with, mut without) = (vec![0.0f32; 32], vec![0.0f32; 32]);
+    let _ = p.play(&mut with).unwrap();
+    let _ = c.play(&mut without).unwrap();
+    assert_eq!(with, without, "the request into level 3 is still waiting");
+    // The volume and battery transitions are still running: an engine set at once differs.
+    let mut twin = bp::engine(&standard, s, &stored, rr_dr60::Route::Speaker, 0.9);
+    twin.set_battery_volts(2.3).unwrap();
+    twin.set_playback_speed(5).unwrap();
+    twin.start_playback(1).unwrap();
+    let mut z = vec![0.0f32; 129];
+    let _ = twin.play(&mut z).unwrap();
+    let mut w = vec![0.0f32; 129];
+    let mut q = bp::engine(&standard, s, &stored, rr_dr60::Route::Speaker, 0.5);
+    q.start_playback(1).unwrap();
+    let _ = q.play(&mut w[..64]).unwrap();
+    q.set_volume(0.9).unwrap();
+    q.set_battery_volts(2.3).unwrap();
+    q.set_playback_speed(5).unwrap();
+    let _ = q.play(&mut w[64..]).unwrap();
+    assert_ne!(z[64..], w[64..], "the transitions are in progress");
     assert_eq!(p.control_value(1).unwrap(), ControlReading::Continuous(0.9));
     assert_eq!(
         p.control_value(29).unwrap(),

@@ -1323,6 +1323,7 @@ fn guide_settings_read() {
     let section = text[start..end].to_lowercase();
     assert!(section.contains("read back") && section.contains("confirm"));
     assert!(section.contains("never by index") && section.contains("0 or 1 in `bool` fields"));
+    assert_eq!(mc::denylist_hit(&section), None, "the house denylist");
     for word in [
         "verif",
         "authentic",

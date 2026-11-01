@@ -2,9 +2,9 @@
 
 | Record | Change |
 |---|---|
-| `docs/guide.md` § control manifest | "Reading and setting controls by index" (the product review's paragraph); the C block re-blessed |
+| `docs/guide.md` § control manifest | "Reading and setting controls by index" (the product review's paragraph, extended by the post-implementation reviews 2026-11-01); no generated block moved |
 | `CHANGELOG.md` | Added, 0.91.0 |
-| `README.md` | the C functions list |
+| `README.md` | the version line (the README has no list of C functions; restated 2026-11-01) |
 | `CLAUDE.md` | the status entry, the reports commands |
 | Version 0.91.0 | `Cargo.toml` ×4, `RR_DR60_VERSION_MINOR`, the stage manifest's version line |
 | `.github/workflows/ci.yml` | the second promise step (f5a0245), the Miri list |

@@ -184,13 +184,19 @@ pub fn c_reading(r: ControlReading) -> RrDr60ControlReading {
     c
 }
 
-/// The Rust reading of a C reading (the library's own output; `None` for a bad type).
+/// The Rust reading of a library-written C reading, strictly (hardware review B5): `None` for
+/// an unknown type, a switch other than 0 or 1, a choice above `u32`, a non-zero unused field,
+/// a non-zero `reserved` or a size other than 24.
 pub fn rust_reading(c: &RrDr60ControlReading) -> Option<ControlReading> {
+    if c.reserved != 0 || c.struct_size != 24 {
+        return None;
+    }
+    let float_unused = c.float_value.to_bits() == 0;
     Some(match c.value_type {
-        0 => ControlReading::Switch(c.int_value != 0),
-        1 => ControlReading::Integer(c.int_value),
-        2 => ControlReading::Continuous(c.float_value),
-        3 => ControlReading::Choice(c.int_value as u32),
+        0 if float_unused && c.int_value <= 1 => ControlReading::Switch(c.int_value == 1),
+        1 if float_unused => ControlReading::Integer(c.int_value),
+        2 if c.int_value == 0 => ControlReading::Continuous(c.float_value),
+        3 if float_unused => ControlReading::Choice(u32::try_from(c.int_value).ok()?),
         _ => return None,
     })
 }

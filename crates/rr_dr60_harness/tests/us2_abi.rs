@@ -357,7 +357,9 @@ fn swift_fixture_matches_rows() {
     );
 }
 
-/// Spec 025 D8 (tasks.md T010): the settings read moved no constant and no existing size.
+/// Spec 025 D8 (tasks.md T010): the settings read moved no constant and no existing size (the
+/// sizes listed here are the ones the feature sits beside; spec 022's `sizes_are_pinned` and the
+/// promise script with 0.22 and 0.90 cover every other struct).
 #[test]
 fn spec_025_moved_nothing() {
     assert_eq!(rr_dr60::controls::CONTROL_COUNT, 31);

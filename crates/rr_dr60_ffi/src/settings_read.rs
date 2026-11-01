@@ -4,7 +4,7 @@
 
 use super::*;
 use rr_dr60::control_map::{self, ControlReading};
-use rr_dr60::controls::{CONTROL_COUNT, controls};
+use rr_dr60::controls::CONTROL_COUNT;
 
 /// A control's value by its manifest index (spec 025 D2), filled by `rr_dr60_control_value`
 /// and `rr_dr60_settings_control_value` and read by the two set functions. `struct_size` first
@@ -226,9 +226,17 @@ pub unsafe extern "C" fn rr_dr60_control_value(
     if !unsafe { report_ok(out, READING_PUBLISHED) } {
         return RrDr60Status::InvalidArgument;
     }
-    let r = match p.inner.control_value(index) {
+    let r = match {
+        let forced = take_forced_panic(p);
+        guarded(p, |inner| {
+            if forced {
+                panic!("rr_dr60__test_force_panic");
+            }
+            inner.control_value(index)
+        })
+    } {
         Ok(r) => r,
-        Err(e) => return status_from_error(e),
+        Err(status) => return status,
     };
     // SAFETY: out is non-null with its `struct_size` bytes writable (caller contract).
     match manifest_guard(|| unsafe {
@@ -245,9 +253,12 @@ pub unsafe extern "C" fn rr_dr60_control_value(
 /// can still be read. Refusals in order, nothing written: a NULL pointer (`NULL_POINTER`), a
 /// settings `struct_size` other than `sizeof(RrDr60Settings)` or a refused reading size
 /// (`INVALID_ARGUMENT`), an index at or past the count (`NO_SUCH_CONTROL`), a live control
-/// (`NOT_A_SETTING`), a stored switch byte other than 0 or 1 or a choice that is not an option
-/// (`INVALID_ARGUMENT`). Ranges are not checked (`rr_dr60_settings_validate` does). Takes no
-/// handle: safe on any thread with its own buffers. Real-time safe.
+/// (`NOT_A_SETTING`), a stored switch byte other than 0 or 1 (`INVALID_ARGUMENT`: the reading
+/// cannot carry it). Every other stored value is returned as stored, so a repair screen can show
+/// it: a choice that is not an option (`tap = 99`), a non-finite float or an integer wider than
+/// the engine's field may then fail the write's representability check or the validator, which
+/// names the field. `out` must not overlap `settings`. Takes no handle: safe on any thread with
+/// its own buffers. Real-time safe.
 ///
 /// # Safety
 ///
@@ -289,13 +300,7 @@ pub unsafe extern "C" fn rr_dr60_settings_control_value(
             CKind::Choice => ControlReading::Choice(at.cast::<u32>().read_unaligned()),
         }
     };
-    if kind == CKind::Choice {
-        // A stored choice must be one of the options: the core's representability check.
-        let mut probe = Settings::new(rr_dr60::DEVICE_RATE_HZ);
-        if control_map::set_settings_value(&mut probe, index, r).is_err() {
-            return RrDr60Status::InvalidArgument;
-        }
-    }
+    // Every other stored value is returned as stored (hardware review B1).
     // SAFETY: out is non-null with its `struct_size` bytes writable (caller contract).
     match manifest_guard(|| unsafe {
         write_sized(out, READING_PUBLISHED, |t, _| fill_reading(t, r))
@@ -350,13 +355,16 @@ pub unsafe extern "C" fn rr_dr60_set_settings_control_value(
         return RrDr60Status::InvalidArgument;
     };
     // The core's representability check and normalization (−0.0 → 0.0) on a probe.
-    let mut probe = Settings::new(rr_dr60::DEVICE_RATE_HZ);
-    if control_map::set_settings_value(&mut probe, index, r).is_err() {
-        return RrDr60Status::InvalidArgument;
-    }
-    let Ok(v) = control_map::settings_value(&probe, index) else {
-        // coverage: unreachable, a settings index (checked above)
-        return RrDr60Status::InternalError;
+    let checked = manifest_guard(|| {
+        let mut probe = Settings::new(rr_dr60::DEVICE_RATE_HZ);
+        control_map::set_settings_value(&mut probe, index, r)
+            .and_then(|()| control_map::settings_value(&probe, index))
+    });
+    let v = match checked {
+        Ok(Ok(v)) => v,
+        Ok(Err(_)) => return RrDr60Status::InvalidArgument,
+        // coverage: unreachable, a field copy (Constitution III)
+        Err(status) => return status,
     };
     // SAFETY: `settings` is writable for the whole structure; the field is written at its
     // offset without forming a reference to the structure, unaligned, in its own width.
@@ -421,9 +429,17 @@ pub unsafe extern "C" fn rr_dr60_set_control_value(
     let Some(r) = reading_of(&c) else {
         return RrDr60Status::InvalidArgument;
     };
-    match p.inner.set_control_value(index, r) {
+    match {
+        let forced = take_forced_panic(p);
+        guarded(p, |inner| {
+            if forced {
+                panic!("rr_dr60__test_force_panic");
+            }
+            inner.set_control_value(index, r)
+        })
+    } {
         Ok(()) => RrDr60Status::Ok,
-        Err(e) => status_from_error(e),
+        Err(status) => status,
     }
 }
 
@@ -443,16 +459,11 @@ pub unsafe extern "C" fn rr_dr60_setting_field_control(
     if out_index.is_null() {
         return RrDr60Status::NullPointer;
     }
-    let by_id = |id: &str| {
-        controls()
-            .iter()
-            .position(|e| e.identifier == id)
-            .map(|i| i as u32)
-    };
+    // Constant data throughout (compile-time indices): no search, no panic path.
     let index = match field {
-        x if x == RrDr60SettingField::HostRate as u32 => by_id("host_rate_hz"),
-        x if x == RrDr60SettingField::Tap as u32 => by_id("tap"),
-        x if x == RrDr60SettingField::VasMode as u32 => by_id("vas.mode"),
+        x if x == RrDr60SettingField::HostRate as u32 => Some(control_map::HOST_RATE_CONTROL),
+        x if x == RrDr60SettingField::Tap as u32 => Some(control_map::TAP_CONTROL),
+        x if x == RrDr60SettingField::VasMode as u32 => Some(control_map::VAS_MODE_CONTROL),
         x => setting_of_field(x).map(control_map::setting_control),
     };
     match index {
@@ -486,6 +497,7 @@ fn setting_of_field(field: u32) -> Option<Setting> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rr_dr60::controls::controls;
 
     /// The C table follows the core's mapping: a write by index through C, converted whole,
     /// reads back by index in Rust (and the live entries are exactly the core's).
@@ -634,5 +646,37 @@ mod tests {
         assert_eq!(whole_struct_mutant(&mut b, 10, knee), RrDr60Status::Ok);
         assert_eq!(a.reserved_008, 0xDEAD);
         assert_ne!(b.reserved_008, 0xDEAD);
+    }
+
+    /// A panic inside the engine call is caught, the status `INTERNAL_ERROR`, the handle
+    /// poisoned (spec 025 D9; coach review 1).
+    #[test]
+    #[cfg(feature = "ffi-test-panic")]
+    fn engine_calls_are_panic_guarded() {
+        for which in 0..2 {
+            let s = rr_dr60_settings_default(48_000);
+            let mut h: *mut RrDr60Pipeline = core::ptr::null_mut();
+            // SAFETY: valid pointers.
+            assert_eq!(unsafe { rr_dr60_create(&s, &mut h) }, RrDr60Status::Ok);
+            let mut r = RrDr60ControlReading::default();
+            fill_reading(&mut r, ControlReading::Continuous(0.5));
+            // SAFETY: a live handle and local values throughout.
+            unsafe {
+                rr_dr60__test_force_panic(h);
+                let st = if which == 0 {
+                    rr_dr60_control_value(h, 1, &mut r)
+                } else {
+                    rr_dr60_set_control_value(h, 1, &r)
+                };
+                assert_eq!(st, RrDr60Status::InternalError, "{which}");
+                let mut v = 0.0f32;
+                assert_eq!(
+                    rr_dr60_get_volume(h, &mut v),
+                    RrDr60Status::InternalError,
+                    "poisoned"
+                );
+                rr_dr60_destroy(h);
+            }
+        }
     }
 }

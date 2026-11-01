@@ -68,10 +68,11 @@ The engine gains a read of its configured settings and access to every control b
 
 ```text
 crates/rr_dr60/src/control_map.rs     # new: the mapping, ControlReading, the settings accessors
-crates/rr_dr60/src/pipeline.rs        # control_value, set_control_value
+crates/rr_dr60/src/control_map.rs     # also control_value, set_control_value (restated 2026-11-01)
 crates/rr_dr60/src/record.rs          # get/set rebuilt on the mapping
 crates/rr_dr60/src/error.rs           # NotASetting, NotAPlainLiveControl
-crates/rr_dr60_ffi/src/lib.rs         # six functions, RrDr60ControlReading, statuses 39 – 40
+crates/rr_dr60_ffi/src/settings_read.rs # six functions, RrDr60ControlReading (restated 2026-11-01)
+crates/rr_dr60_ffi/src/lib.rs         # statuses 39 – 40, the module
 crates/rr_dr60_ffi/include/rr_dr60.h  # regenerated
 crates/rr_dr60_ffi/tests/c/smoke.c    # --settings, the C one-hot comparison
 crates/rr_dr60_harness/tests/         # us1_settings_read.rs, us2_control_index.rs, settings_read_edge_cases.rs, mutation settings_read

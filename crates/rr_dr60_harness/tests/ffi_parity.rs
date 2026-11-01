@@ -4986,7 +4986,19 @@ fn settings_read_parity() {
             (31, ControlReading::Integer(0), RrDr60Status::NoSuchControl),
         ];
         for (i, r, st) in cases {
-            assert!(p.set_control_value(i, r).is_err());
+            let e = p.set_control_value(i, r).unwrap_err();
+            let want = match st {
+                RrDr60Status::InvalidVolume => matches!(e, Error::InvalidVolume { .. }),
+                RrDr60Status::InvalidSpeedLevel => matches!(e, Error::InvalidSpeedLevel { .. }),
+                RrDr60Status::InvalidBatteryVolts => matches!(e, Error::InvalidBatteryVolts { .. }),
+                RrDr60Status::InvalidArgument => matches!(e, Error::InvalidControlValue { .. }),
+                RrDr60Status::NotAPlainLiveControl => {
+                    matches!(e, Error::NotAPlainLiveControl { .. })
+                }
+                RrDr60Status::NoSuchControl => matches!(e, Error::NoSuchControl { .. }),
+                _ => false,
+            };
+            assert!(want, "{i} {r:?}: {e:?} for {st:?}");
             let c = sr::c_reading(r);
             // SAFETY: a live handle and a local reading.
             assert_eq!(

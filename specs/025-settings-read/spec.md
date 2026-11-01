@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-01
 
-**Status**: Draft reviewed 2026-11-01 (coach 1 – 13, hardware B1 – B9, product M1 – M5, applied at the defaults below); clarified 2026-11-01 (five questions, every answer the recommended one); **spec approved by the owner 2026-11-01 (D1 – D11)**; plan reviewed (coach 1 – 14, hardware B1 – B9, product M1 – M5) and **approved by the owner 2026-11-01**; tasks next.
+**Status**: Draft reviewed 2026-11-01 (coach 1 – 13, hardware B1 – B9, product M1 – M5, applied at the defaults below); clarified 2026-11-01 (five questions, every answer the recommended one); **spec approved by the owner 2026-11-01 (D1 – D11)**; plan reviewed (coach 1 – 14, hardware B1 – B9, product M1 – M5) and **approved by the owner 2026-11-01**; tasks next.; **implemented 2026-11-01** (T001 – T014; the post-implementation reviews coach 1 – 10 and hardware B1 – B7 applied at the defaults; the gate next).
 
 **Input**: The owner's decision of 2026-11-01 in the test bench's `/speckit-clarify` (ic-recorder-app, spec 001, question 1: "engine first"): the engine gains a read of the settings it is running with and access to every control by the control manifest's index, so the bench can confirm an Apply from the engine's own read and build its controls without a hand-written table. The first engine feature after 0.90.0 (a 0.9x minor: 0.91.0); spec 024 stays held.
 
@@ -27,6 +27,16 @@ The owner reads this section first. Each decision gives the recommendation; the 
 | D11 | **Records**: the guide's control-manifest section gains the paragraph "Reading and setting controls by index" (the product review's text, checked against the wording denylist: "read back" and "confirm", never "verify"); the guide's C block re-blessed; the CHANGELOG under Added; the README's list of C functions; the Swift ABI fixture regenerated if the ABI rows gain the new structure; the traceability audit; CLAUDE.md; the bench's spec 001 points to 0.91.0. Figures: the idle cost of each new call as the C smoke prints it (spec 022's timing prints); SC-006 quotes 0.90's coverage. | **As stated** |
 
 ## Clarifications
+
+### Session 2026-11-01 (implementation restatements; the post-implementation reviews: coach 1 – 10, hardware B1 – B7)
+
+- **D3, the read** (hardware B1, coach 8): the read by index refuses only a stored `bool` byte other than 0 or 1 (the reading cannot carry it); every other stored value is returned as stored (a non-option choice such as `tap = 99`, a non-finite float, an integer wider than the engine's field), so a repair screen can show it; the write or the validator then refuses it. The draft implementation also refused a non-option choice on read; one rule now, stated in the guide.
+- **D9, the panic guards** (coach 1): the two engine calls that run core code (`rr_dr60_control_value`, `rr_dr60_set_control_value`) run it under the handle's guard (a panic poisons the handle, as `rr_dr60_process`), the write's core check under the constant-data guard, and the field-to-control lookup is constant data with no panic path (compile-time indices); `engine_calls_are_panic_guarded` forces a panic.
+- **US2 AS2**: the Rust one-hot is the core test `control_map::tests::one_hot` (the harness cannot destructure the `#[non_exhaustive]` settings structures).
+- **Placement**: `Pipeline::control_value` / `set_control_value` are in `control_map.rs`; the C functions are in `crates/rr_dr60_ffi/src/settings_read.rs` (re-exported from `lib.rs`); `cbindgen.toml` needed no entry (the reading is referenced by the functions).
+- **R-07's mutants**: "the setter's validation bypassed" is the wide-integer wrap on the speed level by index (259 → 3), caught by the representability row; the harness has five mutants with named oracles, the whole-structure round trip is the FFI crate's.
+- **The record's −0.0** keeps its sign on the record's round trip; a set by index stores 0.0.
+- **D11**: the guide's paragraph adds the idle/live recipe (`reconfigure` when idle, `schedule_change` for live-timed settings during a stream), the transitions and waits that read the requested value, the confirmation rule (a set to the current value logs nothing) and −0.0; the README has no list of C functions, so only its version line moved.
 
 ### Session 2026-11-01 (the plan reviews: coach 1 – 14, hardware B1 – B9, product M1 – M5; dated restatements)
 
@@ -86,7 +96,7 @@ An app developer generates a control surface from the manifest and reaches every
 **Acceptance Scenarios**:
 
 1. **Given** a default engine, **When** every control is read by index, **Then** each reading's value type is the manifest's and its value is the manifest's default (the host rate's is the engine's rate), and `ControlReading(defaultOf:)` equals it (`us2_defaults_by_index`).
-2. **Given** a settings structure, **When** each setting is written by index with its one-hot value, **Then** exactly the field the test names by identifier changed, in Rust and in C (`us2_one_hot_rust`, `us2_one_hot_c`); **given** a reading of the wrong type, a choice value outside the options, a non-finite continuous value or an integer wider than the field, **Then** the write is refused with `INVALID_ARGUMENT` and nothing changes; **given** an out-of-range value within the width (sensitivity 6), **Then** the write succeeds and the validator refuses naming the field, and `rr_dr60_setting_field_control` maps that field to the control's index (`us2_representability`).
+2. **Given** a settings structure, **When** each setting is written by index with its one-hot value, **Then** exactly the field the test names by identifier changed, in Rust and in C (the core test `control_map::tests::one_hot`, `us2_one_hot_c`); **given** a reading of the wrong type, a choice value outside the options, a non-finite continuous value or an integer wider than the field, **Then** the write is refused with `INVALID_ARGUMENT` and nothing changes; **given** an out-of-range value within the width (sensitivity 6), **Then** the write succeeds and the validator refuses naming the field, and `rr_dr60_setting_field_control` maps that field to the control's index (`us2_representability`).
 3. **Given** one of the five live controls, **When** set by index, **Then** the engine's read returns the value and the change log's entries are identical to the plain setter's and to a schedule at the current position (`us2_live_by_index`); **given** an idle setting or a schedule-only value, **Then** setting it by index is refused with `NOT_A_PLAIN_LIVE_CONTROL` (`us2_class_refused`).
 4. **Given** a structure holding `tap = 99`, **When** the `tap` index is written with a valid option, **Then** the structure becomes valid and no other byte changed (`us2_repair_by_index`).
 5. **Given** a non-default engine, **When** reconfigured with the default settings and each of the five live controls set by index to its manifest default, **Then** all 31 readings equal the defaults of AS1 (`us2_device_as_modeled`).

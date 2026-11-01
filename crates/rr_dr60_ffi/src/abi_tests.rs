@@ -1328,13 +1328,15 @@ fn control_reading_field_local() {
             }
         }
         if kind == settings_read::CKind::Choice {
+            // A stored non-option reads as stored (hardware review B1): a repair screen shows it.
             b.0[off..off + 4].copy_from_slice(&99u32.to_ne_bytes());
-            let mut out = Painted::new(24);
+            let mut out = RrDr60ControlReading::default();
             // SAFETY: as above.
             assert_eq!(
-                unsafe { rr_dr60_settings_control_value(b.ptr(), i, out.ptr()) },
-                RrDr60Status::InvalidArgument
+                unsafe { rr_dr60_settings_control_value(b.ptr(), i, &mut out) },
+                RrDr60Status::Ok
             );
+            assert_eq!((out.value_type, out.int_value), (3, 99));
         }
     }
 }

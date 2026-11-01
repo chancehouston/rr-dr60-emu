@@ -55,6 +55,12 @@ private func engine(_ rate: UInt32 = 48000) -> OpaquePointer {
         #expect(try s.value(index: i) == new, "index \(i)")
     }
     #expect(settingsCount == 26)
+    // Named fields (coach review 7): a swapped mapping would pass the round trip alone.
+    let d = rr_dr60_settings_default(48000)
+    #expect(s.agc_attack_ms == 11.5 && s.agc_release_ms == 12.5 && d.agc_release_ms != 12.5)
+    #expect(s.vas_sensitivity == 17 && s.memory_capacity_s == 21 && s.seed == 10)
+    #expect(s.output_speaker_enabled == !d.output_speaker_enabled && s.output_earphone_enabled == !d.output_earphone_enabled)
+    #expect(s.mic_hiss_offset_db == 28.5 && s.tap != d.tap)
 }
 
 @Test func refusalsAsStatuses() throws {
