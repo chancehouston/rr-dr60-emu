@@ -4893,3 +4893,109 @@ fn pitch_parity() {
         unsafe { rr_dr60_destroy(h) };
     }
 }
+
+/// Spec 025 (tasks.md T010): the C functions agree with the Rust ones on every index: the
+/// engine's readings after the same live writes, the structure's readings of the same set, the
+/// statuses of the refusals (39, 40), and a reconfigure confirmed by the read.
+#[test]
+fn settings_read_parity() {
+    use rr_dr60::control_map::{self, ControlReading};
+    use rr_dr60::{Error, Settings};
+    use rr_dr60_ffi::{
+        RrDr60ControlReading, rr_dr60_control_value, rr_dr60_get_settings, rr_dr60_reconfigure,
+        rr_dr60_set_control_value, rr_dr60_settings_control_value,
+    };
+    use rr_dr60_harness::settings_read_checks as sr;
+    assert_eq!(RrDr60Status::NotASetting as u32, 39);
+    assert_eq!(RrDr60Status::NotAPlainLiveControl as u32, 40);
+    for &rate in configs::measurement_rates() {
+        let want = sr::differ(rate);
+        let mut p = Pipeline::new(Settings::new(rate)).unwrap();
+        p.reconfigure(want).unwrap();
+        let cw = configs::c_settings(&want);
+        let h = create(&rr_dr60_ffi::rr_dr60_settings_default(rate));
+        // SAFETY: a live handle and a valid struct.
+        assert_eq!(unsafe { rr_dr60_reconfigure(h, &cw) }, RrDr60Status::Ok);
+        for (index, r, _, _) in sr::live_cases() {
+            p.set_control_value(index, r).unwrap();
+            let c = sr::c_reading(r);
+            // SAFETY: a live handle and a local reading.
+            assert_eq!(
+                unsafe { rr_dr60_set_control_value(h, index, &c) },
+                RrDr60Status::Ok
+            );
+        }
+        let mut got = rr_dr60_ffi::rr_dr60_settings_default(rate);
+        // SAFETY: a live handle and a local struct.
+        assert_eq!(
+            unsafe { rr_dr60_get_settings(h, &mut got) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(got, cw, "{rate} Hz: the C read equals the reconfigure");
+        for i in 0..31u32 {
+            let mut out = RrDr60ControlReading::default();
+            // SAFETY: a live handle and a local reading.
+            assert_eq!(
+                unsafe { rr_dr60_control_value(h, i, &mut out) },
+                RrDr60Status::Ok
+            );
+            assert_eq!(
+                sr::rust_reading(&out),
+                Some(p.control_value(i).unwrap()),
+                "{rate} Hz: {i}"
+            );
+            let mut out2 = RrDr60ControlReading::default();
+            // SAFETY: a local struct and reading.
+            let st = unsafe { rr_dr60_settings_control_value(&cw, i, &mut out2) };
+            match control_map::settings_value(&want, i) {
+                Ok(r) => {
+                    assert_eq!(st, RrDr60Status::Ok);
+                    assert_eq!(sr::rust_reading(&out2), Some(r), "{rate} Hz: pure {i}");
+                }
+                Err(Error::NotASetting { .. }) => assert_eq!(st, RrDr60Status::NotASetting),
+                Err(e) => panic!("{e}"),
+            }
+        }
+        // The refusals map to the same statuses.
+        let cases = [
+            (
+                1u32,
+                ControlReading::Continuous(1.5),
+                RrDr60Status::InvalidVolume,
+            ),
+            (
+                2,
+                ControlReading::Integer(0),
+                RrDr60Status::InvalidSpeedLevel,
+            ),
+            (
+                29,
+                ControlReading::Continuous(3.5),
+                RrDr60Status::InvalidBatteryVolts,
+            ),
+            (
+                1,
+                ControlReading::Continuous(f32::NAN),
+                RrDr60Status::InvalidArgument,
+            ),
+            (
+                10,
+                ControlReading::Continuous(-3.0),
+                RrDr60Status::NotAPlainLiveControl,
+            ),
+            (31, ControlReading::Integer(0), RrDr60Status::NoSuchControl),
+        ];
+        for (i, r, st) in cases {
+            assert!(p.set_control_value(i, r).is_err());
+            let c = sr::c_reading(r);
+            // SAFETY: a live handle and a local reading.
+            assert_eq!(
+                unsafe { rr_dr60_set_control_value(h, i, &c) },
+                st,
+                "{i} {r:?}"
+            );
+        }
+        // SAFETY: destroying the handle once.
+        unsafe { rr_dr60_ffi::rr_dr60_destroy(h) };
+    }
+}

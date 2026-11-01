@@ -1108,3 +1108,29 @@ fn pitch_same_calls_same_log() {
         }
     }
 }
+
+/// Spec 025 (tasks.md T010): the same calls give the same readings, in Rust and through C, at
+/// 6 and 48 kHz; a reading carries no state of its own.
+#[test]
+fn settings_read_same() {
+    use rr_dr60::control_map::ControlReading;
+    use rr_dr60::{Pipeline, Settings};
+    use rr_dr60_harness::settings_read_checks as sr;
+    for rate in [6000u32, 48_000] {
+        let calls = |_: ()| {
+            let mut p = Pipeline::new(sr::differ(rate)).unwrap();
+            for (index, r, _, _) in sr::live_cases() {
+                p.set_control_value(index, r).unwrap();
+            }
+            let _ = p.set_control_value(1, ControlReading::Continuous(f32::NAN));
+            (0..31u32)
+                .map(|i| p.control_value(i).unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(calls(()), calls(()), "{rate} Hz");
+        let p = Pipeline::new(Settings::new(rate)).unwrap();
+        let a: Vec<_> = (0..31u32).map(|i| p.control_value(i).unwrap()).collect();
+        let b: Vec<_> = (0..31u32).map(|i| p.control_value(i).unwrap()).collect();
+        assert_eq!(a, b, "{rate} Hz: reading twice");
+    }
+}

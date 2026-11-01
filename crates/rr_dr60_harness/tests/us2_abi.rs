@@ -356,3 +356,17 @@ fn swift_fixture_matches_rows() {
         "regenerate the fixture: cargo run -q -p rr_dr60_harness --example abi_rows > {path}"
     );
 }
+
+/// Spec 025 D8 (tasks.md T010): the settings read moved no constant and no existing size.
+#[test]
+fn spec_025_moved_nothing() {
+    assert_eq!(rr_dr60::controls::CONTROL_COUNT, 31);
+    assert_eq!(rr_dr60::changes::MAX_CHANGES_PER_CALL, 142);
+    assert_eq!(RR_DR60_MAX_CHANGES_PER_CALL, 142);
+    assert_eq!(RR_DR60_ABI_VERSION, 1);
+    assert_eq!(size_of::<RrDr60Settings>(), 120);
+    assert_eq!(size_of::<RrDr60Control>(), 120);
+    assert_eq!(size_of::<RrDr60ControlOption>(), 24);
+    assert_eq!(size_of::<RrDr60ControlReading>(), 24);
+    assert_eq!(RrDr60Status::InvalidSpeedMode as u32, 38);
+}
