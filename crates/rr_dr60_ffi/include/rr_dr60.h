@@ -2720,9 +2720,12 @@ RrDr60Status rr_dr60_control_value(struct RrDr60Pipeline *pipeline,
 // can still be read. Refusals in order, nothing written: a NULL pointer (`NULL_POINTER`), a
 // settings `struct_size` other than `sizeof(RrDr60Settings)` or a refused reading size
 // (`INVALID_ARGUMENT`), an index at or past the count (`NO_SUCH_CONTROL`), a live control
-// (`NOT_A_SETTING`), a stored switch byte other than 0 or 1 or a choice that is not an option
-// (`INVALID_ARGUMENT`). Ranges are not checked (`rr_dr60_settings_validate` does). Takes no
-// handle: safe on any thread with its own buffers. Real-time safe.
+// (`NOT_A_SETTING`), a stored switch byte other than 0 or 1 (`INVALID_ARGUMENT`: the reading
+// cannot carry it). Every other stored value is returned as stored, so a repair screen can show
+// it: a choice that is not an option (`tap = 99`), a non-finite float or an integer wider than
+// the engine's field may then fail the write's representability check or the validator, which
+// names the field. `out` must not overlap `settings`. Takes no handle: safe on any thread with
+// its own buffers. Real-time safe.
 //
 // # Safety
 //
