@@ -11,7 +11,7 @@ Fidelity is the product. Everything the real RR-DR60 does is free, with the real
 ## Free tier: the device
 
 - The full signal chain, recording and playback, through the modeled speaker or the modeled earphone output.
-- Voice-activated pausing, the five sensitivity levels, SLOW/FAST playback speed, 10-second review (all documented device features; S-001, S-002). **(SLOW/FAST is modeled since 0.13.0, spec 013; the 10-second review is not.)**
+- Voice-activated pausing, the five sensitivity levels, SLOW/FAST playback speed, 10-second review (all documented device features; S-001, S-002). **(SLOW/FAST is modeled since 0.13.0, spec 013, with a pitch-kept mode as a selectable engine convention since 0.23.0, spec 023, free via curated values; the 10-second review is not.)**
 - The device's memory: 60 minutes and 99 recordings (S-001, S-002: 16 Mbit flash).
 - Share one recording through the system share sheet (the device-rate render).
 - The inside view: the chain rendered live, with each stage's status (sourced, assumed, not modeled, checked against a real unit) and a flat text fallback; it replaces a separate "About this model" screen (front-and-inside.md).

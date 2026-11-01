@@ -220,7 +220,7 @@ Feature descriptions (WHAT/WHY), ready for `/speckit-specify`:
   - the VAS state and events;
   - codec frames and their level;
   - the volume knob position;
-  - the speed level and place.
+  - the speed level, the speed mode and the place (the mode since 0.23.0, spec 023; in pitch-kept mode the content heard lies within ±64 device samples of the place).
 
   Each value is tagged with its input-sample and recording-sample position. It changes neither the audio nor determinism, and it is real-time safe.
 
@@ -237,7 +237,7 @@ Feature descriptions (WHAT/WHY), ready for `/speckit-specify`:
 - **015 (built, engine 0.16.0):** each change a stream applies is logged at its output-sample position with the control, the values before and after and a caller tag; the recording counter has a public getter. Moved to 020: the host-input index a change maps to (through the voice-activation events), construct-at-counter, and the map from a playback position to the recording's place under a speed schedule.
 - **017 (built, engine 0.17.0):** the sensitivity, the voice activation's threshold, hang and onset, the hiss level and the limiter's knee, attack and release change during a recording through the schedule, positioned in the input clock and logged; a change scheduled while stopped lands on the recording's first sample. The session's setting changes therefore come from the engine's log in microphone time. Still 020's: the entry's stream word, the flush boundary in the stop's report, the host-input index of a voice-activation event.
 - **018 (built, engine 0.18.0):** the battery voltage is a live unit condition on the playback side (a plain setter and a scheduled change in the output clock; kept through `reset` and `reconfigure`); the meters carry the amplifier's clip count and the ceiling factor, so the amplifier card prints the engine's numbers; the law and the trajectory are engine data. For 020: the session snapshot carries the starting values of the four live controls.
-- **019 (built, engine 0.19.0):** a playback speed-level change is a 20 ms crossfade of the old and the new level, the engine's convention (A-054 amended; the device's own behavior at a change is open, capture P1); a constant level is bit-identical; a request during a blend lands when it ends and every request is logged at its position. The speed card describes a constant level and is unchanged; the timeline marks a change at its logged position.
+- **019 (built, engine 0.19.0):** a playback speed-level change is a 20 ms crossfade of the old and the new level, the engine's convention (A-054 amended; the device's own behavior at a change is open, capture P1); a constant level is bit-identical; a request during a blend lands when it ends and every request is logged at its position. The speed card describes a constant level and is unchanged; the timeline marks a change at its logged position. **023 (built, engine 0.23.0):** a second speed mode keeps the pitch (an engine convention, a time-scaling of the decoded stream); the card names the mode in force, the timeline marks a mode change at its logged position like a level change.
 - **014:** unchanged, plus descriptions of the meter fields, so the app labels them from one source.
 - **Chore:** an Android arm64 golden target before case files are shared across platforms.
 

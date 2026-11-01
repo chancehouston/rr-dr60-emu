@@ -70,7 +70,7 @@ impl SpeedMode {
 }
 
 /// The number of speed modes (spec 023 D1).
-pub const MODE_COUNT: u32 = 2; // 023 D1
+pub const MODE_COUNT: u32 = 2; // 023 D1, FR-001 (the two candidate mechanisms of A-054)
 
 /// The time-scaler's analysis frame in device samples (spec 023 D2, research R-02): 20 ms.
 pub const FRAME_SAMPLES: u32 = 120; // engineering target (023 R-02); an engine convention (A-054)
@@ -84,10 +84,10 @@ pub const SEARCH_SAMPLES: u32 = 40; // engineering target (023 R-03, R-06)
 pub const CORRELATION_SAMPLES: u32 = 60; // engineering target (023 R-03)
 /// The most device samples the pitch-kept tail adds after a recording's own part, before the
 /// drain (spec 023 D4, research R-06: 120 − ((own − origin) mod 60), or 60).
-pub const MAX_PITCH_KEPT_TAIL_SAMPLES: u32 = 120; // 023 R-06 (a grid bound; Δ < Ss)
+pub const MAX_PITCH_KEPT_TAIL_SAMPLES: u32 = 120; // 023 R-06, FR-005 (a grid bound; Δ < Ss; engineering target)
 /// The most device samples the audio heard in pitch-kept mode can sit from the place the
 /// progress reports (spec 023 D5: Δ + 59·|1 − r| at levels 1 and 5; 52 at 2 and 4).
-pub const MAX_PITCH_KEPT_OFFSET_SAMPLES: u32 = 64; // 023 R-05 (the plan review's coach 3)
+pub const MAX_PITCH_KEPT_OFFSET_SAMPLES: u32 = 64; // 023 R-05, FR-004 (the plan review's coach 3; engineering target)
 
 /// The speed ratio of `level` (1 … 5) as a number, for display only; `None` for any other
 /// level. The engine counts places in exact fifths and never uses this value.

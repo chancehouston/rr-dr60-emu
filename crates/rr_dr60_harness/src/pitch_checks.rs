@@ -1040,10 +1040,10 @@ pub fn lengths(make: Make<'_>, rate: u32) -> Vec<MeasurementResult> {
 }
 
 /// US2 AS2 (FR-006): the reading A/B on the off-grid tone at 6 kHz: a level change a → b at
-/// output s in pitch-kept mode; A the worst-window spurious reading over the 100 ms after the
-/// change, B the held level b's over its middle: A ≤ B + 1 dB (the `restart_overlap` mutant
-/// reported beside it); the place's ratio changes at s and the next frame reads it within 60
-/// outputs.
+/// output s in pitch-kept mode; A the worst-window spurious reading over the 200 ms after the
+/// change, B the held level b's over the same output window: A ≤ B + 1 dB (the
+/// `restart_overlap` mutant reported beside it, failing on at least one pair); the place's
+/// ratio changes at s and the next frame reads it within 60 outputs.
 pub fn level_change_rows(make: Make<'_>) -> Vec<MeasurementResult> {
     let x = tone(OFFGRID_HZ, 2.0);
     let mut rows = Vec::new();
@@ -1086,8 +1086,10 @@ pub fn level_change_rows(make: Make<'_>) -> Vec<MeasurementResult> {
         let reading = |y: &[f32], from: usize, len: usize| {
             spurious_worst_window_db(&y[from..from + len], 6000, OFFGRID_HZ)
         };
+        // The same 1200-output window at s in each run (a stationary tone: the held level's
+        // own reading there is the floor the change is measured against).
         let a_db = reading(&changed.out, s, 1200);
-        let b_db = reading(&held.out, 1200, held.out.len() - 2400);
+        let b_db = reading(&held.out, s, 1200);
         let m_db = reading(&mutated.out, s, 1200);
         let stim = format!("stored 1234.5 Hz -6 dBFS, L{a} -> L{b} at {s}, PitchKept");
         rows.push(row(

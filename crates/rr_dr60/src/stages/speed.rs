@@ -69,11 +69,11 @@ const FADE_N: u32 = crate::speed::CROSSFADE_SAMPLES;
 /// The time-scaler's frame, hop, search window and correlation length (spec 023 D2).
 const FRAME: usize = crate::speed::FRAME_SAMPLES as usize; // 023 R-02
 const HOP: usize = crate::speed::HOP_SAMPLES as usize; // 023 R-02
-const SEARCH: i64 = crate::speed::SEARCH_SAMPLES as i64; // 023 R-03
+const SEARCH: i64 = crate::speed::SEARCH_SAMPLES as i64; // 023 R-03 (engineering target)
 const CORR: usize = crate::speed::CORRELATION_SAMPLES as usize; // 023 R-03
 /// The search buffer: the candidates' span, 2Δ + Lc = 140 stored samples (research R-03).
-const SEARCH_SPAN: usize = 2 * SEARCH as usize + CORR;
-const _: () = assert!(FRAME == 2 * HOP && (SEARCH as usize) < HOP && CORR == HOP); // 023 R-06's proof needs Δ < Ss
+const SEARCH_SPAN: usize = 2 * SEARCH as usize + CORR; // 023 R-03 (engineering target)
+const _: () = assert!(FRAME == 2 * HOP && (SEARCH as usize) < HOP && CORR == HOP); // 023 R-06's proof needs Δ < Ss (engineering target)
 /// The shift trace reserved at construction (the golden's digest; a test hook).
 #[cfg(feature = "__test-hooks")]
 const SHIFT_TRACE_CAPACITY: usize = 8192; // engineering target (023 R-12)
