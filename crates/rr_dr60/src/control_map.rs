@@ -238,6 +238,14 @@ fn exhaustive(s: &Settings) {
     } = *s;
 }
 
+/// The settings field of control `index`, if it is one.
+pub(crate) fn setting_access(index: u32) -> Option<SettingAccess> {
+    match TARGETS.get(index as usize) {
+        Some(Target::Setting(a)) => Some(*a),
+        _ => None,
+    }
+}
+
 /// The value of field `a` in `s`.
 pub(crate) fn get(s: &Settings, a: SettingAccess) -> ControlReading {
     use ControlReading::{Choice, Continuous, Integer, Switch};
@@ -294,13 +302,26 @@ pub(crate) fn finite(index: u32, r: ControlReading) -> Result<f32, Error> {
     }
 }
 
-/// Writes field `a` of `s` from `r`, checking representability only (spec 025 D3).
+/// Writes field `a` of `s` from `r`, checking representability only (spec 025 D3). With
+/// `keep_sign` a continuous −0.0 is stored as given (the processing record's exact round trip);
+/// otherwise as 0.0.
 pub(crate) fn set(
     s: &mut Settings,
     a: SettingAccess,
     index: u32,
     r: ControlReading,
+    keep_sign: bool,
 ) -> Result<(), Error> {
+    let finite = |index, r| {
+        if keep_sign {
+            match r {
+                ControlReading::Continuous(v) if v.is_finite() => Ok(v),
+                _ => Err(refuse(index, r)),
+            }
+        } else {
+            finite(index, r)
+        }
+    };
     use ControlReading::{Choice, Integer, Switch};
     let bad = || refuse(index, r);
     let switch = |r: ControlReading| match r {
@@ -391,7 +412,7 @@ pub fn set_settings_value(
     return __hooks::set_settings_value_with(MapMutation::default(), s, index, reading);
     #[cfg(not(feature = "__test-hooks"))]
     match target(index)? {
-        Target::Setting(a) => set(s, a, index, reading),
+        Target::Setting(a) => set(s, a, index, reading, false),
         Target::Live(_) => Err(Error::NotASetting { control: index }),
     }
 }
@@ -608,7 +629,7 @@ pub mod __hooks {
                         return Ok(());
                     }
                 }
-                set(s, a, index, reading)
+                set(s, a, index, reading, false)
             }
             Target::Live(_) => Err(Error::NotASetting { control: index }),
         }
@@ -687,7 +708,7 @@ mod tests {
                     match target(i as u32).unwrap() {
                         Target::Setting(a) => {
                             let mut s = Settings::new(48_000);
-                            set(&mut s, a, i as u32, r)
+                            set(&mut s, a, i as u32, r, false)
                                 .unwrap_or_else(|_| panic!("{} {}", e.identifier, o.identifier));
                             assert_eq!(get(&s, a), r, "{} {}", e.identifier, o.identifier);
                         }
