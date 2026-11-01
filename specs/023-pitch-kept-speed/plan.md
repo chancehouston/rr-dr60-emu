@@ -2,11 +2,11 @@
 
 **Branch**: `023-pitch-kept-speed` | **Date**: 2026-10-31 | **Spec**: [spec.md](spec.md)
 
-**Input**: Feature specification from `/specs/023-pitch-kept-speed/spec.md` (approved D1 – D11, 2026-10-31; D12 from the plan reviews, awaiting the owner)
+**Input**: Feature specification from `/specs/023-pitch-kept-speed/spec.md` (approved D1 – D12 and the plan, 2026-10-31)
 
 ## Decisions and findings (owner: read this section)
 
-The spec's D1 – D11 stand. The three plan reviews (coach 1 – 16, hardware B1 – B8 with a simulation of the plan's rules, product M1 – M9; 2026-10-31) are applied at their defaults; one finding is a **new decision for the owner**:
+The spec's D1 – D11 stand. The three plan reviews (coach 1 – 16, hardware B1 – B8 with a simulation of the plan's rules, product M1 – M9; 2026-10-31) are applied at their defaults; one finding was a new decision, **D12, approved by the owner 2026-10-31** at the recommendation:
 
 - **D12 (hardware B3, Critical): the change into level 3 in pitch-kept mode is a 20 ms fade from the frozen time-scaler to the identity.** The plan's first rule (the current frame's remaining overlap onto the identity) swaps the dominant branch at a weight near one and reads up to 13 dB worse than an instant step on a late landing; the fade reads at the held floor on every row. Recommended: the fade. Alternative: a wait to the next hop boundary (10 dB worse).
 
@@ -85,4 +85,4 @@ docs, product notes, registers, CLAUDE.md per records.md
 
 ## Reviews
 
-The coach (1 – 16), the hardware-emulation reviewer (B1 – B8, with `scratchpad/wsola_plan.py`, the seed of the design script's `--pitch-kept`) and the product specialist (M1 – M9) reviewed this plan on 2026-10-31; every finding is applied above and in the design documents at the reviewers' defaults, and the spec carries the restatements as a dated Clarifications session. D12 is the one new decision, for the owner's plan sign-off.
+The coach (1 – 16), the hardware-emulation reviewer (B1 – B8, with `scratchpad/wsola_plan.py`, the seed of the design script's `--pitch-kept`) and the product specialist (M1 – M9) reviewed this plan on 2026-10-31; every finding is applied above and in the design documents at the reviewers' defaults, and the spec carries the restatements as a dated Clarifications session. D12 and the plan were approved by the owner on 2026-10-31.

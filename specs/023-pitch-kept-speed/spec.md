@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-31
 
-**Status**: Spec approved by the owner 2026-10-31 (D1 – D11, D11 free via the curated-values rule); plan reviewed 2026-10-31 (coach 1 – 16, hardware B1 – B8, product M1 – M9); **D12 awaits the owner** (the change into level 3 in pitch-kept mode)
+**Status**: Spec approved by the owner 2026-10-31 (D1 – D11, D11 free via the curated-values rule); plan reviewed 2026-10-31 (coach 1 – 16, hardware B1 – B8, product M1 – M9); D12 approved by the owner 2026-10-31 (the into-3 fade); plan approved 2026-10-31; tasks
 
 **Input**: User description: "023 pitch-kept playback speed as an option (mechanism c1; the owner's road to 1.0, decisions.md 2026-10-31). As an app user reviewing a recording, I want to slow a playback down (or speed it up) at the device's five levels without the voice dropping or rising in pitch, selectable as an option beside the modeled default, so that a slowed passage keeps its pitch; as an app developer I want it as one more live control with the same live-change, scheduling, logging, length and progress rules the speed level already has."
 
@@ -28,6 +28,10 @@ The owner reads this section first. Each decision gives the recommendation; the 
 | D11 | **The app's tier** (product M1; an app rule, not an engine field): the kind rule puts the knob in the Workbench, and the curated-values rule of 1.0-feature-set.md § 5 lets the free app offer the pitch-kept value as a curated setting of the device's own speed control (a "Pitch kept (engine option)" switch beside the free speed control; "Pitch follows speed (modeled default)" the other label); the Workbench gets nothing new from this spec. If a capture shows the device keeps pitch, the option becomes the device default by a CHANGELOG-recorded assumption change. | **Free via the curated-values rule, kind unchanged** (alternatives: Workbench by kind; a fifth kind "candidate device behavior", free by rule) |
 
 ## Clarifications
+
+### Session 2026-10-31 (the owner's plan sign-off)
+
+- The owner approved **D12 as recommended** (a 20 ms fade from the frozen time-scaler to the identity on a change into level 3 in pitch-kept mode) and the plan (P1 – P9 with the three plan reviews applied). The next owner stop is the merge.
 
 ### Session 2026-10-31 (the plan reviews: coach 1 – 16, hardware B1 – B8, product M1 – M9; dated restatements)
 
