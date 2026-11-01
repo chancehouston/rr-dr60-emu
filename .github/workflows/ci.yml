@@ -115,6 +115,10 @@ jobs:
         run: |
           cbindgen --config crates/rr_dr60_ffi/cbindgen.toml --crate rr_dr60_ffi --output crates/rr_dr60_ffi/include/rr_dr60.h
           git diff --exit-code crates/rr_dr60_ffi/include/rr_dr60.h
+      - name: The 0.22 ABI promise (spec 023 FR-008, US2 AS6)
+        # 0.22's C smoke, compiled against 0.22's header, linked to this library: exit 0 and
+        # every mode byte-identical to the current smoke's.
+        run: scripts/abi-promise.sh 12a3c45
 
   coverage:
     # Constitution III: workspace line coverage >= 80%, enforced as soon as the workspace exists.
@@ -122,10 +126,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: The 0.22 ABI promise (spec 023 FR-008, US2 AS6)
-        # 0.22's C smoke, compiled against 0.22's header, linked to this library: exit 0 and
-        # every mode byte-identical to the current smoke's.
-        run: scripts/abi-promise.sh 12a3c45
       - name: Install toolchain from rust-toolchain.toml
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2

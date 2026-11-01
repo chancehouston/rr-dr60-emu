@@ -17,6 +17,8 @@ cd "$root"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/include"
+# A shallow checkout (CI) may not hold the revision: fetch it alone.
+git cat-file -e "$rev^{commit}" 2>/dev/null || git fetch --depth=1 origin "$rev"
 git show "$rev:crates/rr_dr60_ffi/include/rr_dr60.h" > "$work/include/rr_dr60.h"
 git show "$rev:crates/rr_dr60_ffi/tests/c/smoke.c" > "$work/smoke.c"
 cargo build -p rr_dr60_ffi --release
