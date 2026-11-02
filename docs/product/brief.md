@@ -62,7 +62,7 @@ Modes define the task; both share the recording engine and the explorable intern
 - **Agreed:** skins are a later appearance layer. A Winamp-inspired skin stays on the future design list.
 - **Agreed:** a skin changes materials, colours and meter styling, never function.
 
-### The back as a workbench
+### The back as the inside (the screen named "Inside", 2026-11-02)
 
 Dossier concept 03 shows the back as a workbench of modules in a phone-sized "VST character": distinct modules, tactile controls, responsive meters, inside the removed-back-panel metaphor.
 

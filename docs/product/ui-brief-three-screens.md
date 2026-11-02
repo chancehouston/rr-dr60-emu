@@ -1,6 +1,6 @@
 # UI brief: the three screens (for comps)
 
-A plain-language description of the app for making visual comps. It deliberately leaves out engineering terms; the visual direction is the design dossier of 15 October 2026 (`design-dossier-2026-10-15.pdf`, pages 2 – 4): a vintage pocket recorder on the front, a theatrical field instrument for investigations, and a modular workbench styled like audio plug-in hardware, all designed for a phone held in one hand.
+A plain-language description of the app for making visual comps. It deliberately leaves out engineering terms; the visual direction is the design dossier of 15 October 2026 (`design-dossier-2026-10-15.pdf`, pages 2 – 4): a vintage pocket recorder on the front, a theatrical field instrument for investigations, and the inside, a modular bench of components styled like audio plug-in hardware, all designed for a phone held in one hand.
 
 ## What the app is
 
@@ -40,7 +40,7 @@ One screen with two faces. It is either the live investigation or the review of 
 What it shows, stacked on one tall screen:
 
 - The audio, recording through the same recorder as screen 1, with its level and elapsed time.
-- Live readings from the phone's own sensors: magnetic field, motion, air pressure, and the ambient light and sound level if we show them. Each reading is a labelled instrument with its current value and a small recent-history trace.
+- Live readings from the phone's own sensors: magnetic field, motion and air pressure. *(The ambient light and sound level come after 1.0, decided 2026-11-02.)* Each reading is a labelled instrument with its current value and a small recent-history trace.
 - A session clock that everything is stamped against.
 - A "mark this moment" button for the user to flag something while it happens, with an optional quick note or a spoken note.
 - A record/stop control that is always reachable, and the recorder's own controls (sensitivity, speed) within reach.
@@ -70,7 +70,7 @@ How it behaves:
 
 Feel: dossier page 3 for both faces. Brass, glowing elements and dials are welcome as atmosphere; the numbers, traces and marks must stay plainly readable and visibly separate from the decoration. Nothing in the interface should suggest that a reading or a sound means anything beyond what it is; the app describes what it measured and what it recorded, never what it found.
 
-## Screen 3: the workbench (the inside)
+## Screen 3: the inside
 
 The back of the recorder, opened up: the chain of components the sound passes through, as a stack of modules. The look is dossier page 4: audio-plug-in character, large tactile controls, responsive meters, designed for a phone rather than a desktop.
 
