@@ -2269,3 +2269,113 @@ mod pitch {
         }
     }
 }
+
+mod settings_read {
+    //! Spec 025 (research R-07; tasks.md T010): the mapping's mutants, each caught by its named
+    //! oracle; the committed engine passes every one. The whole-structure round-trip mutant of
+    //! the C write is the FFI crate's `whole_struct_round_trip_mutant_is_caught`.
+    use rr_dr60::control_map::__hooks::{
+        control_value_with, set_control_value_with, set_settings_value_with,
+    };
+    use rr_dr60::control_map::{ControlReading, MapMutation};
+    use rr_dr60::controls::controls;
+    use rr_dr60::{Pipeline, Settings};
+    use rr_dr60_harness::configs;
+    use rr_dr60_harness::settings_read_checks as sr;
+
+    /// The C one-hot oracle through the Rust write: every settings index written with
+    /// `m`, converted to C by `configs::c_settings`, equals the struct set by name.
+    fn one_hot_fails(m: MapMutation) -> usize {
+        let base = Settings::new(48_000);
+        let cbase = configs::c_settings(&base);
+        let mut failures = 0;
+        for (i, e) in controls().iter().enumerate() {
+            let i = i as u32;
+            if rr_dr60::control_map::settings_value(&base, i).is_err() {
+                continue;
+            }
+            let r = sr::one_hot_value(i);
+            let mut s = base;
+            let ok = set_settings_value_with(m, &mut s, i, r).is_ok();
+            let mut want = cbase;
+            sr::set_by_name(&mut want, e.identifier, r);
+            if !ok || configs::c_settings(&s) != want {
+                failures += 1;
+            }
+        }
+        failures
+    }
+
+    /// The representability row: 259 for the sensitivity and the speed level is refused.
+    fn wide_accepted(m: MapMutation) -> bool {
+        let mut s = Settings::new(48_000);
+        let sens = set_settings_value_with(m, &mut s, 15, ControlReading::Integer(259)).is_ok();
+        let mut p = Pipeline::new(Settings::new(48_000)).unwrap();
+        let lvl = set_control_value_with(m, &mut p, 2, ControlReading::Integer(259)).is_ok();
+        sens || lvl
+    }
+
+    /// The live read row: a set value reads back.
+    fn live_read_wrong(m: MapMutation) -> bool {
+        let mut p = Pipeline::new(Settings::new(48_000)).unwrap();
+        sr::live_cases().iter().any(|&(i, r, _, _)| {
+            p.set_control_value(i, r).unwrap();
+            control_value_with(m, &p, i).unwrap() != r
+        })
+    }
+
+    #[test]
+    fn the_committed_map_passes() {
+        let none = MapMutation::default();
+        assert_eq!(one_hot_fails(none), 0);
+        assert!(!wide_accepted(none));
+        assert!(!live_read_wrong(none));
+    }
+
+    #[test]
+    fn index_plus_one_is_caught_by_the_one_hot() {
+        let m = MapMutation {
+            index_plus_one: true,
+            ..MapMutation::default()
+        };
+        assert!(one_hot_fails(m) > 0);
+    }
+
+    #[test]
+    fn attack_release_swap_is_caught_by_the_one_hot() {
+        let m = MapMutation {
+            attack_release_swapped: true,
+            ..MapMutation::default()
+        };
+        assert_eq!(one_hot_fails(m), 2);
+    }
+
+    #[test]
+    fn speaker_earphone_swap_is_caught_by_the_one_hot() {
+        let m = MapMutation {
+            speaker_earphone_swapped: true,
+            ..MapMutation::default()
+        };
+        assert_eq!(one_hot_fails(m), 2);
+    }
+
+    #[test]
+    fn wide_wrap_is_caught_by_the_representability_row() {
+        let m = MapMutation {
+            wide_integer_wraps: true,
+            ..MapMutation::default()
+        };
+        assert!(wide_accepted(m));
+        assert_eq!(one_hot_fails(m), 0, "the one-hot alone cannot see it");
+    }
+
+    #[test]
+    fn stale_read_is_caught_by_the_live_read_row() {
+        let m = MapMutation {
+            default_not_live: true,
+            ..MapMutation::default()
+        };
+        assert!(live_read_wrong(m));
+        assert_eq!(one_hot_fails(m), 0, "the one-hot alone cannot see it");
+    }
+}

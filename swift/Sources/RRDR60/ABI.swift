@@ -26,6 +26,9 @@ public enum ABIMismatch: Error, Equatable, Sendable {
 public enum RRDR60Error: Error, Equatable, Sendable {
     /// `rr_dr60_abi_check` refused this header against this library.
     case abiMismatch(reason: ABIMismatch)
+    /// A library call refused with this `RR_DR60_STATUS_*` value (spec 025: the reads and
+    /// writes by control index).
+    case status(Int32)
 }
 
 public enum RRDR60 {
@@ -40,9 +43,10 @@ public enum RRDR60 {
     /// package's first library call.
     static let abiStatus: Int32 = rr_dr60_abi_check(headerVersion, pointerSize, settingsSize, vasEventSize, changeEntrySize)
 
-    /// Test-only: a status that replaces the library's answer (the package's tests exercise the
-    /// mismatch path with it; never set by an app).
-    nonisolated(unsafe) static var abiOverride: Int32?
+    /// Test-only: a status that replaces the library's answer within one task (the package's
+    /// tests exercise the mismatch path with `$abiOverride.withValue`; task-local, so tests running
+    /// in parallel never see it; never set by an app).
+    @TaskLocal static var abiOverride: Int32?
 
     /// Whether the header matches the library.
     public static var abiOK: Bool { (abiOverride ?? abiStatus) == Int32(RR_DR60_STATUS_OK.rawValue) }

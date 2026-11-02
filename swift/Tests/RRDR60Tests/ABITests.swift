@@ -82,17 +82,16 @@ private func sizedMatches<T: RRDR60Sized>(_: T.Type) -> Bool {
     #expect(RRDR60.mismatchReason(version: 1, pointerSize: 8, settingsSize: 120, vasEventSize: 24, changeEntrySize: 40) == .vasEventSize)
     #expect(RRDR60.mismatchReason(version: 1, pointerSize: 8, settingsSize: 120, vasEventSize: 16, changeEntrySize: 48) == .changeEntrySize)
     // A library refusal with every header comparison holding names the status (coach 9, B2).
-    RRDR60.abiOverride = Int32(RR_DR60_STATUS_ABI_MISMATCH.rawValue)
-    defer { RRDR60.abiOverride = nil }
-    #expect(!RRDR60.abiOK)
-    #expect(throws: RRDR60Error.abiMismatch(reason: .libraryRefused(status: Int32(RR_DR60_STATUS_ABI_MISMATCH.rawValue)))) {
-        try RRDR60.checkABI()
+    try RRDR60.$abiOverride.withValue(Int32(RR_DR60_STATUS_ABI_MISMATCH.rawValue)) {
+        #expect(!RRDR60.abiOK)
+        #expect(throws: RRDR60Error.abiMismatch(reason: .libraryRefused(status: Int32(RR_DR60_STATUS_ABI_MISMATCH.rawValue)))) {
+            try RRDR60.checkABI()
+        }
+        // The package's entry points consult the check before any library call (coach 2).
+        #expect(throws: RRDR60Error.self) { try ProcessingRecord.read([1, 2, 3]) }
+        #expect(throws: RRDR60Error.self) { try ProcessingRecord.changes(of: [1, 2, 3], count: 0) }
+        #expect(throws: RRDR60Error.self) { try ProcessingRecord.reRender(record: [1, 2, 3], raw: []) }
     }
-    // The package's entry points consult the check before any library call (coach 2).
-    #expect(throws: RRDR60Error.self) { try ProcessingRecord.read([1, 2, 3]) }
-    #expect(throws: RRDR60Error.self) { try ProcessingRecord.changes(of: [1, 2, 3], count: 0) }
-    #expect(throws: RRDR60Error.self) { try ProcessingRecord.reRender(record: [1, 2, 3], raw: []) }
-    RRDR60.abiOverride = nil
     let unreadable = try ProcessingRecord.read([1, 2, 3])
     #expect(unreadable == nil, "an unreadable record is nil, not an error")
     // The C check itself, each argument wrong alone.

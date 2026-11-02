@@ -27,6 +27,7 @@ pub mod pitch_checks;
 pub mod record_checks;
 pub mod record_contract_checks;
 pub mod report;
+pub mod settings_read_checks;
 pub mod smoke_reference;
 pub mod speed_checks;
 pub mod split_checks;

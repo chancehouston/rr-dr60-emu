@@ -208,6 +208,7 @@ pub mod speech_codec {
 pub mod battery;
 pub mod changes;
 mod codec;
+pub mod control_map;
 pub mod controls;
 pub mod digest;
 mod error;

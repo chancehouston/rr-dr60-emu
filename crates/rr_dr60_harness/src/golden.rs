@@ -1430,13 +1430,14 @@ const GOLDEN_CHANGES_0_18_SHA256: &str =
 
 /// Whether the committed golden `name` is still version 0.18's (its SHA-256 equals `sha`).
 fn committed_is_0_18(name: &str, sha: &str) -> bool {
-    let bytes = std::fs::read(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("golden")
-            .join(name),
-    )
-    .expect("the committed golden");
-    let hex: String = Sha256::digest(&bytes)
+    // The embedded files, not a path read at run time: the device golden check runs these
+    // binaries on a phone, where the build machine's paths do not exist.
+    let bytes: &[u8] = match name {
+        "golden-speed-v1.json" => include_bytes!("../golden/golden-speed-v1.json"),
+        "golden-changes-v1.json" => include_bytes!("../golden/golden-changes-v1.json"),
+        _ => panic!("no embedded golden {name}"),
+    };
+    let hex: String = Sha256::digest(bytes)
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
@@ -1480,7 +1481,8 @@ pub fn speed_re_bless_gate() {
 ///
 /// If the embedded file is not valid golden JSON.
 pub fn committed_speed() -> GoldenFile {
-    load(&path_speed()).expect("golden-speed-v1.json")
+    serde_json::from_str(include_str!("../golden/golden-speed-v1.json"))
+        .expect("golden-speed-v1.json")
 }
 
 /// The path of `golden/golden-speed-v1.json`.

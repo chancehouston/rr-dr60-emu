@@ -28,6 +28,9 @@ fn sizes_are_pinned() {
     assert_eq!(size_of::<RrDr60StopFields>(), 40);
     assert_eq!(size_of::<RrDr60RunData>(), 80);
     assert_eq!(size_of::<RrDr60Settings>(), 120);
+    assert_eq!(size_of::<RrDr60ControlReading>(), 24); // spec 025 R-02
+    assert_eq!(offset_of!(RrDr60ControlReading, int_value), 8);
+    assert_eq!(offset_of!(RrDr60ControlReading, float_value), 16);
     // The offsets the pass pins (D9, R-03).
     assert_eq!(offset_of!(RrDr60StopOutcome, kept), 48);
     assert_eq!(offset_of!(RrDr60StopOutcome, padding_start_sample), 80);
@@ -67,6 +70,8 @@ fn published_lists_end_in_size_of() {
     check::<RrDr60RecordReadout>(READOUT_PUBLISHED);
     check::<RrDr60InputAlignment>(ALIGNMENT_PUBLISHED);
     check::<RrDr60PlaceState>(PLACE_STATE_PUBLISHED);
+    check::<RrDr60ControlReading>(READING_PUBLISHED);
+    assert_eq!(READING_PUBLISHED, &[24]);
     assert_eq!(METERS_PUBLISHED, &[56, 64]);
     assert_eq!(READOUT_PUBLISHED, &[376]);
 }
@@ -212,6 +217,7 @@ fn write_sized_every_out_struct_four_cases() {
     cases::<RrDr60RecordReadout>(READOUT_PUBLISHED, padding_of("RrDr60RecordReadout"));
     cases::<RrDr60InputAlignment>(ALIGNMENT_PUBLISHED, padding_of("RrDr60InputAlignment"));
     cases::<RrDr60PlaceState>(PLACE_STATE_PUBLISHED, padding_of("RrDr60PlaceState"));
+    cases::<RrDr60ControlReading>(READING_PUBLISHED, padding_of("RrDr60ControlReading"));
 }
 
 /// Every out-struct's padding runs on 64-bit targets (research R-03): the four-cases test and
@@ -367,9 +373,10 @@ fn default_is_zeroed_plus_size() {
     check::<RrDr60RecordReadout>("RrDr60RecordReadout");
     check::<RrDr60InputAlignment>("RrDr60InputAlignment");
     check::<RrDr60PlaceState>("RrDr60PlaceState");
+    check::<RrDr60ControlReading>("RrDr60ControlReading");
 }
 
-const OUT_STRUCTS: [&str; 15] = [
+const OUT_STRUCTS: [&str; 16] = [
     "RrDr60BlockInfo",
     "RrDr60RecordInfo",
     "RrDr60StopOutcome",
@@ -385,6 +392,7 @@ const OUT_STRUCTS: [&str; 15] = [
     "RrDr60RecordReadout",
     "RrDr60InputAlignment",
     "RrDr60PlaceState",
+    "RrDr60ControlReading", // spec 025
 ];
 
 /// The construction rule, mechanically (coach 5): no out-struct derives `Default`, and no
@@ -456,6 +464,8 @@ fn scan_source(src: &str) -> Vec<String> {
 #[test]
 fn no_out_struct_derives_default_and_no_whole_writes() {
     let findings = scan_source(include_str!("lib.rs"));
+    assert!(findings.is_empty(), "{findings:?}");
+    let findings = scan_source(include_str!("settings_read.rs"));
     assert!(findings.is_empty(), "{findings:?}");
     // The scan has teeth: a doctored source fails on both rules.
     let doctored = "#[repr(C)]\n#[derive(Clone, Copy, Default)]\npub struct RrDr60BlockInfo {\n}\npub unsafe extern \"C\" fn f(out: *mut RrDr60BlockInfo) {\n    unsafe { put(out, v) };\n}\n    fn fill(&mut self, r: &R) {\n        self.settings = settings_to_c(&r.settings);\n    }\n";
@@ -1143,4 +1153,414 @@ fn status_and_constant_data_order() {
         RrDr60Status::Ok
     );
     assert_eq!(ci2.size(), 28);
+}
+
+// ---- Spec 025: the settings read and the control reading (the Miri filter
+// `abi_tests::settings_read abi_tests::control_reading`). -------------------------------------
+
+/// The settings struct's four implicit padding runs (64-bit; READOUT_PADDING's embedded runs).
+const SETTINGS_PADDING: [(usize, usize); 4] = [(10, 12), (25, 28), (49, 52), (73, 76)];
+
+/// `rr_dr60_get_settings`: the handle first, then the pointer, then the size (equal to the
+/// settings size); on success the structure in place, its padding zero, nothing past it.
+#[test]
+fn settings_read_order_and_fill() {
+    let mut b = Painted::new(120);
+    // SAFETY: a NULL handle is refused.
+    assert_eq!(
+        unsafe { rr_dr60_get_settings(core::ptr::null_mut(), b.ptr()) },
+        RrDr60Status::NullPointer
+    );
+    assert!(b.untouched_after(4));
+    let h = handle();
+    // SAFETY: a live handle, a NULL out.
+    assert_eq!(
+        unsafe { rr_dr60_get_settings(h, core::ptr::null_mut()) },
+        RrDr60Status::NullPointer
+    );
+    for size in [0, 119, 121, 4096] {
+        let mut b = Painted::new(size);
+        // SAFETY: a live handle, a painted buffer.
+        assert_eq!(
+            unsafe { rr_dr60_get_settings(h, b.ptr()) },
+            RrDr60Status::InvalidArgument,
+            "{size}"
+        );
+        assert!(b.untouched_after(4));
+    }
+    let mut b = Painted::new(120);
+    // SAFETY: as above.
+    assert_eq!(
+        unsafe { rr_dr60_get_settings(h, b.ptr()) },
+        RrDr60Status::Ok
+    );
+    for (lo, hi) in SETTINGS_PADDING {
+        assert!(b.zero_in(lo, hi), "padding {lo}..{hi}");
+    }
+    assert!(b.untouched_after(120));
+    // SAFETY: the buffer holds a filled settings struct now (8-aligned, 120 bytes).
+    let got = unsafe { b.ptr::<RrDr60Settings>().read() };
+    assert_eq!(to_settings(&got).unwrap(), Settings::new(48_000));
+    // SAFETY: destroying once.
+    unsafe { rr_dr60_destroy(h) };
+}
+
+/// `rr_dr60_control_value`: handle, pointer, size, index; a larger size filled to 24 with the
+/// tail zero.
+#[test]
+fn control_reading_engine_order() {
+    let mut b = Painted::new(24);
+    // SAFETY: a NULL handle.
+    assert_eq!(
+        unsafe { rr_dr60_control_value(core::ptr::null_mut(), 0, b.ptr()) },
+        RrDr60Status::NullPointer
+    );
+    let h = handle();
+    // SAFETY: a NULL out.
+    assert_eq!(
+        unsafe { rr_dr60_control_value(h, 0, core::ptr::null_mut()) },
+        RrDr60Status::NullPointer
+    );
+    for size in [0, 23, 4097] {
+        let mut b = Painted::new(size);
+        // SAFETY: a painted buffer; a bad size wins over a bad index.
+        assert_eq!(
+            unsafe { rr_dr60_control_value(h, 99, b.ptr()) },
+            RrDr60Status::InvalidArgument
+        );
+        assert!(b.untouched_after(4));
+    }
+    let mut b = Painted::new(24);
+    // SAFETY: as above.
+    assert_eq!(
+        unsafe { rr_dr60_control_value(h, 31, b.ptr()) },
+        RrDr60Status::NoSuchControl
+    );
+    assert!(b.untouched_after(4));
+    let mut b = Painted::new(32);
+    // SAFETY: as above; the volume.
+    assert_eq!(
+        unsafe { rr_dr60_control_value(h, 1, b.ptr()) },
+        RrDr60Status::Ok
+    );
+    assert_eq!(b.size(), 24);
+    assert!(b.zero_in(24, 32));
+    assert!(b.untouched_after(32));
+    // SAFETY: 24 bytes filled at an 8-aligned address.
+    let r = unsafe { b.ptr::<RrDr60ControlReading>().read() };
+    assert_eq!(r.value_type, RrDr60ControlValueType::Continuous as u32);
+    assert_eq!(r.float_value, rr_dr60::output::VOLUME_REFERENCE);
+    assert_eq!((r.int_value, r.reserved), (0, 0));
+    // SAFETY: destroying once.
+    unsafe { rr_dr60_destroy(h) };
+}
+
+fn reading(
+    value_type: RrDr60ControlValueType,
+    int_value: u64,
+    float_value: f32,
+) -> RrDr60ControlReading {
+    RrDr60ControlReading {
+        value_type: value_type as u32,
+        int_value,
+        float_value,
+        ..Default::default()
+    }
+}
+
+/// The settings-structure functions read and write only the field: on a structure painted
+/// 0xAA (every switch byte invalid, `tap` and `vas_mode` not options) every write by index
+/// changes exactly the field's bytes, and a read of a switch byte 0xAA (or 2) is refused.
+#[test]
+fn control_reading_field_local() {
+    for (i, f) in settings_read::C_FIELDS.iter().enumerate() {
+        let Some((off, kind)) = *f else { continue };
+        let i = i as u32;
+        let mut b = Painted::new(120);
+        let r = match kind {
+            settings_read::CKind::Switch => reading(RrDr60ControlValueType::Switch, 1, 0.0),
+            settings_read::CKind::Int32 | settings_read::CKind::Int64 => {
+                reading(RrDr60ControlValueType::Integer, 3, 0.0)
+            }
+            settings_read::CKind::Float => reading(RrDr60ControlValueType::Continuous, 0, 1.5),
+            settings_read::CKind::Choice if i == 3 => {
+                reading(RrDr60ControlValueType::Choice, 8000, 0.0)
+            }
+            settings_read::CKind::Choice => reading(RrDr60ControlValueType::Choice, 1, 0.0),
+        };
+        let width = match kind {
+            settings_read::CKind::Switch => 1,
+            settings_read::CKind::Int64 => 8,
+            _ => 4,
+        };
+        let before = b.0;
+        // SAFETY: a 120-byte settings buffer and a local reading.
+        assert_eq!(
+            unsafe { rr_dr60_set_settings_control_value(b.ptr(), i, &r) },
+            RrDr60Status::Ok,
+            "{i}"
+        );
+        for (k, (x, y)) in before.iter().zip(b.0.iter()).enumerate() {
+            if !(off..off + width).contains(&k) {
+                assert_eq!(x, y, "index {i}: byte {k} outside the field moved");
+            }
+        }
+        let mut out = RrDr60ControlReading::default();
+        // SAFETY: as above.
+        assert_eq!(
+            unsafe { rr_dr60_settings_control_value(b.ptr(), i, &mut out) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            (out.value_type, out.int_value, out.float_value),
+            (r.value_type, r.int_value, r.float_value)
+        );
+        if kind == settings_read::CKind::Switch {
+            for bad in [2u8, 0xAA] {
+                b.0[off] = bad;
+                let mut out = Painted::new(24);
+                // SAFETY: as above.
+                assert_eq!(
+                    unsafe { rr_dr60_settings_control_value(b.ptr(), i, out.ptr()) },
+                    RrDr60Status::InvalidArgument
+                );
+                assert!(out.untouched_after(4));
+            }
+        }
+        if kind == settings_read::CKind::Choice {
+            // A stored non-option reads as stored (hardware review B1): a repair screen shows it.
+            b.0[off..off + 4].copy_from_slice(&99u32.to_ne_bytes());
+            let mut out = RrDr60ControlReading::default();
+            // SAFETY: as above.
+            assert_eq!(
+                unsafe { rr_dr60_settings_control_value(b.ptr(), i, &mut out) },
+                RrDr60Status::Ok
+            );
+            assert_eq!((out.value_type, out.int_value), (3, 99));
+        }
+    }
+}
+
+/// The write's refusal order, nothing written on any (D7).
+#[test]
+fn control_reading_settings_write_order() {
+    let ok = reading(RrDr60ControlValueType::Continuous, 0, -3.0);
+    let mut s = rr_dr60_settings_default(48_000);
+    let snapshot = |s: &RrDr60Settings| to_settings(s).unwrap();
+    let base = snapshot(&s);
+    // SAFETY: NULL pointers refused.
+    unsafe {
+        assert_eq!(
+            rr_dr60_set_settings_control_value(core::ptr::null_mut(), 10, &ok),
+            RrDr60Status::NullPointer
+        );
+        assert_eq!(
+            rr_dr60_set_settings_control_value(&mut s, 10, core::ptr::null()),
+            RrDr60Status::NullPointer
+        );
+    }
+    s.struct_size = 119;
+    // SAFETY: local values.
+    assert_eq!(
+        unsafe { rr_dr60_set_settings_control_value(&mut s, 99, &ok) },
+        RrDr60Status::InvalidArgument
+    );
+    s.struct_size = 120;
+    for size in [0, 23, 4097] {
+        let bad = RrDr60ControlReading {
+            struct_size: size,
+            ..ok
+        };
+        // SAFETY: local values; a bad reading size wins over a bad index.
+        assert_eq!(
+            unsafe { rr_dr60_set_settings_control_value(&mut s, 99, &bad) },
+            RrDr60Status::InvalidArgument
+        );
+    }
+    // SAFETY: local values.
+    unsafe {
+        assert_eq!(
+            rr_dr60_set_settings_control_value(&mut s, 31, &ok),
+            RrDr60Status::NoSuchControl
+        );
+        assert_eq!(
+            rr_dr60_set_settings_control_value(&mut s, 1, &ok),
+            RrDr60Status::NotASetting
+        );
+        let wrong = reading(RrDr60ControlValueType::Integer, 3, 0.0);
+        assert_eq!(
+            rr_dr60_set_settings_control_value(&mut s, 10, &wrong),
+            RrDr60Status::InvalidArgument
+        );
+        let nan = reading(RrDr60ControlValueType::Continuous, 0, f32::NAN);
+        assert_eq!(
+            rr_dr60_set_settings_control_value(&mut s, 10, &nan),
+            RrDr60Status::InvalidArgument
+        );
+        let wide = reading(RrDr60ControlValueType::Integer, 256, 0.0);
+        assert_eq!(
+            rr_dr60_set_settings_control_value(&mut s, 15, &wide),
+            RrDr60Status::InvalidArgument
+        );
+        let switch2 = reading(RrDr60ControlValueType::Switch, 2, 0.0);
+        assert_eq!(
+            rr_dr60_set_settings_control_value(&mut s, 9, &switch2),
+            RrDr60Status::InvalidArgument
+        );
+    }
+    assert_eq!(snapshot(&s), base);
+    // A larger reading is read for its first 24 bytes; −0.0 written as 0.0.
+    let neg = RrDr60ControlReading {
+        struct_size: 4096,
+        ..reading(RrDr60ControlValueType::Continuous, 0, -0.0)
+    };
+    let mut big = [0u8; 4096];
+    // SAFETY: `neg` is plain data; 24 bytes copied into a 4096-byte buffer.
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            (&neg as *const RrDr60ControlReading).cast::<u8>(),
+            big.as_mut_ptr(),
+            24,
+        )
+    };
+    // SAFETY: a 4096-byte readable reading.
+    assert_eq!(
+        unsafe { rr_dr60_set_settings_control_value(&mut s, 10, big.as_ptr().cast()) },
+        RrDr60Status::Ok
+    );
+    assert_eq!(s.agc_knee_dbfs.to_bits(), 0.0f32.to_bits());
+}
+
+/// The pointers may alias: a reading laid over the target field is copied before the write.
+#[test]
+fn control_reading_alias() {
+    let mut b = Painted::new(120);
+    let off = core::mem::offset_of!(RrDr60Settings, memory_capacity_s);
+    let r = RrDr60ControlReading {
+        struct_size: 24,
+        ..reading(RrDr60ControlValueType::Integer, 1234, 0.0)
+    };
+    // SAFETY: the reading's 24 bytes copied into the buffer at the field's offset (in bounds).
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            (&r as *const RrDr60ControlReading).cast::<u8>(),
+            b.0.as_mut_ptr().add(off),
+            24,
+        )
+    };
+    // SAFETY: the reading lies inside the settings buffer.
+    let st =
+        unsafe { rr_dr60_set_settings_control_value(b.ptr(), 19, b.0.as_ptr().add(off).cast()) };
+    assert_eq!(st, RrDr60Status::Ok);
+    assert_eq!(
+        u32::from_ne_bytes(b.0[off..off + 4].try_into().unwrap()),
+        1234
+    );
+}
+
+/// `rr_dr60_set_control_value`: handle, pointer, size, index, class, representability, then
+/// the setter's status; nothing changed on any refusal.
+#[test]
+fn control_reading_live_write_order() {
+    let vol = reading(RrDr60ControlValueType::Continuous, 0, 0.5);
+    // SAFETY: a NULL handle.
+    assert_eq!(
+        unsafe { rr_dr60_set_control_value(core::ptr::null_mut(), 1, &vol) },
+        RrDr60Status::NullPointer
+    );
+    let h = handle();
+    // SAFETY: a live handle and local readings throughout.
+    unsafe {
+        assert_eq!(
+            rr_dr60_set_control_value(h, 1, core::ptr::null()),
+            RrDr60Status::NullPointer
+        );
+        let small = RrDr60ControlReading {
+            struct_size: 23,
+            ..vol
+        };
+        assert_eq!(
+            rr_dr60_set_control_value(h, 99, &small),
+            RrDr60Status::InvalidArgument
+        );
+        assert_eq!(
+            rr_dr60_set_control_value(h, 31, &vol),
+            RrDr60Status::NoSuchControl
+        );
+        assert_eq!(
+            rr_dr60_set_control_value(h, 10, &vol),
+            RrDr60Status::NotAPlainLiveControl
+        );
+        let int = reading(RrDr60ControlValueType::Integer, 1, 0.0);
+        assert_eq!(
+            rr_dr60_set_control_value(h, 1, &int),
+            RrDr60Status::InvalidArgument
+        );
+        let nan = reading(RrDr60ControlValueType::Continuous, 0, f32::NAN);
+        assert_eq!(
+            rr_dr60_set_control_value(h, 1, &nan),
+            RrDr60Status::InvalidArgument
+        );
+        let loud = reading(RrDr60ControlValueType::Continuous, 0, 1.5);
+        assert_eq!(
+            rr_dr60_set_control_value(h, 1, &loud),
+            RrDr60Status::InvalidVolume
+        );
+        let lvl = reading(RrDr60ControlValueType::Integer, 6, 0.0);
+        assert_eq!(
+            rr_dr60_set_control_value(h, 2, &lvl),
+            RrDr60Status::InvalidSpeedLevel
+        );
+        let bat = reading(RrDr60ControlValueType::Continuous, 0, 2.0);
+        assert_eq!(
+            rr_dr60_set_control_value(h, 29, &bat),
+            RrDr60Status::InvalidBatteryVolts
+        );
+        let mut v = 0.0f32;
+        assert_eq!(rr_dr60_get_volume(h, &mut v), RrDr60Status::Ok);
+        assert_eq!(v, rr_dr60::output::VOLUME_REFERENCE);
+        assert_eq!(rr_dr60_set_control_value(h, 1, &vol), RrDr60Status::Ok);
+        assert_eq!(rr_dr60_get_volume(h, &mut v), RrDr60Status::Ok);
+        assert_eq!(v, 0.5);
+        rr_dr60_destroy(h);
+    }
+}
+
+/// A poisoned handle keeps its status on the three engine functions, nothing written.
+#[test]
+#[cfg(feature = "ffi-test-panic")]
+fn settings_read_poisoned() {
+    let input = vec![0.1f32; 64];
+    let mut output = vec![0.0f32; 64];
+    let h = handle();
+    // SAFETY: a live handle; the forced panic poisons it.
+    unsafe { rr_dr60__test_force_panic(h) };
+    let mut ok = Painted::new(40);
+    // SAFETY: as above.
+    assert_eq!(
+        unsafe { rr_dr60_process(h, input.as_ptr(), output.as_mut_ptr(), 64, ok.ptr()) },
+        RrDr60Status::InternalError
+    );
+    let mut b = Painted::new(120);
+    let mut r = Painted::new(24);
+    let vol = reading(RrDr60ControlValueType::Continuous, 0, 0.5);
+    // SAFETY: a poisoned handle.
+    unsafe {
+        assert_eq!(
+            rr_dr60_get_settings(h, b.ptr()),
+            RrDr60Status::InternalError
+        );
+        assert_eq!(
+            rr_dr60_control_value(h, 1, r.ptr()),
+            RrDr60Status::InternalError
+        );
+        assert_eq!(
+            rr_dr60_set_control_value(h, 1, &vol),
+            RrDr60Status::InternalError
+        );
+    }
+    assert!(b.untouched_after(4));
+    assert!(r.untouched_after(4));
+    // SAFETY: destroying once.
+    unsafe { rr_dr60_destroy(h) };
 }

@@ -8,7 +8,8 @@ use core::fmt::{self, Write as _};
 use core::str::FromStr;
 
 use crate::changes::{ChangeEntry, STREAM_ONE_PASS, STREAM_PLAYBACK, STREAM_RECORD};
-use crate::controls::{controls, mode_code, mode_from_code, tap_code, tap_from_code};
+use crate::control_map::{self, ControlReading, SettingAccess};
+use crate::controls::controls;
 use crate::digest::Fnv1a64;
 use crate::error::Error;
 use crate::memory::Encoding;
@@ -270,85 +271,45 @@ const SETTING_IDS: [&str; 24] = [
     "mic.hiss_offset_db",
 ];
 
+/// The settings field named `id`, or `None` for a name that is not one of the 24 (the table
+/// filters ahead of the mapping, so `seed`, `host_rate_hz` and the live controls stay unknown
+/// here; spec 025 R-08).
+fn access(id: &str) -> Option<(u32, SettingAccess)> {
+    if !SETTING_IDS.contains(&id) {
+        return None;
+    }
+    let index = controls().iter().position(|e| e.identifier == id)? as u32;
+    Some((index, control_map::setting_access(index)?))
+}
+
 /// The value of setting `id` in `s`, or `None` for a name that is not one of the 24.
 fn get(id: &str, s: &Settings) -> Option<Val> {
-    Some(match id {
-        "record_stage_enabled" => Val::B(s.record_stage_enabled),
-        "playback_stage_enabled" => Val::B(s.playback_stage_enabled),
-        "adc_clamp_enabled" => Val::B(s.adc_clamp_enabled),
-        "tap" => Val::C(tap_code(s.tap)),
-        "agc.enabled" => Val::B(s.agc.enabled),
-        "agc.knee_dbfs" => Val::F(s.agc.knee_dbfs),
-        "agc.attack_ms" => Val::F(s.agc.attack_ms),
-        "agc.release_ms" => Val::F(s.agc.release_ms),
-        "vas.enabled" => Val::B(s.vas.enabled),
-        "vas.mode" => Val::C(mode_code(s.vas.mode)),
-        "vas.sensitivity" => Val::I(u64::from(s.vas.sensitivity)),
-        "vas.threshold_dbfs" => Val::F(s.vas.threshold_dbfs),
-        "vas.hang_ms" => Val::F(s.vas.hang_ms),
-        "vas.onset_ms" => Val::F(s.vas.onset_ms),
-        "memory.capacity_s" => Val::I(u64::from(s.memory.capacity_s)),
-        "memory.max_recordings" => Val::I(u64::from(s.memory.max_recordings)),
-        "speech_codec_enabled" => Val::B(s.speech_codec_enabled),
-        "output.volume_amp_enabled" => Val::B(s.output.volume_amp_enabled),
-        "output.speaker_enabled" => Val::B(s.output.speaker_enabled),
-        "output.earphone_enabled" => Val::B(s.output.earphone_enabled),
-        "output.clamp_enabled" => Val::B(s.output.clamp_enabled),
-        "mic.capsule_enabled" => Val::B(s.mic.capsule_enabled),
-        "mic.amp_enabled" => Val::B(s.mic.amp_enabled),
-        "mic.hiss_offset_db" => Val::F(s.mic.hiss_offset_db),
-        _ => return None,
+    let (_, a) = access(id)?;
+    Some(match control_map::get(s, a) {
+        ControlReading::Switch(b) => Val::B(b),
+        ControlReading::Integer(i) => Val::I(i),
+        ControlReading::Continuous(f) => Val::F(f),
+        ControlReading::Choice(c) => Val::C(c),
     })
 }
 
 /// Sets setting `id` in `s` from `text`: `Ok(true)` set, `Ok(false)` an unknown name,
-/// `Err(())` a value that does not parse for the name's kind.
+/// `Err(())` a value that does not parse for the name's kind or that the field cannot hold.
 fn set(id: &str, s: &mut Settings, text: &str) -> Result<bool, ()> {
-    let kind = match get(id, s) {
-        Some(v) => v,
-        None => return Ok(false),
+    let Some((index, a)) = access(id) else {
+        return Ok(false);
     };
-    let v = match kind {
-        Val::B(_) => Val::B(match text {
+    let r = match control_map::get(s, a) {
+        ControlReading::Switch(_) => ControlReading::Switch(match text {
             "true" => true,
             "false" => false,
             _ => return Err(()),
         }),
-        Val::I(_) => Val::I(parse::<u64>(text)?),
-        Val::F(_) => Val::F(parse_f32(text)?),
-        Val::C(_) => Val::C(parse::<u32>(text)?),
+        ControlReading::Integer(_) => ControlReading::Integer(parse::<u64>(text)?),
+        ControlReading::Continuous(_) => ControlReading::Continuous(parse_f32(text)?),
+        ControlReading::Choice(_) => ControlReading::Choice(parse::<u32>(text)?),
     };
-    match (id, v) {
-        ("record_stage_enabled", Val::B(b)) => s.record_stage_enabled = b,
-        ("playback_stage_enabled", Val::B(b)) => s.playback_stage_enabled = b,
-        ("adc_clamp_enabled", Val::B(b)) => s.adc_clamp_enabled = b,
-        ("tap", Val::C(c)) => s.tap = tap_from_code(c).ok_or(())?,
-        ("agc.enabled", Val::B(b)) => s.agc.enabled = b,
-        ("agc.knee_dbfs", Val::F(f)) => s.agc.knee_dbfs = f,
-        ("agc.attack_ms", Val::F(f)) => s.agc.attack_ms = f,
-        ("agc.release_ms", Val::F(f)) => s.agc.release_ms = f,
-        ("vas.enabled", Val::B(b)) => s.vas.enabled = b,
-        ("vas.mode", Val::C(c)) => s.vas.mode = mode_from_code(c).ok_or(())?,
-        ("vas.sensitivity", Val::I(i)) => s.vas.sensitivity = u8::try_from(i).map_err(|_| ())?,
-        ("vas.threshold_dbfs", Val::F(f)) => s.vas.threshold_dbfs = f,
-        ("vas.hang_ms", Val::F(f)) => s.vas.hang_ms = f,
-        ("vas.onset_ms", Val::F(f)) => s.vas.onset_ms = f,
-        ("memory.capacity_s", Val::I(i)) => {
-            s.memory.capacity_s = u32::try_from(i).map_err(|_| ())?;
-        }
-        ("memory.max_recordings", Val::I(i)) => {
-            s.memory.max_recordings = u32::try_from(i).map_err(|_| ())?;
-        }
-        ("speech_codec_enabled", Val::B(b)) => s.speech_codec_enabled = b,
-        ("output.volume_amp_enabled", Val::B(b)) => s.output.volume_amp_enabled = b,
-        ("output.speaker_enabled", Val::B(b)) => s.output.speaker_enabled = b,
-        ("output.earphone_enabled", Val::B(b)) => s.output.earphone_enabled = b,
-        ("output.clamp_enabled", Val::B(b)) => s.output.clamp_enabled = b,
-        ("mic.capsule_enabled", Val::B(b)) => s.mic.capsule_enabled = b,
-        ("mic.amp_enabled", Val::B(b)) => s.mic.amp_enabled = b,
-        ("mic.hiss_offset_db", Val::F(f)) => s.mic.hiss_offset_db = f,
-        _ => return Err(()),
-    }
+    control_map::set(s, a, index, r, true).map_err(|_| ())?;
     Ok(true)
 }
 
@@ -1500,6 +1461,32 @@ mod tests {
                 field: "stored_unit_count"
             }
         );
+    }
+
+    /// Spec 025 R-08: the table filters ahead of the mapping, so identity and live-control
+    /// names in the settings block stay unknown; a −0.0 value keeps its sign.
+    #[test]
+    fn mapping_keeps_the_table_filter() {
+        let r = readout();
+        let (ev, ch) = rows();
+        let bytes = written(&r, &ev, &ch);
+        let b2 = resign(doctor(
+            &bytes,
+            "setting.tap = 5\n",
+            "setting.tap = 5\nsetting.seed = 1\nsetting.host_rate_hz = 6000\nsetting.route = 1\n",
+        ));
+        let mut got = RecordReadout::default();
+        read(&b2, &mut got).unwrap();
+        assert_eq!(got.unknown_setting_count, 3);
+        assert_eq!(record_unknown_setting(&b2, 0), Some("seed"));
+        assert_eq!(record_unknown_setting(&b2, 1), Some("host_rate_hz"));
+        assert_eq!(record_unknown_setting(&b2, 2), Some("route"));
+        let mut s = Settings::new(48_000);
+        assert_eq!(set("agc.knee_dbfs", &mut s, "-0"), Ok(true));
+        assert_eq!(s.agc.knee_dbfs.to_bits(), (-0.0f32).to_bits());
+        assert_eq!(set("vas.sensitivity", &mut s, "256"), Err(()));
+        assert_eq!(set("tap", &mut s, "11"), Err(()));
+        assert_eq!(set("seed", &mut s, "1"), Ok(false));
     }
 
     #[test]

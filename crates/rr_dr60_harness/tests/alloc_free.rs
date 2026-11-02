@@ -1447,3 +1447,60 @@ fn pitch_allocate_nothing() {
         unsafe { rr_dr60_destroy(handle) };
     }
 }
+
+/// Spec 025 FR-009 (tasks.md T010): every new read and write, accepted and refused, allocates
+/// nothing, in Rust and through the C API.
+#[test]
+fn settings_read_allocate_nothing() {
+    use rr_dr60::Settings;
+    use rr_dr60::control_map::{self, ControlReading};
+    use rr_dr60_ffi::{
+        RrDr60ControlReading, RrDr60Settings, rr_dr60_control_value, rr_dr60_get_settings,
+        rr_dr60_set_control_value, rr_dr60_set_settings_control_value,
+        rr_dr60_setting_field_control, rr_dr60_settings_control_value,
+    };
+    let _turn = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    for &rate in configs::measurement_rates() {
+        let mut p = Pipeline::new(Settings::new(rate)).unwrap();
+        let c = rr_dr60_ffi::rr_dr60_settings_default(rate);
+        let mut handle: *mut RrDr60Pipeline = core::ptr::null_mut();
+        // SAFETY: a valid settings struct and an out-pointer.
+        assert_eq!(unsafe { rr_dr60_create(&c, &mut handle) }, RrDr60Status::Ok);
+        let mut s = Settings::new(rate);
+        let mut cs: RrDr60Settings = c;
+        let mut out = RrDr60ControlReading::default();
+        let mut got = c;
+        let vol = RrDr60ControlReading {
+            value_type: 2,
+            float_value: 0.4,
+            ..Default::default()
+        };
+        let mut idx = 0u32;
+        MEASURING.with(|m| m.set(true));
+        let before = counts();
+        let mut ok = 0usize;
+        for i in 0..32u32 {
+            ok += usize::from(p.control_value(i).is_ok());
+            ok += usize::from(control_map::settings_value(&s, i).is_ok());
+            let _ = control_map::set_settings_value(&mut s, i, ControlReading::Continuous(1.0));
+            let _ = p.set_control_value(i, ControlReading::Continuous(0.4));
+            // SAFETY: a live handle and local values.
+            unsafe {
+                let _ = rr_dr60_control_value(handle, i, &mut out);
+                let _ = rr_dr60_settings_control_value(&cs, i, &mut out);
+                let _ = rr_dr60_set_settings_control_value(&mut cs, i, &vol);
+                let _ = rr_dr60_set_control_value(handle, i, &vol);
+                let _ = rr_dr60_setting_field_control(i, &mut idx);
+            }
+        }
+        // SAFETY: a live handle and a local settings struct.
+        let st = unsafe { rr_dr60_get_settings(handle, &mut got) };
+        let after = counts();
+        MEASURING.with(|m| m.set(false));
+        assert_eq!(st, RrDr60Status::Ok);
+        assert_eq!(ok, 31 + 26, "{rate} Hz: every read ran");
+        assert_eq!(after, before, "{rate} Hz: the settings read allocated");
+        // SAFETY: destroying the handle once.
+        unsafe { rr_dr60_destroy(handle) };
+    }
+}

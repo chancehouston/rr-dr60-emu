@@ -71,3 +71,10 @@ echo "smoke --record matches the Rust example"
 cargo run -q -p rr_dr60_harness --example abi_rows > target/example-abi.txt
 diff target/smoke-abi.txt target/example-abi.txt
 echo "smoke --abi matches the Rust example"
+# Spec 025 T011: the C program's settings rows (the reading's layout, every control's default
+# reading, the bytes a one-hot write by index changes, from the C compiler's own layout) equal
+# the Rust example's (offset_of! and the field assignment by name). Not in the promise loop.
+./target/smoke --settings > target/smoke-settings.txt
+cargo run -q -p rr_dr60_harness --example settings_rows > target/example-settings.txt
+diff target/smoke-settings.txt target/example-settings.txt
+echo "smoke --settings matches the Rust example"

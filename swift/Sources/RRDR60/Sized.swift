@@ -37,3 +37,5 @@ extension RrDr60InputAlignment: RRDR60Sized {}
 extension RrDr60PlaceState: RRDR60Sized {}
 extension RrDr60RunData: RRDR60Sized {}
 extension RrDr60StopFields: RRDR60Sized {}
+// Spec 025: the control reading, filled and read by the reads and writes by control index.
+extension RrDr60ControlReading: RRDR60Sized {}

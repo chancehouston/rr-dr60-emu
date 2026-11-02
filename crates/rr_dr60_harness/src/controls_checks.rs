@@ -895,6 +895,25 @@ pub fn setters(
         .captures_iter(header)
         .map(|cap| cap[1].to_string())
         .collect();
+    // Spec 025: the by-index entry points take a control index, not a value of one control, so
+    // they name no entry (`set_control_value`, `set_settings_value`, their mutation-hook twins,
+    // and the C `rr_dr60_set_control_value` / `rr_dr60_set_settings_control_value`). Exact names
+    // only: any other new setter still needs its entry.
+    const BY_INDEX: [&str; 5] = [
+        "control_value",
+        "settings_value",
+        "control_value_with",
+        "settings_value_with",
+        "settings_control_value",
+    ];
+    let found_core: Vec<(String, String)> = found_core
+        .into_iter()
+        .filter(|(_, n)| !BY_INDEX.contains(&n.as_str()))
+        .collect();
+    let found_c: Vec<String> = found_c
+        .into_iter()
+        .filter(|n| !BY_INDEX.contains(&n.as_str()))
+        .collect();
     let mut f = Vec::new();
     for (path, name) in &found_core {
         if !live.contains(&name.as_str()) {
