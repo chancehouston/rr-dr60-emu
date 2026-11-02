@@ -29,6 +29,15 @@ fn sizes_are_pinned() {
     assert_eq!(size_of::<RrDr60RunData>(), 80);
     assert_eq!(size_of::<RrDr60Settings>(), 120);
     assert_eq!(size_of::<RrDr60ControlReading>(), 24); // spec 025 R-02
+    // Spec 024 D9: the four new structs, no implicit padding.
+    assert_eq!(size_of::<RrDr60InsertionPoint>(), 40);
+    assert_eq!(size_of::<RrDr60Component>(), 48);
+    assert_eq!(size_of::<RrDr60ComponentParameter>(), 56);
+    assert_eq!(size_of::<RrDr60RecordComponent>(), 80);
+    assert_eq!(offset_of!(RrDr60InsertionPoint, paths), 32);
+    assert_eq!(offset_of!(RrDr60Component, latency_samples), 32);
+    assert_eq!(offset_of!(RrDr60ComponentParameter, min), 32);
+    assert_eq!(offset_of!(RrDr60RecordComponent, store), 16);
     assert_eq!(offset_of!(RrDr60ControlReading, int_value), 8);
     assert_eq!(offset_of!(RrDr60ControlReading, float_value), 16);
     // The offsets the pass pins (D9, R-03).
@@ -218,6 +227,14 @@ fn write_sized_every_out_struct_four_cases() {
     cases::<RrDr60InputAlignment>(ALIGNMENT_PUBLISHED, padding_of("RrDr60InputAlignment"));
     cases::<RrDr60PlaceState>(PLACE_STATE_PUBLISHED, padding_of("RrDr60PlaceState"));
     cases::<RrDr60ControlReading>(READING_PUBLISHED, padding_of("RrDr60ControlReading"));
+    // Spec 024 D9.
+    cases::<RrDr60InsertionPoint>(POINT_PUBLISHED, padding_of("RrDr60InsertionPoint"));
+    cases::<RrDr60Component>(COMPONENT_PUBLISHED, padding_of("RrDr60Component"));
+    cases::<RrDr60ComponentParameter>(PARAMETER_PUBLISHED, padding_of("RrDr60ComponentParameter"));
+    cases::<RrDr60RecordComponent>(
+        RECORD_COMPONENT_PUBLISHED,
+        padding_of("RrDr60RecordComponent"),
+    );
 }
 
 /// Every out-struct's padding runs on 64-bit targets (research R-03): the four-cases test and
@@ -235,6 +252,11 @@ fn padding_of(name: &str) -> &'static [(usize, usize)] {
         "RrDr60Control" => &[(4, 8)],
         "RrDr60ControlOption" => &[(4, 8), (20, 24)],
         "RrDr60RecordReadout" => &READOUT_PADDING,
+        // Spec 024: no implicit padding (pinned by the offsets in `sizes_are_pinned`).
+        "RrDr60InsertionPoint"
+        | "RrDr60Component"
+        | "RrDr60ComponentParameter"
+        | "RrDr60RecordComponent" => &[],
         _ => &[],
     }
 }
@@ -1233,7 +1255,7 @@ fn control_reading_engine_order() {
     let mut b = Painted::new(24);
     // SAFETY: as above.
     assert_eq!(
-        unsafe { rr_dr60_control_value(h, 31, b.ptr()) },
+        unsafe { rr_dr60_control_value(h, 36, b.ptr()) },
         RrDr60Status::NoSuchControl
     );
     assert!(b.untouched_after(4));
@@ -1380,7 +1402,7 @@ fn control_reading_settings_write_order() {
     // SAFETY: local values.
     unsafe {
         assert_eq!(
-            rr_dr60_set_settings_control_value(&mut s, 31, &ok),
+            rr_dr60_set_settings_control_value(&mut s, 36, &ok),
             RrDr60Status::NoSuchControl
         );
         assert_eq!(
@@ -1484,7 +1506,7 @@ fn control_reading_live_write_order() {
             RrDr60Status::InvalidArgument
         );
         assert_eq!(
-            rr_dr60_set_control_value(h, 31, &vol),
+            rr_dr60_set_control_value(h, 36, &vol),
             RrDr60Status::NoSuchControl
         );
         assert_eq!(

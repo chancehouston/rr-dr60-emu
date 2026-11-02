@@ -23,7 +23,8 @@ fn index_past_the_count() {
     let h = handle();
     let mut c = rr_dr60_settings_default(48_000);
     let r = sr::c_reading(ControlReading::Integer(0));
-    for i in [31u32, 32, 1000, u32::MAX] {
+    for i in [36u32, 37, 1000, u32::MAX] {
+        // 31 and 32 before spec 024
         assert!(matches!(
             p.control_value(i),
             Err(Error::NoSuchControl { .. })
@@ -124,7 +125,7 @@ fn choices_are_option_values() {
             ControlReading::Choice(v)
         );
     }
-    assert!(control_map::set_settings_value(&mut s, 7, ControlReading::Choice(11)).is_err());
+    assert!(control_map::set_settings_value(&mut s, 7, ControlReading::Choice(12)).is_err()); // 11 is a tap since 0.92
     for v in 0..=1u32 {
         control_map::set_settings_value(&mut s, 14, ControlReading::Choice(v)).unwrap();
     }

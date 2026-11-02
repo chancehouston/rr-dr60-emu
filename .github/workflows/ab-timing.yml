@@ -73,3 +73,7 @@ jobs:
         env:
           RR_DR60_PITCH_DEFAULT_COST_CEILING: "0.05"
           RR_DR60_PITCH_COST_CEILING: "4.0"
+      - name: Insertable component A/B (024 FR-010, the empty slot within 5 %)
+        run: scripts/ab-timing.sh feec05459f00b29592ba61db0113800336d4c767 insert
+        env:
+          RR_DR60_INSERT_COST_CEILING: "0.05"

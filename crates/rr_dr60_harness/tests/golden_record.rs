@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 /// `<version-dependent>`; every data line is unchanged). The golden window is closed for the
 /// feature: a moved hash is a defect, never a re-bless; a later form version is a new file.
 const GOLDEN_RECORD_V1_SHA256: &str =
-    "026f1ca3aa98cdcaecef584adf604938550d6eab0fb7e2cde565ea3733e4c8ec"; // re-blessed 2026-10-31 by spec 021 (the digest line normalized; was 0620eb30…61be, blessed 2026-10-31, 020 T015)
+    "9b4c7a714220a8713470eea1b3e5329f63ff92800f60e2279a624aea40bf311e"; // re-blessed 2026-11-01 by spec 024 (form 2: the slot lines; was 026f1ca3…c8ec, spec 021; 0620eb30…61be, 020 T015)
 
 #[test]
 fn golden_record_v1_unchanged() {

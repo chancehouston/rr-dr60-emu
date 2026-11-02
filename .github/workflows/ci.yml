@@ -81,7 +81,7 @@ jobs:
         run: scripts/check-traceability.sh
       - name: Golden files with default features (shipped configuration, no op-count)
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test -p rr_dr60_harness --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test golden_speed --test golden_meters --test golden_changes --test golden_record_changes --test golden_battery --test golden_record --test golden_bypass --test golden_pitch_kept
+        run: cargo test -p rr_dr60_harness --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test golden_speed --test golden_meters --test golden_changes --test golden_record_changes --test golden_battery --test golden_record --test golden_bypass --test golden_pitch_kept --test golden_insert
       - name: Timing checks (release; FR-015 bounded work, SC-006; 008 SC-006 and the frame-byte digest)
         if: matrix.os == 'ubuntu-latest'
         # One test at a time: the timing tests measure wall-clock cost and worst blocks, so running
@@ -123,6 +123,12 @@ jobs:
         # 0.90's C smoke, compiled against 0.90's header, linked to this library: exit 0 and
         # every mode byte-identical to the current smoke's.
         run: scripts/abi-promise.sh f5a02452728f3d0687c033689266a5bbdf88c6db # f5a0245, 0.90's merge (the full id: a shallow checkout fetches it)
+      - name: The 0.91 ABI promise (spec 024 D9)
+        # 0.91's C smoke, compiled against 0.91's header, linked to this library: exit 0 (but for
+        # the appended tap's checks, plan R8) and every mode byte-identical to the current smoke's.
+        env:
+          ABI_PROMISE_SELF_TEST: "1" # the tolerance filter's own canned cases (024 plan R8)
+        run: scripts/abi-promise.sh 97bbdc24e2f358f6c8d89c75f5472a62985cf276 # 97bbdc2, 0.91's merge (the full id: a shallow checkout fetches it)
 
   coverage:
     # Constitution III: workspace line coverage >= 80%, enforced as soon as the workspace exists.
@@ -165,7 +171,7 @@ jobs:
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - name: Golden files and determinism
-        run: cargo test -p rr_dr60_harness --all-features --target ${{ matrix.target }} --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test golden_speed --test golden_meters --test golden_changes --test golden_record_changes --test golden_battery --test golden_record --test golden_bypass --test golden_pitch_kept --test determinism
+        run: cargo test -p rr_dr60_harness --all-features --target ${{ matrix.target }} --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test golden_speed --test golden_meters --test golden_changes --test golden_record_changes --test golden_battery --test golden_record --test golden_bypass --test golden_pitch_kept --test golden_insert --test determinism
 
   ios:
     name: ios (simulator + builds)
@@ -177,7 +183,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Golden files and determinism in the iOS simulator
         # .cargo/config.toml routes aarch64-apple-ios-sim binaries through scripts/ios-sim-runner.sh.
-        run: cargo test -p rr_dr60_harness --target aarch64-apple-ios-sim --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test golden_speed --test golden_meters --test golden_changes --test golden_record_changes --test golden_battery --test golden_record --test golden_bypass --test golden_pitch_kept --test determinism
+        run: cargo test -p rr_dr60_harness --target aarch64-apple-ios-sim --test golden --test golden_agc --test golden_vas --test golden_codec --test golden_output --test golden_output_clamp --test golden_volume_ramp --test golden_mic --test golden_speed --test golden_meters --test golden_changes --test golden_record_changes --test golden_battery --test golden_record --test golden_bypass --test golden_pitch_kept --test golden_insert --test determinism
       - name: Build the C API library for iOS device and Intel simulator
         run: |
           cargo build -p rr_dr60_ffi --release --target aarch64-apple-ios
@@ -208,4 +214,4 @@ jobs:
       # rule under Miri, which reports an uninitialized padding byte where a painted-byte test
       # passes by luck (the first run caught `MaybeUninit::zeroed()`'s typed move).
       - name: Miri on the ABI helper's tests
-        run: cargo +nightly miri test -p rr_dr60_ffi --lib -- abi_tests::write_sized abi_tests::readout abi_tests::default_is abi_tests::published abi_tests::settings_read abi_tests::control_reading settings_read::tests
+        run: cargo +nightly miri test -p rr_dr60_ffi --lib -- abi_tests::write_sized abi_tests::readout abi_tests::default_is abi_tests::published abi_tests::settings_read abi_tests::control_reading settings_read::tests insert::tests

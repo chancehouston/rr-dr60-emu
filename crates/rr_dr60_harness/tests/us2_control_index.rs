@@ -120,7 +120,7 @@ fn us2_representability() {
             i("agc.knee_dbfs"),
             ControlReading::Continuous(f32::NEG_INFINITY),
         ),
-        (i("tap"), ControlReading::Choice(11)),
+        (i("tap"), ControlReading::Choice(12)), // 11 is a tap since 0.92 (spec 024)
         (i("vas.mode"), ControlReading::Choice(2)),
         (i("host_rate_hz"), ControlReading::Choice(12_345)),
         (i("vas.sensitivity"), ControlReading::Integer(256)),
@@ -321,7 +321,7 @@ fn us2_class_refused() {
             }
         }
     }
-    assert_eq!((settings, live), (26, 5));
+    assert_eq!((settings, live), (26, 10)); // the five live controls and, since spec 024, the slot's five
     // SAFETY: destroying once.
     unsafe { rr_dr60_destroy(h) };
 }

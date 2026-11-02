@@ -1147,3 +1147,37 @@ fn settings_read_same() {
         assert_eq!(a, b, "{rate} Hz: reading twice");
     }
 }
+
+/// Spec 024 FR-012: the same calls give the same output and log, with the slot's landings and a
+/// type blend on the one-pass (the recordings through the filter: the golden's six targets).
+#[test]
+fn insert_same_calls_same_log() {
+    use rr_dr60::{ChangeEntry, Stream, VasEvent};
+    use rr_dr60_harness::insert_checks as ic;
+    for rate in [6000u32, 48_000] {
+        let run = || {
+            let mut p = ic::engine(ic::placement_settings(rate), [2.0, 900.0, 3.0, 4.0]);
+            p.schedule_change(Stream::OnePass, 500, 33, 1800.0, 1)
+                .unwrap();
+            p.schedule_change(Stream::OnePass, 700, 32, 3.0, 2).unwrap();
+            let x = rr_dr60_harness::stimulus::voiced(f64::from(rate), 0.5, -20.0, 5);
+            let mut out = vec![0.0f32; x.len()];
+            let mut log = vec![ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
+            let mut ev = vec![VasEvent::default(); 64];
+            let mut entries = Vec::new();
+            for (k, block) in x.chunks(777).enumerate() {
+                let info = p
+                    .process_with_events_and_changes(
+                        block,
+                        &mut out[k * 777..k * 777 + block.len()],
+                        &mut ev,
+                        &mut log,
+                    )
+                    .unwrap();
+                entries.extend_from_slice(&log[..info.changes]);
+            }
+            (out, entries)
+        };
+        assert_eq!(run(), run(), "{rate}");
+    }
+}

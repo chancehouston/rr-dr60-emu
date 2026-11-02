@@ -56,13 +56,13 @@ fn as1_refusals() {
         let b = &run.record;
         let tag = format!("{rate} Hz");
         assert_eq!(
-            read(&p, &doctor(b, "version = 1", "version = 0")).unwrap_err(),
+            read(&p, &doctor(b, "version = 2", "version = 0")).unwrap_err(),
             Error::UnknownRecordVersion { version: 0 },
             "{tag}"
         );
         assert_eq!(
-            read(&p, &doctor(b, "version = 1", "version = 2")).unwrap_err(),
-            Error::UnknownRecordVersion { version: 2 },
+            read(&p, &doctor(b, "version = 2", "version = 3")).unwrap_err(),
+            Error::UnknownRecordVersion { version: 3 }, // 2 is read since spec 024
             "{tag}"
         );
         assert!(

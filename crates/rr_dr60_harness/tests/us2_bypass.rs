@@ -326,8 +326,9 @@ fn as6_control_manifest_live() {
         .iter()
         .filter(|e| e.timing == ControlTiming::Live)
         .count();
-    // Sixteen at 0.21; spec 023 added the playback speed mode (2026-10-31), live: seventeen.
-    assert_eq!(live, 17);
+    // Sixteen at 0.21; spec 023 added the playback speed mode (2026-10-31), live: seventeen;
+    // spec 024 the band filter's four parameters (2026-11-01): twenty-one.
+    assert_eq!(live, 21);
 }
 
 /// US2 AS7 (FR-010): the cost is asserted release-only by `scripts/ab-timing.sh f303c99 bypass`
@@ -341,7 +342,7 @@ fn as7_cost_pointer() {
 /// US2 AS8: the C path is covered by `ffi_parity bypass_parity` and the smoke's `--bypass`.
 #[test]
 fn as8_c_parity_pointer() {
-    assert_eq!(rr_dr60::changes::MAX_CHANGES_PER_CALL, 142);
+    assert_eq!(rr_dr60::changes::MAX_CHANGES_PER_CALL, 158); // 142 before spec 024 D5
 }
 
 /// US2 AS9 (FR-004): the trap and its recipe.

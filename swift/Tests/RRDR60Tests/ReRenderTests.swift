@@ -15,13 +15,20 @@ private let hissControl: UInt32 = 28
 
 /// Records `raw` with `schedule` (position, control, value) on a default 48 kHz engine with the
 /// codec on, collects the run, writes the record; returns (record, digest).
-private func recordAndWrite(raw: [Int32], schedule: [(UInt64, UInt32, Double)]) throws -> ([UInt8], UInt64) {
+private func recordAndWrite(raw: [Int32], schedule: [(UInt64, UInt32, Double)], filter: Bool = false) throws -> ([UInt8], UInt64) {
     var settings = rr_dr60_settings_default(48000)
     settings.vas_hang_ms = 100
     var handle: OpaquePointer?
     #expect(isOK(rr_dr60_create(&settings, &handle)))
     let p = try #require(handle)
     defer { rr_dr60_destroy(p) }
+    if filter {
+        // Spec 024: the band filter in the slot, a high-pass at 700 Hz set while idle.
+        let point = UInt32(RR_DR60_INSERTION_POINT_BEFORE_LIMITER)
+        #expect(isOK(rr_dr60_set_component_parameter(p, point, 0, Double(RR_DR60_BAND_FILTER_HIGH_PASS))))
+        #expect(isOK(rr_dr60_set_component_parameter(p, point, 1, 700)))
+        #expect(isOK(rr_dr60_set_component(p, point, UInt32(RR_DR60_COMPONENT_BAND_FILTER))))
+    }
     var next = 0
     func fill() {
         while next < schedule.count {
@@ -117,6 +124,19 @@ private func squareWithGap() -> [Int32] {
     other[12000] += 400_000
     let moved = try ProcessingRecord.reRender(record: record, raw: other)
     #expect(moved != digest)
+}
+
+/// Spec 024 D7: the re-render restores the slot's component and store; the record names them.
+@Test func reRenderWithTheBandFilter() throws {
+    let raw = squareWithGap()
+    let (record, digest) = try recordAndWrite(raw: raw, schedule: [(20000, 33, 1400)], filter: true)
+    let slot = try #require(try ProcessingRecord.component(of: record))
+    #expect(slot.component == UInt32(RR_DR60_COMPONENT_BAND_FILTER))
+    let again = try ProcessingRecord.reRender(record: record, raw: raw)
+    #expect(again == digest)
+    let (plain, plainDigest) = try recordAndWrite(raw: raw, schedule: [])
+    #expect(plainDigest != digest)
+    #expect(try ProcessingRecord.reRender(record: plain, raw: raw) == plainDigest)
 }
 
 @Test func scheduleRefillPast64() throws {

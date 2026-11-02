@@ -1,0 +1,593 @@
+{
+  "format": "rr_dr60-golden-insert",
+  "entries": [
+    {
+      "name": "record_type_0",
+      "host_rate_hz": 6000,
+      "n": 6120,
+      "digest": "336ba56962160913",
+      "changes": 0
+    },
+    {
+      "name": "record_type_1",
+      "host_rate_hz": 6000,
+      "n": 6120,
+      "digest": "f6207a1876be7a5d",
+      "changes": 0
+    },
+    {
+      "name": "record_type_2",
+      "host_rate_hz": 6000,
+      "n": 6120,
+      "digest": "3f3385de5a008550",
+      "changes": 0
+    },
+    {
+      "name": "record_type_3",
+      "host_rate_hz": 6000,
+      "n": 6120,
+      "digest": "738b63fd1f7cc6bd",
+      "changes": 0
+    },
+    {
+      "name": "record_type_0",
+      "host_rate_hz": 8000,
+      "n": 6120,
+      "digest": "e467c008cbe18da7",
+      "changes": 0
+    },
+    {
+      "name": "record_type_1",
+      "host_rate_hz": 8000,
+      "n": 6120,
+      "digest": "b4ffa9b7bef1adfd",
+      "changes": 0
+    },
+    {
+      "name": "record_type_2",
+      "host_rate_hz": 8000,
+      "n": 6120,
+      "digest": "062002c2b4443591",
+      "changes": 0
+    },
+    {
+      "name": "record_type_3",
+      "host_rate_hz": 8000,
+      "n": 6120,
+      "digest": "9ef30d92f0a7ac78",
+      "changes": 0
+    },
+    {
+      "name": "record_type_0",
+      "host_rate_hz": 16000,
+      "n": 6120,
+      "digest": "d128710cc495db72",
+      "changes": 0
+    },
+    {
+      "name": "record_type_1",
+      "host_rate_hz": 16000,
+      "n": 6120,
+      "digest": "e3990198e1a5eedb",
+      "changes": 0
+    },
+    {
+      "name": "record_type_2",
+      "host_rate_hz": 16000,
+      "n": 6120,
+      "digest": "3ff1b01a545db551",
+      "changes": 0
+    },
+    {
+      "name": "record_type_3",
+      "host_rate_hz": 16000,
+      "n": 6120,
+      "digest": "9c2dc2f2e242c084",
+      "changes": 0
+    },
+    {
+      "name": "record_type_0",
+      "host_rate_hz": 44100,
+      "n": 6120,
+      "digest": "796f3894b7ef6e6e",
+      "changes": 0
+    },
+    {
+      "name": "record_type_1",
+      "host_rate_hz": 44100,
+      "n": 6120,
+      "digest": "9617854c33e4189a",
+      "changes": 0
+    },
+    {
+      "name": "record_type_2",
+      "host_rate_hz": 44100,
+      "n": 6120,
+      "digest": "e2c5c9aee82c8a1c",
+      "changes": 0
+    },
+    {
+      "name": "record_type_3",
+      "host_rate_hz": 44100,
+      "n": 6120,
+      "digest": "5ba2127ff1d299b2",
+      "changes": 0
+    },
+    {
+      "name": "record_type_0",
+      "host_rate_hz": 48000,
+      "n": 6120,
+      "digest": "adaaed64f27ec3f4",
+      "changes": 0
+    },
+    {
+      "name": "record_type_1",
+      "host_rate_hz": 48000,
+      "n": 6120,
+      "digest": "978865261027cee3",
+      "changes": 0
+    },
+    {
+      "name": "record_type_2",
+      "host_rate_hz": 48000,
+      "n": 6120,
+      "digest": "c4534ed21a16c186",
+      "changes": 0
+    },
+    {
+      "name": "record_type_3",
+      "host_rate_hz": 48000,
+      "n": 6120,
+      "digest": "161ac12322d8ab17",
+      "changes": 0
+    },
+    {
+      "name": "record_type_0",
+      "host_rate_hz": 88200,
+      "n": 6120,
+      "digest": "eea64d90055bae65",
+      "changes": 0
+    },
+    {
+      "name": "record_type_1",
+      "host_rate_hz": 88200,
+      "n": 6120,
+      "digest": "36efcec68be3225e",
+      "changes": 0
+    },
+    {
+      "name": "record_type_2",
+      "host_rate_hz": 88200,
+      "n": 6120,
+      "digest": "8e99f28eb92db16f",
+      "changes": 0
+    },
+    {
+      "name": "record_type_3",
+      "host_rate_hz": 88200,
+      "n": 6120,
+      "digest": "d521e943aa2d88a9",
+      "changes": 0
+    },
+    {
+      "name": "record_type_0",
+      "host_rate_hz": 96000,
+      "n": 6120,
+      "digest": "90fec1ad06bc4b76",
+      "changes": 0
+    },
+    {
+      "name": "record_type_1",
+      "host_rate_hz": 96000,
+      "n": 6120,
+      "digest": "38e7d08ece384fab",
+      "changes": 0
+    },
+    {
+      "name": "record_type_2",
+      "host_rate_hz": 96000,
+      "n": 6120,
+      "digest": "361d70c260996c58",
+      "changes": 0
+    },
+    {
+      "name": "record_type_3",
+      "host_rate_hz": 96000,
+      "n": 6120,
+      "digest": "820bfe1de675cce4",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_300_0.5",
+      "host_rate_hz": 6000,
+      "n": 6120,
+      "digest": "e8f05c2616b5cd51",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_1000_3",
+      "host_rate_hz": 6000,
+      "n": 6120,
+      "digest": "6306b5bcf05647a9",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_3000_10",
+      "host_rate_hz": 6000,
+      "n": 6120,
+      "digest": "ad7049c6cdb0c27b",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_300_0.5",
+      "host_rate_hz": 8000,
+      "n": 6120,
+      "digest": "dd1f2491ba474d1b",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_1000_3",
+      "host_rate_hz": 8000,
+      "n": 6120,
+      "digest": "47695727703ced46",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_3000_10",
+      "host_rate_hz": 8000,
+      "n": 6120,
+      "digest": "92419fcc40a65b34",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_300_0.5",
+      "host_rate_hz": 16000,
+      "n": 6120,
+      "digest": "c04aef002bc0fc88",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_1000_3",
+      "host_rate_hz": 16000,
+      "n": 6120,
+      "digest": "c8636b662cebe3ed",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_3000_10",
+      "host_rate_hz": 16000,
+      "n": 6120,
+      "digest": "2d28518ab12ae522",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_300_0.5",
+      "host_rate_hz": 44100,
+      "n": 6120,
+      "digest": "9a8ca86664df7f1b",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_1000_3",
+      "host_rate_hz": 44100,
+      "n": 6120,
+      "digest": "20e256a8fa31e9b2",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_3000_10",
+      "host_rate_hz": 44100,
+      "n": 6120,
+      "digest": "cb35f843560a5921",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_300_0.5",
+      "host_rate_hz": 48000,
+      "n": 6120,
+      "digest": "359719c13ca9e70f",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_1000_3",
+      "host_rate_hz": 48000,
+      "n": 6120,
+      "digest": "3de9d8b8a4a14786",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_3000_10",
+      "host_rate_hz": 48000,
+      "n": 6120,
+      "digest": "c66facf6f80697fe",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_300_0.5",
+      "host_rate_hz": 88200,
+      "n": 6120,
+      "digest": "c1d8b9ca3c474215",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_1000_3",
+      "host_rate_hz": 88200,
+      "n": 6120,
+      "digest": "934e983c9bde7d4e",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_3000_10",
+      "host_rate_hz": 88200,
+      "n": 6120,
+      "digest": "5025958c0a543583",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_300_0.5",
+      "host_rate_hz": 96000,
+      "n": 6120,
+      "digest": "25b6d55ce88122b9",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_1000_3",
+      "host_rate_hz": 96000,
+      "n": 6120,
+      "digest": "b4afb0de4ded843e",
+      "changes": 0
+    },
+    {
+      "name": "record_low_pass_3000_10",
+      "host_rate_hz": 96000,
+      "n": 6120,
+      "digest": "e67adff5616c7f34",
+      "changes": 0
+    },
+    {
+      "name": "one_pass_default",
+      "host_rate_hz": 6000,
+      "n": 6000,
+      "digest": "d2c7a2d6154cc32d",
+      "changes": 0
+    },
+    {
+      "name": "one_pass_default",
+      "host_rate_hz": 8000,
+      "n": 8000,
+      "digest": "b170e5d408761b85",
+      "changes": 0
+    },
+    {
+      "name": "one_pass_default",
+      "host_rate_hz": 16000,
+      "n": 16000,
+      "digest": "e5cbaa02d0a10754",
+      "changes": 0
+    },
+    {
+      "name": "one_pass_default",
+      "host_rate_hz": 44100,
+      "n": 44100,
+      "digest": "ff548a4fe4d20b56",
+      "changes": 0
+    },
+    {
+      "name": "one_pass_default",
+      "host_rate_hz": 48000,
+      "n": 48000,
+      "digest": "1d0f52bd8baae921",
+      "changes": 0
+    },
+    {
+      "name": "one_pass_default",
+      "host_rate_hz": 88200,
+      "n": 88200,
+      "digest": "d2b0a1ec3c28e6a6",
+      "changes": 0
+    },
+    {
+      "name": "one_pass_default",
+      "host_rate_hz": 96000,
+      "n": 96000,
+      "digest": "accf69174b00216b",
+      "changes": 0
+    },
+    {
+      "name": "schedule_frequency",
+      "host_rate_hz": 6000,
+      "n": 6120,
+      "digest": "abb54eeabf30e79d",
+      "changes": 1
+    },
+    {
+      "name": "schedule_type",
+      "host_rate_hz": 6000,
+      "n": 6120,
+      "digest": "2a203abccbbf98c0",
+      "changes": 1
+    },
+    {
+      "name": "schedule_frequency",
+      "host_rate_hz": 8000,
+      "n": 6120,
+      "digest": "6787c4b84ae7ef7a",
+      "changes": 1
+    },
+    {
+      "name": "schedule_type",
+      "host_rate_hz": 8000,
+      "n": 6120,
+      "digest": "5ac18c712ea6fec6",
+      "changes": 1
+    },
+    {
+      "name": "schedule_frequency",
+      "host_rate_hz": 16000,
+      "n": 6120,
+      "digest": "9eca520b48cb8508",
+      "changes": 1
+    },
+    {
+      "name": "schedule_type",
+      "host_rate_hz": 16000,
+      "n": 6120,
+      "digest": "adc73f6edbf3469a",
+      "changes": 1
+    },
+    {
+      "name": "schedule_frequency",
+      "host_rate_hz": 44100,
+      "n": 6120,
+      "digest": "ffba7f9a2dcce9e9",
+      "changes": 1
+    },
+    {
+      "name": "schedule_type",
+      "host_rate_hz": 44100,
+      "n": 6120,
+      "digest": "9c04a30e0a4fdb8b",
+      "changes": 1
+    },
+    {
+      "name": "schedule_frequency",
+      "host_rate_hz": 48000,
+      "n": 6120,
+      "digest": "df9bbf3f0d6188ae",
+      "changes": 1
+    },
+    {
+      "name": "schedule_type",
+      "host_rate_hz": 48000,
+      "n": 6120,
+      "digest": "d525d4a08f00624e",
+      "changes": 1
+    },
+    {
+      "name": "schedule_frequency",
+      "host_rate_hz": 88200,
+      "n": 6120,
+      "digest": "336087f1fedc9d69",
+      "changes": 1
+    },
+    {
+      "name": "schedule_type",
+      "host_rate_hz": 88200,
+      "n": 6120,
+      "digest": "edb71089dea2ab88",
+      "changes": 1
+    },
+    {
+      "name": "schedule_frequency",
+      "host_rate_hz": 96000,
+      "n": 6120,
+      "digest": "bea9a089edd4ce71",
+      "changes": 1
+    },
+    {
+      "name": "schedule_type",
+      "host_rate_hz": 96000,
+      "n": 6120,
+      "digest": "38fd9d1d85beaaab",
+      "changes": 1
+    },
+    {
+      "name": "tone_type_0",
+      "host_rate_hz": 6000,
+      "n": 3000,
+      "digest": "07779a65ef01f5eb",
+      "changes": 0
+    },
+    {
+      "name": "tone_type_1",
+      "host_rate_hz": 6000,
+      "n": 3000,
+      "digest": "4d05143dfd3fecc1",
+      "changes": 0
+    },
+    {
+      "name": "tone_type_2",
+      "host_rate_hz": 6000,
+      "n": 3000,
+      "digest": "839cacd28ab2901f",
+      "changes": 0
+    },
+    {
+      "name": "tone_type_3",
+      "host_rate_hz": 6000,
+      "n": 3000,
+      "digest": "22b3455b67a3651e",
+      "changes": 0
+    },
+    {
+      "name": "tone_type_0",
+      "host_rate_hz": 48000,
+      "n": 24000,
+      "digest": "aadb074729644e11",
+      "changes": 0
+    },
+    {
+      "name": "tone_type_1",
+      "host_rate_hz": 48000,
+      "n": 24000,
+      "digest": "c870163f440174f6",
+      "changes": 0
+    },
+    {
+      "name": "tone_type_2",
+      "host_rate_hz": 48000,
+      "n": 24000,
+      "digest": "9cfa7ffca278a5bc",
+      "changes": 0
+    },
+    {
+      "name": "tone_type_3",
+      "host_rate_hz": 48000,
+      "n": 24000,
+      "digest": "0de2511c849e4e30",
+      "changes": 0
+    },
+    {
+      "name": "second_recording",
+      "host_rate_hz": 6000,
+      "n": 6120,
+      "digest": "139eeaae371761b1",
+      "changes": 0
+    },
+    {
+      "name": "second_recording",
+      "host_rate_hz": 44100,
+      "n": 6120,
+      "digest": "a2dee4c05e914939",
+      "changes": 0
+    },
+    {
+      "name": "second_recording",
+      "host_rate_hz": 48000,
+      "n": 6120,
+      "digest": "f957ba533267504b",
+      "changes": 0
+    },
+    {
+      "name": "second_recording",
+      "host_rate_hz": 96000,
+      "n": 6120,
+      "digest": "becd9cf5a40d968a",
+      "changes": 0
+    },
+    {
+      "name": "set_then_schedule",
+      "host_rate_hz": 6000,
+      "n": 3000,
+      "digest": "52996a9090095358",
+      "changes": 1
+    },
+    {
+      "name": "set_then_schedule",
+      "host_rate_hz": 48000,
+      "n": 24000,
+      "digest": "f2d725f1298f718e",
+      "changes": 1
+    }
+  ]
+}

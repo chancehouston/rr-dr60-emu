@@ -8,6 +8,7 @@
 pub mod abi_checks;
 pub mod agc_checks;
 pub mod analysis;
+pub mod band_filter_ref;
 pub mod battery_checks;
 pub mod bypass_checks;
 pub mod chain_checks;
@@ -18,6 +19,7 @@ pub mod configs;
 pub mod controls_checks;
 pub mod crossfade_checks;
 pub mod golden;
+pub mod insert_checks;
 pub mod manifest_checks;
 pub mod meters_checks;
 pub mod mic_checks;

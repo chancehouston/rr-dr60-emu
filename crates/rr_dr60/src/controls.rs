@@ -22,12 +22,15 @@
 //! every entry to its stage's controls note in the stage manifest, and every ID to the
 //! registers (spec 014 FR-007 – FR-010, FR-016).
 
+// The default Q is the spec's literal 0.7071 (024 D4), not 1/√2.
+#![allow(clippy::approx_constant)]
+
 use crate::manifest::{bytes_eq, chars, ends_with_dot, ids_ok};
 use crate::settings::{Tap, VasMode};
 
 /// The number of entries: three live controls and 26 settings (014 FR-001), then the appended
 /// live controls (spec 018's battery voltage, spec 023's speed mode).
-pub const CONTROL_COUNT: usize = 31; // FR-001; spec 018: `battery_volts` appended at 29; spec 023: `playback_speed_mode` at 30
+pub const CONTROL_COUNT: usize = 36; // FR-001; spec 018: `battery_volts` appended at 29; spec 023: `playback_speed_mode` at 30; spec 024 D5: the slot and the band filter at 31 – 35
 
 /// What kind of adjustment an entry is (014 FR-003; the owner's decisions of 2026-10-29).
 #[non_exhaustive]
@@ -187,6 +190,7 @@ pub(crate) const fn tap_code(t: Tap) -> u32 {
         Tap::AfterEarphone => 8,
         Tap::AfterMicCapsule => 9,
         Tap::AfterMicAmp => 10,
+        Tap::AfterInsert => 11, // spec 024 D6
     }
 }
 
@@ -204,6 +208,7 @@ pub(crate) const fn tap_from_code(c: u32) -> Option<Tap> {
         8 => Tap::AfterEarphone,
         9 => Tap::AfterMicCapsule,
         10 => Tap::AfterMicAmp,
+        11 => Tap::AfterInsert,
         _ => return None,
     })
 }
@@ -380,7 +385,7 @@ control_table! {
             ("after_record", 0), ("after_playback", 1), ("after_agc", 2), ("after_vas", 3),
             ("after_decoder", 4), ("route_output", 5), ("after_volume_amp", 6),
             ("after_speaker", 7), ("after_earphone", 8), ("after_mic_capsule", 9),
-            ("after_mic_amp", 10),
+            ("after_mic_amp", 10), ("after_insert", 11),
         ], Some(5)), unit: "",
         sources: [], assumptions: [],
         description: "Chooses which stage's output the one-pass engine returns, to hear the chain up to that point; recording and playback ignore it.",
@@ -548,6 +553,43 @@ control_table! {
         value: choice([("pitch_with_speed", 0), ("pitch_kept", 1)], Some(0)), unit: "",
         sources: ["S-001", "S-012"], assumptions: ["A-054"],
         description: "Chooses whether slow and fast playback moves the pitch with the speed (the modeled default) or keeps it by time-scaling the decoded stream.",
+    },
+    // Spec 024 D5: the slot and the band filter's parameters (their values bound to the
+    // component manifest's constants by `components::tests`).
+    {
+        identifier: "insert.before_limiter", name: "Component before the limiter", kind: EmulatorOption, timing: Idle,
+        paths: [RECORD, ONE_PASS], stage: 0,
+        value: choice([("none", 0), ("band_filter", 1)], Some(0)), unit: "",
+        sources: [], assumptions: [],
+        description: "Puts one of the engine's own components, or none, between the microphone amplifier and the limiter; an addition of the emulator, not a part of the recorder.",
+    },
+    {
+        identifier: "band_filter.type", name: "Band filter type", kind: EmulatorOption, timing: Live,
+        paths: [RECORD, ONE_PASS], stage: 0,
+        value: choice([("low_pass", 0), ("high_pass", 1), ("band_pass", 2), ("notch", 3)], Some(0)), unit: "",
+        sources: [], assumptions: [],
+        description: "Chooses the band filter's shape: low-pass, high-pass, band-pass or notch.",
+    },
+    {
+        identifier: "band_filter.frequency_hz", name: "Band filter frequency", kind: EmulatorOption, timing: Live,
+        paths: [RECORD, ONE_PASS], stage: 0,
+        value: continuous(20.0, 20_000.0, 1000.0), unit: "Hz",
+        sources: [], assumptions: [],
+        description: "Sets the band filter's corner or centre frequency; a value above the host rate's ceiling, a little under half the rate, is applied at the ceiling.",
+    },
+    {
+        identifier: "band_filter.q", name: "Band filter Q", kind: EmulatorOption, timing: Live,
+        paths: [RECORD, ONE_PASS], stage: 0,
+        value: continuous(0.5, 10.0, 0.7071), unit: "",
+        sources: [], assumptions: [],
+        description: "Sets how sharp the band filter's corner is, or how narrow its peak or notch; at the top of the range the corner peaks by about twenty decibels.",
+    },
+    {
+        identifier: "band_filter.gain_db", name: "Band filter gain", kind: EmulatorOption, timing: Live,
+        paths: [RECORD, ONE_PASS], stage: 0,
+        value: continuous(-24.0, 24.0, 0.0), unit: "dB",
+        sources: [], assumptions: [],
+        description: "Sets the level after the band filter's section; a large gain drives the limiter and can keep the recorder from pausing.",
     },
 }
 
@@ -763,7 +805,15 @@ mod tests {
 
     const LIVE: [&str; 3] = ["route", "volume", "playback_speed"];
     /// Spec 018: entries added after 0.14 are appended in their order (indices are stable).
-    const APPENDED: [&str; 2] = ["battery_volts", "playback_speed_mode"]; // 018, 023
+    const APPENDED: [&str; 7] = [
+        "battery_volts",
+        "playback_speed_mode",
+        "insert.before_limiter",
+        "band_filter.type",
+        "band_filter.frequency_hz",
+        "band_filter.q",
+        "band_filter.gain_db",
+    ]; // 018, 023, 024
 
     /// 014 FR-007: the mapped identifiers plus the live ones equal the table exactly, in
     /// FR-001's order (live first, then the settings' declaration order).
@@ -860,6 +910,14 @@ mod tests {
                     // Spec 018 FR-001: the range `set_battery_volts` accepts.
                     assert_eq!((min, max), crate::battery::BATTERY_VOLTS_RANGE);
                 }
+                (id, v) if id.starts_with("band_filter.") => {
+                    // Spec 024 D4: the component manifest's constants.
+                    let (_, p) = crate::components::parameter_of_control(
+                        controls().iter().position(|e| e.identifier == id).unwrap() as u32,
+                    )
+                    .unwrap();
+                    assert_eq!(v, p.value, "{id}");
+                }
                 (id, ControlValue::Integer { min, max, .. }) => {
                     let (lo, hi) = range_of(id).unwrap_or_else(|| panic!("{id}: no range"));
                     assert_eq!((min as f32, max as f32), (lo, hi), "{id}");
@@ -904,6 +962,7 @@ mod tests {
             Tap::AfterEarphone => "after_earphone",
             Tap::AfterMicCapsule => "after_mic_capsule",
             Tap::AfterMicAmp => "after_mic_amp",
+            Tap::AfterInsert => "after_insert",
         };
         assert_eq!(tap_from_code(tap_code(t)), Some(t));
         (name, tap_code(t))
@@ -932,6 +991,11 @@ mod tests {
             "playback_speed" => Def::I(u64::from(crate::speed::DEFAULT_LEVEL)),
             "battery_volts" => Def::F(crate::battery::DEFAULT_BATTERY_VOLTS), // spec 018
             "playback_speed_mode" => Def::C(Some(crate::speed::SpeedMode::default() as u32)), // spec 023
+            "insert.before_limiter" => Def::C(Some(crate::components::ComponentId::None as u32)), // spec 024
+            "band_filter.type" => Def::C(Some(crate::components::default_store()[0] as u32)),
+            "band_filter.frequency_hz" => Def::F(crate::components::default_store()[1]),
+            "band_filter.q" => Def::F(crate::components::default_store()[2]),
+            "band_filter.gain_db" => Def::F(crate::components::default_store()[3]),
             "host_rate_hz" => Def::C(None),
             "record_stage_enabled" => Def::B(s.record_stage_enabled),
             "playback_stage_enabled" => Def::B(s.playback_stage_enabled),
@@ -1009,6 +1073,7 @@ mod tests {
             Tap::AfterEarphone,
             Tap::AfterMicCapsule,
             Tap::AfterMicAmp,
+            Tap::AfterInsert,
         ];
         let want: Vec<(&str, u32)> = taps.iter().map(|&t| tap_value(t)).collect();
         let got: Vec<(&str, u32)> = options("tap")

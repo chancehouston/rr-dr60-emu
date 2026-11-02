@@ -19,7 +19,7 @@ use crate::transport::{RecordInfo, StopOutcome, StopResult};
 
 /// The record form's version this library writes (spec 020 D2); it reads every earlier one
 /// (none yet) and refuses 0 and any later one.
-pub const FORM_VERSION: u32 = 1; // engineering target (020 D2): the form's first version
+pub const FORM_VERSION: u32 = 2; // engineering target (020 D2; 024 D7: version 2 carries the slot)
 
 /// The first line of every record.
 pub const VERSION_LINE_NAME: &str = "rr_dr60_processing_record_version"; // engineering target (020 D2)
@@ -43,6 +43,9 @@ pub mod flags {
     pub const IMPORTED_ORIGIN: u32 = 32; // FR-002: a reported difference (020 D4)
     /// Checked against a recording in memory: the digests differ.
     pub const DIGEST_MISMATCH: u32 = 64; // FR-002: a reported difference (020 D4)
+    /// The record names a component this library does not know (spec 024 D7): the re-render
+    /// is refused.
+    pub const UNKNOWN_COMPONENT: u32 = 128; // FR-002: a reported difference (020 D4; 024 D7)
 }
 
 /// How a recording ended (spec 020 D9; research R-07).
@@ -198,6 +201,12 @@ pub struct RecordReadout {
     pub flags: u32,
     /// Under `STAGE_MODEL_DIFFERS`: bit `n − 1` for stage `n`.
     pub stage_mask: u16,
+    /// Spec 024 D7: the slot's component at the recording's start (none in a version-1
+    /// record).
+    pub component: crate::components::ComponentId,
+    /// Spec 024 D7: the parameter store at the recording's start (the defaults in a
+    /// version-1 record).
+    pub store: [f32; crate::components::COMPONENT_PARAMETER_BUDGET],
 }
 
 impl Default for RecordReadout {
@@ -225,6 +234,8 @@ impl Default for RecordReadout {
             unknown_setting_count: 0,
             flags: 0,
             stage_mask: 0,
+            component: crate::components::ComponentId::None,
+            store: crate::components::default_store(),
         }
     }
 }
@@ -469,6 +480,23 @@ fn emit<I: Iterator<Item = RecordEvent>>(
         for id in SETTING_IDS {
             let v = get(id, &r.settings).expect("a table identifier");
             writeln!(s, "setting.{id} = {v}")?;
+        }
+        // Spec 024 D7: the slot and every component's parameters, present when empty.
+        writeln!(s, "insert.before_limiter = {}", r.component.identifier())?;
+        for c in crate::components::components() {
+            for (i, p) in c.parameters.iter().enumerate() {
+                let v = r.store[c.parameter_offset as usize + i];
+                match p.value {
+                    crate::controls::ControlValue::Choice { options, .. } => {
+                        let o = options
+                            .iter()
+                            .find(|o| o.value == v as u32)
+                            .map_or("unknown", |o| o.identifier);
+                        writeln!(s, "{} = {o}", p.identifier)?;
+                    }
+                    _ => writeln!(s, "{} = {v}", p.identifier)?,
+                }
+            }
         }
         writeln!(
             s,
@@ -753,6 +781,9 @@ pub fn read(bytes: &[u8], out: &mut RecordReadout) -> Result<(), Error> {
     let mut host_rate: Option<u32> = None;
     let mut seed: Option<u64> = None;
     let mut unknown = 0u32;
+    // Spec 024 (hardware post-implementation B12): form 2's slot lines are required.
+    let mut seen_insert = false;
+    let mut seen_params = 0u32;
     let total = lines(bytes).count();
     for (idx, line) in lines(bytes).enumerate() {
         let n = (idx + 1) as u32;
@@ -872,6 +903,55 @@ pub fn read(bytes: &[u8], out: &mut RecordReadout) -> Result<(), Error> {
                         return Err(bad);
                     }
                     r.stage_model_versions[stage - 1] = parse_version(value).map_err(e)?;
+                } else if name == "insert.before_limiter" {
+                    if seen_insert {
+                        return Err(bad); // a repeated line
+                    }
+                    seen_insert = true;
+                    // Spec 024 D7: an unknown component is flagged, not refused.
+                    match crate::components::components()
+                        .iter()
+                        .find(|c| c.identifier == value)
+                    {
+                        Some(c) => r.component = c.id,
+                        None if value == "none" => {
+                            r.component = crate::components::ComponentId::None;
+                        }
+                        None => r.flags |= flags::UNKNOWN_COMPONENT,
+                    }
+                } else if let Some((at, p)) = crate::components::components()
+                    .iter()
+                    .flat_map(|c| {
+                        c.parameters
+                            .iter()
+                            .enumerate()
+                            .map(move |(i, p)| (c.parameter_offset as usize + i, p))
+                    })
+                    .find(|(_, p)| p.identifier == name)
+                {
+                    let v = match p.value {
+                        crate::controls::ControlValue::Choice { options, .. } => options
+                            .iter()
+                            .find(|o| o.identifier == value)
+                            .map(|o| o.value as f32)
+                            .ok_or(bad)?,
+                        _ => parse_f32(value).map_err(e)?,
+                    };
+                    r.store[at] = crate::components::store_value(p, f64::from(v)).ok_or(bad)?;
+                    if seen_params & (1 << at) != 0 {
+                        return Err(bad); // a repeated line
+                    }
+                    seen_params |= 1 << at;
+                } else if name.contains('.')
+                    && !name.starts_with("setting.")
+                    && !name.starts_with("stage.")
+                    && !name.starts_with("event.")
+                    && !name.starts_with("change.")
+                    && !name.starts_with("run.")
+                    && version >= 2
+                {
+                    // Spec 024 D7: a parameter of a component this library does not know.
+                    unknown += 1;
                 } else if let Some(id) = name.strip_prefix("setting.") {
                     match set(id, &mut r.settings, value) {
                         Ok(true) => {}
@@ -911,6 +991,22 @@ pub fn read(bytes: &[u8], out: &mut RecordReadout) -> Result<(), Error> {
         return Err(Error::MissingRecordField {
             field: req::name(bit),
         });
+    }
+    if version >= 2 && origin == Origin::Engine {
+        if !seen_insert {
+            return Err(Error::MissingRecordField {
+                field: "insert.before_limiter",
+            });
+        }
+        for c in crate::components::components() {
+            for (i, p) in c.parameters.iter().enumerate() {
+                if seen_params & (1 << (c.parameter_offset as usize + i)) == 0 {
+                    return Err(Error::MissingRecordField {
+                        field: p.identifier,
+                    });
+                }
+            }
+        }
     }
     // The settings carry the host rate and the seed from identity.
     if let Some(rate) = host_rate {
@@ -1205,6 +1301,9 @@ mod tests {
                             | "battery_volts"
                             | "playback_speed_mode"
                     )
+                    // Spec 024 D7: the slot's lines are written beside the table, not in it.
+                    && !e.identifier.starts_with("insert.")
+                    && !e.identifier.starts_with("band_filter.")
             })
             .map(|e| e.identifier)
             .collect();
@@ -1284,7 +1383,8 @@ mod tests {
         let (ev, ch) = rows();
         let bytes = written(&r, &ev, &ch);
         let text = String::from_utf8(bytes.clone()).unwrap();
-        assert!(text.starts_with("rr_dr60_processing_record_version = 1\nlibrary_version = "));
+        assert!(text.starts_with("rr_dr60_processing_record_version = 2\nlibrary_version = ")); // 024 D7: form 2
+        assert!(text.contains("\nsetting.mic.hiss_offset_db = 0\ninsert.before_limiter = none\nband_filter.type = low_pass\nband_filter.frequency_hz = 1000\nband_filter.q = 0.7071\nband_filter.gain_db = 0\nrun.remaining_samples_at_start = "), "{text}");
         assert!(text.contains("\norigin = engine\nhost_rate_hz = 48000\nstage.1.model_version = "));
         assert!(text.contains("\nseed = 9\nrecording_counter = 3\nstored_form_version = 2\nstored_codec_model_version = 0.8.0\nencoding = frames\nstored_unit_count = 25\nrecording_digest = fnv1a64:0123456789abcdef\nsetting.record_stage_enabled = true\n"));
         assert!(text.contains("\nsetting.agc.knee_dbfs = -1.5\n"));
@@ -1340,6 +1440,95 @@ mod tests {
         assert_eq!(again, bytes, "the round trip");
     }
 
+    /// Spec 024 D7: form 2 round trip with the band filter in the slot.
+    #[test]
+    fn form_2_round_trip() {
+        let mut r = readout();
+        r.component = crate::components::ComponentId::BandFilter;
+        r.store[0] = 3.0;
+        r.store[1] = 432.5;
+        r.store[2] = 3.25;
+        r.store[3] = -6.5;
+        let (ev, ch) = rows();
+        let bytes = written(&r, &ev, &ch);
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(text.contains("\ninsert.before_limiter = band_filter\nband_filter.type = notch\nband_filter.frequency_hz = 432.5\nband_filter.q = 3.25\nband_filter.gain_db = -6.5\n"), "{text}");
+        let mut got = RecordReadout::default();
+        read(&bytes, &mut got).unwrap();
+        assert_eq!((got.component, got.store), (r.component, r.store));
+        assert_eq!(got.flags & flags::UNKNOWN_COMPONENT, 0);
+    }
+
+    /// Spec 024 D7: a version-1 record (no slot lines) reads as an empty slot at the defaults.
+    #[test]
+    fn reads_form_1_as_empty_slot() {
+        let mut r = readout();
+        r.component = crate::components::ComponentId::BandFilter;
+        r.store[1] = 300.0;
+        let (ev, ch) = rows();
+        let bytes = written(&r, &ev, &ch);
+        let mut text = String::from_utf8(bytes).unwrap();
+        text = text.replacen("version = 2", "version = 1", 1);
+        let start = text.find("insert.before_limiter").unwrap();
+        let end = text.find("run.remaining_samples_at_start").unwrap();
+        text.replace_range(start..end, "");
+        let b1 = resign(text.into_bytes());
+        let mut got = RecordReadout::default();
+        read(&b1, &mut got).unwrap();
+        assert_eq!(got.form_version, 1);
+        assert_eq!(got.component, crate::components::ComponentId::None);
+        assert_eq!(got.store, crate::components::default_store());
+    }
+
+    /// Hardware post-implementation B12: a form-2 engine record without a slot line is refused.
+    #[test]
+    fn form_2_slot_lines_required() {
+        let (ev, ch) = rows();
+        let bytes = written(&readout(), &ev, &ch);
+        for line in [
+            "insert.before_limiter = none\n",
+            "band_filter.type = low_pass\n",
+            "band_filter.frequency_hz = 1000\n",
+            "band_filter.q = 0.7071\n",
+            "band_filter.gain_db = 0\n",
+        ] {
+            let b = resign(doctor(&bytes, line, ""));
+            assert!(
+                matches!(read_err(&b), Error::MissingRecordField { .. }),
+                "{line}"
+            );
+        }
+    }
+
+    /// Spec 024 D7: an unknown component is flagged; an unknown parameter is counted.
+    #[test]
+    fn unknown_component_flagged_and_parameter_counted() {
+        let (ev, ch) = rows();
+        let bytes = written(&readout(), &ev, &ch);
+        let b = resign(doctor(
+            &bytes,
+            "insert.before_limiter = none",
+            "insert.before_limiter = reverb",
+        ));
+        let mut got = RecordReadout::default();
+        read(&b, &mut got).unwrap();
+        assert_ne!(got.flags & flags::UNKNOWN_COMPONENT, 0);
+        let b = resign(doctor(
+            &bytes,
+            "band_filter.gain_db = 0\n",
+            "band_filter.gain_db = 0\nreverb.decay_ms = 900\n",
+        ));
+        let mut got = RecordReadout::default();
+        read(&b, &mut got).unwrap();
+        assert_eq!(got.unknown_setting_count, 1);
+        let b = resign(doctor(
+            &bytes,
+            "band_filter.q = 0.7071",
+            "band_filter.q = 11",
+        ));
+        assert!(matches!(read_err(&b), Error::MalformedRecord { .. }));
+    }
+
     fn doctor(bytes: &[u8], from: &str, to: &str) -> Vec<u8> {
         let text = String::from_utf8(bytes.to_vec()).unwrap();
         assert!(text.contains(from), "{from}");
@@ -1369,12 +1558,12 @@ mod tests {
         let (ev, ch) = rows();
         let bytes = written(&r, &ev, &ch);
         assert_eq!(
-            read_err(&doctor(&bytes, "version = 1", "version = 0")),
+            read_err(&doctor(&bytes, "version = 2", "version = 0")),
             Error::UnknownRecordVersion { version: 0 }
         );
         assert_eq!(
-            read_err(&doctor(&bytes, "version = 1", "version = 2")),
-            Error::UnknownRecordVersion { version: 2 }
+            read_err(&doctor(&bytes, "version = 2", "version = 3")), // 024 D7: 2 is read
+            Error::UnknownRecordVersion { version: 3 }
         );
         assert_eq!(
             read_err(&doctor(
@@ -1485,7 +1674,7 @@ mod tests {
         assert_eq!(set("agc.knee_dbfs", &mut s, "-0"), Ok(true));
         assert_eq!(s.agc.knee_dbfs.to_bits(), (-0.0f32).to_bits());
         assert_eq!(set("vas.sensitivity", &mut s, "256"), Err(()));
-        assert_eq!(set("tap", &mut s, "11"), Err(()));
+        assert_eq!(set("tap", &mut s, "12"), Err(())); // 11 is `after_insert` since spec 024
         assert_eq!(set("seed", &mut s, "1"), Ok(false));
     }
 

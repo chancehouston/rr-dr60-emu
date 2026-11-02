@@ -1479,7 +1479,8 @@ fn settings_read_allocate_nothing() {
         MEASURING.with(|m| m.set(true));
         let before = counts();
         let mut ok = 0usize;
-        for i in 0..32u32 {
+        for i in 0..37u32 {
+            // 36 controls since spec 024 (31 before), plus one index past the manifest.
             ok += usize::from(p.control_value(i).is_ok());
             ok += usize::from(control_map::settings_value(&s, i).is_ok());
             let _ = control_map::set_settings_value(&mut s, i, ControlReading::Continuous(1.0));
@@ -1498,8 +1499,62 @@ fn settings_read_allocate_nothing() {
         let after = counts();
         MEASURING.with(|m| m.set(false));
         assert_eq!(st, RrDr60Status::Ok);
-        assert_eq!(ok, 31 + 26, "{rate} Hz: every read ran");
+        assert_eq!(ok, 36 + 26, "{rate} Hz: every read ran");
         assert_eq!(after, before, "{rate} Hz: the settings read allocated");
+        // SAFETY: destroying the handle once.
+        unsafe { rr_dr60_destroy(handle) };
+    }
+}
+
+/// Spec 024 FR-012: the slot's calls allocate nothing in a call: a landing, a transition, a
+/// type blend, the idle setter and the component set, in Rust and through the C API.
+#[test]
+fn insert_allocate_nothing() {
+    use rr_dr60::Stream;
+    use rr_dr60::components::{ComponentId, InsertionPointId::BeforeLimiter};
+    use rr_dr60_harness::insert_checks as ic;
+    let _turn = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    for &rate in configs::measurement_rates() {
+        let mut p = ic::engine(
+            ic::placement_settings(rate),
+            [0.0, 1000.0, ic::DEFAULT_Q, 0.0],
+        );
+        let x = rr_dr60_harness::stimulus::tone(700.0, 0.2, f64::from(rate), 4096);
+        let mut y = vec![0.0f32; x.len()];
+        let c = configs::c_settings(&ic::placement_settings(rate));
+        let mut handle: *mut RrDr60Pipeline = core::ptr::null_mut();
+        // SAFETY: a valid settings struct and an out-pointer.
+        assert_eq!(unsafe { rr_dr60_create(&c, &mut handle) }, RrDr60Status::Ok);
+        MEASURING.with(|m| m.set(true));
+        let before = counts();
+        p.schedule_change(Stream::OnePass, 100, 33, 2000.0, 1)
+            .unwrap();
+        p.schedule_change(Stream::OnePass, 900, 32, 3.0, 2).unwrap();
+        let _ = p.process(&x, &mut y).unwrap();
+        p.set_component(BeforeLimiter, ComponentId::None).unwrap();
+        p.set_component_parameter(BeforeLimiter, 2, 5.0).unwrap();
+        p.set_component(BeforeLimiter, ComponentId::BandFilter)
+            .unwrap();
+        let _ = p.process(&x, &mut y).unwrap();
+        // SAFETY: a live handle and buffers of the stated length.
+        let st = unsafe {
+            [
+                rr_dr60_ffi::rr_dr60_set_component(handle, 0, 1),
+                rr_dr60_ffi::rr_dr60_set_component_parameter(handle, 0, 1, 1500.0),
+                rr_dr60_ffi::rr_dr60_schedule_change(handle, 1, 10, 35, 6.0, 3),
+                rr_dr60_ffi::rr_dr60_process(
+                    handle,
+                    x.as_ptr(),
+                    y.as_mut_ptr(),
+                    x.len(),
+                    core::ptr::null_mut(),
+                ),
+            ]
+        };
+        let after = counts();
+        MEASURING.with(|m| m.set(false));
+        assert!(st.iter().all(|&s| s == RrDr60Status::Ok), "{st:?}");
+        assert_eq!(after, before, "{rate} Hz: the slot allocated");
         // SAFETY: destroying the handle once.
         unsafe { rr_dr60_destroy(handle) };
     }
