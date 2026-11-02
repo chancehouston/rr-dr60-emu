@@ -39,3 +39,8 @@ extension RrDr60RunData: RRDR60Sized {}
 extension RrDr60StopFields: RRDR60Sized {}
 // Spec 025: the control reading, filled and read by the reads and writes by control index.
 extension RrDr60ControlReading: RRDR60Sized {}
+// Spec 024: the slot's constant data and the record's component.
+extension RrDr60InsertionPoint: RRDR60Sized {}
+extension RrDr60Component: RRDR60Sized {}
+extension RrDr60ComponentParameter: RRDR60Sized {}
+extension RrDr60RecordComponent: RRDR60Sized {}

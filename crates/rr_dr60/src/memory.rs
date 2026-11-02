@@ -148,6 +148,10 @@ pub(crate) struct SlotBlock {
     pub(crate) events_total: u64,
     /// Record-stream change entries that landed during the recording.
     pub(crate) changes_total: u64,
+    /// Spec 024 D7: the slot's component at the recording's start.
+    pub(crate) component: crate::components::ComponentId,
+    /// Spec 024 D7: the parameter store at the recording's start.
+    pub(crate) store: [f32; crate::components::COMPONENT_PARAMETER_BUDGET],
 }
 
 /// The store and its span table (research R-03; spec 008 R-07: spans count **units**, a device
@@ -1226,6 +1230,8 @@ mod block_tests {
             remaining_samples: 0,
             events_total: 0,
             changes_total: 0,
+            component: crate::components::ComponentId::None,
+            store: crate::components::default_store(),
         }
     }
 

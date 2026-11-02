@@ -878,6 +878,7 @@ mod tests {
             Tap::AfterEarphone => 13,  // spec 009 FR-011
             Tap::AfterMicCapsule => 1, // spec 012 FR-008
             Tap::AfterMicAmp => 2,     // spec 012 FR-008
+            Tap::AfterInsert => 2,     // spec 024 D6: the slot after stage 2 (no stage of its own)
         };
         for t in [
             Tap::AfterMicCapsule, // spec 012 FR-008

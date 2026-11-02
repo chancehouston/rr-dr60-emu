@@ -117,10 +117,12 @@ pub fn samples(raw: &[i32]) -> Vec<f32> {
 pub fn filler(encoding: Encoding, units: u64) -> Vec<u8> {
     let mut s = crate::configs::settings("bypass_all", 6000);
     s.speech_codec_enabled = encoding == Encoding::Frames;
-    s.memory.capacity_s = CAPACITY_S.max((units / 6000) as u32 + 1);
+    let n = units as usize * encoding.unit_samples();
+    // The capacity in seconds of device samples (units are frames with the codec on; spec 024's
+    // second-recording cells first needed a fill larger than the units-as-samples estimate).
+    s.memory.capacity_s = CAPACITY_S.max((n / 6000) as u32 + 1);
     let mut p = Pipeline::new(s).expect("the filler engine");
     p.start_recording().expect("start");
-    let n = units as usize * encoding.unit_samples();
     let _ = p.record(&vec![0.0f32; n], &mut []).expect("record");
     let out = p.stop_recording(&mut []).expect("stop");
     let StopResult::Kept { number, length } = out.result else {
@@ -274,6 +276,11 @@ pub fn record_run_in(p: &mut Pipeline, cell: Cell, raw: &[i32]) -> (Pipeline, Ru
 pub enum Delta {
     /// Nothing: the contract.
     None,
+    /// Spec 024 SC-004: the slot left empty in the re-render while the record names a
+    /// component.
+    ComponentNone,
+    /// Spec 024 SC-004: one parameter of the store moved (the frequency × 1.5).
+    ParameterMoved,
     /// The seed + 1.
     Seed,
     /// The counter + 1.
@@ -361,7 +368,25 @@ pub fn readout(record: &[u8]) -> RecordReadout {
 /// feed-point rule up to the stop position in `block` samples, the same stop, the digest.
 /// `delta` varies one thing.
 pub fn re_render(record: &[u8], raw: &[i32], block: usize, delta: Delta) -> u64 {
+    re_render_checked(record, raw, block, delta).expect("a record the recipe can render")
+}
+
+/// The recipe's refusal (spec 024 D7): a record that names a component this library does not
+/// know is not rendered (an empty slot would render a different session).
+///
+/// # Errors
+///
+/// The reason, when the record carries `flags::UNKNOWN_COMPONENT`.
+pub fn re_render_checked(
+    record: &[u8],
+    raw: &[i32],
+    block: usize,
+    delta: Delta,
+) -> Result<u64, &'static str> {
     let r = readout(record);
+    if r.flags & rr_dr60::record::flags::UNKNOWN_COMPONENT != 0 {
+        return Err("the record names a component this library does not know");
+    }
     let mut s = r.settings;
     let mut counter = r.recording_counter;
     let mut raw = raw.to_vec();
@@ -410,6 +435,25 @@ pub fn re_render(record: &[u8], raw: &[i32], block: usize, delta: Delta) -> u64 
         _ => {}
     }
     let mut p = Pipeline::new_at_counter(s, counter).expect("the record's configuration");
+    // Spec 024 D7 (plan R1): the slot and its store restored before the schedule and the start.
+    {
+        use rr_dr60::components::{ComponentId, InsertionPointId::BeforeLimiter};
+        let mut store = r.store;
+        if delta == Delta::ParameterMoved {
+            store[1] = (store[1] * 1.5).min(20_000.0);
+        }
+        for (i, v) in store.iter().enumerate().take(4) {
+            p.set_component_parameter(BeforeLimiter, i as u32, f64::from(*v))
+                .expect("the record's parameter");
+        }
+        let c = if delta == Delta::ComponentNone {
+            ComponentId::None
+        } else {
+            r.component
+        };
+        p.set_component(BeforeLimiter, c)
+            .expect("the record's component");
+    }
     match delta {
         Delta::TwinVolume => p.set_volume(0.5).unwrap(),
         Delta::TwinRoute => p.set_route(rr_dr60::Route::Earphone),
@@ -477,7 +521,7 @@ pub fn re_render(record: &[u8], raw: &[i32], block: usize, delta: Delta) -> u64 
         }
     }
     let number = p.memory_status().count;
-    p.recording_digest(number).expect("digest")
+    Ok(p.recording_digest(number).expect("digest"))
 }
 
 /// The dirty-engine counter identity (spec US1 AS5): an engine that recorded `c` times with a

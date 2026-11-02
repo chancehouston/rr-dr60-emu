@@ -180,6 +180,26 @@ pub fn engine_default(id: &str, s: &Settings) -> Option<Val> {
         "mic.capsule_enabled" => Val::B(s.mic.capsule_enabled),
         "mic.amp_enabled" => Val::B(s.mic.amp_enabled),
         "mic.hiss_offset_db" => Val::F(s.mic.hiss_offset_db),
+        // Spec 024 D3: the slot and the store, read from a fresh engine (not settings).
+        "insert.before_limiter"
+        | "band_filter.type"
+        | "band_filter.frequency_hz"
+        | "band_filter.q"
+        | "band_filter.gain_db" => {
+            use rr_dr60::components::InsertionPointId::BeforeLimiter;
+            let p = Pipeline::new(*s).ok()?;
+            match id {
+                "insert.before_limiter" => Val::C(Some(p.component(BeforeLimiter) as u32)),
+                "band_filter.type" => Val::C(Some(
+                    p.component_parameter_value(BeforeLimiter, 0).ok()? as u32,
+                )),
+                "band_filter.frequency_hz" => {
+                    Val::F(p.component_parameter_value(BeforeLimiter, 1).ok()?)
+                }
+                "band_filter.q" => Val::F(p.component_parameter_value(BeforeLimiter, 2).ok()?),
+                _ => Val::F(p.component_parameter_value(BeforeLimiter, 3).ok()?),
+            }
+        }
         _ => return None,
     })
 }
@@ -305,6 +325,14 @@ fn live_accepts(p: &mut Pipeline, id: &str, v: Val) -> Option<bool> {
         // setter); the value is validated as the setting.
         (_, Val::F(x)) if is_record_side(id) => Some(schedule_record_side(p, id, f64::from(x))),
         (_, Val::I(x)) if is_record_side(id) => Some(schedule_record_side(p, id, x as f64)),
+        // Spec 024 D3: the band filter's parameters, live through the schedule in the input
+        // clock like the record-side values.
+        (_, Val::F(x)) if is_component_parameter(id) => {
+            Some(schedule_record_side(p, id, f64::from(x)))
+        }
+        (_, Val::C(Some(c))) if is_component_parameter(id) => {
+            Some(schedule_record_side(p, id, f64::from(c)))
+        }
         // Spec 021: the four playback-stage switches change live through the schedule only, on
         // the playback stream (kept by `start_playback`; stage 10 is playback-only, D6).
         (_, Val::B(b)) if is_stage_switch(id) => Some(schedule_stage_switch(p, id, b)),
@@ -341,6 +369,14 @@ fn schedule_stage_switch(p: &mut Pipeline, id: &str, on: bool) -> bool {
         1,
     )
     .is_ok()
+}
+
+/// Spec 024 D3: the component parameters (live through the schedule only; the idle restore is
+/// `set_component_parameter`).
+pub fn is_component_parameter(id: &str) -> bool {
+    rr_dr60::components::components()
+        .iter()
+        .any(|c| c.parameters.iter().any(|p| p.identifier == id))
 }
 
 /// Spec 017 FR-001: the eight record-side values.
@@ -514,6 +550,14 @@ fn reconfigured(p: &mut Pipeline, id: &str, v: Val) -> Option<bool> {
         if let Val::I(x) = v {
             s.host_rate_hz = x as u32;
         }
+    } else if id == "insert.before_limiter" {
+        // Spec 024 D3: the slot's component, idle only, through `set_component`.
+        let Val::C(Some(c)) = v else { return None };
+        let c = rr_dr60::components::ComponentId::from_u32(c)?;
+        return Some(
+            p.set_component(rr_dr60::components::InsertionPointId::BeforeLimiter, c)
+                .is_ok(),
+        );
     } else if !set_setting(&mut s, id, v) {
         return None;
     }
@@ -906,13 +950,26 @@ pub fn setters(
         "settings_value_with",
         "settings_control_value",
     ];
+    // Spec 024 (coach 16): the slot's setters name their entries by the component manifest:
+    // `set_component` the slot (31, idle), `set_component_parameter` the parameters (32 – 35,
+    // the idle restore; live through the schedule).
+    const SLOT_SETTERS: [&str; 2] = ["component", "component_parameter"];
+    let slot_entries_exist = entries
+        .iter()
+        .any(|e| e.identifier == "insert.before_limiter")
+        && entries.iter().any(|e| is_component_parameter(e.identifier));
+    let by_index_and_slot: Vec<&str> = BY_INDEX
+        .iter()
+        .copied()
+        .chain(SLOT_SETTERS.iter().copied().filter(|_| slot_entries_exist))
+        .collect();
     let found_core: Vec<(String, String)> = found_core
         .into_iter()
-        .filter(|(_, n)| !BY_INDEX.contains(&n.as_str()))
+        .filter(|(_, n)| !by_index_and_slot.contains(&n.as_str()))
         .collect();
     let found_c: Vec<String> = found_c
         .into_iter()
-        .filter(|n| !BY_INDEX.contains(&n.as_str()))
+        .filter(|n| !by_index_and_slot.contains(&n.as_str()))
         .collect();
     let mut f = Vec::new();
     for (path, name) in &found_core {
@@ -929,7 +986,7 @@ pub fn setters(
         // Spec 017 D4 (restated): the eight record-side values are live through the schedule
         // only; a plain setter for one of them would be a defect. Spec 021 FR-001: the four
         // playback-stage switches likewise.
-        if is_record_side(id) || is_stage_switch(id) {
+        if is_record_side(id) || is_stage_switch(id) || is_component_parameter(id) {
             let bare = id.rsplit('.').next().unwrap_or(id);
             if found_core.iter().any(|(_, n)| n == id || n == bare)
                 || found_c.iter().any(|n| n == id || n == bare)
@@ -1050,6 +1107,39 @@ fn default_line<'a>(id: &str, sources: &'a [(String, String)]) -> Option<&'a str
         "host_rate_hz" => settings
             .lines()
             .find(|l| l.contains("pub const SUPPORTED_HOST_RATES")),
+        // Spec 024: the slot's default is the `#[default]` variant of `ComponentId`; the band
+        // filter's defaults are the `default:` lines of its value constants.
+        "insert.before_limiter" => {
+            let f = file("components.rs")?;
+            let mut previous = "";
+            for l in f.lines() {
+                if l.trim_start().starts_with("None = 0,") {
+                    return (previous.trim() == "#[default]").then_some(l);
+                }
+                previous = l;
+            }
+            None
+        }
+        "band_filter.type" => find(
+            file("components.rs")?,
+            "pub(crate) const BAND_FILTER_TYPE:",
+            "default:",
+        ),
+        "band_filter.frequency_hz" => find(
+            file("components.rs")?,
+            "pub(crate) const BAND_FILTER_FREQUENCY:",
+            "default:",
+        ),
+        "band_filter.q" => find(
+            file("components.rs")?,
+            "pub(crate) const BAND_FILTER_Q:",
+            "default:",
+        ),
+        "band_filter.gain_db" => find(
+            file("components.rs")?,
+            "pub(crate) const BAND_FILTER_GAIN:",
+            "default:",
+        ),
         _ => match id.split_once('.') {
             Some((group, field)) => {
                 let name = match group {

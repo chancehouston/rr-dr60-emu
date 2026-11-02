@@ -1,4 +1,4 @@
-control_count: 31
+control_count: 36
 
 [0] route
 name: Speaker or earphone
@@ -106,7 +106,7 @@ timing: idle
 paths: one-pass
 stage: 0
 value: choice
-options: after_record=0, after_playback=1, after_agc=2, after_vas=3, after_decoder=4, route_output=5, after_volume_amp=6, after_speaker=7, after_earphone=8, after_mic_capsule=9, after_mic_amp=10
+options: after_record=0, after_playback=1, after_agc=2, after_vas=3, after_decoder=4, route_output=5, after_volume_amp=6, after_speaker=7, after_earphone=8, after_mic_capsule=9, after_mic_amp=10, after_insert=11
 default: 5
 unit: 
 sources: 
@@ -449,3 +449,79 @@ unit:
 sources: S-001, S-012
 assumptions: A-054
 description: Chooses whether slow and fast playback moves the pitch with the speed (the modeled default) or keeps it by time-scaling the decoded stream.
+
+[31] insert.before_limiter
+name: Component before the limiter
+kind: emulator option
+timing: idle
+paths: record, one-pass
+stage: 0
+value: choice
+options: none=0, band_filter=1
+default: 0
+unit: 
+sources: 
+assumptions: 
+description: Puts one of the engine's own components, or none, between the microphone amplifier and the limiter; an addition of the emulator, not a part of the recorder.
+
+[32] band_filter.type
+name: Band filter type
+kind: emulator option
+timing: live
+paths: record, one-pass
+stage: 0
+value: choice
+options: low_pass=0, high_pass=1, band_pass=2, notch=3
+default: 0
+unit: 
+sources: 
+assumptions: 
+description: Chooses the band filter's shape: low-pass, high-pass, band-pass or notch.
+
+[33] band_filter.frequency_hz
+name: Band filter frequency
+kind: emulator option
+timing: live
+paths: record, one-pass
+stage: 0
+value: continuous
+min: 20
+max: 20000
+step: 0
+default: 1000
+unit: Hz
+sources: 
+assumptions: 
+description: Sets the band filter's corner or centre frequency; a value above the host rate's ceiling, a little under half the rate, is applied at the ceiling.
+
+[34] band_filter.q
+name: Band filter Q
+kind: emulator option
+timing: live
+paths: record, one-pass
+stage: 0
+value: continuous
+min: 0.5
+max: 10
+step: 0
+default: 0.7071
+unit: 
+sources: 
+assumptions: 
+description: Sets how sharp the band filter's corner is, or how narrow its peak or notch; at the top of the range the corner peaks by about twenty decibels.
+
+[35] band_filter.gain_db
+name: Band filter gain
+kind: emulator option
+timing: live
+paths: record, one-pass
+stage: 0
+value: continuous
+min: -24
+max: 24
+step: 0
+default: 0
+unit: dB
+sources: 
+assumptions: 
+description: Sets the level after the band filter's section; a large gain drives the limiter and can keep the recorder from pausing.

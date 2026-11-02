@@ -208,6 +208,7 @@ pub mod speech_codec {
 pub mod battery;
 pub mod changes;
 mod codec;
+pub mod components;
 pub mod control_map;
 pub mod controls;
 pub mod digest;
@@ -287,6 +288,56 @@ pub mod __test_hooks {
     }
 
     pub use crate::changes::{ChangeMutation, RecordMutation};
+
+    pub use crate::stages::insert::InsertMutation;
+
+    /// Spec 024 (research › The six mutants): sets the slot's mutant on both record paths.
+    pub fn mutate_insert(pipeline: &mut crate::Pipeline, m: InsertMutation) {
+        pipeline.one_pass.rec.insert.set_mutation(m);
+        pipeline.recorder.insert.set_mutation(m);
+    }
+
+    fn insert_of(
+        pipeline: &crate::Pipeline,
+        stream: crate::Stream,
+    ) -> &crate::stages::insert::Insert {
+        match stream {
+            crate::Stream::Record => &pipeline.recorder.insert,
+            _ => &pipeline.one_pass.rec.insert,
+        }
+    }
+
+    /// Spec 024 (research R-07): starts (clearing) or stops the slot's traces on a stream's
+    /// record path (`Stream::Record` the recorder, otherwise the one-pass); the buffers are
+    /// reserved here (8192 samples each, outside any processing call) and never grown.
+    pub fn insert_tracing(pipeline: &mut crate::Pipeline, stream: crate::Stream, on: bool) {
+        let ins = match stream {
+            crate::Stream::Record => &mut pipeline.recorder.insert,
+            _ => &mut pipeline.one_pass.rec.insert,
+        };
+        ins.tracing = on;
+        if on {
+            ins.trace.clear();
+            ins.input_trace.clear();
+            ins.trace.reserve(crate::stages::insert::TRACE_CAPACITY);
+            ins.input_trace
+                .reserve(crate::stages::insert::TRACE_CAPACITY);
+        }
+    }
+
+    /// Spec 024: the applied (frequency Hz, Q, gain dB) per traced sample.
+    pub fn insert_trace(pipeline: &crate::Pipeline, stream: crate::Stream) -> &[(f64, f64, f64)] {
+        &insert_of(pipeline, stream).trace
+    }
+
+    /// Spec 024 (hardware plan review B1): the slot's f64 input per traced sample (the
+    /// placement identity's oracle input).
+    pub fn insert_input_trace(pipeline: &crate::Pipeline, stream: crate::Stream) -> &[f64] {
+        &insert_of(pipeline, stream).input_trace
+    }
+
+    /// Spec 024: the slot's trace capacity.
+    pub const INSERT_TRACE_CAPACITY: usize = crate::stages::insert::TRACE_CAPACITY;
 
     /// Test-only (spec 015 research R-13): the published `speed_landing` or, with the
     /// `speed_landing_ceiling` mutant, the defective ⌊P · 6000 ÷ rate⌋.

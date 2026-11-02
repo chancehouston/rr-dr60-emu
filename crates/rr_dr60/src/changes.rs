@@ -16,9 +16,13 @@ pub const SCHEDULE_CAPACITY: usize = 64; // engineering target (015 D4)
 /// A change-log length that is always enough for one processing call (spec 015 FR-005; spec
 /// 017 FR-005, restated at the plan): the one-pass's two schedules (one per clock, spec 017 D2),
 /// one plain change per live control, and one cross-stream landing per record-side value (spec
-/// 017 D4), and one mirrored playback-stage switch per stage 11 – 13 (spec 021 research R-05).
-/// The one-pass attains 142 in one call, the recorder 72, the player 68. 67 in 0.16, 139 in 0.17.
-pub const MAX_CHANGES_PER_CALL: usize = 2 * SCHEDULE_CAPACITY + 3 + 8 + 3; // 015 FR-005; 017 FR-005; 021 FR-001
+/// 017 D4), one cross-stream landing per component parameter within the budget (spec 024 D5:
+/// all components together, [`COMPONENT_PARAMETER_BUDGET`](crate::components::COMPONENT_PARAMETER_BUDGET)),
+/// and one mirrored playback-stage switch per stage 11 – 13 (spec 021 research R-05). The
+/// one-pass attains 146 in one call with the band filter (restated 2026-11-01 from 142), the
+/// recorder 64, the player 69. 67 in 0.16, 139 in 0.17, 142 in 0.21.
+pub const MAX_CHANGES_PER_CALL: usize =
+    2 * SCHEDULE_CAPACITY + 3 + 8 + crate::components::COMPONENT_PARAMETER_BUDGET + 3; // 015 FR-005; 017 FR-005; 021 FR-001; 024 D5
 
 /// The stream a change is scheduled on (spec 015 D2): each has its own clock and schedule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -398,7 +402,7 @@ mod tests {
                 stream: 0,
             }
         );
-        assert_eq!(MAX_CHANGES_PER_CALL, 142); // 021: 2 · 64 + 3 + 8 + 3
+        assert_eq!(MAX_CHANGES_PER_CALL, 158); // 024 D5 (restated 2026-11-01): 2 · 64 + 3 + 8 + 16 + 3
     }
 
     #[test]
@@ -951,8 +955,9 @@ mod bypass_stream_tests {
     }
 
     #[test]
-    fn max_changes_per_call_is_142() {
-        assert_eq!(MAX_CHANGES_PER_CALL, 2 * 64 + 3 + 8 + 3);
+    fn max_changes_per_call_is_158_by_derivation() {
+        // Spec 024 D5 (restated 2026-11-01 from 142): the 16-parameter budget.
+        assert_eq!(MAX_CHANGES_PER_CALL, 2 * 64 + 3 + 8 + 16 + 3);
     }
 
     /// Spec 023 (research R-07, coach 4): the bound stays 142 (the one-pass attains it and the
@@ -960,7 +965,7 @@ mod bypass_stream_tests {
     /// level, battery) + the mode = 69, under the bound.
     #[test]
     fn max_changes_per_call_stays_142_player_attains_69() {
-        assert_eq!(MAX_CHANGES_PER_CALL, 142);
+        assert_eq!(MAX_CHANGES_PER_CALL, 158); // restated 2026-11-01 (spec 024 D5); the player still 69
         let mut st = state();
         st.begin_call(crate::Route::Earphone, 0.25, Some(5), 2.5);
         st.begin_call_mode(Some(1));
@@ -1232,6 +1237,17 @@ pub(crate) const SETTING_OF_SLOT: [crate::error::Setting; 8] = [
 /// setting's inclusive range after narrowing to single precision (NaN and ±Inf refused), the
 /// sensitivity integral; −0.0 normalized.
 pub(crate) fn record_value(slot: usize, value: f64) -> Result<f64, Error> {
+    if slot >= RECORD_VALUES {
+        // Spec 024 research R-06: a component parameter, narrowed to the store's f32.
+        let (_, p) = crate::components::parameter_at(slot - RECORD_VALUES)
+            .expect("a component slot maps to a parameter");
+        return crate::components::store_value(p, value)
+            .map(f64::from)
+            .ok_or(Error::InvalidControlValue {
+                control: p.control_index,
+                value,
+            });
+    }
     let setting = SETTING_OF_SLOT[slot];
     let (lo, hi) = setting.range();
     let v = value as f32;
@@ -1244,10 +1260,31 @@ pub(crate) fn record_value(slot: usize, value: f64) -> Result<f64, Error> {
     Ok(f64::from(v) + 0.0)
 }
 
-/// The slot of a record-side control, or `None` for any other control.
+/// The record-side values' count (spec 017): slots 0 – 7; the component parameters follow at
+/// 8 + their global store index (spec 024 research R-06).
+pub(crate) const RECORD_VALUES: usize = 8;
+/// Every record-side slot: the eight values and the component parameter budget.
+pub(crate) const RECORD_SLOTS: usize =
+    RECORD_VALUES + crate::components::COMPONENT_PARAMETER_BUDGET;
+
+/// The slot of a record-side control (a record-side value or a component parameter), or
+/// `None` for any other control.
 #[inline]
 pub(crate) fn slot_of(control: u32) -> Option<usize> {
-    LIVE_RECORD.iter().position(|&c| c == control)
+    LIVE_RECORD.iter().position(|&c| c == control).or_else(|| {
+        crate::components::parameter_of_control(control).map(|(i, _)| RECORD_VALUES + i)
+    })
+}
+
+/// The control manifest index of a record-side slot.
+#[inline]
+pub(crate) fn control_of_slot(slot: usize) -> u32 {
+    if slot < RECORD_VALUES {
+        LIVE_RECORD[slot]
+    } else {
+        crate::components::parameter_at(slot - RECORD_VALUES)
+            .map_or(u32::MAX, |(_, p)| p.control_index)
+    }
 }
 
 /// The eight record-side values as one copyable record (data-model.md › Record-side values).
@@ -1362,7 +1399,7 @@ pub struct RecordMutation {
 /// value (data-model.md › Record control state). The recorder itself attains 64 (a one-pass
 /// landing reaches it through `start_recording`'s adopt, with no entry); the eight are the
 /// one-pass's record side's.
-const RECORD_LOG: usize = SCHEDULE_CAPACITY + 8;
+const RECORD_LOG: usize = SCHEDULE_CAPACITY + RECORD_SLOTS; // 017; 024 D5: + the parameter budget
 
 /// The record side's control state (spec 017 research R-01; data-model.md › Record control
 /// state): the input clock, the schedule, the last applied values, the cross-stream pending
@@ -1379,13 +1416,15 @@ pub(crate) struct RecordCtl {
     /// The last applied values (the entries' `before`).
     last: RecordValues,
     /// The cross-stream pending changes: a slot mask, with the value and the tag per slot.
-    pending_mask: u8,
-    pending_value: [f64; 8],
-    pending_tag: [u64; 8],
+    pending_mask: u32,
+    pending_value: [f64; RECORD_SLOTS],
+    pending_tag: [u64; RECORD_SLOTS],
     /// The last landed value and tag per slot in the call (the epilogue writes them into the
-    /// settings), as a slot mask.
-    landed_mask: u8,
-    landed_tag: [u64; 8],
+    /// settings and the component store), as a slot mask.
+    landed_mask: u32,
+    landed_tag: [u64; RECORD_SLOTS],
+    /// The last applied component parameters (spec 024 research R-06: the global store).
+    last_component: [f32; crate::components::COMPONENT_PARAMETER_BUDGET],
     /// The stream word the entries carry (spec 020 D9); set after construction.
     stream: u32,
     #[cfg(feature = "__test-hooks")]
@@ -1403,10 +1442,11 @@ impl RecordCtl {
             log_len: 0,
             last: RecordValues::from(settings),
             pending_mask: 0,
-            pending_value: [0.0; 8],
-            pending_tag: [0; 8],
+            pending_value: [0.0; RECORD_SLOTS],
+            pending_tag: [0; RECORD_SLOTS],
             landed_mask: 0,
-            landed_tag: [0; 8],
+            landed_tag: [0; RECORD_SLOTS],
+            last_component: crate::components::default_store(),
             stream: 0,
             #[cfg(feature = "__test-hooks")]
             mutation: RecordMutation::default(),
@@ -1431,13 +1471,45 @@ impl RecordCtl {
         self.last = values;
     }
 
+    /// The last applied component parameters.
+    pub(crate) fn last_component(&self) -> [f32; crate::components::COMPONENT_PARAMETER_BUDGET] {
+        self.last_component
+    }
+
+    /// Spec 024 research R-06: the stream's component parameters become `store` with no entry
+    /// (construction, `reset`, `start_recording`, the idle setter; the caller applied them).
+    pub(crate) fn set_last_component(
+        &mut self,
+        store: [f32; crate::components::COMPONENT_PARAMETER_BUDGET],
+    ) {
+        self.last_component = store;
+    }
+
     /// A processing call's entry (research R-02): every value of `settings` that differs from
     /// the stream's last applied value becomes a pending cross-stream change with that value's
     /// tag, applied at the call's first input sample; the log and the landed record cleared.
     #[inline]
-    pub(crate) fn begin_call(&mut self, settings: &crate::Settings, tags: &[u64; 8]) {
+    pub(crate) fn begin_call(
+        &mut self,
+        settings: &crate::Settings,
+        tags: &[u64; 8],
+        store: &crate::pipeline::ComponentStore,
+    ) {
         let values = RecordValues::from(settings);
-        let mask = values.differing(&self.last);
+        let mut mask = u32::from(values.differing(&self.last));
+        for (i, (&v, &last)) in store
+            .values
+            .iter()
+            .zip(self.last_component.iter())
+            .enumerate()
+        {
+            if v.to_bits() != last.to_bits() {
+                let slot = RECORD_VALUES + i;
+                mask |= 1 << slot;
+                self.pending_value[slot] = f64::from(v);
+                self.pending_tag[slot] = store.tags[i];
+            }
+        }
         #[cfg(feature = "__test-hooks")]
         let mask = if self.mutation.skip_other_stream {
             0
@@ -1482,7 +1554,7 @@ impl RecordCtl {
     /// before the position, in position order. `apply` receives the merged values and the slot
     /// that changed; each change is logged (a scheduled one always, D5).
     #[inline(never)]
-    pub(crate) fn apply_due(&mut self, apply: &mut dyn FnMut(&RecordValues, usize)) {
+    pub(crate) fn apply_due(&mut self, apply: &mut dyn FnMut(&RecordValues, &[f32], usize)) {
         let pos = self.input;
         #[cfg(feature = "__test-hooks")]
         let pos = if self.mutation.apply_after_front {
@@ -1492,7 +1564,7 @@ impl RecordCtl {
         };
         if self.pending_mask != 0 {
             let mask = core::mem::replace(&mut self.pending_mask, 0);
-            for slot in 0..8 {
+            for slot in 0..RECORD_SLOTS {
                 if mask & (1 << slot) != 0 {
                     let (value, tag) = (self.pending_value[slot], self.pending_tag[slot]);
                     self.land(pos, slot, value, tag, apply);
@@ -1516,33 +1588,43 @@ impl RecordCtl {
         slot: usize,
         value: f64,
         tag: u64,
-        apply: &mut dyn FnMut(&RecordValues, usize),
+        apply: &mut dyn FnMut(&RecordValues, &[f32], usize),
     ) {
-        let before = self.last.get(slot);
-        let mut values = self.last;
-        values.set(slot, value);
-        apply(&values, slot);
+        let (before, after) = if slot < RECORD_VALUES {
+            let before = self.last.get(slot);
+            let mut values = self.last;
+            values.set(slot, value);
+            apply(&values, &self.last_component, slot);
+            self.last = values;
+            (before, values.get(slot))
+        } else {
+            let i = slot - RECORD_VALUES;
+            let before = f64::from(self.last_component[i]);
+            self.last_component[i] = value as f32;
+            apply(&self.last, &self.last_component, slot);
+            (before, f64::from(self.last_component[i]))
+        };
         if let Some(e) = self.log.get_mut(self.log_len) {
-            *e = ChangeEntry::new(
-                pos,
-                LIVE_RECORD[slot],
-                before,
-                values.get(slot),
-                tag,
-                self.stream,
-            );
+            *e = ChangeEntry::new(pos, control_of_slot(slot), before, after, tag, self.stream);
         }
         self.log_len += 1;
-        self.last = values;
         self.landed_mask |= 1 << slot;
         self.landed_tag[slot] = tag;
     }
 
     /// The call's landed slots and their tags, cleared (the epilogue writes the values into the
-    /// settings): `(mask, tags, values)`.
-    pub(crate) fn take_landed(&mut self) -> (u8, [u64; 8], RecordValues) {
+    /// settings and the component store): `(mask, tags, values, component values)`.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn take_landed(
+        &mut self,
+    ) -> (
+        u32,
+        [u64; RECORD_SLOTS],
+        RecordValues,
+        [f32; crate::components::COMPONENT_PARAMETER_BUDGET],
+    ) {
         let mask = core::mem::replace(&mut self.landed_mask, 0);
-        (mask, self.landed_tag, self.last)
+        (mask, self.landed_tag, self.last, self.last_component)
     }
 
     /// Copies the call's entries into `into` (the first ones when it is shorter) and returns
@@ -1636,9 +1718,10 @@ mod record_tests {
 
     #[test]
     fn record_ctl_bound() {
-        assert_eq!(MAX_CHANGES_PER_CALL, 142); // 021
-        assert_eq!(MAX_CHANGES_PER_CALL, 2 * SCHEDULE_CAPACITY + 3 + 8 + 3); // 021: the three mirrored switches
-        assert_eq!(RECORD_LOG, 72);
+        // Restated 2026-11-01 (spec 024 D5): 142 → 158 with the 16-parameter budget, 72 → 88.
+        assert_eq!(MAX_CHANGES_PER_CALL, 158);
+        assert_eq!(MAX_CHANGES_PER_CALL, 2 * SCHEDULE_CAPACITY + 3 + 8 + 16 + 3); // 024: the budget
+        assert_eq!(RECORD_LOG, 88);
     }
 
     #[test]
@@ -1666,7 +1749,7 @@ mod record_tests {
         }
         assert!(matches!(
             clock_of(crate::controls::CONTROL_COUNT as u32),
-            Err(Error::NoSuchControl { control: 31 }) // 29 before spec 018, 30 before spec 023
+            Err(Error::NoSuchControl { control: 36 }) // 29 before spec 018, 30 before 023, 31 before 024
         ));
         assert_eq!(Clock::Input as u32, 0);
         assert_eq!(Clock::Output as u32, 1);
@@ -1793,11 +1876,11 @@ mod record_tests {
         ctl.schedule
             .insert(2, LIVE_RECORD[SLOT_ONSET], 5.0, 12)
             .unwrap();
-        ctl.begin_call(&other, &tags);
+        ctl.begin_call(&other, &tags, &crate::pipeline::ComponentStore::default());
         assert_eq!(ctl.next_apply, 0);
         let mut seen = alloc::vec::Vec::new();
         assert!(ctl.due());
-        ctl.apply_due(&mut |v, slot| seen.push((slot, v.get(slot))));
+        ctl.apply_due(&mut |v, _, slot| seen.push((slot, v.get(slot))));
         // The cross-stream pair in slot order, then the scheduled entry at 0.
         assert_eq!(
             seen,
@@ -1823,10 +1906,10 @@ mod record_tests {
         assert!(!ctl.due());
         ctl.input = 2;
         assert!(ctl.due());
-        ctl.apply_due(&mut |_, _| {});
+        ctl.apply_due(&mut |_, _, _| {});
         assert_eq!(ctl.log_len(), 4);
         assert_eq!(ctl.next_apply, u64::MAX);
-        let (mask, t, values) = ctl.take_landed();
+        let (mask, t, values, _) = ctl.take_landed();
         assert_eq!(
             mask,
             (1 << SLOT_HANG) | (1 << SLOT_KNEE) | (1 << SLOT_HISS) | (1 << SLOT_ONSET)
@@ -1837,7 +1920,7 @@ mod record_tests {
         let mut same = other;
         same.mic.hiss_offset_db = 3.0;
         same.vas.onset_ms = 5.0;
-        ctl.begin_call(&same, &tags);
+        ctl.begin_call(&same, &tags, &crate::pipeline::ComponentStore::default());
         assert_eq!(ctl.next_apply, u64::MAX);
         assert_eq!(ctl.log_len(), 0);
         ctl.schedule

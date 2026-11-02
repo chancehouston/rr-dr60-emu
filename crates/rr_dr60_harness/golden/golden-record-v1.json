@@ -1,7 +1,7 @@
 {
   "format": "rr_dr60-golden",
   "version": 1,
-  "library_version": "0.21.0",
+  "library_version": "0.92.0",
   "entries": [
     {
       "stimulus": "matrix_voice",
@@ -30,7 +30,7 @@
       "rms_dbfs": -33.76,
       "record_contract": {
         "lines": [
-          "rr_dr60_processing_record_version = 1",
+          "rr_dr60_processing_record_version = 2",
           "library_version = <current>",
           "origin = engine",
           "host_rate_hz = 6000",
@@ -78,6 +78,11 @@
           "setting.mic.capsule_enabled = true",
           "setting.mic.amp_enabled = true",
           "setting.mic.hiss_offset_db = 0",
+          "insert.before_limiter = none",
+          "band_filter.type = low_pass",
+          "band_filter.frequency_hz = 1000",
+          "band_filter.q = 0.7071",
+          "band_filter.gain_db = 0",
           "run.remaining_samples_at_start = 120000",
           "run.events_total = 2",
           "run.changes_total = 2",
@@ -126,7 +131,7 @@
       "rms_dbfs": -33.83,
       "record_contract": {
         "lines": [
-          "rr_dr60_processing_record_version = 1",
+          "rr_dr60_processing_record_version = 2",
           "library_version = <current>",
           "origin = engine",
           "host_rate_hz = 8000",
@@ -174,6 +179,11 @@
           "setting.mic.capsule_enabled = true",
           "setting.mic.amp_enabled = true",
           "setting.mic.hiss_offset_db = 0",
+          "insert.before_limiter = none",
+          "band_filter.type = low_pass",
+          "band_filter.frequency_hz = 1000",
+          "band_filter.q = 0.7071",
+          "band_filter.gain_db = 0",
           "run.remaining_samples_at_start = 120000",
           "run.events_total = 2",
           "run.changes_total = 2",
@@ -222,7 +232,7 @@
       "rms_dbfs": -33.7,
       "record_contract": {
         "lines": [
-          "rr_dr60_processing_record_version = 1",
+          "rr_dr60_processing_record_version = 2",
           "library_version = <current>",
           "origin = engine",
           "host_rate_hz = 16000",
@@ -270,6 +280,11 @@
           "setting.mic.capsule_enabled = true",
           "setting.mic.amp_enabled = true",
           "setting.mic.hiss_offset_db = 0",
+          "insert.before_limiter = none",
+          "band_filter.type = low_pass",
+          "band_filter.frequency_hz = 1000",
+          "band_filter.q = 0.7071",
+          "band_filter.gain_db = 0",
           "run.remaining_samples_at_start = 120000",
           "run.events_total = 2",
           "run.changes_total = 2",
@@ -318,7 +333,7 @@
       "rms_dbfs": -33.62,
       "record_contract": {
         "lines": [
-          "rr_dr60_processing_record_version = 1",
+          "rr_dr60_processing_record_version = 2",
           "library_version = <current>",
           "origin = engine",
           "host_rate_hz = 44100",
@@ -366,6 +381,11 @@
           "setting.mic.capsule_enabled = true",
           "setting.mic.amp_enabled = true",
           "setting.mic.hiss_offset_db = 0",
+          "insert.before_limiter = none",
+          "band_filter.type = low_pass",
+          "band_filter.frequency_hz = 1000",
+          "band_filter.q = 0.7071",
+          "band_filter.gain_db = 0",
           "run.remaining_samples_at_start = 120000",
           "run.events_total = 2",
           "run.changes_total = 2",
@@ -414,7 +434,7 @@
       "rms_dbfs": -33.61,
       "record_contract": {
         "lines": [
-          "rr_dr60_processing_record_version = 1",
+          "rr_dr60_processing_record_version = 2",
           "library_version = <current>",
           "origin = engine",
           "host_rate_hz = 48000",
@@ -462,6 +482,11 @@
           "setting.mic.capsule_enabled = true",
           "setting.mic.amp_enabled = true",
           "setting.mic.hiss_offset_db = 0",
+          "insert.before_limiter = none",
+          "band_filter.type = low_pass",
+          "band_filter.frequency_hz = 1000",
+          "band_filter.q = 0.7071",
+          "band_filter.gain_db = 0",
           "run.remaining_samples_at_start = 120000",
           "run.events_total = 2",
           "run.changes_total = 2",
@@ -510,7 +535,7 @@
       "rms_dbfs": -33.61,
       "record_contract": {
         "lines": [
-          "rr_dr60_processing_record_version = 1",
+          "rr_dr60_processing_record_version = 2",
           "library_version = <current>",
           "origin = engine",
           "host_rate_hz = 88200",
@@ -558,6 +583,11 @@
           "setting.mic.capsule_enabled = true",
           "setting.mic.amp_enabled = true",
           "setting.mic.hiss_offset_db = 0",
+          "insert.before_limiter = none",
+          "band_filter.type = low_pass",
+          "band_filter.frequency_hz = 1000",
+          "band_filter.q = 0.7071",
+          "band_filter.gain_db = 0",
           "run.remaining_samples_at_start = 120000",
           "run.events_total = 2",
           "run.changes_total = 2",
@@ -606,7 +636,7 @@
       "rms_dbfs": -33.63,
       "record_contract": {
         "lines": [
-          "rr_dr60_processing_record_version = 1",
+          "rr_dr60_processing_record_version = 2",
           "library_version = <current>",
           "origin = engine",
           "host_rate_hz = 96000",
@@ -654,6 +684,11 @@
           "setting.mic.capsule_enabled = true",
           "setting.mic.amp_enabled = true",
           "setting.mic.hiss_offset_db = 0",
+          "insert.before_limiter = none",
+          "band_filter.type = low_pass",
+          "band_filter.frequency_hz = 1000",
+          "band_filter.q = 0.7071",
+          "band_filter.gain_db = 0",
           "run.remaining_samples_at_start = 120000",
           "run.events_total = 2",
           "run.changes_total = 2",

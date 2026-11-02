@@ -46,6 +46,11 @@ echo "smoke --record-changes matches the Rust example"
 cargo run -q -p rr_dr60_harness --example battery_rows > target/example-battery.txt
 diff target/smoke-battery.txt target/example-battery.txt
 echo "smoke --battery matches the Rust example"
+# Spec 024 (research R-09): the band filter in the slot, the scheduled move, the constant data.
+./target/smoke --insert > target/smoke-insert.txt
+cargo run -q -p rr_dr60_harness --example insert_rows > target/example-insert.txt
+diff target/smoke-insert.txt target/example-insert.txt
+echo "smoke --insert matches the Rust example"
 # Spec 021 FR-011: the C program's bypass rows (the entries per block, the output digest, the
 # level function's four cells) are byte-identical to the Rust example.
 ./target/smoke --bypass > target/smoke-bypass.txt

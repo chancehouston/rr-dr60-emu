@@ -186,7 +186,7 @@ fn us3_guards_unmoved() {
         ),
         (
             "golden_record.rs",
-            "026f1ca3aa98cdcaecef584adf604938550d6eab0fb7e2cde565ea3733e4c8ec",
+            "9b4c7a714220a8713470eea1b3e5329f63ff92800f60e2279a624aea40bf311e", // spec 024: the record golden re-blessed once (form 2)
         ),
         (
             "golden_bypass.rs",
@@ -362,9 +362,10 @@ fn swift_fixture_matches_rows() {
 /// promise script with 0.22 and 0.90 cover every other struct).
 #[test]
 fn spec_025_moved_nothing() {
-    assert_eq!(rr_dr60::controls::CONTROL_COUNT, 31);
-    assert_eq!(rr_dr60::changes::MAX_CHANGES_PER_CALL, 142);
-    assert_eq!(RR_DR60_MAX_CHANGES_PER_CALL, 142);
+    // Restated 2026-11-01 (spec 024 D5): 31 → 36 controls, 142 → 158; spec 025 moved neither.
+    assert_eq!(rr_dr60::controls::CONTROL_COUNT, 36);
+    assert_eq!(rr_dr60::changes::MAX_CHANGES_PER_CALL, 158);
+    assert_eq!(RR_DR60_MAX_CHANGES_PER_CALL, 158);
     assert_eq!(RR_DR60_ABI_VERSION, 1);
     assert_eq!(size_of::<RrDr60Settings>(), 120);
     assert_eq!(size_of::<RrDr60Control>(), 120);

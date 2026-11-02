@@ -57,7 +57,7 @@ use rr_dr60::{
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 91;
+pub const RR_DR60_VERSION_MINOR: u32 = 92;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -184,6 +184,14 @@ pub enum RrDr60Status {
     /// `rr_dr60_set_control_value` with the index of a settings field: change it with a settings
     /// structure and `rr_dr60_reconfigure` or with `rr_dr60_schedule_change` (spec 025 D4).
     NotAPlainLiveControl = 40, // spec 025 D7: appended
+    /// An insertion point the library does not publish (spec 024 D9).
+    NoSuchInsertionPoint = 41, // spec 024 D9: appended
+    /// A component the library does not publish, or a parameter index past the store (spec 024
+    /// D9).
+    NoSuchComponent = 42, // spec 024 D9: appended
+    /// `rr_dr60_set_component` or `rr_dr60_set_component_parameter` while recording or playing
+    /// (spec 024 D3): stop first, or schedule the parameter with `rr_dr60_schedule_change`.
+    ComponentWhileActive = 43, // spec 024 D9: appended
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -268,6 +276,10 @@ pub enum RrDr60Tap {
     /// After signal-chain stage 2 (the microphone amplifier), at the host rate. Nothing after
     /// it runs; latency 0, no events (spec 012 FR-008). Appended in 0.12.
     AfterMicAmp = 10,
+    /// After the insertion point `before_limiter` (spec 024 D6), at the host rate: stage 2's
+    /// output through the slot's component; with the slot empty it equals
+    /// `RR_DR60_TAP_AFTER_MIC_AMP`. Nothing after it runs; latency 0, no events. Appended in 0.92.
+    AfterInsert = 11,
 }
 
 /// `RR_DR60_TAP_AFTER_PLAYBACK` under the stage's name: after stage 10, before the output chain
@@ -417,7 +429,7 @@ pub const RR_DR60_SCHEDULE_CAPACITY: usize = 64; // 015 D4: equal to `rr_dr60::c
 
 /// A `changes_capacity` that is always enough for one call (spec 015 FR-005). Equal to the
 /// Rust `changes::MAX_CHANGES_PER_CALL`.
-pub const RR_DR60_MAX_CHANGES_PER_CALL: usize = 142; // 015 FR-005; 017 FR-005; 021 FR-001: equal to `rr_dr60::changes::MAX_CHANGES_PER_CALL` (a literal so cbindgen emits the define; the unit test pins it)
+pub const RR_DR60_MAX_CHANGES_PER_CALL: usize = 158; // 015 FR-005; 017 FR-005; 021 FR-001; 024 D5 (142 → 158, the 16-parameter budget): equal to `rr_dr60::changes::MAX_CHANGES_PER_CALL` (a literal so cbindgen emits the define; the unit test pins it)
 
 /// The engine's state (spec 006 FR-003), in `RrDr60EngineState.state`.
 #[repr(u32)]
@@ -958,6 +970,14 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
         Error::NotAPlainLiveControl { .. } => {
             (RrDr60Status::NotAPlainLiveControl, RrDr60SettingField::None)
         }
+        // Spec 024 contracts/api.md: statuses 41 – 43.
+        Error::NoSuchInsertionPoint { .. } => {
+            (RrDr60Status::NoSuchInsertionPoint, RrDr60SettingField::None)
+        }
+        Error::NoSuchComponent { .. } => (RrDr60Status::NoSuchComponent, RrDr60SettingField::None),
+        Error::ComponentWhileActive => {
+            (RrDr60Status::ComponentWhileActive, RrDr60SettingField::None)
+        }
         _ => (RrDr60Status::InvalidArgument, RrDr60SettingField::None),
     }
 }
@@ -997,6 +1017,7 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Sett
         8 => Tap::AfterEarphone,
         9 => Tap::AfterMicCapsule, // 012 FR-012
         10 => Tap::AfterMicAmp,    // 012 FR-012
+        11 => Tap::AfterInsert,    // 024 D6
         _ => return Err(invalid(RrDr60SettingField::Tap)),
     };
     let vas_mode = match s.vas_mode {
@@ -2869,8 +2890,8 @@ pub struct RrDr60Meters {
     pub struct_size: u32,
     /// The largest absolute input sample after the engine's sanitizing of non-finite samples.
     pub input_peak: f32,
-    /// The largest absolute sample entering the limiter (stage 2's output; the input with
-    /// stages 1 – 2 bypassed; A-046, A-051). May exceed 1.0.
+    /// The largest absolute sample entering the limiter (the slot's output, spec 024; stage 2's
+    /// with the slot empty; the input with stages 1 – 2 bypassed; A-046, A-051). May exceed 1.0.
     pub limiter_input_peak: f32,
     /// The deepest attenuation the limiter applied in the call, dB ≥ 0 (A-028, A-034, A-035;
     /// modeled on the circuit, not measured).
@@ -4364,6 +4385,8 @@ unsafe fn control_id(
 
 mod settings_read;
 pub use settings_read::*;
+mod insert;
+pub use insert::*;
 
 #[cfg(test)]
 mod abi_tests;
@@ -4387,7 +4410,7 @@ mod tests {
         let mut s = rr_dr60_settings_default(48_000);
         assert_eq!(s.struct_size as usize, size_of::<RrDr60Settings>());
         assert!(to_settings(&s).is_ok());
-        s.tap = 11; // 0 – 10 are taps since 0.12 (spec 012 contracts/c-api.md)
+        s.tap = 12; // 0 – 10 are taps since 0.12 (spec 012 contracts/c-api.md), 11 since 0.92 (024)
         assert_eq!(
             to_settings(&s),
             Err((RrDr60Status::InvalidArgument, RrDr60SettingField::Tap))
@@ -4498,7 +4521,7 @@ mod tests {
         assert_eq!(d.reserved_010_tail, [0; 7]);
         assert_eq!(d.reserved_012, [0; 2]);
         assert_eq!(d.mic_hiss_offset_db, 0.0); // 012 FR-003
-        assert_eq!(RR_DR60_VERSION_MINOR, 91);
+        assert_eq!(RR_DR60_VERSION_MINOR, 92);
         let mut stale = rr_dr60_settings_default(48_000);
         stale.struct_size = 112; // a 0.10 or 0.11 caller (spec 012 FR-012)
         assert_eq!(
@@ -4678,12 +4701,17 @@ mod tests {
             s.tap = v;
             assert_eq!(to_settings(&s).unwrap().tap, t, "{v}");
         }
-        // Spec 012 FR-012: taps 9 and 10 after the microphone stages; 11 is refused.
-        for (v, t) in [(9, Tap::AfterMicCapsule), (10, Tap::AfterMicAmp)] {
+        // Spec 012 FR-012: taps 9 and 10 after the microphone stages; spec 024 D6: 11 after the
+        // slot; 12 is refused.
+        for (v, t) in [
+            (9, Tap::AfterMicCapsule),
+            (10, Tap::AfterMicAmp),
+            (11, Tap::AfterInsert),
+        ] {
             s.tap = v;
             assert_eq!(to_settings(&s).unwrap().tap, t, "{v}");
         }
-        s.tap = 11;
+        s.tap = 12; // 11 is `after_insert` since 0.92 (spec 024 D6)
         assert!(to_settings(&s).is_err());
         assert_eq!(RrDr60Status::InvalidVolume as u32, 23);
         assert_eq!(RrDr60Status::TapNotOnRoute as u32, 24);
@@ -6166,7 +6194,7 @@ mod changes_tests {
         assert_eq!(RrDr60Status::ScheduleFull as u32, 27);
         assert_eq!(RrDr60Status::ControlNotOnStream as u32, 28);
         assert_eq!(RrDr60Status::NoSuchClock as u32, 29); // spec 017
-        assert_eq!(RR_DR60_MAX_CHANGES_PER_CALL, 142); // spec 017 FR-005; spec 021 FR-001
+        assert_eq!(RR_DR60_MAX_CHANGES_PER_CALL, 158); // spec 017 FR-005; spec 021 FR-001; 024 D5 (142 → 158)
         assert_eq!(
             status_from_error(Error::ReservedStream {
                 stream: Stream::Record
@@ -6702,7 +6730,7 @@ use rr_dr60::timeline::{self, KeptOrRemoved};
 
 /// The processing record form's version this library writes (spec 020 D2); it reads every
 /// earlier one and refuses 0 and any later one. Equal to the Rust `record::FORM_VERSION`.
-pub const RR_DR60_PROCESSING_RECORD_VERSION: u32 = 1; // 020 D2 (a literal so cbindgen emits the define; the unit test pins it)
+pub const RR_DR60_PROCESSING_RECORD_VERSION: u32 = 2; // 020 D2; 024 D7 (form 2 carries the slot) (a literal so cbindgen emits the define; the unit test pins it)
 
 /// `RrDr60RecordReadout.flags`: the record's library version differs from this library's.
 pub const RR_DR60_RECORD_FLAG_LIBRARY_DIFFERS: u32 = 1;
@@ -6721,6 +6749,9 @@ pub const RR_DR60_RECORD_FLAG_IMPORTED_ORIGIN: u32 = 32;
 /// Checked against a recording in memory (`rr_dr60_recording_digest_matches`): the digests
 /// differ.
 pub const RR_DR60_RECORD_FLAG_DIGEST_MISMATCH: u32 = 64;
+/// The record names a component this library does not know (spec 024 D7): the re-render is
+/// refused.
+pub const RR_DR60_RECORD_FLAG_UNKNOWN_COMPONENT: u32 = 128;
 
 /// `RrDr60StopFields.how`: the host called `rr_dr60_stop_recording` (also when its flush
 /// filled the memory).
@@ -7068,6 +7099,7 @@ fn fill_settings(t: &mut RrDr60Settings, s: &Settings) {
         Tap::AfterEarphone => 8,
         Tap::AfterMicCapsule => 9,
         Tap::AfterMicAmp => 10,
+        Tap::AfterInsert => 11,
         _ => 5, // a tap this build does not know (the enum is non-exhaustive): the default
     };
     let vas_mode = match s.vas.mode {
@@ -7639,6 +7671,40 @@ pub unsafe extern "C" fn rr_dr60_record_write(
         Ok(r) => r,
         Err(status) => return status,
     };
+    // SAFETY: the arrays as the caller's contract states.
+    unsafe {
+        write_record_rows(
+            &r,
+            events,
+            host_input_positions,
+            event_count,
+            changes,
+            change_count,
+            out,
+            out_len,
+            out_written,
+        )
+    }
+}
+
+/// The pure writer's body after the read-out (spec 020 FR-001; spec 024 shares it).
+///
+/// # Safety
+///
+/// As `rr_dr60_record_write`'s arrays and output.
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn write_record_rows(
+    r: &RecordReadout,
+    events: *const RrDr60VasEvent,
+    host_input_positions: *const u64,
+    event_count: usize,
+    changes: *const RrDr60ChangeEntry,
+    change_count: usize,
+    out: *mut u8,
+    out_len: usize,
+    out_written: *mut usize,
+) -> RrDr60Status {
+    let r = *r;
     let rows: Vec<record::RecordEvent> = (0..event_count)
         .map(|i| {
             // SAFETY: readable for the count (caller contract); the layouts match.
@@ -8224,6 +8290,10 @@ mod record_contract_tests {
             RR_DR60_RECORD_FLAG_DIGEST_MISMATCH,
             record::flags::DIGEST_MISMATCH
         );
+        assert_eq!(
+            RR_DR60_RECORD_FLAG_UNKNOWN_COMPONENT,
+            record::flags::UNKNOWN_COMPONENT
+        );
         assert_eq!(RR_DR60_STREAM_WORD_PLAYBACK, rr_dr60::STREAM_PLAYBACK);
         assert_eq!(RR_DR60_STREAM_WORD_ONE_PASS, rr_dr60::STREAM_ONE_PASS);
         assert_eq!(RR_DR60_STREAM_WORD_RECORD, rr_dr60::STREAM_RECORD);
@@ -8258,7 +8328,7 @@ mod record_contract_tests {
         // SAFETY: the first 376 bytes are a filled struct.
         let c = unsafe { big.0.as_ptr().cast::<RrDr60RecordReadout>().read() };
         assert_eq!(c.struct_size, READOUT_SIZE);
-        assert_eq!(c.to_core().unwrap().form_version, 1);
+        assert_eq!(c.to_core().unwrap().form_version, 2); // 024 D7: form 2
         let mut small = Big([0; READOUT_SIZE as usize + 16]);
         small.0[..4].copy_from_slice(&(READOUT_SIZE - 1).to_ne_bytes());
         // SAFETY: a writable buffer.

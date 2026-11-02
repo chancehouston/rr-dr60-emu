@@ -1339,3 +1339,42 @@ fn guide_settings_read() {
         );
     }
 }
+
+#[test]
+fn guide_insert() {
+    // Spec 024 FR-011 (records.md): the guide's section exists, names the slot an addition of
+    // the emulator and describes what the filter does to a tone; the forbidden words absent.
+    let text = std::fs::read_to_string(mc::repo_root().join("docs/guide.md")).unwrap();
+    let start = text
+        .find("## Insertable components (the slot before the limiter)\n")
+        .expect("the guide's insertable-components section");
+    let end = text[start + 1..]
+        .find("\n## ")
+        .map_or(text.len(), |i| start + 1 + i);
+    let section = text[start..end].to_lowercase();
+    assert!(section.contains("an addition of the emulator, not a part of the original recorder"));
+    assert!(section.contains("max_changes_per_call") && section.contains("158"));
+    assert!(
+        section.contains("set_component_parameter")
+            && section.contains("component_parameter_budget")
+    );
+    for word in [
+        "verified",
+        "authentic",
+        "proves",
+        "genuine",
+        "accurate",
+        "honest",
+        "raw ",
+        "clean",
+        "unfiltered",
+        "true signal",
+        "reveal",
+        "strip away",
+        "enhance",
+        "isolate",
+        "measured",
+    ] {
+        assert!(!section.contains(word), "the insert section says {word:?}");
+    }
+}

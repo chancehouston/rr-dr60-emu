@@ -192,12 +192,13 @@ fn the_tight_bounds() {
     let info = q
         .process_with_events_and_changes(&x[..n], &mut yo, &mut evo, &mut log)
         .unwrap();
+    // Restated 2026-11-01 (spec 024 D5): the bound is 158 with the 16-parameter budget; this
+    // call, with no component parameters landed, attains 142 (insert_matrix reads 146).
     assert_eq!(
-        info.changes,
-        rr_dr60::changes::MAX_CHANGES_PER_CALL,
-        "the one-pass attains the bound"
+        info.changes, 142,
+        "the one-pass attains 142 without the component's mirrors"
     );
-    assert_eq!(rr_dr60::changes::MAX_CHANGES_PER_CALL, 142);
+    assert_eq!(rr_dr60::changes::MAX_CHANGES_PER_CALL, 158);
     let _ = Pipeline::new(s).unwrap();
     let _ = cc::run(&mut q, Source::OnePass(&x[..8]), Partition::Fixed(8));
     let _ = Change::speed;

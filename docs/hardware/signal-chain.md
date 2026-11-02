@@ -18,6 +18,8 @@ The IDs refer to [sources.md](sources.md) (`S-###`) and [assumptions.md](assumpt
  EMULATOR (specs 006, 008, 009, 012, 013): the record path (1, 2, 3, 4 + clamp, 5, 7) writes 4 kbit/s frames into a modeled
  memory (8: 60 min / 99 items in whole frames, A-038, A-040) and the playback path (9 with the speed control, 10) decodes them
  toward the selected route (spec 009: 11 and 12 on the speaker route, 11 and 13 on the earphone route); 6 is not modeled (A-009: no evidence).
+ Since spec 024 (0.92) an emulator-only slot sits between 2 and 3 at the host rate (the insertion point `before_limiter`, empty by
+ default, holding the band filter when set): an addition of the emulator, not a stage, so it has no row below.
  [5 VAS gate] ─▶ [7 Encoder] ─▶ [memory: 4 kbit/s frames (10 bytes / 20 ms)] ─▶ [9 Decoder] ─▶ [10 Codec filter] ─▶ [11 Volume, amp] ─▶ [12 Speaker] | [13 Earphone]
 
  GLOBAL

@@ -528,6 +528,11 @@ impl EventCounters {
     }
 }
 
+/// The band filter's four store values (spec 024 research R-06: the global store, 0 – 3).
+fn band_values(store: &[f32; crate::components::COMPONENT_PARAMETER_BUDGET]) -> [f32; 4] {
+    [store[0], store[1], store[2], store[3]]
+}
+
 /// Where the front of the record path is read at a host-rate tap (spec 012 FR-008).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FrontStop {
@@ -535,6 +540,8 @@ enum FrontStop {
     Capsule,
     /// After stage 2, the microphone amplifier (`Tap::AfterMicAmp`).
     Amp,
+    /// After the slot (`Tap::AfterInsert`; spec 024 D6): stage 2, then the slot's component.
+    Insert,
     /// After stage 3, the limiter (`Tap::AfterAgc`), and the default for every other tap.
     Limiter,
 }
@@ -552,7 +559,10 @@ pub(crate) struct RecordPath {
     /// Stage 3 at the host rate, before the conversion.
     pub(crate) limiter: Limiter,
     /// Stage 3 runs: the AGC is enabled (spec 002 FR-002; spec 005 FR-002).
-    run_limiter: bool,
+    pub(crate) run_limiter: bool,
+    /// A component is in the slot (spec 024 research R-01): in `run_limiter`'s padding, so no
+    /// offset after it moves.
+    pub(crate) run_insert: bool,
     /// `None` at the 6 kHz identity rate (spec 004 FR-002) and at the honoured "after AGC" tap.
     pub(crate) down: Option<PolyphaseDown>,
     pub(crate) half: RecordHalf,
@@ -580,6 +590,9 @@ pub(crate) struct RecordPath {
     /// Spec 017 (research R-01): the input clock, the record schedule, the last applied
     /// record-side values, the cross-stream pending changes and the staging log.
     pub(crate) ctl: crate::changes::RecordCtl,
+    /// The slot at `before_limiter` (spec 024 D1): after `ctl`, so the hot fields keep their
+    /// offsets (spec 015's lesson; research R-01).
+    pub(crate) insert: crate::stages::insert::Insert,
 }
 
 impl RecordPath {
@@ -617,6 +630,7 @@ impl RecordPath {
             mic: MicFront::new(&settings.mic, settings.seed, settings.host_rate_hz),
             limiter: Limiter::new(&settings.agc, settings.host_rate_hz),
             run_limiter: settings.agc.enabled,
+            run_insert: false,
             // The "after AGC" tap never converts, so its decimator is not built (001 R-01).
             down: if front_tap {
                 None
@@ -636,6 +650,7 @@ impl RecordPath {
             front_stop: match settings.tap {
                 Tap::AfterMicCapsule => FrontStop::Capsule,
                 Tap::AfterMicAmp => FrontStop::Amp,
+                Tap::AfterInsert => FrontStop::Insert,
                 _ => FrontStop::Limiter,
             },
             latency,
@@ -644,7 +659,31 @@ impl RecordPath {
             input_peak: 0.0,
             limiter_input_peak: 0.0,
             ctl: crate::changes::RecordCtl::new(settings),
+            insert: crate::stages::insert::Insert::new(
+                settings.host_rate_hz,
+                crate::components::ComponentId::None,
+                band_values(&crate::components::default_store()),
+            ),
         }
+    }
+
+    /// Spec 024 research R-06: the slot's component and the store applied at once with no entry
+    /// (construction, `reconfigure`, `set_component`, the idle setter, `start_recording`'s
+    /// adopt). A changed component clears the filter's state.
+    pub(crate) fn set_store(&mut self, store: &crate::pipeline::ComponentStore) {
+        if self.insert.component() != store.component {
+            self.insert.set_component(store.component);
+        }
+        // Only the values that differ from the stream's last applied ones snap (hardware
+        // post-implementation B3): a running transition of another parameter is kept.
+        let last = self.ctl.last_component();
+        for (i, (&v, &l)) in store.values.iter().zip(last.iter()).enumerate().take(4) {
+            if v.to_bits() != l.to_bits() {
+                self.insert.land(i, v, true);
+            }
+        }
+        self.run_insert = self.insert.occupied();
+        self.ctl.set_last_component(store.values);
     }
 
     /// Spec 017 research R-02: the apply point at the top of input sample `ctl.input`, one
@@ -670,13 +709,14 @@ impl RecordPath {
             limiter,
             half,
             ctl,
+            insert,
             ..
         } = self;
 
         let at_once = ctl.input == 0;
         #[cfg(feature = "__test-hooks")]
         let m = ctl.mutation;
-        ctl.apply_due(&mut |v, slot| match slot {
+        ctl.apply_due(&mut |v, store, slot| match slot {
             SLOT_SENSITIVITY..=SLOT_ONSET => {
                 half.vas
                     .set_values(v.sensitivity, v.threshold_dbfs, v.hang_ms, v.onset_ms);
@@ -697,6 +737,13 @@ impl RecordPath {
                 #[cfg(feature = "__test-hooks")]
                 let step = step || m.step_hiss;
                 let _ = mic.set_hiss_offset(v.hiss_offset_db, step);
+            }
+            s if s >= crate::changes::RECORD_VALUES => {
+                // Spec 024 research R-06: a component parameter (the band filter's 0 – 3).
+                let i = s - crate::changes::RECORD_VALUES;
+                if i < 4 {
+                    insert.land(i, store[i], at_once);
+                }
             }
             _ => debug_assert!(false, "a record-side slot"),
         });
@@ -752,8 +799,13 @@ impl RecordPath {
     /// A processing call's entry (spec 017 research R-02): the settings' values that differ
     /// from the stream's last applied ones become pending, landing at the first input sample.
     #[inline]
-    pub(crate) fn begin_call(&mut self, settings: &Settings, tags: &[u64; 8]) {
-        self.ctl.begin_call(settings, tags);
+    pub(crate) fn begin_call(
+        &mut self,
+        settings: &Settings,
+        tags: &[u64; 8],
+        store: &crate::pipeline::ComponentStore,
+    ) {
+        self.ctl.begin_call(settings, tags, store);
         if self.mic.ramping() {
             self.ctl.hold_now(); // R-05's fold across a call boundary
         }
@@ -818,6 +870,14 @@ impl RecordPath {
                 self.peak_limiter_input(v);
                 v
             }
+            FrontStop::Insert => {
+                let mut v = self.mic.process_upto(s, MicStop::Amp);
+                if self.run_insert {
+                    v = self.insert.process(v);
+                }
+                self.peak_limiter_input(v);
+                v
+            }
             FrontStop::Limiter => self.front_from(s),
         });
         self.ctl.input += 1;
@@ -855,7 +915,11 @@ impl RecordPath {
     /// The front from the sanitized sample: stages 1 – 2, then stage 3.
     #[inline]
     fn front_from(&mut self, s: f64) -> f64 {
-        let x = self.mic.process(s);
+        let mut x = self.mic.process(s);
+        // Spec 024 research R-01: the slot; with none, not entered and no arithmetic.
+        if self.run_insert {
+            x = self.insert.process(x);
+        }
         self.peak_limiter_input(x);
         if self.run_limiter {
             self.limiter.process(x)
@@ -1008,6 +1072,7 @@ impl RecordPath {
         self.input_peak = 0.0;
         self.limiter_input_peak = 0.0;
         self.ctl.reset_clock(); // 017 D2: the clock restarts; the schedule is kept (D5)
+        self.insert.reset(); // spec 024 plan R2: cleared at each recording's start, as stage 2's
     }
 
     /// Test-only: stages 1 – 2 altered by `m` (spec 012 T033).

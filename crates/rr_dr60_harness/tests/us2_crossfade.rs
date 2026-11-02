@@ -46,7 +46,7 @@ fn as2_manifest_and_register() {
     assert_eq!(s9.model_version, "0.23.0"); // 0.19.0 until spec 023 moved stage 9
     assert_eq!(
         rr_dr60::controls().len(),
-        31, // 30 until spec 023 appended the mode
+        36, // 30 until spec 023 appended the mode, 31 until spec 024 the slot
         "the control manifest is unchanged"
     );
     let text =

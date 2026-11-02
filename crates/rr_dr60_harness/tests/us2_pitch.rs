@@ -109,7 +109,7 @@ fn as3_lifecycle() {
 #[test]
 fn as4_control_manifest() {
     let c = rr_dr60::controls();
-    assert_eq!(c.len(), 31);
+    assert_eq!(c.len(), 36); // restated 2026-11-01 (spec 024: entries 31 – 35)
     let e = &c[30];
     assert_eq!(e.identifier, "playback_speed_mode");
     assert_eq!(e.name, "Playback speed mode");
