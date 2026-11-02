@@ -8,6 +8,7 @@
 pub mod abi_checks;
 pub mod agc_checks;
 pub mod analysis;
+pub mod band_filter_ref;
 pub mod battery_checks;
 pub mod bypass_checks;
 pub mod chain_checks;
