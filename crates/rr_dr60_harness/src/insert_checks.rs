@@ -199,7 +199,7 @@ pub fn change_run(
     block: usize,
 ) -> (Vec<f32>, Vec<ChangeEntry>) {
     let mut p = engine(oracle_settings(rate), values);
-    hooks::set_insert_mutation(&mut p, mutation);
+    hooks::mutate_insert(&mut p, mutation);
     p.schedule_change(Stream::OnePass, at, change.0, change.1, 9)
         .expect("schedule");
     let mut out = vec![0.0f32; x.len()];

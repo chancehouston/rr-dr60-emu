@@ -63,7 +63,7 @@
 
 // A `changes_capacity` that is always enough for one call (spec 015 FR-005). Equal to the
 // Rust `changes::MAX_CHANGES_PER_CALL`.
-#define RR_DR60_MAX_CHANGES_PER_CALL 142
+#define RR_DR60_MAX_CHANGES_PER_CALL 158
 
 // The C ABI version (spec 022 D3): 1 since 0.22. It moves on a change no size field can express
 // (a frozen struct's bytes, a function's signature or removal, an enum value's meaning, a field
@@ -172,7 +172,7 @@
 
 // The processing record form's version this library writes (spec 020 D2); it reads every
 // earlier one and refuses 0 and any later one. Equal to the Rust `record::FORM_VERSION`.
-#define RR_DR60_PROCESSING_RECORD_VERSION 1
+#define RR_DR60_PROCESSING_RECORD_VERSION 2
 
 // `RrDr60RecordReadout.flags`: the record's library version differs from this library's.
 #define RR_DR60_RECORD_FLAG_LIBRARY_DIFFERS 1
@@ -198,6 +198,10 @@
 // differ.
 #define RR_DR60_RECORD_FLAG_DIGEST_MISMATCH 64
 
+// The record names a component this library does not know (spec 024 D7): the re-render is
+// refused.
+#define RR_DR60_RECORD_FLAG_UNKNOWN_COMPONENT 128
+
 // `RrDr60StopFields.how`: the host called `rr_dr60_stop_recording` (also when its flush
 // filled the memory).
 #define RR_DR60_STOP_CALL 0
@@ -220,6 +224,39 @@
 
 // The stream word of the record stream (the recorder).
 #define RR_DR60_STREAM_WORD_RECORD 3
+
+// `RR_DR60_INSERTION_POINT_BEFORE_LIMITER`: between stage 2 and the limiter (spec 024 D1).
+#define RR_DR60_INSERTION_POINT_BEFORE_LIMITER 0
+
+// `RR_DR60_COMPONENT_NONE`: the slot empty.
+#define RR_DR60_COMPONENT_NONE 0
+
+// `RR_DR60_COMPONENT_BAND_FILTER`: the band filter.
+#define RR_DR60_COMPONENT_BAND_FILTER 1
+
+// The band filter's types (`band_filter.type`): low-pass.
+#define RR_DR60_BAND_FILTER_LOW_PASS 0
+
+// High-pass.
+#define RR_DR60_BAND_FILTER_HIGH_PASS 1
+
+// Band-pass (a 0 dB peak).
+#define RR_DR60_BAND_FILTER_BAND_PASS 2
+
+// Notch.
+#define RR_DR60_BAND_FILTER_NOTCH 3
+
+// The parameters of all components together in the global store (spec 024 D5).
+#define RR_DR60_COMPONENT_PARAMETER_BUDGET 16
+
+// `RrDr60ComponentParameter.scale`: linear.
+#define RR_DR60_SCALE_LINEAR 0
+
+// Logarithmic.
+#define RR_DR60_SCALE_LOG 1
+
+// In decibels.
+#define RR_DR60_SCALE_DECIBEL 2
 
 // Result of every fallible C API call.
 enum RrDr60Status
@@ -346,6 +383,14 @@ enum RrDr60Status
   // `rr_dr60_set_control_value` with the index of a settings field: change it with a settings
   // structure and `rr_dr60_reconfigure` or with `rr_dr60_schedule_change` (spec 025 D4).
   RR_DR60_STATUS_NOT_A_PLAIN_LIVE_CONTROL = 40,
+  // An insertion point the library does not publish (spec 024 D9).
+  RR_DR60_STATUS_NO_SUCH_INSERTION_POINT = 41,
+  // A component the library does not publish, or a parameter index past the store (spec 024
+  // D9).
+  RR_DR60_STATUS_NO_SUCH_COMPONENT = 42,
+  // `rr_dr60_set_component` or `rr_dr60_set_component_parameter` while recording or playing
+  // (spec 024 D3): stop first, or schedule the parameter with `rr_dr60_schedule_change`.
+  RR_DR60_STATUS_COMPONENT_WHILE_ACTIVE = 43,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -446,6 +491,10 @@ enum RrDr60Tap
   // After signal-chain stage 2 (the microphone amplifier), at the host rate. Nothing after
   // it runs; latency 0, no events (spec 012 FR-008). Appended in 0.12.
   RR_DR60_TAP_AFTER_MIC_AMP = 10,
+  // After the insertion point `before_limiter` (spec 024 D6), at the host rate: stage 2's
+  // output through the slot's component; with the slot empty it equals
+  // `RR_DR60_TAP_AFTER_MIC_AMP`. Nothing after it runs; latency 0, no events. Appended in 0.92.
+  RR_DR60_TAP_AFTER_INSERT = 11,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -1431,6 +1480,92 @@ typedef struct RrDr60ControlReading {
   // Zero on output; ignored on input.
   uint32_t reserved;
 } RrDr60ControlReading;
+
+// One insertion point (spec 024 D1), filled by `rr_dr60_insertion_point`. `struct_size` first.
+typedef struct RrDr60InsertionPoint {
+  // `sizeof(RrDr60InsertionPoint)`; read back as the filled size.
+  uint32_t struct_size;
+  // The point's value (`RR_DR60_INSERTION_POINT_*`).
+  uint32_t value;
+  // The identifier, e.g. `before_limiter` (static, NUL-terminated).
+  const char *identifier;
+  // The name.
+  const char *name;
+  // Where it sits, one sentence.
+  const char *placement;
+  // The paths it serves (1 the record side).
+  uint32_t paths;
+  // The control manifest's index of the slot's control (31).
+  uint32_t control_index;
+} RrDr60InsertionPoint;
+
+// One component (spec 024 D2), filled by `rr_dr60_component`. `struct_size` first.
+typedef struct RrDr60Component {
+  // `sizeof(RrDr60Component)`; read back as the filled size.
+  uint32_t struct_size;
+  // The component's value (`RR_DR60_COMPONENT_*`, never NONE).
+  uint32_t value;
+  // The identifier, e.g. `band_filter`.
+  const char *identifier;
+  // The name.
+  const char *name;
+  // What it does to the sound, one sentence.
+  const char *description;
+  // The latency it adds, in host samples (0 for every 0.92 component).
+  uint32_t latency_samples;
+  // The paths it serves (1 the record side).
+  uint32_t paths;
+  // Its parameters' base index in the global store.
+  uint32_t parameter_offset;
+  // Its parameter count.
+  uint32_t parameter_count;
+} RrDr60Component;
+
+// One parameter of a component (spec 024 D2), filled by `rr_dr60_component_parameter`.
+// `struct_size` first. A choice's options are read with `rr_dr60_control_option` at
+// `control_index`.
+typedef struct RrDr60ComponentParameter {
+  // `sizeof(RrDr60ComponentParameter)`; read back as the filled size.
+  uint32_t struct_size;
+  // The value type, an `RrDr60ControlValueType` value (choice or continuous).
+  uint32_t value_type;
+  // The control manifest identifier, e.g. `band_filter.frequency_hz`.
+  const char *identifier;
+  // The name.
+  const char *name;
+  // The unit, or empty.
+  const char *unit;
+  // The inclusive minimum (a choice: 0).
+  float min;
+  // The inclusive maximum (a choice: the last option's value).
+  float max;
+  // The default.
+  float default_value;
+  // How its transition moves (`RR_DR60_SCALE_*`).
+  uint32_t scale;
+  // The control manifest's index.
+  uint32_t control_index;
+  // Zero.
+  uint32_t reserved;
+} RrDr60ComponentParameter;
+
+// The slot of a processing record (spec 024 D7), filled by
+// `rr_dr60_processing_record_component` and read by `rr_dr60_record_write_with_component`.
+// `struct_size` first. `parameter_count` 0 (a version-1 record, or a write without it) means
+// an empty slot at the defaults.
+typedef struct RrDr60RecordComponent {
+  // `sizeof(RrDr60RecordComponent)`; read back as the filled size.
+  uint32_t struct_size;
+  // The slot's component at the recording's start (`RR_DR60_COMPONENT_*`).
+  uint32_t component;
+  // The store's values written (16 on a read; 0 or 16 on a write).
+  uint32_t parameter_count;
+  // Zero.
+  uint32_t reserved;
+  // The global parameter store at the recording's start (the band filter's type, frequency,
+  // Q and gain at 0 – 3).
+  float store[16];
+} RrDr60RecordComponent;
 
 // `RR_DR60_TAP_AFTER_PLAYBACK` under the stage's name: after stage 10, before the output chain
 // (version 0.8's default output; spec 009 FR-011).
@@ -2785,6 +2920,125 @@ RrDr60Status rr_dr60_set_control_value(struct RrDr60Pipeline *pipeline,
 //
 // `out_index` must be NULL or writable.
 RrDr60Status rr_dr60_setting_field_control(uint32_t field, uint32_t *out_index);
+
+// Puts `component` into the slot at `point`, or empties it with `RR_DR60_COMPONENT_NONE`
+// (spec 024 D3): only while idle (`RR_DR60_STATUS_COMPONENT_WHILE_ACTIVE` while recording or
+// playing); never a change entry; kept by reset and reconfigure; never allocates. A change
+// clears the filter's state; the parameter store is kept. On the one-pass the change is
+// immediate: fade or mute around it. Not real-time safe in the sense of a live control: call
+// it between recordings.
+//
+// # Safety
+//
+// `pipeline` must be NULL or a live handle.
+RrDr60Status rr_dr60_set_component(struct RrDr60Pipeline *pipeline,
+                                   uint32_t point,
+                                   uint32_t component);
+
+// Writes the slot's component at `point` into `*out_component` (spec 024 D3). Real-time safe.
+//
+// # Safety
+//
+// `pipeline` NULL or a live handle; `out_component` NULL or writable.
+RrDr60Status rr_dr60_get_component(struct RrDr60Pipeline *pipeline,
+                                   uint32_t point,
+                                   uint32_t *out_component);
+
+// Writes parameter `index` of the global store (the band filter's type 0, frequency 1, Q 2,
+// gain 3) while idle, with no change entry (spec 024 plan R1): the restore path a re-render
+// takes. Validated as the schedule validates it (`RR_DR60_STATUS_INVALID_ARGUMENT` out of range
+// or not an option; `RR_DR60_STATUS_NO_SUCH_COMPONENT` past the store's parameters);
+// `RR_DR60_STATUS_COMPONENT_WHILE_ACTIVE` while recording or playing. To change a parameter
+// during a recording, schedule it with `rr_dr60_schedule_change` (controls 32 – 35).
+//
+// # Safety
+//
+// `pipeline` must be NULL or a live handle.
+RrDr60Status rr_dr60_set_component_parameter(struct RrDr60Pipeline *pipeline,
+                                             uint32_t point,
+                                             uint32_t index,
+                                             double value);
+
+// Writes parameter `index` of the store into `*out_value` (spec 024 D3): the most recently set
+// or landed value (the target during a transition). Real-time safe.
+//
+// # Safety
+//
+// `pipeline` NULL or a live handle; `out_value` NULL or writable.
+RrDr60Status rr_dr60_component_parameter_value(struct RrDr60Pipeline *pipeline,
+                                               uint32_t point,
+                                               uint32_t index,
+                                               float *out_value);
+
+// Writes the band filter's applied frequency ceiling at `host_rate_hz` into `*out_hz` (spec 024
+// D4: 0.45 × the rate); `RR_DR60_STATUS_UNSUPPORTED_HOST_RATE` for a rate the engine does not
+// support. Needs no handle; real-time safe.
+//
+// # Safety
+//
+// `out_hz` must be NULL or writable.
+RrDr60Status rr_dr60_band_filter_frequency_ceiling_hz(uint32_t host_rate_hz, double *out_hz);
+
+// The number of insertion points (spec 024 D1: 1). Real-time safe.
+uint32_t rr_dr60_insertion_point_count(void);
+
+// Copies insertion point `index` (0-based) into `*out` (spec 024 D1);
+// `RR_DR60_STATUS_NO_SUCH_INSERTION_POINT` past the list. Real-time safe.
+//
+// # Safety
+//
+// `out` must be NULL or point to a writable `RrDr60InsertionPoint` of its `struct_size`.
+RrDr60Status rr_dr60_insertion_point(uint32_t index, struct RrDr60InsertionPoint *out);
+
+// The number of components (spec 024 D2: 1; none is not counted). Real-time safe.
+uint32_t rr_dr60_component_count(void);
+
+// Copies component `index` (0-based over the components; each carries its value) into `*out`
+// (spec 024 D2); `RR_DR60_STATUS_NO_SUCH_COMPONENT` past the list. Real-time safe.
+//
+// # Safety
+//
+// `out` must be NULL or point to a writable `RrDr60Component` of its `struct_size`.
+RrDr60Status rr_dr60_component(uint32_t index, struct RrDr60Component *out);
+
+// Copies parameter `index` of component `component_index` (both 0-based) into `*out` (spec 024
+// D2); `RR_DR60_STATUS_NO_SUCH_COMPONENT` past either list. Real-time safe.
+//
+// # Safety
+//
+// `out` must be NULL or point to a writable `RrDr60ComponentParameter` of its `struct_size`.
+RrDr60Status rr_dr60_component_parameter(uint32_t component_index,
+                                         uint32_t index,
+                                         struct RrDr60ComponentParameter *out);
+
+// Reads a processing record's slot into `*out` (spec 024 D7): the component and the store at
+// the recording's start; a version-1 record reads as an empty slot at the defaults. The record
+// is read and refused exactly as `rr_dr60_processing_record_read` refuses it. Needs no handle.
+//
+// # Safety
+//
+// `bytes` readable for `len`; `out` NULL or a writable `RrDr60RecordComponent` of its size.
+RrDr60Status rr_dr60_processing_record_component(const uint8_t *bytes,
+                                                 uintptr_t len,
+                                                 struct RrDr60RecordComponent *out);
+
+// The pure writer with the slot (spec 024 D7): as `rr_dr60_record_write`, with the record's
+// component and store from `*component` (`parameter_count` 0: an empty slot at the defaults).
+// `rr_dr60_record_write` itself writes an empty slot.
+//
+// # Safety
+//
+// As `rr_dr60_record_write`; `component` readable for its `struct_size` (at least 80 bytes).
+RrDr60Status rr_dr60_record_write_with_component(const struct RrDr60RecordReadout *readout,
+                                                 const struct RrDr60RecordComponent *component,
+                                                 const struct RrDr60VasEvent *events,
+                                                 const uint64_t *host_input_positions,
+                                                 uintptr_t event_count,
+                                                 const struct RrDr60ChangeEntry *changes,
+                                                 uintptr_t change_count,
+                                                 uint8_t *out,
+                                                 uintptr_t out_len,
+                                                 uintptr_t *out_written);
 
 #ifdef __cplusplus
 }  // extern "C"

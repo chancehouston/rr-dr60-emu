@@ -4385,6 +4385,8 @@ unsafe fn control_id(
 
 mod settings_read;
 pub use settings_read::*;
+mod insert;
+pub use insert::*;
 
 #[cfg(test)]
 mod abi_tests;
@@ -7669,6 +7671,40 @@ pub unsafe extern "C" fn rr_dr60_record_write(
         Ok(r) => r,
         Err(status) => return status,
     };
+    // SAFETY: the arrays as the caller's contract states.
+    unsafe {
+        write_record_rows(
+            &r,
+            events,
+            host_input_positions,
+            event_count,
+            changes,
+            change_count,
+            out,
+            out_len,
+            out_written,
+        )
+    }
+}
+
+/// The pure writer's body after the read-out (spec 020 FR-001; spec 024 shares it).
+///
+/// # Safety
+///
+/// As `rr_dr60_record_write`'s arrays and output.
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn write_record_rows(
+    r: &RecordReadout,
+    events: *const RrDr60VasEvent,
+    host_input_positions: *const u64,
+    event_count: usize,
+    changes: *const RrDr60ChangeEntry,
+    change_count: usize,
+    out: *mut u8,
+    out_len: usize,
+    out_written: *mut usize,
+) -> RrDr60Status {
+    let r = *r;
     let rows: Vec<record::RecordEvent> = (0..event_count)
         .map(|i| {
             // SAFETY: readable for the count (caller contract); the layouts match.

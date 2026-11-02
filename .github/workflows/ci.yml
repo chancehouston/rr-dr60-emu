@@ -123,6 +123,10 @@ jobs:
         # 0.90's C smoke, compiled against 0.90's header, linked to this library: exit 0 and
         # every mode byte-identical to the current smoke's.
         run: scripts/abi-promise.sh f5a02452728f3d0687c033689266a5bbdf88c6db # f5a0245, 0.90's merge (the full id: a shallow checkout fetches it)
+      - name: The 0.91 ABI promise (spec 024 D9)
+        # 0.91's C smoke, compiled against 0.91's header, linked to this library: exit 0 (but for
+        # the appended tap's checks, plan R8) and every mode byte-identical to the current smoke's.
+        run: scripts/abi-promise.sh 97bbdc24e2f358f6c8d89c75f5472a62985cf276 # 97bbdc2, 0.91's merge (the full id: a shallow checkout fetches it)
 
   coverage:
     # Constitution III: workspace line coverage >= 80%, enforced as soon as the workspace exists.

@@ -326,8 +326,9 @@ fn as6_control_manifest_live() {
         .iter()
         .filter(|e| e.timing == ControlTiming::Live)
         .count();
-    // Sixteen at 0.21; spec 023 added the playback speed mode (2026-10-31), live: seventeen.
-    assert_eq!(live, 17);
+    // Sixteen at 0.21; spec 023 added the playback speed mode (2026-10-31), live: seventeen;
+    // spec 024 the band filter's four parameters (2026-11-01): twenty-one.
+    assert_eq!(live, 21);
 }
 
 /// US2 AS7 (FR-010): the cost is asserted release-only by `scripts/ab-timing.sh f303c99 bypass`

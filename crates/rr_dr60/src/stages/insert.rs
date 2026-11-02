@@ -60,10 +60,12 @@ impl Insert {
             ),
             #[cfg(feature = "__test-hooks")]
             mutation: InsertMutation::default(),
+            // Reserved when tracing is switched on (a hook call, never a processing call), so
+            // an engine's footprint does not carry them (spec 019's one-mebibyte lesson).
             #[cfg(feature = "__test-hooks")]
-            trace: alloc::vec::Vec::with_capacity(TRACE_CAPACITY),
+            trace: alloc::vec::Vec::new(),
             #[cfg(feature = "__test-hooks")]
-            input_trace: alloc::vec::Vec::with_capacity(TRACE_CAPACITY),
+            input_trace: alloc::vec::Vec::new(),
             #[cfg(feature = "__test-hooks")]
             tracing: false,
         }

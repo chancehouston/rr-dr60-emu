@@ -29,6 +29,15 @@ fn sizes_are_pinned() {
     assert_eq!(size_of::<RrDr60RunData>(), 80);
     assert_eq!(size_of::<RrDr60Settings>(), 120);
     assert_eq!(size_of::<RrDr60ControlReading>(), 24); // spec 025 R-02
+    // Spec 024 D9: the four new structs, no implicit padding.
+    assert_eq!(size_of::<RrDr60InsertionPoint>(), 40);
+    assert_eq!(size_of::<RrDr60Component>(), 48);
+    assert_eq!(size_of::<RrDr60ComponentParameter>(), 56);
+    assert_eq!(size_of::<RrDr60RecordComponent>(), 80);
+    assert_eq!(offset_of!(RrDr60InsertionPoint, paths), 32);
+    assert_eq!(offset_of!(RrDr60Component, latency_samples), 32);
+    assert_eq!(offset_of!(RrDr60ComponentParameter, min), 32);
+    assert_eq!(offset_of!(RrDr60RecordComponent, store), 16);
     assert_eq!(offset_of!(RrDr60ControlReading, int_value), 8);
     assert_eq!(offset_of!(RrDr60ControlReading, float_value), 16);
     // The offsets the pass pins (D9, R-03).
@@ -218,6 +227,11 @@ fn write_sized_every_out_struct_four_cases() {
     cases::<RrDr60InputAlignment>(ALIGNMENT_PUBLISHED, padding_of("RrDr60InputAlignment"));
     cases::<RrDr60PlaceState>(PLACE_STATE_PUBLISHED, padding_of("RrDr60PlaceState"));
     cases::<RrDr60ControlReading>(READING_PUBLISHED, padding_of("RrDr60ControlReading"));
+    // Spec 024 D9.
+    cases::<RrDr60InsertionPoint>(POINT_PUBLISHED, &[]);
+    cases::<RrDr60Component>(COMPONENT_PUBLISHED, &[]);
+    cases::<RrDr60ComponentParameter>(PARAMETER_PUBLISHED, &[]);
+    cases::<RrDr60RecordComponent>(RECORD_COMPONENT_PUBLISHED, &[]);
 }
 
 /// Every out-struct's padding runs on 64-bit targets (research R-03): the four-cases test and

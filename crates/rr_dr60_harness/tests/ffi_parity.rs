@@ -5012,3 +5012,244 @@ fn settings_read_parity() {
         unsafe { rr_dr60_ffi::rr_dr60_destroy(h) };
     }
 }
+
+/// Spec 024 (research R-09): the C path equals the Rust path bit for bit with the band filter
+/// in the slot and across a scheduled change, on a ±0.125 square; the statuses, the new structs,
+/// the value read and the ceiling agree.
+#[test]
+fn insert_parity() {
+    use rr_dr60::components::{ComponentId, InsertionPointId::BeforeLimiter};
+    use rr_dr60::{ChangeEntry, Stream};
+    use rr_dr60_harness::insert_checks as ic;
+    for &rate in configs::measurement_rates() {
+        let s = ic::placement_settings(rate);
+        let x = stimulus::square(440.0, 0.125, f64::from(rate), rate as usize / 2);
+        // Rust.
+        let mut r = Pipeline::new(s).unwrap();
+        r.set_component_parameter(BeforeLimiter, 0, 2.0).unwrap();
+        r.set_component(BeforeLimiter, ComponentId::BandFilter)
+            .unwrap();
+        r.schedule_change(Stream::OnePass, 2000, 33, 1800.0, 5)
+            .unwrap();
+        let mut want = vec![0.0f32; x.len()];
+        let mut log = vec![ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
+        let mut ev = vec![VasEvent::default(); 64];
+        let mut rust_entries = 0usize;
+        for (i, block) in x.chunks(1000).enumerate() {
+            let info = r
+                .process_with_events_and_changes(
+                    block,
+                    &mut want[i * 1000..i * 1000 + block.len()],
+                    &mut ev,
+                    &mut log,
+                )
+                .unwrap();
+            rust_entries += info.changes;
+        }
+        // C.
+        let h = create(&configs::c_settings(&s));
+        // SAFETY: a live handle.
+        unsafe {
+            assert_eq!(
+                rr_dr60_set_component_parameter(h, RR_DR60_INSERTION_POINT_BEFORE_LIMITER, 0, 2.0),
+                RrDr60Status::Ok
+            );
+            assert_eq!(
+                rr_dr60_set_component(
+                    h,
+                    RR_DR60_INSERTION_POINT_BEFORE_LIMITER,
+                    RR_DR60_COMPONENT_BAND_FILTER
+                ),
+                RrDr60Status::Ok
+            );
+            assert_eq!(
+                rr_dr60_schedule_change(h, 1, 2000, 33, 1800.0, 5),
+                RrDr60Status::Ok
+            );
+        }
+        let mut got = vec![0.0f32; x.len()];
+        let mut c_entries = 0usize;
+        let mut clog = vec![RrDr60ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
+        let mut cev = vec![RrDr60VasEvent::default(); 64];
+        for (i, block) in x.chunks(1000).enumerate() {
+            let mut info = RrDr60BlockInfo::default();
+            let mut n = 0usize;
+            // SAFETY: a live handle and buffers of the stated lengths.
+            let st = unsafe {
+                rr_dr60_process_with_events_and_changes(
+                    h,
+                    block.as_ptr(),
+                    got[i * 1000..].as_mut_ptr(),
+                    block.len(),
+                    &mut info,
+                    cev.as_mut_ptr(),
+                    cev.len(),
+                    clog.as_mut_ptr(),
+                    clog.len(),
+                    &mut n,
+                )
+            };
+            assert_eq!(st, RrDr60Status::Ok);
+            c_entries += n;
+        }
+        assert_eq!(got, want, "C equals Rust at {rate}");
+        assert_eq!((c_entries, rust_entries), (1, 1));
+        let (mut comp, mut v) = (9u32, 0.0f32);
+        // SAFETY: a live handle and writable outs.
+        unsafe {
+            assert_eq!(rr_dr60_get_component(h, 0, &mut comp), RrDr60Status::Ok);
+            assert_eq!(
+                rr_dr60_component_parameter_value(h, 0, 1, &mut v),
+                RrDr60Status::Ok
+            );
+            assert_eq!(
+                rr_dr60_get_component(h, 1, &mut comp),
+                RrDr60Status::NoSuchInsertionPoint
+            );
+            assert_eq!(
+                rr_dr60_set_component(h, 0, 7),
+                RrDr60Status::NoSuchComponent
+            );
+            assert_eq!(
+                rr_dr60_set_component_parameter(h, 0, 2, 11.0),
+                RrDr60Status::InvalidArgument
+            );
+            assert_eq!(
+                rr_dr60_component_parameter_value(h, 0, 4, &mut v),
+                RrDr60Status::NoSuchComponent
+            );
+        }
+        assert_eq!(comp, RR_DR60_COMPONENT_BAND_FILTER);
+        // SAFETY: a live handle.
+        unsafe {
+            assert_eq!(rr_dr60_start_recording(h), RrDr60Status::Ok);
+            assert_eq!(
+                rr_dr60_set_component(h, 0, 0),
+                RrDr60Status::ComponentWhileActive
+            );
+            rr_dr60_destroy(h);
+        }
+        let mut hz = 0.0f64;
+        // SAFETY: a writable out.
+        assert_eq!(
+            unsafe { rr_dr60_band_filter_frequency_ceiling_hz(rate, &mut hz) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(hz, 0.45 * f64::from(rate));
+    }
+    // The constant data.
+    let mut p = RrDr60InsertionPoint::default();
+    let mut c = RrDr60Component::default();
+    let mut q = RrDr60ComponentParameter::default();
+    // SAFETY: sized out structs.
+    unsafe {
+        assert_eq!(rr_dr60_insertion_point_count(), 1);
+        assert_eq!(rr_dr60_insertion_point(0, &mut p), RrDr60Status::Ok);
+        assert_eq!(
+            rr_dr60_insertion_point(1, &mut p),
+            RrDr60Status::NoSuchInsertionPoint
+        );
+        assert_eq!(rr_dr60_component_count(), 1);
+        assert_eq!(rr_dr60_component(0, &mut c), RrDr60Status::Ok);
+        assert_eq!(rr_dr60_component(1, &mut c), RrDr60Status::NoSuchComponent);
+        assert_eq!(rr_dr60_component_parameter(0, 1, &mut q), RrDr60Status::Ok);
+        assert_eq!(
+            rr_dr60_component_parameter(0, 4, &mut q),
+            RrDr60Status::NoSuchComponent
+        );
+    }
+    assert_eq!(
+        (cstr(p.identifier), p.control_index),
+        ("before_limiter", 31)
+    );
+    assert_eq!(
+        (cstr(c.identifier), c.value, c.parameter_count),
+        ("band_filter", 1, 4)
+    );
+    assert_eq!(
+        (
+            cstr(q.identifier),
+            q.min,
+            q.max,
+            q.default_value,
+            q.scale,
+            q.control_index
+        ),
+        (
+            "band_filter.frequency_hz",
+            20.0,
+            20_000.0,
+            1000.0,
+            RR_DR60_SCALE_LOG,
+            33
+        )
+    );
+}
+
+/// Spec 024 D7: the record's component through C, and the pure writer with the component.
+#[test]
+fn insert_record_parity() {
+    use rr_dr60::components::{ComponentId, InsertionPointId::BeforeLimiter};
+    use rr_dr60_harness::record_contract_checks as rcc;
+    let cell = rcc::Cell {
+        codec: false,
+        changes: false,
+        mute: false,
+        self_stop: false,
+    };
+    let mut p = Pipeline::new(rcc::settings(cell, 48_000)).unwrap();
+    p.set_component_parameter(BeforeLimiter, 1, 640.0).unwrap();
+    p.set_component(BeforeLimiter, ComponentId::BandFilter)
+        .unwrap();
+    let raw = rcc::raw_stimulus(48_000);
+    let (_, run) = rcc::record_run_in(&mut p, cell, &raw);
+    let bytes = run.record;
+    let mut rc = RrDr60RecordComponent::default();
+    // SAFETY: readable bytes and a sized out struct.
+    assert_eq!(
+        unsafe { rr_dr60_processing_record_component(bytes.as_ptr(), bytes.len(), &mut rc) },
+        RrDr60Status::Ok
+    );
+    assert_eq!(
+        (rc.component, rc.parameter_count, rc.store[1]),
+        (1, 16, 640.0)
+    );
+    // The pure writer with the component, from the record's read-out.
+    let mut ro = RrDr60RecordReadout::default();
+    // SAFETY: readable bytes and a sized out struct.
+    assert_eq!(
+        unsafe {
+            rr_dr60_processing_record_read(
+                std::ptr::null_mut(),
+                bytes.as_ptr(),
+                bytes.len(),
+                &mut ro,
+            )
+        },
+        RrDr60Status::Ok
+    );
+    let mut out = vec![0u8; 8192];
+    let mut written = 0usize;
+    // SAFETY: valid structs and buffers.
+    let st = unsafe {
+        rr_dr60_record_write_with_component(
+            &ro,
+            &rc,
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            0,
+            out.as_mut_ptr(),
+            out.len(),
+            &mut written,
+        )
+    };
+    assert_eq!(st, RrDr60Status::Ok);
+    let text = String::from_utf8_lossy(&out[..written]);
+    assert!(
+        text.contains("\ninsert.before_limiter = band_filter\n"),
+        "{text}"
+    );
+    assert!(text.contains("\nband_filter.frequency_hz = 640\n"));
+}

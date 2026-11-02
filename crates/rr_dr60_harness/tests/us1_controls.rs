@@ -47,6 +47,16 @@ fn thirty_entries_in_order() {
     // Spec 018: a control added after 0.14 is appended, so no stored index moves.
     want.push("battery_volts".into());
     want.push("playback_speed_mode".into()); // spec 023: appended at 30
+    // Spec 024 D5: the slot and the band filter's parameters, appended at 31 – 35.
+    for id in [
+        "insert.before_limiter",
+        "band_filter.type",
+        "band_filter.frequency_hz",
+        "band_filter.q",
+        "band_filter.gain_db",
+    ] {
+        want.push(id.into());
+    }
     let got: Vec<String> = controls()
         .iter()
         .map(|e| e.identifier.to_string())
@@ -132,6 +142,11 @@ fn literal_kinds_and_timing() {
             "mic.hiss_offset_db",
             "battery_volts",
             "playback_speed_mode",
+            // Spec 024 D5: the band filter's parameters, live through the schedule.
+            "band_filter.type",
+            "band_filter.frequency_hz",
+            "band_filter.q",
+            "band_filter.gain_db",
         ]
     );
     // Spec 017 FR-010: the live entries are the output-clock controls (three, four since spec

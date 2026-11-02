@@ -30,7 +30,26 @@ cc -std=c11 -Wall -Wextra -Werror -O2 -I "$work/include" \
 cc -std=c11 -Wall -Wextra -Werror -O2 -I crates/rr_dr60_ffi/include \
   crates/rr_dr60_ffi/tests/c/smoke.c target/release/librr_dr60_ffi.a $native_libs -lm -o "$work/smoke-new"
 echo "abi-promise: $rev's smoke (against $rev's header) linked to the current library: the default run"
-"$work/smoke-old"
+# Spec 024 (plan R8): appending an enum value is compatible by design, so a CHECK of REV's that
+# asserts an unassigned value is refused may fail once a later library assigns it. Exactly
+# these are tolerated, each named: REV's "tap = 11" (Tap::AfterInsert, appended in 0.92) and
+# its knock-on "struct_size = 4" (the create before it succeeded, so the sentinel handle moved).
+# Every other failure fails the promise.
+set +e
+"$work/smoke-old" > "$work/default.txt" 2>&1
+status=$?
+set -e
+cat "$work/default.txt"
+if [ "$status" -ne 0 ]; then
+  fails="$(grep '^smoke: FAIL ' "$work/default.txt" | sed 's/^smoke: FAIL [^ ]*: //' || true)"
+  unexpected="$(printf '%s\n' "$fails" | grep -v -x -e 'tap = 11' -e 'struct_size = 4' | grep -v '^$' || true)"
+  if [ -n "$unexpected" ] || ! printf '%s\n' "$fails" | grep -q -x 'tap = 11'; then
+    echo "abi-promise: $rev's default run failed:" >&2
+    printf '%s\n' "$unexpected" >&2
+    exit 1
+  fi
+  echo "abi-promise: $rev's default run: only the appended tap's checks differ (tap = 11, struct_size = 4; plan R8)"
+fi
 # Every mode REV's smoke knows: byte-identical to the current smoke's output.
 for mode in --manifest --controls --meters --changes --record-changes --battery --bypass --record --abi; do
   "$work/smoke-old" "$mode" > "$work/old.txt"

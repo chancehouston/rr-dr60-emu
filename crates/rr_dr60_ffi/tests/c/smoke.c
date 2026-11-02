@@ -340,6 +340,66 @@ static int print_changes(void) {
    block the entries and the battery row (the amplifier clip count and the ceiling factor's
    bits), then the output digest; then the law at the six points, the seven trajectory rows and
    the NiMH figure as hex bits. `run_smoke.sh` diffs the two. */
+/* Spec 024 (research R-09): the band filter in the slot on a ±0.125 square (exactly
+ * representable) at 48 kHz for 1 s, the default engine with the codec off, read at the tap
+ * after the slot: the band-pass at 800 Hz set while idle, a frequency move to 2400 Hz
+ * scheduled on the one-pass at input 12000, 1024-sample blocks; the entries, the output
+ * digest, then the constant data (the point, the component, its four parameters). */
+static int print_insert(void) {
+  enum { IRATE = 48000, IN = IRATE, IBLOCK = 1024 };
+  static float iin[IN], iout[IN];
+  for (size_t i = 0; i < IN; i++) iin[i] = (i % 96 < 48) ? 0.125f : -0.125f;
+  RrDr60Settings s = rr_dr60_settings_default(IRATE);
+  s.speech_codec_enabled = false;
+  s.tap = RR_DR60_TAP_AFTER_INSERT;
+  RrDr60Pipeline *p = NULL;
+  if (rr_dr60_create(&s, &p) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_set_component_parameter(p, RR_DR60_INSERTION_POINT_BEFORE_LIMITER, 0, RR_DR60_BAND_FILTER_BAND_PASS) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_set_component_parameter(p, RR_DR60_INSERTION_POINT_BEFORE_LIMITER, 1, 800.0) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_set_component(p, RR_DR60_INSERTION_POINT_BEFORE_LIMITER, RR_DR60_COMPONENT_BAND_FILTER) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_schedule_change(p, 1, 12000, 33, 2400.0, 3) != RR_DR60_STATUS_OK) return 1;
+  RrDr60ChangeEntry entries[RR_DR60_MAX_CHANGES_PER_CALL];
+  uint64_t h = 0xcbf29ce484222325ULL;
+  for (size_t pos = 0; pos < IN; pos += IBLOCK) {
+    size_t n = IN - pos < IBLOCK ? IN - pos : IBLOCK;
+    SIZED(RrDr60BlockInfo, info);
+    size_t count = 0;
+    if (rr_dr60_process_with_events_and_changes(p, iin + pos, iout + pos, n, &info, NULL, 0, entries,
+                                                RR_DR60_MAX_CHANGES_PER_CALL, &count) != RR_DR60_STATUS_OK)
+      return 1;
+    for (size_t k = 0; k < count; k++) print_entry(&entries[k]);
+    h = digest_add(h, iout + pos, info.produced);
+  }
+  printf("digest %016llx\n", (unsigned long long)h);
+  float v = 0.0f;
+  if (rr_dr60_component_parameter_value(p, 0, 1, &v) != RR_DR60_STATUS_OK) return 1;
+  uint32_t bits;
+  memcpy(&bits, &v, 4);
+  printf("frequency %08x\n", bits);
+  rr_dr60_destroy(p);
+  SIZED(RrDr60InsertionPoint, pt);
+  if (rr_dr60_insertion_point(0, &pt) != RR_DR60_STATUS_OK) return 1;
+  printf("point %u %s %u %u\n", (unsigned)pt.value, pt.identifier, (unsigned)pt.paths, (unsigned)pt.control_index);
+  SIZED(RrDr60Component, c);
+  if (rr_dr60_component(0, &c) != RR_DR60_STATUS_OK) return 1;
+  printf("component %u %s %u %u %u\n", (unsigned)c.value, c.identifier, (unsigned)c.latency_samples,
+         (unsigned)c.parameter_offset, (unsigned)c.parameter_count);
+  for (uint32_t i = 0; i < c.parameter_count; i++) {
+    SIZED(RrDr60ComponentParameter, q);
+    if (rr_dr60_component_parameter(0, i, &q) != RR_DR60_STATUS_OK) return 1;
+    uint32_t bmin, bmax, bdef;
+    memcpy(&bmin, &q.min, 4);
+    memcpy(&bmax, &q.max, 4);
+    memcpy(&bdef, &q.default_value, 4);
+    printf("parameter %s %u %08x %08x %08x %u %u\n", q.identifier, (unsigned)q.value_type, bmin, bmax, bdef,
+           (unsigned)q.scale, (unsigned)q.control_index);
+  }
+  double hz = 0.0;
+  if (rr_dr60_band_filter_frequency_ceiling_hz(6000, &hz) != RR_DR60_STATUS_OK) return 1;
+  printf("ceiling 6000 %g\n", hz);
+  return 0;
+}
+
 static int print_battery(void) {
   enum { BRATE = 48000, BN = BRATE * 3 / 2, BBLOCK = 1024 };
   static float bin[BN], bout[BN];
@@ -1342,6 +1402,9 @@ int main(int argc, char **argv) {
   if (argc > 1 && strcmp(argv[1], "--record-changes") == 0) {
     return print_record_changes();
   }
+  if (argc > 1 && strcmp(argv[1], "--insert") == 0) {
+    return print_insert();
+  }
   if (argc > 1 && strcmp(argv[1], "--battery") == 0) {
     return print_battery();
   }
@@ -1489,8 +1552,8 @@ int main(int argc, char **argv) {
   CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_UNSUPPORTED_HOST_RATE && q == NULL, "7000 Hz");
   q = sentinel;
   bad = settings_011(FS);
-  bad.tap = 11; /* 0 – 10 are taps since 0.12 (spec 012 contracts/c-api.md) */
-  CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_INVALID_ARGUMENT && q == sentinel, "tap = 11");
+  bad.tap = 12; /* 0 – 10 are taps since 0.12 (spec 012 contracts/c-api.md), 11 since 0.92 (024) */
+  CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_INVALID_ARGUMENT && q == sentinel, "tap = 12");
   bad = settings_011(FS);
   bad.struct_size = 4;
   CHECK(rr_dr60_create(&bad, &q) == RR_DR60_STATUS_INVALID_ARGUMENT && q == sentinel, "struct_size = 4");

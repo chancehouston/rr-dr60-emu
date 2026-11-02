@@ -292,7 +292,7 @@ pub mod __test_hooks {
     pub use crate::stages::insert::InsertMutation;
 
     /// Spec 024 (research › The six mutants): sets the slot's mutant on both record paths.
-    pub fn set_insert_mutation(pipeline: &mut crate::Pipeline, m: InsertMutation) {
+    pub fn mutate_insert(pipeline: &mut crate::Pipeline, m: InsertMutation) {
         pipeline.one_pass.rec.insert.mutation = m;
         pipeline.recorder.insert.mutation = m;
     }
@@ -309,7 +309,7 @@ pub mod __test_hooks {
 
     /// Spec 024 (research R-07): starts (clearing) or stops the slot's traces on a stream's
     /// record path (`Stream::Record` the recorder, otherwise the one-pass); the buffers are
-    /// reserved at construction (8192 samples each) and never grown.
+    /// reserved here (8192 samples each, outside any processing call) and never grown.
     pub fn insert_tracing(pipeline: &mut crate::Pipeline, stream: crate::Stream, on: bool) {
         let ins = match stream {
             crate::Stream::Record => &mut pipeline.recorder.insert,
@@ -319,6 +319,9 @@ pub mod __test_hooks {
         if on {
             ins.trace.clear();
             ins.input_trace.clear();
+            ins.trace.reserve(crate::stages::insert::TRACE_CAPACITY);
+            ins.input_trace
+                .reserve(crate::stages::insert::TRACE_CAPACITY);
         }
     }
 

@@ -385,6 +385,7 @@ pub fn c_settings(s: &Settings) -> RrDr60Settings {
         Tap::AfterEarphone => RrDr60Tap::AfterEarphone,
         Tap::AfterMicCapsule => RrDr60Tap::AfterMicCapsule, // 012 FR-012
         Tap::AfterMicAmp => RrDr60Tap::AfterMicAmp,
+        Tap::AfterInsert => RrDr60Tap::AfterInsert, // 024 D6
         other => panic!("configs::c_settings: unmapped tap {other:?}"),
     };
     let vas_mode = match s.vas.mode {

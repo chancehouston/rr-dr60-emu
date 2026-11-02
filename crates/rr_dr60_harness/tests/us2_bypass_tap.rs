@@ -289,7 +289,7 @@ fn c_api_reconfigure() {
 
     // Invalid tap: rejected, and the old configuration still processes.
     let mut bad = c_default_001(44_100);
-    bad.tap = 11; // 0 – 10 are taps since 0.12 (spec 012 contracts/c-api.md)
+    bad.tap = 12; // 0 – 10 are taps since 0.12 (spec 012 contracts/c-api.md), 11 since 0.92 (024)
     // SAFETY: p is live; bad is valid.
     assert_eq!(
         unsafe { rr_dr60_reconfigure(p, &bad) },

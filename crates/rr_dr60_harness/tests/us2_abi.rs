@@ -186,7 +186,7 @@ fn us3_guards_unmoved() {
         ),
         (
             "golden_record.rs",
-            "026f1ca3aa98cdcaecef584adf604938550d6eab0fb7e2cde565ea3733e4c8ec",
+            "9b4c7a714220a8713470eea1b3e5329f63ff92800f60e2279a624aea40bf311e", // spec 024: the record golden re-blessed once (form 2)
         ),
         (
             "golden_bypass.rs",
