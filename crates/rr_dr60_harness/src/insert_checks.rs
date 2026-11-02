@@ -433,3 +433,219 @@ pub fn limiter_input_peak_row(rate: u32) -> f64 {
     }
     worst
 }
+
+// ---- The golden (research R-08) ------------------------------------------------------------
+
+/// One entry of `golden-insert-v1.json`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct InsertEntry {
+    /// What the entry runs (the group and its parameters).
+    pub name: String,
+    /// The host rate.
+    pub host_rate_hz: u32,
+    /// Samples (one-pass outputs) or stored device samples (recordings).
+    pub n: u64,
+    /// FNV-1a 64 of the output's bits, or the recording's digest, as hex.
+    pub digest: String,
+    /// Change entries the run logged.
+    pub changes: u64,
+}
+
+/// The insert golden file.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct InsertGoldenFile {
+    /// `rr_dr60-golden-insert`.
+    pub format: String,
+    /// The entries, in generation order.
+    pub entries: Vec<InsertEntry>,
+}
+
+/// The committed golden (embedded: the device golden check runs this binary on a phone).
+pub fn committed_golden() -> InsertGoldenFile {
+    serde_json::from_str(include_str!("../golden/golden-insert-v1.json"))
+        .expect("valid embedded insert golden file")
+}
+
+/// The golden's path for a bless.
+pub fn golden_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden/golden-insert-v1.json")
+}
+
+const VOICE_SEED: u64 = 24;
+
+/// A recording through the default engine (codec on) with the filter at `values`, an optional
+/// record-stream change at 0.3 s, `count` recordings in a row; the entry of the last.
+fn record_entry(
+    name: &str,
+    rate: u32,
+    values: [f32; 4],
+    change: Option<(u32, f64)>,
+    count: usize,
+) -> InsertEntry {
+    let fs = f64::from(rate);
+    let x = stimulus::voiced(fs, 1.0, -20.0, VOICE_SEED);
+    let mut p = engine(Settings::new(rate), values);
+    let mut changes = 0u64;
+    for _ in 0..count {
+        if let Some((control, value)) = change {
+            p.schedule_change(Stream::Record, (0.3 * fs) as u64, control, value, 11)
+                .expect("schedule");
+        }
+        p.start_recording().expect("start");
+        let mut log = vec![ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
+        for block in x.chunks(1024) {
+            let mut ev = vec![VasEvent::default(); p.max_record_events(block.len())];
+            let info = p
+                .record_with_changes(block, &mut ev, &mut log)
+                .expect("record");
+            changes += info.changes as u64;
+        }
+        let mut ev = vec![VasEvent::default(); p.max_record_events(0).max(64)];
+        let _ = p.stop_recording(&mut ev).expect("stop");
+    }
+    // The recording played back and its output digested: the stored form's digest covers its
+    // header, which carries the library version (spec 021's lesson), so the golden reads the
+    // played samples instead.
+    let number = p.memory_status().count;
+    p.start_playback(number).expect("play");
+    let mut out = Vec::new();
+    loop {
+        let mut y = vec![0.0f32; 4096];
+        let info = p.play(&mut y).expect("play");
+        out.extend_from_slice(&y[..info.produced]);
+        if info.finished {
+            break;
+        }
+    }
+    InsertEntry {
+        name: name.into(),
+        host_rate_hz: rate,
+        n: p.recording_length(number).expect("length"),
+        digest: format!("{:016x}", crate::changes_checks::digest(&out)),
+        changes,
+    }
+}
+
+/// A one-pass run of `x` with the filter at `values` in `s`, an optional one-pass change.
+fn one_pass_entry(
+    name: &str,
+    s: Settings,
+    values: [f32; 4],
+    x: &[f32],
+    change: Option<(u64, u32, f64)>,
+) -> InsertEntry {
+    let rate = s.host_rate_hz;
+    let mut p = engine(s, values);
+    if let Some((at, control, value)) = change {
+        p.schedule_change(Stream::OnePass, at, control, value, 12)
+            .expect("schedule");
+    }
+    let mut out = Vec::with_capacity(x.len());
+    let mut log = vec![ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
+    let mut changes = 0u64;
+    for block in x.chunks(1024) {
+        let mut y = vec![0.0f32; block.len()];
+        let mut ev = vec![VasEvent::default(); p.max_events(block.len())];
+        let info = p
+            .process_with_events_and_changes(block, &mut y, &mut ev, &mut log)
+            .expect("process");
+        out.extend_from_slice(&y[..info.produced]);
+        changes += info.changes as u64;
+    }
+    InsertEntry {
+        name: name.into(),
+        host_rate_hz: rate,
+        n: out.len() as u64,
+        digest: format!("{:016x}", crate::changes_checks::digest(&out)),
+        changes,
+    }
+}
+
+/// Generates the 84 entries of research R-08.
+pub fn generate_golden() -> InsertGoldenFile {
+    let rates = configs::all_rates();
+    let mut e = Vec::new();
+    for &rate in &rates {
+        for t in 0..4u8 {
+            e.push(record_entry(
+                &format!("record_type_{t}"),
+                rate,
+                [f32::from(t), 1000.0, 0.7071, 0.0],
+                None,
+                1,
+            ));
+        }
+    }
+    for &rate in &rates {
+        for (f, q) in [(300.0f32, 0.5f32), (1000.0, 3.0), (3000.0, 10.0)] {
+            e.push(record_entry(
+                &format!("record_low_pass_{f}_{q}"),
+                rate,
+                [0.0, f, q, 0.0],
+                None,
+                1,
+            ));
+        }
+    }
+    for &rate in &rates {
+        let x = stimulus::voiced(f64::from(rate), 1.0, -20.0, VOICE_SEED);
+        e.push(one_pass_entry(
+            "one_pass_default",
+            Settings::new(rate),
+            [0.0, 1000.0, 0.7071, 0.0],
+            &x,
+            None,
+        ));
+    }
+    for &rate in &rates {
+        e.push(record_entry(
+            "schedule_frequency",
+            rate,
+            [0.0, 1000.0, 0.7071, 0.0],
+            Some((CONTROLS[1], 3000.0)),
+            1,
+        ));
+        e.push(record_entry(
+            "schedule_type",
+            rate,
+            [0.0, 1000.0, 0.7071, 0.0],
+            Some((CONTROLS[0], 1.0)),
+            1,
+        ));
+    }
+    for rate in [6000u32, 48_000] {
+        let x = stimulus::tone(1000.0, 0.25, f64::from(rate), rate as usize / 2);
+        for t in 0..4u8 {
+            e.push(one_pass_entry(
+                &format!("tone_type_{t}"),
+                oracle_settings(rate),
+                [f32::from(t), 1000.0, 2.0, 0.0],
+                &x,
+                None,
+            ));
+        }
+    }
+    for rate in [6000u32, 44_100, 48_000, 96_000] {
+        e.push(record_entry(
+            "second_recording",
+            rate,
+            [1.0, 700.0, 1.5, 3.0],
+            None,
+            2,
+        ));
+    }
+    for rate in [6000u32, 48_000] {
+        let x = stimulus::voiced(f64::from(rate), 0.5, -20.0, VOICE_SEED);
+        e.push(one_pass_entry(
+            "set_then_schedule",
+            placement_settings(rate),
+            [2.0, 900.0, 2.0, 6.0],
+            &x,
+            Some((u64::from(rate) / 5, CONTROLS[3], -6.0)),
+        ));
+    }
+    InsertGoldenFile {
+        format: "rr_dr60-golden-insert".into(),
+        entries: e,
+    }
+}
