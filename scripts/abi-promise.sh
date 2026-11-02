@@ -84,4 +84,4 @@ for mode in --manifest --controls --meters --changes --record-changes --battery 
   fi
   echo "abi-promise: $mode byte-identical ($(wc -l < "$work/old.txt" | tr -d ' ') lines)"
 done
-echo "abi-promise: OK ($rev's smoke against the current library: exit 0, every mode byte-identical)"
+echo "abi-promise: OK ($rev's smoke against the current library: exit 0 or only the tolerated checks, every mode byte-identical)"
