@@ -150,6 +150,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
 
 - **O-1 ★ Which controls are the free "intended user adjustments"?**
   - *2026-11-01: reopened; options and a recommendation in [app-questions-2026-11-01.md](app-questions-2026-11-01.md) › O-1.*
+  - **Decided 2026-11-01**: app 1.0 shows the device controls only; the presets stay (decisions.md).
   - **Answered in part 2026-11-01**: nothing is paid; the question is now which controls the app shows (decisions.md).
   - The engine has no such list yet; producing one is the dossier's first engine question.
   - The candidates fall into three groups:
@@ -169,6 +170,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
     - review tools (candidates added 2026-10-21: reverse playback and a spectrogram; slow playback is the device's own speed control, free).
 - **O-3 ★ Raw microphone audio.**
   - *2026-11-01: reopened; options and a recommendation in [app-questions-2026-11-01.md](app-questions-2026-11-01.md) › O-3.*
+  - **Remaining parts decided 2026-11-01**: Delete original only and a storage screen (decisions.md).
   - Kept in both modes or only in Investigation sessions; free or paid in Recorder mode.
   - How it interacts with voice activation (the dossier asks this).
   - Where the user sees and deletes it. The privacy labels follow from the answer.
@@ -180,6 +182,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
   - when the first paid package arrives.
 - **O-5 Default mode.** Which mode the app opens in, and how the user chooses or switches.
   - *2026-11-01: reopened; options and a recommendation in [app-questions-2026-11-01.md](app-questions-2026-11-01.md) › O-5.*
+  - **Decided 2026-11-01**: Recorder first, then the last-used mode (decisions.md).
 - **O-6 Subscription.** The 2026-10-11 decision (none at launch) stands unless reopened. Confirm, given that "future pack access" is now an open question.
   - *2026-11-01: reopened; options and a recommendation in [app-questions-2026-11-01.md](app-questions-2026-11-01.md) › O-6.*
   - **Decided 2026-11-01: no subscription**, ever; the app is free (decisions.md).
@@ -204,7 +207,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
   - It joins O-1 and the dossier's engine question 1.
   - It includes how a fast stream of volume changes behaves: each change restarts the 20 ms volume transition, so updates faster than about 60 per second make the knob lag.
 - **O-15 Recorder mode's audience (2026-10-18):** with real-unit checks out of scope, the product no longer targets listeners whose main interest is a checked, authentic sound. Does Recorder mode keep its "home for vintage-hardware and audio enthusiasts" framing, become the plain recorder front for every user, or merge into the tinkerer's view? Reconsider the dropped audience if demand appears.
-- **O-16 An "entertainment" disclaimer (2026-10-21).** The working notes lean toward "For entertainment purposes" in the store description and the About screen, to cover App Review. The copy rules (2026-10-11) ban "entertainment only" because it reads as a debunk. Options:
+- **O-16 An "entertainment" disclaimer (2026-10-21).** *Decided 2026-11-01: a neutral statement of what the app does, no "entertainment" wording (decisions.md).* The working notes lean toward "For entertainment purposes" in the store description and the About screen, to cover App Review. The copy rules (2026-10-11) ban "entertainment only" because it reads as a debunk. Options:
   1. keep the rule and write a neutral statement of what the app does instead, in the style competitors use ("measures and reacts to changes in the environment only", competitors.md);
   2. allow "for entertainment" in the store description and About screen only, never in the app's working copy;
   3. decide after the first review: submit with option 1 and add the phrase if App Review asks for it.

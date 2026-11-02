@@ -15,7 +15,7 @@ The owner answered after reading this brief; decisions.md has the rows. Where th
 - **The app is free for good.** 1.0 and every later feature and update are free: no purchase, no subscription, no ads. **O-2 and O-6 are closed**: the "equipment packages", the "All packages" item and every paid label below are withdrawn. Contradiction 1 is resolved: there is no Workbench tier.
 - **The app need not include every feature or control**, in 1.0 or at all. **O-1 becomes a scope question**: which controls the app shows (nothing is paid). The O-1 table below is now a candidate list, not a tier list.
 - **The one major update planned after 1.0 is an effects module inserted into the chain**, free. 1.0 ships without it; spec 024 is its engine side. **O-4 is answered** that way; the TestFlight beta and the D-U-N-S/enrolment advice stand.
-- Still open after these answers: O-1's scope, O-3's remaining parts, O-5, O-16, and the shape and timing of the effects update (asked of the owner the same day).
+- **Second round, the same day:** the effects update is **spec 024 as drafted**, its engine side built **before engine 1.0** and resumed **now**; **app 1.0 shows the device controls only** (route, volume, speed, sensitivity, keep-pitch), with Investigation's voice-activation presets kept; **O-5** as recommended; **O-3** as recommended (Delete original only, a storage screen); **O-16** a neutral statement. All six questions and O-16 are now decided; the first app spec (app 007 below) follows spec 024, with its controls cut to the device controls.
 
 ## Summary
 
