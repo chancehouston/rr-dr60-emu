@@ -27,7 +27,7 @@ pub struct InsertMutation {
 
 /// The applied-parameter trace's capacity (spec 024 contracts: 8192 reserved).
 #[cfg(feature = "__test-hooks")]
-pub(crate) const TRACE_CAPACITY: usize = 8192;
+pub(crate) const TRACE_CAPACITY: usize = 8192; // engineering target (024 contracts: the hook's reserve)
 
 /// The slot: the component and its processor (fixed size; the band filter is built whether or
 /// not it is in the slot, so setting a component never allocates).

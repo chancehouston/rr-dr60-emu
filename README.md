@@ -42,6 +42,8 @@ What you hear, in the model's default configuration:
 
 Each stage can be switched off or tapped on its own, for example to hear the codec alone; the four playback-side stages (the codec output filter, the volume and amplifier, the speaker, the earphone output) can also be switched **while a recording plays**, as a 20 ms blend (since 0.21, an emulator convention).
 
+**An optional effect before the limiter (since 0.92).** One slot between the microphone amplifier and the limiter holds none (the default) or the engine's **band filter**: a low-pass, high-pass, band-pass or notch at a chosen frequency and Q, then a gain, with its parameters changeable while recording. It is an addition of the emulator, not part of the original recorder; see the [user guide](docs/guide.md#insertable-components-the-slot-before-the-limiter).
+
 ## Quick start
 
 The library is not on crates.io yet; depend on the repository:

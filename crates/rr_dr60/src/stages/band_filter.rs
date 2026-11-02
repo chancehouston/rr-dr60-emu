@@ -37,7 +37,7 @@ pub(crate) const MIXES: [[f64; 3]; 4] = [
 ];
 
 /// The number of types.
-pub(crate) const TYPE_COUNT: u8 = 4;
+pub(crate) const TYPE_COUNT: u8 = 4; // engineering target (024 D4): the four types
 
 /// The smoothstep at `u` (the pinned expression of spec 019; spec 011's shape).
 #[inline]

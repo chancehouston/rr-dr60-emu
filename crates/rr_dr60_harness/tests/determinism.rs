@@ -1157,7 +1157,8 @@ fn insert_same_calls_same_log() {
     for rate in [6000u32, 48_000] {
         let run = || {
             let mut p = ic::engine(ic::placement_settings(rate), [2.0, 900.0, 3.0, 4.0]);
-            p.schedule_change(Stream::OnePass, 500, 33, 1800.0, 1).unwrap();
+            p.schedule_change(Stream::OnePass, 500, 33, 1800.0, 1)
+                .unwrap();
             p.schedule_change(Stream::OnePass, 700, 32, 3.0, 2).unwrap();
             let x = rr_dr60_harness::stimulus::voiced(f64::from(rate), 0.5, -20.0, 5);
             let mut out = vec![0.0f32; x.len()];
@@ -1166,7 +1167,12 @@ fn insert_same_calls_same_log() {
             let mut entries = Vec::new();
             for (k, block) in x.chunks(777).enumerate() {
                 let info = p
-                    .process_with_events_and_changes(block, &mut out[k * 777..k * 777 + block.len()], &mut ev, &mut log)
+                    .process_with_events_and_changes(
+                        block,
+                        &mut out[k * 777..k * 777 + block.len()],
+                        &mut ev,
+                        &mut log,
+                    )
                     .unwrap();
                 entries.extend_from_slice(&log[..info.changes]);
             }

@@ -1094,8 +1094,8 @@ typedef struct RrDr60Meters {
   uint32_t struct_size;
   // The largest absolute input sample after the engine's sanitizing of non-finite samples.
   float input_peak;
-  // The largest absolute sample entering the limiter (stage 2's output; the input with
-  // stages 1 – 2 bypassed; A-046, A-051). May exceed 1.0.
+  // The largest absolute sample entering the limiter (the slot's output, spec 024; stage 2's
+  // with the slot empty; the input with stages 1 – 2 bypassed; A-046, A-051). May exceed 1.0.
   float limiter_input_peak;
   // The deepest attenuation the limiter applied in the call, dB ≥ 0 (A-028, A-034, A-035;
   // modeled on the circuit, not measured).

@@ -1524,12 +1524,14 @@ fn insert_allocate_nothing() {
         assert_eq!(unsafe { rr_dr60_create(&c, &mut handle) }, RrDr60Status::Ok);
         MEASURING.with(|m| m.set(true));
         let before = counts();
-        p.schedule_change(Stream::OnePass, 100, 33, 2000.0, 1).unwrap();
+        p.schedule_change(Stream::OnePass, 100, 33, 2000.0, 1)
+            .unwrap();
         p.schedule_change(Stream::OnePass, 900, 32, 3.0, 2).unwrap();
         let _ = p.process(&x, &mut y).unwrap();
         p.set_component(BeforeLimiter, ComponentId::None).unwrap();
         p.set_component_parameter(BeforeLimiter, 2, 5.0).unwrap();
-        p.set_component(BeforeLimiter, ComponentId::BandFilter).unwrap();
+        p.set_component(BeforeLimiter, ComponentId::BandFilter)
+            .unwrap();
         let _ = p.process(&x, &mut y).unwrap();
         // SAFETY: a live handle and buffers of the stated length.
         let st = unsafe {
@@ -1537,7 +1539,13 @@ fn insert_allocate_nothing() {
                 rr_dr60_ffi::rr_dr60_set_component(handle, 0, 1),
                 rr_dr60_ffi::rr_dr60_set_component_parameter(handle, 0, 1, 1500.0),
                 rr_dr60_ffi::rr_dr60_schedule_change(handle, 1, 10, 35, 6.0, 3),
-                rr_dr60_ffi::rr_dr60_process(handle, x.as_ptr(), y.as_mut_ptr(), x.len(), core::ptr::null_mut()),
+                rr_dr60_ffi::rr_dr60_process(
+                    handle,
+                    x.as_ptr(),
+                    y.as_mut_ptr(),
+                    x.len(),
+                    core::ptr::null_mut(),
+                ),
             ]
         };
         let after = counts();

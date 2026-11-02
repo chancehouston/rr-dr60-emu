@@ -2890,8 +2890,8 @@ pub struct RrDr60Meters {
     pub struct_size: u32,
     /// The largest absolute input sample after the engine's sanitizing of non-finite samples.
     pub input_peak: f32,
-    /// The largest absolute sample entering the limiter (stage 2's output; the input with
-    /// stages 1 – 2 bypassed; A-046, A-051). May exceed 1.0.
+    /// The largest absolute sample entering the limiter (the slot's output, spec 024; stage 2's
+    /// with the slot empty; the input with stages 1 – 2 bypassed; A-046, A-051). May exceed 1.0.
     pub limiter_input_peak: f32,
     /// The deepest attenuation the limiter applied in the call, dB ≥ 0 (A-028, A-034, A-035;
     /// modeled on the circuit, not measured).

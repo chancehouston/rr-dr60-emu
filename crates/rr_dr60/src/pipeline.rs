@@ -229,9 +229,11 @@ pub struct Meters {
     /// The largest absolute input sample, after the engine's sanitizing of non-finite samples:
     /// always finite, with no magnitude bound. Rest 0.
     pub input_peak: f32,
-    /// The largest absolute sample entering stage 3: stage 2's output (stage 1's with stage 2
-    /// bypassed; the sanitized input with both bypassed; A-046, A-051). May exceed 1.0 (stage 2
-    /// limits softly near +9 and +17 dBFS). Rest 0; also rest at [`Tap::AfterMicCapsule`].
+    /// The largest absolute sample entering stage 3: the slot's output (spec 024 D6; stage 2's
+    /// with the slot empty; stage 1's with stage 2 bypassed; the sanitized input with both
+    /// bypassed; A-046, A-051). May exceed 1.0 (stage 2 limits softly near +9 and +17 dBFS; a
+    /// component's gain or resonance can add more). Rest 0; also rest at
+    /// [`Tap::AfterMicCapsule`].
     pub limiter_input_peak: f32,
     /// The deepest attenuation the limiter applied to any sample of the call, in non-negative
     /// dB (0 = unity gain; exactly 0 below the hold's unity floor; A-028, A-034, A-035,

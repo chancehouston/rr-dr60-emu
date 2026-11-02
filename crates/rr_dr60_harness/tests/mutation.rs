@@ -2404,7 +2404,11 @@ mod insert {
             &x,
             at,
             change,
-            InsertMutation { param_step: true, type_instant: true, ..InsertMutation::default() },
+            InsertMutation {
+                param_step: true,
+                type_instant: true,
+                ..InsertMutation::default()
+            },
             1024,
         );
         let n = (0.02 * fs).round();
@@ -2420,8 +2424,10 @@ mod insert {
         hooks::mutate_insert(&mut p, m);
         let at = 100usize;
         let n = 960usize;
-        p.schedule_change(Stream::OnePass, at as u64, CONTROLS[1], 2000.0, 1).unwrap();
-        p.schedule_change(Stream::OnePass, (at + n / 2) as u64, CONTROLS[1], 500.0, 2).unwrap();
+        p.schedule_change(Stream::OnePass, at as u64, CONTROLS[1], 2000.0, 1)
+            .unwrap();
+        p.schedule_change(Stream::OnePass, (at + n / 2) as u64, CONTROLS[1], 500.0, 2)
+            .unwrap();
         let x = stimulus::tone(1000.0, 0.1, f64::from(RATE), at + 2 * n);
         let _ = ic::run(&mut p, &x[..at], 64);
         hooks::insert_tracing(&mut p, Stream::OnePass, true);
@@ -2447,8 +2453,12 @@ mod insert {
         let mut toggled = ic::engine(ic::oracle_settings(RATE), [1.0, 500.0, 2.0, 3.0]);
         hooks::mutate_insert(&mut toggled, m);
         let _ = ic::run(&mut toggled, &x, 1024);
-        toggled.set_component(BeforeLimiter, ComponentId::None).unwrap();
-        toggled.set_component(BeforeLimiter, ComponentId::BandFilter).unwrap();
+        toggled
+            .set_component(BeforeLimiter, ComponentId::None)
+            .unwrap();
+        toggled
+            .set_component(BeforeLimiter, ComponentId::BandFilter)
+            .unwrap();
         let mut clean = ic::engine(ic::oracle_settings(RATE), [1.0, 500.0, 2.0, 3.0]);
         ic::run(&mut toggled, &x[..512], 512) == ic::run(&mut clean, &x[..512], 512)
     }
@@ -2459,15 +2469,20 @@ mod insert {
         s.speech_codec_enabled = false;
         let mut p = ic::engine(s, DEF);
         hooks::mutate_insert(&mut p, m);
-        p.schedule_change(Stream::Record, 0, CONTROLS[1], 2000.0, 7).unwrap();
+        p.schedule_change(Stream::Record, 0, CONTROLS[1], 2000.0, 7)
+            .unwrap();
         p.start_recording().unwrap();
         let mut ev = vec![VasEvent::default(); 1024];
-        let _ = p.record(&stimulus::tone(500.0, 0.1, f64::from(RATE), 480), &mut ev).unwrap();
+        let _ = p
+            .record(&stimulus::tone(500.0, 0.1, f64::from(RATE), 480), &mut ev)
+            .unwrap();
         let _ = p.stop_recording(&mut ev).unwrap();
         let mut log = vec![ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
         let x = stimulus::tone(500.0, 0.1, f64::from(RATE), 64);
         let mut y = vec![0.0f32; 64];
-        let info = p.process_with_events_and_changes(&x, &mut y, &mut ev, &mut log).unwrap();
+        let info = p
+            .process_with_events_and_changes(&x, &mut y, &mut ev, &mut log)
+            .unwrap();
         info.changes == 1 && log[0].control == CONTROLS[1] && log[0].tag == 7
     }
 
@@ -2483,32 +2498,56 @@ mod insert {
 
     #[test]
     fn param_step_is_caught_by_the_click_rows() {
-        assert!(!click_ok(InsertMutation { param_step: true, ..Default::default() }, (CONTROLS[1], 2000.0)));
+        assert!(!click_ok(
+            InsertMutation {
+                param_step: true,
+                ..Default::default()
+            },
+            (CONTROLS[1], 2000.0)
+        ));
     }
 
     #[test]
     fn type_instant_is_caught_by_the_type_click_row() {
-        assert!(!click_ok(InsertMutation { type_instant: true, ..Default::default() }, (CONTROLS[0], 1.0)));
+        assert!(!click_ok(
+            InsertMutation {
+                type_instant: true,
+                ..Default::default()
+            },
+            (CONTROLS[0], 1.0)
+        ));
     }
 
     #[test]
     fn freq_linear_is_caught_by_the_trace() {
-        assert!(!trajectory_ok(InsertMutation { freq_linear: true, ..Default::default() }));
+        assert!(!trajectory_ok(InsertMutation {
+            freq_linear: true,
+            ..Default::default()
+        }));
     }
 
     #[test]
     fn restart_from_target_is_caught_by_the_trace() {
-        assert!(!trajectory_ok(InsertMutation { restart_from_target: true, ..Default::default() }));
+        assert!(!trajectory_ok(InsertMutation {
+            restart_from_target: true,
+            ..Default::default()
+        }));
     }
 
     #[test]
     fn state_kept_on_set_is_caught_by_the_toggle_identity() {
-        assert!(!toggle_ok(InsertMutation { state_kept_on_set: true, ..Default::default() }));
+        assert!(!toggle_ok(InsertMutation {
+            state_kept_on_set: true,
+            ..Default::default()
+        }));
     }
 
     #[test]
     fn skip_store_mirror_is_caught_by_the_cross_stream_test() {
-        assert!(!mirror_ok(InsertMutation { skip_store_mirror: true, ..Default::default() }));
+        assert!(!mirror_ok(InsertMutation {
+            skip_store_mirror: true,
+            ..Default::default()
+        }));
     }
 
     #[test]

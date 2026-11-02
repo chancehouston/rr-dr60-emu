@@ -45,7 +45,7 @@ pub mod flags {
     pub const DIGEST_MISMATCH: u32 = 64; // FR-002: a reported difference (020 D4)
     /// The record names a component this library does not know (spec 024 D7): the re-render
     /// is refused.
-    pub const UNKNOWN_COMPONENT: u32 = 128; // 024 D7: a reported difference
+    pub const UNKNOWN_COMPONENT: u32 = 128; // FR-002: a reported difference (020 D4; 024 D7)
 }
 
 /// How a recording ended (spec 020 D9; research R-07).

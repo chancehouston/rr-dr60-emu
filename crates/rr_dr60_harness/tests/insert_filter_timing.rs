@@ -52,14 +52,18 @@ fn insert_filter_cost() {
     let e = best_of(25, || run(&mut empty, &mut out));
     let mut filt = ic::engine(s, [0.0, 1000.0, 0.7071, 0.0]);
     let f = best_of(25, || run(&mut filt, &mut out));
-    println!("one-pass at 48 kHz: empty {e:.2} ns, the band filter at rest {f:.2} ns per host sample ({:+.2} ns)", f - e);
+    println!(
+        "one-pass at 48 kHz: empty {e:.2} ns, the band filter at rest {f:.2} ns per host sample ({:+.2} ns)",
+        f - e
+    );
     let mut ramp = ic::engine(s, [0.0, 1000.0, 0.7071, 0.0]);
     let r = best_of(15, || {
         ramp.reset();
         let step = u64::from(rate) / 5;
         for k in 0..(x.len() as u64 / step) {
             let v = if k % 2 == 0 { 2000.0 } else { 1000.0 };
-            ramp.schedule_change(Stream::OnePass, k * step + 1, 33, v, k + 1).unwrap();
+            ramp.schedule_change(Stream::OnePass, k * step + 1, 33, v, k + 1)
+                .unwrap();
         }
         let t = Instant::now();
         for chunk in x.chunks(4096) {
@@ -67,7 +71,10 @@ fn insert_filter_cost() {
         }
         t.elapsed().as_secs_f64() * 1e9 / x.len() as f64
     });
-    println!("a frequency transition every 200 ms: {r:.2} ns per host sample ({:+.2} ns over the filter at rest)", r - f);
+    println!(
+        "a frequency transition every 200 ms: {r:.2} ns per host sample ({:+.2} ns over the filter at rest)",
+        r - f
+    );
     // The worst 64-sample block at 96 kHz with three parameters ramping.
     let rate = 96_000u32;
     let mut s96 = Settings::new(rate);

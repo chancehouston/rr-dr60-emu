@@ -16,7 +16,7 @@ pub const COMPONENT_PARAMETER_BUDGET: usize = 16; // engineering target (024 D5)
 
 /// The paths a point or component serves: the record side (the recorder and the one-pass's
 /// record half).
-pub const PATH_RECORD: u32 = 1;
+pub const PATH_RECORD: u32 = 1; // engineering target (024 D1): the record side's path bit
 
 /// The published insertion points (spec 024 D1; C `RR_DR60_INSERTION_POINT_*`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -182,9 +182,9 @@ pub(crate) const BAND_FILTER_GAIN: ControlValue = ControlValue::Continuous {
 };
 
 /// The control manifest's index of the slot's control (`insert.before_limiter`).
-pub(crate) const CONTROL_INSERT: u32 = 31;
+pub(crate) const CONTROL_INSERT: u32 = 31; // engineering target (024 D5): appended at 31
 /// The control manifest's indices of the band filter's four parameters, in store order.
-pub(crate) const CONTROL_BAND_FILTER: [u32; 4] = [32, 33, 34, 35];
+pub(crate) const CONTROL_BAND_FILTER: [u32; 4] = [32, 33, 34, 35]; // engineering target (024 D5)
 
 const BAND_FILTER_PARAMETERS: &[ComponentParameter] = &[
     ComponentParameter {
