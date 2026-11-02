@@ -30,6 +30,17 @@ public enum ProcessingRecord {
         return status == Int32(RR_DR60_STATUS_OK.rawValue) ? r : nil
     }
 
+    /// The record's slot (spec 024 D7): the component and the store at the recording's start;
+    /// `nil` when the library refuses the record; throws on a header mismatch.
+    public static func component(of record: [UInt8]) throws -> RrDr60RecordComponent? {
+        try RRDR60.checkABI()
+        var c = RrDr60RecordComponent.sized
+        let status = record.withUnsafeBufferPointer { bytes in
+            rr_dr60_processing_record_component(bytes.baseAddress, UInt(record.count), &c)
+        }
+        return status == Int32(RR_DR60_STATUS_OK.rawValue) ? c : nil
+    }
+
     /// The record's change rows (the control's manifest index, the stream word in `stream`);
     /// throws `RRDR60Error.abiMismatch` when the header does not match the library.
     public static func changes(of record: [UInt8], count: UInt64) throws -> [RrDr60ChangeEntry] {
@@ -63,6 +74,22 @@ public enum ProcessingRecord {
             let missing = status.remaining_samples - r.remaining_samples_at_start
             guard fill(p, samples: missing, codec: settings.speech_codec_enabled) else { return nil }
         }
+        // Spec 024 D7 (plan R1): the slot's component and its store restored before the schedule
+        // and the start; a record naming a component this library does not know is refused.
+        guard r.flags & UInt32(RR_DR60_RECORD_FLAG_UNKNOWN_COMPONENT) == 0,
+            let slot = try component(of: record)
+        else { return nil }
+        if slot.parameter_count > 0 {
+            for i in 0..<4 {
+                let v = withUnsafeBytes(of: slot.store) { $0.load(fromByteOffset: i * 4, as: Float.self) }
+                guard rr_dr60_set_component_parameter(p, UInt32(RR_DR60_INSERTION_POINT_BEFORE_LIMITER), UInt32(i), Double(v))
+                        == Int32(RR_DR60_STATUS_OK.rawValue)
+                else { return nil }
+            }
+        }
+        guard rr_dr60_set_component(p, UInt32(RR_DR60_INSERTION_POINT_BEFORE_LIMITER), slot.component)
+                == Int32(RR_DR60_STATUS_OK.rawValue)
+        else { return nil }
         let entries = try changes(of: record, count: r.change_count)
         var next = 0
         func schedule() -> Bool {
