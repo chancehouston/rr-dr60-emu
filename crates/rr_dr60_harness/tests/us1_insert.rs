@@ -65,7 +65,7 @@ fn insert_as2_transitions_and_clicks() {
     for &rate in configs::measurement_rates() {
         let traj = ic::trajectory(rate, [0.0, 1000.0, 0.7071, 0.0], (CONTROLS[1], 2000.0));
         let n = (0.02 * f64::from(rate)).round() as usize;
-        let (l0, l1) = (1000.0f64.ln(), 2000.0f64.ln());
+        let (l0, l1) = (rr_dr60_detmath::ln(1000.0), rr_dr60_detmath::ln(2000.0));
         for (i, &(f, _, _)) in traj.iter().enumerate().take(n + 4) {
             let m = (i + 1).min(n);
             let want = if m == n {
