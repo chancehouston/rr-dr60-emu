@@ -29,7 +29,7 @@ One instrument with two ways to explore it. It is a complete, free recorder with
 
 **Recorder mode** is a home for vintage-hardware and audio enthusiasts. **Investigation mode** is a field instrument that records audio together with synchronized tracks from the phone's own sensors. Both modes share the engine and the explorable internals.
 
-The free app is generous: both modes, the visible internals, sensor sessions, and the adjustments the engine intends users to make. Paid expansion arrives as packages of extra components that open a new experience, not as a charge for each control. iPhone first, Android planned.
+The app is free for good, 1.0 and every later update, with no purchase, subscription or ads (decided 2026-11-01). App 1.0 carries both modes, the visible internals, sensor sessions and the device's own controls; the one major update planned after 1.0 inserts an effects module (spec 024, the band filter first), and later components arrive in later free updates. iPhone first, Android planned. *(Until 2026-11-01 this paragraph read: "The free app is generous: both modes, the visible internals, sensor sessions, and the adjustments the engine intends users to make. Paid expansion arrives as packages of extra components that open a new experience, not as a charge for each control.")*
 
 ## Agreed direction (2026-10-15)
 
@@ -70,8 +70,9 @@ Dossier concept 03 shows the back as a workbench of modules in a phone-sized "VS
 - **Needs engine support** for the proposed flow:
   - choose an insertion point and add a component;
   - inspect its controls;
-  - bypass it for comparison; *(built for the device's own playback-side stages 10 – 13 as a live 20 ms blend, spec 021, engine 0.21.0, 2026-10-31; record-side stages compare through the offline re-render of spec 020; a Workbench feature)*
+  - bypass it for comparison; *(built for the device's own playback-side stages 10 – 13 as a live 20 ms blend, spec 021, engine 0.21.0, 2026-10-31; record-side stages compare through the offline re-render of spec 020; a Workbench feature; since 2026-11-01 not in app 1.0, free if added later)*
   - move or remove it where supported.
+  - *2026-11-01: spec 024 (signed off by the owner) answers the flow with **one slot** at one published insertion point, before the limiter on the record side, holding one engine component at a time (the band filter first); add and remove, no move or reorder. The band filter applies to new recordings, never to recordings already made. The engine side lands before engine 1.0; the app uses it in the effects update after 1.0.*
 - Placement before or after a stage can change the result, so **the supported insertion points must come from the engine contract**, not from the app.
 - **Proposed:** a front-panel indicator that shows when a custom chain is active.
 
@@ -99,16 +100,18 @@ A recording becomes a documented session. The whole session design is **Agreed**
   - the adjustments the engine intends for users.
 
   Not all tinkering is paid.
+
+  *Superseded 2026-11-01: nothing is paid. The app and every update are free; app 1.0 shows the device controls only, and the rest is a scope choice for free updates (decisions.md). The two bullets below are kept as the 2026-10-15 record.*
 - **Agreed direction:** paid expansion is packages of complementary components (examples discussed: equalization, reverb, flanging, more unusual processing) with example chains and presets.
   - Users can listen, compare, take the chain apart and build their own.
   - One purchase should feel like opening a useful box of equipment.
   - Purchased components appear in the same back-panel language and feel integrated into the workbench.
-- **Open:** the products, the prices, the package contents and the exact free/paid line. No subscription model or pricing has been selected.
+- **Open:** the products, the prices, the package contents and the exact free/paid line. No subscription model or pricing has been selected. *(Closed 2026-11-01: no products, prices or packages; added components come in free updates.)*
 
 ### Ownership
 
-- **Agreed:** phone sensors, permissions, styling and purchase presentation live in the app layer, unless a shared contract needs otherwise.
-- **Agreed:** the engine returns capability facts before the UI or the commercial boundary is locked.
+- **Agreed:** phone sensors, permissions, styling and purchase presentation live in the app layer, unless a shared contract needs otherwise. *(2026-11-01: there is no purchase to present.)*
+- **Agreed:** the engine returns capability facts before the UI or the commercial boundary is locked. *(2026-11-01: there is no commercial boundary.)*
 
 ## Standing decisions (2026-10-11, unchanged)
 
@@ -119,7 +122,7 @@ The dossier does not change these. Details and reasoning are in decisions.md.
 - **Privacy:** no analytics or advertising SDK at launch. App Privacy and Data safety both say "data not collected".
   - The sensor tracks and the raw microphone audio are processed and stored on the device. Re-check both labels against the final session design.
 - **Ads:** none, and no consumables.
-- **Subscriptions:** none at launch. The dossier selects none either; confirmation is question O-6.
+- **Subscriptions:** none at launch. The dossier selects none either; confirmation is question O-6. *(Decided 2026-11-01: none, ever; no purchase of any kind.)*
 - **Evidence program:** *superseded 2026-10-18:* real-unit checks are out of scope until the project has a unit it can open (decisions.md). The status header still shows the truth: no stage checked against a real unit.
 - **Engine distribution:** a Swift Package wrapping an XCFramework (later an Android archive), not a source port. 64-bit targets only (iOS is 64-bit; on Android `arm64-v8a` and `x86_64`, which Play serves to every current device; 32-bit-only devices are not offered the app; spec 022, 2026-10-31).
 - **Stage strings:** the engine carries short, neutral, English strings per stage (the stage manifest), and apps localize them.
@@ -206,7 +209,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
 - **O-13 Controls and AI control:** the 2026-10-15 request to give the app's users more to "play" with and to allow an AI to drive the engine's controls is not in the dossier. *(2026-10-18: the decision brief is [controls-discussion.md](controls-discussion.md), against engine 0.13.0.)*
   - It joins O-1 and the dossier's engine question 1.
   - It includes how a fast stream of volume changes behaves: each change restarts the 20 ms volume transition, so updates faster than about 60 per second make the knob lag.
-- **O-15 Recorder mode's audience (2026-10-18):** with real-unit checks out of scope, the product no longer targets listeners whose main interest is a checked, authentic sound. Does Recorder mode keep its "home for vintage-hardware and audio enthusiasts" framing, become the plain recorder front for every user, or merge into the tinkerer's view? Reconsider the dropped audience if demand appears.
+- **O-15 Recorder mode's audience (2026-10-18):** *Decided 2026-10-29: the plain device experience for every user (decisions.md).* with real-unit checks out of scope, the product no longer targets listeners whose main interest is a checked, authentic sound. Does Recorder mode keep its "home for vintage-hardware and audio enthusiasts" framing, become the plain recorder front for every user, or merge into the tinkerer's view? Reconsider the dropped audience if demand appears.
 - **O-16 An "entertainment" disclaimer (2026-10-21).** *Decided 2026-11-01: a neutral statement of what the app does, no "entertainment" wording (decisions.md).* The working notes lean toward "For entertainment purposes" in the store description and the About screen, to cover App Review. The copy rules (2026-10-11) ban "entertainment only" because it reads as a debunk. Options:
   1. keep the rule and write a neutral statement of what the app does instead, in the style competitors use ("measures and reacts to changes in the environment only", competitors.md);
   2. allow "for entertainment" in the store description and About screen only, never in the app's working copy;
@@ -287,9 +290,9 @@ The limiter's internal state is a test-only hook. Also not built: a scope copy a
 
 ### 3. Define extension points
 
-**The pipeline is fixed.** Stages can be bypassed through settings, applied by `reconfigure` *(the four playback-side switches also live, since 0.21.0)*. There is no insertion, reordering, removal or third-party module interface; that is the API-shape decision of spec 001.
+**The pipeline is fixed.** Stages can be bypassed through settings, applied by `reconfigure` *(the four playback-side switches also live, since 0.21.0)*. There is no insertion, reordering, removal or third-party module interface; that is the API-shape decision of spec 001. *(2026-11-01: spec 024 adds one insertion slot before the limiter with a closed set of engine components; still no reordering and no third-party modules.)*
 
-**Effects beyond the device** (reverb, EQ, flanger) do not exist in the engine. They could run in the app around the engine's input or output, or become engine stages. Where they live is an architecture decision for a later spec, not a fact today.
+**Effects beyond the device** (reverb, EQ, flanger) do not exist in the engine. They could run in the app around the engine's input or output, or become engine stages. Where they live is an architecture decision for a later spec, not a fact today. *(2026-11-01: decided as engine components in spec 024's slot; the band filter first, others in later free updates.)*
 
 **Latency reporting exists:** total, record path, playback path, and drain.
 
@@ -312,7 +315,7 @@ The limiter's internal state is a test-only hook. Also not built: a scope copy a
 
 ### 5. Ownership
 
-- **App:** phone sensors, permissions, styling and purchase presentation.
+- **App:** phone sensors, permissions and styling (purchase presentation dropped 2026-11-01: there is none).
 - **Engine:** no I/O, no clock, no allocation in the audio path.
 
 These match the dossier's split.
@@ -325,7 +328,7 @@ The three concept images are on pages 2–4 of [the dossier](design-dossier-2026
 |---|---|---|
 | **01 Recorder: front and exposed back** (accepted visual baseline) | Front: an LCD-style timer and level meter, a large record/stop button, play, recordings, more, and an "Inside" flip button. Back: a stylized circuit board with stage modules (input, limiter with a threshold knob, voice gate, codec, output), each with a waveform and meter, and the recording state and Stop at the bottom. | Stage names and knob settings are placeholders. Per-stage meters need E-A. A limiter knob is a model parameter (O-1). |
 | **02 Investigation: a theatrical field instrument** | Live: an audio scope, then magnetic field, motion and pressure read-outs, record, mark, and the flip. Review: linked tracks (audio, magnetic, motion, pressure) under one cursor, a marker card and transport. | A live/review pair, not front/back. Readings are invented for the concept. Wording: O-11, O-12. |
-| **03 Component workbench** | A chain of modules (input, recorder core, an added reverb, output) with "Add component", and an expanded reverb module with decay, tone, mix, move and remove. | Add, inspect, bypass and move are proposals pending engine support (question 3). |
+| **03 Component workbench** | A chain of modules (input, recorder core, an added reverb, output) with "Add component", and an expanded reverb module with decay, tone, mix, move and remove. | Add, inspect, bypass and move are proposals pending engine support (question 3). *2026-11-01: spec 024 supports add and remove in one slot before the limiter (no move); the effects update after 1.0.* |
 
 ## Next review (from the dossier)
 

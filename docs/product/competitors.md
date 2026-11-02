@@ -2,6 +2,8 @@
 
 Apps in the paranormal-investigation audio category on the App Store and Google Play, as checked on 2026-10-11. Prices and ratings change; re-check before quoting. This page records what competitors claim; it does not evaluate those claims.
 
+The prices and models below describe the competitors only. This project's app is free for good, with no purchase, subscription or ads (decision 2026-11-01); the pricing observations are kept as context on what the category's users meet elsewhere, not as a plan.
+
 | App | Platforms | Price / model | Rating (ratings) | What it says about itself | Review themes |
 |---|---|---|---|---|---|
 | [GhostTube EVP](https://apps.apple.com/us/app/ghosttube-evp/id6747162108) (GhostTube Pty Ltd); Play `com.ghosttube.evp` | iOS, Android | free; $2.99/month, $11.99/year, $49.99 three-app bundle | 4.7 (696) iOS | "a fully functional emulation of the discontinued DR60 voice recorder" that "closely matches the sample rate, audio boosting features and voice activated system (VAS)"; an "interference modulator" from device sensors; disclaimer that paranormal tools "measure and react to changes in the environment only" | "it's like there's nothing even there"; sibling SLS app: usage-cap bugs |

@@ -11,6 +11,8 @@ This is a decision brief, not a spec. It creates no engineering work. Each engin
 
 Related notes: [brief.md](brief.md) (O-1, O-9, O-13), [front-and-inside.md](front-and-inside.md), [monetization.md](monetization.md), [decisions.md](decisions.md).
 
+> **Superseded in part 2026-11-01** (decisions.md, the owner's rows of that date). The app and every update are **free for good**: no purchase, subscription, ads, Workbench or paid packages. Every "tier", "Workbench", "paid" and "packages" reference below is the 2026-10-18 recommendation, kept as the record. Which controls the app shows is now a scope choice: **app 1.0 shows the device controls only** (route, volume, playback speed with the keep-pitch switch, sensitivity), with Investigation mode's voice-activation presets kept; the unit conditions, model internals and stage switches may come in free updates. The four kinds stand as the engine's classification. Added components come in the effects update after 1.0 (spec 024, one slot before the limiter, the band filter first), free. AI control stays off (2026-10-29).
+
 ## Summary
 
 - **The engine has 3 live controls and 26 construction-time settings** (counting each field, the tap and the seed). It also has a long list of fixed design constants.
@@ -78,7 +80,7 @@ For "Kind", see the table in the summary. "Perceived" is what a listener notices
 | `output.speaker_enabled` | Emulator option when off | bool; on | 12 | Large. With it off, the small-speaker template (A-010, low confidence) is removed. |
 | `output.earphone_enabled` | Emulator option when off | bool; on | 13 | With it off, the earphone corners at 120 / 280 Hz are removed. Subtle. |
 | `output.clamp_enabled` | Emulator option | bool; **off** | after 13 | Only output above ±1.0 changes (flat tops). A host convenience; it adds distortion the device does not have. |
-| `memory.capacity_s` | Device limit (S-001: 60 min); above it an emulator option | 1 – 86 400; 3600 | 8 | Noticed only when the memory fills and recording stops. A tier question (O-2). |
+| `memory.capacity_s` | Device limit (S-001: 60 min); above it an emulator option | 1 – 86 400; 3600 | 8 | Noticed only when the memory fills and recording stops. A tier question (O-2). *(2026-11-01: no tier; not in app 1.0.)* |
 | `memory.max_recordings` | Device limit (S-001: 99); above it an emulator option | 1 – 9 999; 99 | 8 | Same as `memory.capacity_s`. |
 | `tap` (11 values) | Emulator option | `RouteOutput` default | any | Which stage's output the one-pass returns. **The recorder and `play` ignore it**: `play` always returns the route output. A live "listen here" during playback needs the scope copy (E-B), not the tap. |
 | `seed` | Plumbing | u64; 0 | 1 | A different hiss realization. Not perceptible as a character change; it matters for reproducibility. Not a user control. |
@@ -116,6 +118,8 @@ For "Kind", see the table in the summary. "Perceived" is what a listener notices
 ### 2a. Ranking by user value
 
 User value is my judgement from the personas (personas.md) and the dossier. No interview or review mining has been done on controls.
+
+*2026-11-01: the "Tier (recommended)" column is the 2026-10-18 recommendation and is superseded: nothing is paid. In app 1.0, rows 1, 2 and 7 (the keep-pitch switch) are shown; rows 3 (the meters) drive the inside; rows 4 – 6 and 8 are left out and may come in free updates.*
 
 | Rank | Control | Who notices | Tier (recommended) | Timing the app needs |
 |---|---|---|---|---|
@@ -168,7 +172,7 @@ The common pattern is spec 011's: a setter that is validated, real-time safe and
 ### 2d. Interaction with the record and playback split
 
 - **Record-path controls change what is stored**, permanently. Playback-path controls (route, volume, speed, battery, playback bypasses) change only what is heard. The inside and the session log should show which side a control is on. The control manifest's "path" field (section 3) carries it.
-- **The speaker is muted while recording** (S-002). A live monitoring toy in which a user speaks and turns record-side knobs is the one-pass with earphones. It is not a device behaviour. The 2026-10-11 decision (decisions.md) makes live monitoring a labelled Workbench extra; it stands.
+- **The speaker is muted while recording** (S-002). A live monitoring toy in which a user speaks and turns record-side knobs is the one-pass with earphones. It is not a device behaviour. The 2026-10-11 decision (decisions.md) makes live monitoring a labelled Workbench extra; it stands. *(Partly superseded 2026-11-01: no Workbench; if offered, a labelled emulator extra in a free update, not in 1.0.)*
 - **The tap does not reach `play`.** Every "listen at this stage" during playback needs the scope copy (E-B, still unbuilt).
 
 ## 3. Options for an AI-facing control surface
@@ -187,7 +191,7 @@ The common pattern is spec 011's: a setter that is validated, real-time safe and
 |---|---|---|---|
 | **1. Control manifest** (beside the stage manifest) | Constant data, one entry per setting and live control: stable id, display name, kind (device control / unit condition / model internal / emulator option), timing class (live / idle / construction), path (record / playback / both), type and unit, range, step, device default, stage number, S- and A-IDs, smoothing, and one neutral sentence on what it does to sound. C access like `rr_dr60_manifest_*`. | One source of truth for the app's UI, the inside's cards, the docs and any AI's tool list. Cross-checkable against `validate` (every range boundary probed) and the stage manifest's `controls` notes, the spec 007 pattern. Answers the dossier's engine question 1 and O-1's raw material. Cheap: data only. | Another versioned public surface. The strings must pass the denylist. A range change becomes a semver event (which is right). |
 | **2. JSON Schema** of the controls | Generated from option 1 by the harness as a checked-in, golden-guarded file. Not in the core, which is `no_std`. | LLM tool-calling APIs take JSON Schema directly. Apple's on-device framework uses typed Swift (`@Generable`), which the Swift package can generate from the same data. | Two renderings to keep in step. Mitigated by generating both from option 1. |
-| **3. Named presets** | A short catalogue of `Settings` plus control values, each with an id, a neutral name and the kinds it touches. The engine carries only device-grounded ones ("device as modeled", "fresh / half / flat batteries" once A-056 is built, "quiet / noisy capsule"). Creative presets live in the app or the packages. | The safest AI target: the AI picks one of N, so it cannot invent a configuration. Good for the free tier and for screenshots. | Preset names are the riskiest strings in the product (below). Engine presets must trace to the registers like everything else. |
+| **3. Named presets** | A short catalogue of `Settings` plus control values, each with an id, a neutral name and the kinds it touches. The engine carries only device-grounded ones ("device as modeled", "fresh / half / flat batteries" once A-056 is built, "quiet / noisy capsule"). Creative presets live in the app or the packages (2026-11-01: in the app; there are no paid packages). | The safest AI target: the AI picks one of N, so it cannot invent a configuration. Good for the free tier and for screenshots. | Preset names are the riskiest strings in the product (below). Engine presets must trace to the registers like everything else. |
 | **4. Scheduled control events and a change log** (2c) | Sample-positioned changes in, a change log out | Makes AI changes reproducible and auditable. A script is a list of events. | Engine work (spec 015 in section 4) |
 | **5. Settings serialization** | A versioned text form of `Settings` plus the live controls | Sessions, sharing a configuration, AI output that a person can read | A third versioned format next to the stored form and the manifest |
 | **6. Free-text assistant** | A chat model that sees the conversation and maybe the audio | Flexible | Claims exposure (it can say anything about a recording), privacy exposure, store review exposure. **Not recommended.** |
@@ -198,7 +202,7 @@ The common pattern is spec 011's: a setter that is validated, real-time safe and
 
 Proposed rules for every AI or automation path:
 
-1. **Only declared controls, only declared ranges.** The AI's tool list is the control manifest, filtered by tier and by timing class (an AI cannot request an idle-only setting during a recording).
+1. **Only declared controls, only declared ranges.** The AI's tool list is the control manifest, filtered by tier (2026-11-01: by the app's shown controls; there is no tier) and by timing class (an AI cannot request an idle-only setting during a recording).
 2. **Rate.** At most one change per control per UI frame. Programmed fades go through a single scheduled event, not a stream. The volume-restart lag (O-13) otherwise grows to about 105 ms.
 3. **Hearing.** An AI may not raise the volume above the reference position (A-043) without a person's action. The output clamp is a host option, not a safety limiter.
 4. **Visible and reversible.** Every AI change appears in the session log as "set by the assistant", and the inside's "device default" button (decisions.md, 2026-10-11) restores it.
@@ -210,7 +214,7 @@ Proposed rules for every AI or automation path:
 ### 3c. Store policy that applies (checked 2026-10-18)
 
 - **App Store Review Guideline 5.1.2(i):** "You must clearly disclose where personal data will be shared with third parties, including with third-party AI, and obtain explicit permission before doing so." A cloud assistant that receives a recording or a transcript needs an in-app disclosure and explicit consent, and it changes the privacy label. Secondary coverage (stora.sh, igeeksblog; not authoritative) says it is unclear whether on-device models are in scope. An on-device model with no audio input sidesteps the question.
-- **Guideline 2.5.2:** apps may not "download, install, or execute code which introduces or changes features or functionality". Presets and chains, whether delivered later, generated by an AI or sold in packages, must be **declarative data validated against the control manifest**, never scripts.
+- **Guideline 2.5.2:** apps may not "download, install, or execute code which introduces or changes features or functionality". Presets and chains, whether delivered later, generated by an AI or (as planned until 2026-11-01) sold in packages, must be **declarative data validated against the control manifest**, never scripts.
 - **Guideline 2.3.1(a):** misleading marketing "is grounds for removal". An "AI" label in the store listing invites scrutiny. Describe what the assistant does ("sets the recorder's controls from a request"), never what it might find.
 - **Guideline 1.2** names "AI content creation apps" among user-generated-content apps. Sharing AI-made presets publicly would bring the UGC duties (reporting, blocking). Keep sharing out of scope for now.
 - **Google Play, AI-Generated Content policy** (Play Console Help, read 2026-10-18): it covers text-to-text chatbots where "the chatbot interaction is a central feature", image generators, and voice or video of real people. It excludes "productivity apps that use AI to improve an existing feature". A settings assistant is plausibly in the exclusion, which is my reading, not a ruling. A chat-first assistant would not be.
@@ -230,7 +234,7 @@ These words apply to control names, preset names, AI prompts, AI tool descriptio
 
 ## 4. Recommended sequence of engine specs
 
-Each item below is small and independently testable, with the WHY and the tier it serves. The numbers assume nothing else is queued; the queued earphone cut-off (A-032) stays capture-gated. Each block is a candidate input for `/speckit-specify`.
+Each item below is small and independently testable, with the WHY and the tier it serves (the tiers as recommended on 2026-10-18; superseded 2026-11-01, nothing is paid). The numbers assume nothing else is queued; the queued earphone cut-off (A-032) stays capture-gated. Each block is a candidate input for `/speckit-specify`.
 
 1. **014: Control manifest** (S, data only; serves free, Workbench, library and AI).
    - *As an app developer and as an AI tool builder, I want the engine to describe every setting and live control (id, kind, timing class, path, unit, range, step, device default, stage, S- and A-IDs, a neutral sentence), so that the app's controls, the inside's cards, the free/paid line and an AI's tool list come from one cross-checked source and cannot drift from what the engine validates.*
@@ -285,7 +289,7 @@ What remains is the **app-facing capability surface**: the control manifest, eve
 Recommendation:
 
 - **Reopen O-1, O-3 and O-4 now.**
-- **Keep O-2** (paid shape), **O-5** (default mode) **and O-6** (subscription) deferred until a phone prototype exists. None of them changes an engine contract.
+- **Keep O-2** (paid shape), **O-5** (default mode) **and O-6** (subscription) deferred until a phone prototype exists. None of them changes an engine contract. *(All three decided 2026-11-01: no paid boundary, Recorder mode first then the last-used mode, no subscription.)*
 
 ## 6. Decisions for the owner
 
@@ -295,7 +299,7 @@ Each question gives the recommended answer first.
 
 1. **Is engine core development complete enough to reopen product questions?** Recommended: yes for O-1, O-3 and O-4; keep O-2, O-5 and O-6 deferred until a prototype. Alternative: keep all deferred until 014 – 016 ship, at the risk of specs that encode guesses. Reversal cost: low.
 2. **Adopt the four kinds** (device control, unit condition, model internal, emulator option), with "intended user adjustments" (O-1, free) defined as device controls plus unit conditions? Recommended: yes.
-   - Model internals and live playback bypasses then sit in the Workbench, whatever its commercial form under O-2.
+   - Model internals and live playback bypasses then sit in the Workbench, whatever its commercial form under O-2. *(Superseded 2026-11-01: no Workbench; they are left out of app 1.0 by scope.)*
    - Alternative: every adjustment free, with paid limited to the component packages.
    - Supports the alternative: the engine is MIT, so a competitor's wrapper can give the knobs away free.
    - Supports the recommendation: the internals are this product's unique content, while EQ and reverb packages are commodity.

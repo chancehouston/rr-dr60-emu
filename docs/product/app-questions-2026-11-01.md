@@ -21,16 +21,16 @@ The owner answered after reading this brief; decisions.md has the rows. Where th
 
 | Q | Question | Recommendation | Confidence | Unblocks |
 |---|---|---|---|---|
-| **O-4** | Release sequencing | **1.0 ships both modes complete and free, with no in-app purchase code at all.** The first paid equipment package comes in a later 1.x, after the component slot (spec 024) and after people are using the app. A TestFlight beta runs before 1.0. Spec 024 is resumed after the first app spec, and the band filter ships in 1.0 only if it is done before the beta freeze. | judgement (high) | The scope of every app spec. With no purchase code there is no 3.1.1 review surface, no restore UI and no paid labels in the metadata. |
-| **O-1** | Which controls are free | **Every user-meaningful control is free, through progressive disclosure:** the front carries the device controls; the inside's cards carry the unit conditions, the model internals and the emulator options. Only the three host parameters (rate, seed, output clamp) stay hidden. None of the 31 is paid. Purchases sell components, never knobs. This revises the tier half of the 2026-10-29 four-kinds row; the kinds themselves stay. | judgement (medium-high) | The front's controls, the inside's cards and the preset format. It also resolves a conflict between two recorded decisions (see "Contradictions" below). |
-| **O-2** | The paid boundary and its shape | **Paid = equipment packages only**: each one a non-consumable of engine components with example chains and presets, plus a later "all packages" non-consumable. None in 1.0. Every old Workbench item becomes free: library, folders and search, export, review tools, Listen here and the extended memory. | judgement (medium) | The library, export and review-tool specs (all free), and the shape of spec 024's resumption. |
-| **O-6** | Subscription | **Confirm: none, at launch or in 1.x.** Revisit only if a catalog grows on a schedule. | evidenced (3.1.2(a)) + judgement (high) | Nothing to build. It closes the "future pack access" thread. |
-| **O-3** | The original microphone audio (remaining parts) | Already decided: it is kept for every recording in both modes (2026-10-29). Recommended for the rest: the voice-activation gaps are mapped by the engine's timeline maps, never by trimming the original; the recording's details screen shows "Original microphone audio · 24-bit · N MB" with "Delete original only" (which ends re-render and Listen here for that recording, stated in the dialog); a storage screen; the labels stay "Data Not Collected". | evidenced (privacy definitions) + judgement | The recorder spec's storage model, the deletion UI and the privacy labels. |
-| **O-5** | Default mode | **First launch opens Recorder mode's front**, with a one-time card offering Investigation. After that the app reopens the last-used mode. Switching is one persistent control on the front ("Start an investigation") and one on the investigation screen ("Recorder"). | judgement (medium-high) | The first-run flow, the permission timing, the App Review path and the screenshot order. |
+| **O-4** | Release sequencing | *Superseded 2026-11-01 in part: no paid package ever; spec 024 resumed before app work, its engine side built before engine 1.0 and used by the effects update after app 1.0, not by 1.0.* **1.0 ships both modes complete and free, with no in-app purchase code at all.** The first paid equipment package comes in a later 1.x, after the component slot (spec 024) and after people are using the app. A TestFlight beta runs before 1.0. Spec 024 is resumed after the first app spec, and the band filter ships in 1.0 only if it is done before the beta freeze. | judgement (high) | The scope of every app spec. With no purchase code there is no 3.1.1 review surface, no restore UI and no paid labels in the metadata. |
+| **O-1** | Which controls are free | *Superseded 2026-11-01: a scope question, not a tier; app 1.0 shows the device controls only (route, volume, speed, sensitivity, keep-pitch), Investigation's voice-activation presets kept.* **Every user-meaningful control is free, through progressive disclosure:** the front carries the device controls; the inside's cards carry the unit conditions, the model internals and the emulator options. Only the three host parameters (rate, seed, output clamp) stay hidden. None of the 31 is paid. Purchases sell components, never knobs. This revises the tier half of the 2026-10-29 four-kinds row; the kinds themselves stay. | judgement (medium-high) | The front's controls, the inside's cards and the preset format. It also resolves a conflict between two recorded decisions (see "Contradictions" below). |
+| **O-2** | The paid boundary and its shape | *Superseded 2026-11-01: no paid boundary; every update free; no packages.* **Paid = equipment packages only**: each one a non-consumable of engine components with example chains and presets, plus a later "all packages" non-consumable. None in 1.0. Every old Workbench item becomes free: library, folders and search, export, review tools, Listen here and the extended memory. | judgement (medium) | The library, export and review-tool specs (all free), and the shape of spec 024's resumption. |
+| **O-6** | Subscription | *Decided 2026-11-01: none, ever (the app is free).* **Confirm: none, at launch or in 1.x.** Revisit only if a catalog grows on a schedule. | evidenced (3.1.2(a)) + judgement (high) | Nothing to build. It closes the "future pack access" thread. |
+| **O-3** | The original microphone audio (remaining parts) | *Decided 2026-11-01 as recommended.* Already decided: it is kept for every recording in both modes (2026-10-29). Recommended for the rest: the voice-activation gaps are mapped by the engine's timeline maps, never by trimming the original; the recording's details screen shows "Original microphone audio · 24-bit · N MB" with "Delete original only" (which ends re-render and Listen here for that recording, stated in the dialog); a storage screen; the labels stay "Data Not Collected". | evidenced (privacy definitions) + judgement | The recorder spec's storage model, the deletion UI and the privacy labels. |
+| **O-5** | Default mode | *Decided 2026-11-01 as recommended.* **First launch opens Recorder mode's front**, with a one-time card offering Investigation. After that the app reopens the last-used mode. Switching is one persistent control on the front ("Start an investigation") and one on the investigation screen ("Recorder"). | judgement (medium-high) | The first-run flow, the permission timing, the App Review path and the screenshot order. |
 
 ## Contradictions found between recorded decisions and notes
 
-These are reported here and not fixed in place. The owner decides which wording wins.
+These are reported here and not fixed in place. The owner decides which wording wins. *Status 2026-11-01, after the owner's answers and the product-docs sweep:* 1 resolved (no Workbench tier); 2 resolved in ui-brief-three-screens.md for the first three points (free for good, when changes apply, one slot), the fourth waits on engine request R1 and the fifth (ambient light and sound level) is still in the brief; 3 resolved in brief.md; 4 resolved in spec 024 (statuses 41 – 43).
 
 1. **Two rows conflict once 1.0 has no purchase.**
    - The 2026-10-29 row says "everything shipped free in 1.0 stays free for good; later purchases only add components".
@@ -57,6 +57,8 @@ These are reported here and not fixed in place. The owner decides which wording 
 
 ## O-4 · Release sequencing
 
+> **Decided 2026-11-01:** 1.0 ships both modes, free, with no purchase code; the one major update after 1.0 inserts an effects module (spec 024, free; its engine side built before engine 1.0). There is no paid package at any point. Kept below as the record.
+
 ### Options
 
 1. **Both modes, the full free inside, no purchase code in 1.0;** the first equipment package in a later 1.x. *(Recommended.)*
@@ -72,7 +74,7 @@ These are reported here and not fixed in place. The owner decides which wording 
   - Play's billing and disclosure rules;
   - one more thing to fail on a first submission (O-17).
 - **Option 2 makes a weaker first impression and gains nothing.** The four-kinds row already makes the device controls and unit conditions free. The bench (six iterations, all 104 C functions) shows the inside's controls work on the phone. Holding them back only makes 1.0 look thinner to an App Review 4.2 reviewer.
-- **Spec 024 (the slot and the band filter) is not on 1.0's critical path.**
+- **Spec 024 (the slot and the band filter) is not on 1.0's critical path.** *(Superseded 2026-11-01: spec 024 resumed now, before app work; its engine side lands before engine 1.0; app 1.0 does not use the slot; the effects update after 1.0 does.)*
   - It matters for the paid direction, not for the table stakes (O-17) or for 4.2.
   - Recommended: resume it after the first app spec, as an engine 0.9x minor. The band filter goes into 1.0 only if it is merged before the beta freeze; otherwise 1.1.
   - The owner's 2026-11-01 request ("include one basic fx plugin for free in the initial release") stays the aim. It is not a gate.
@@ -107,6 +109,8 @@ These are reported here and not fixed in place. The owner decides which wording 
 
 ## O-1 · Which controls are free
 
+> **Decided 2026-11-01:** not a tier question (nothing is paid) but a scope one; app 1.0 shows the device controls only, with the keep-pitch switch and Investigation's voice-activation presets. Kept below as the record.
+
 ### Options
 
 1. **The 2026-10-29 line:** device controls and unit conditions free; model internals and emulator options in a paid Workbench. *(It conflicts with the free-stays-free row; see Contradictions 1.)*
@@ -136,6 +140,8 @@ These are reported here and not fixed in place. The owner decides which wording 
 - **Hidden:** set by the app, never shown as a control.
 
 Every control has "device default" in its card (the 2026-10-11 card rule).
+
+*2026-11-01: the table below is a candidate list, not a tier list (nothing is paid). App 1.0 shows the device controls (rows 0, 1, 2 and 15) and the keep-pitch switch of row 30; the rest are left out of 1.0 and may come in free updates.*
 
 | # | Identifier | Kind (manifest) | Timing | Tier | Placement and notes |
 |---|---|---|---|---|---|
@@ -173,7 +179,7 @@ Every control has "device default" in its card (the 2026-10-11 card rule).
 
 **Counts:** 28 free (4 device controls, 2 unit conditions, 7 model internals, 15 emulator options), 3 hidden (2 host parameters, 1 emulator option), **0 paid**.
 
-**Paid, later:** components only. Spec 024's own entries (`insert.before_limiter` and the four `band_filter.*` parameters, indices 31 – 35 in the draft) are free by its D11. A purchased package's components unlock by the app's table, keyed by the component's identifier (024 D11, product M2).
+**Paid, later:** *(withdrawn 2026-11-01: nothing is paid; every component is free, spec 024 D11 as revised)* components only. Spec 024's own entries (`insert.before_limiter` and the four `band_filter.*` parameters, indices 31 – 35 in the draft) are free by its D11. A purchased package's components unlock by the app's table, keyed by the component's identifier (024 D11, product M2).
 
 ### What changed since the question was opened
 
@@ -195,6 +201,8 @@ Every control has "device default" in its card (the 2026-10-11 card rule).
 ---
 
 ## O-2 · The paid boundary and its shape
+
+> **Decided 2026-11-01: no paid boundary.** The app and every update are free; there are no packages, no "All packages" item and no prices. The options and the recommendation below are kept as the record. Where they place an old Workbench item as free, that stands as a free candidate; when it ships is an app-spec decision.
 
 ### Options
 
@@ -240,13 +248,15 @@ Every control has "device default" in its card (the 2026-10-11 card rule).
 ### Store and compliance
 
 - **3.1.1:** unlocks go through in-app purchase, with a restore mechanism for non-consumables.
-- **2.3.2:** the description and screenshots must show which items need a purchase. That is the reason the store listing should show only free features until a package exists.
+- **2.3.2:** the description and screenshots must show which items need a purchase. That is the reason the store listing should show only free features until a package exists. *(2026-11-01: no package will exist; the listing shows the free app.)*
 - **Play Payments, Section 2 and Section 6:** use Play billing, and show prices and terms clearly.
 - **Package presets are data, not code (2.5.2).** Presets and chains in a package are declarative values validated against the manifest. A component is compiled into the engine and unlocked, never downloaded as code.
 
 ---
 
 ## O-6 · Subscription
+
+> **Decided 2026-11-01: no subscription, ever;** the app is free. Kept as the record.
 
 ### Options
 

@@ -8,7 +8,7 @@ A phone app that behaves like a small handheld voice recorder from the late 1990
 
 People use it in two ways: as a recorder with a particular character, and as a field instrument for investigations where a recording is kept together with sensor readings, notes and markers so it can be reviewed later.
 
-Everything in the three screens below is free. Extra equipment (additional components for the workbench) may be sold later; the comps do not need to show a store.
+Everything in the app is free, for good, including every later update: there is no store, no purchase and nothing locked, so the comps show no prices, locks or upgrade prompts (decided 2026-11-01). The three screens below describe the app as it grows. **App 1.0** is the front with its device controls, the investigation screen, and the inside **without controls** (the chain, its meters and its plain descriptions); the inside's switches, knobs and presets, and the place to add a component, arrive in free updates after 1.0, the first of them the effects update. Comps may show the full picture; mark what comes after 1.0.
 
 ## Screen 1: the recorder (the front)
 
@@ -76,17 +76,17 @@ The back of the recorder, opened up: the chain of components the sound passes th
 
 What it shows:
 
-- A compact overview of the chain, top to bottom, in the order the sound travels: the microphone, the level control, the voice-activated pause, the band filter, the speech coder, the memory, the playback filter, the volume and amplifier, the speaker or earphone. Each module has a name, a small meter or trace showing what it is doing right now, and an on/off switch where the component can be bypassed.
-- Tapping a module expands it: its controls (knobs, switches, a few sliders), its live readings, and a one-sentence plain description of what it does to the sound. Each module also says whether it is modeled on documentation of the original recorder or is an addition of the app.
-- A place to add components (the first additions would be things like reverb or an extra filter), reorder them where that makes sense, and remove them.
-- A reset to "the recorder as modeled", which puts every component back to the original's behaviour.
+- A compact overview of the chain, top to bottom, in the order the sound travels: the microphone, the level control, the codec's input filter, the voice-activated pause, the speech coder, the memory, the playback filter, the volume and amplifier, the speaker or earphone. Each module has a name and a small meter or trace showing what it is doing right now; after 1.0, an on/off switch where the component can be bypassed.
+- Tapping a module expands it: its live readings and a one-sentence plain description of what it does to the sound; after 1.0, its controls (knobs, switches, a few sliders). Each module also says whether it is modeled on documentation of the original recorder or is an addition of the app.
+- After 1.0 (the effects update): **one slot** for an added component, between the microphone and the level control, on the recording side. "Add component" offers the band filter, shown as "Band filter (added)" and labelled as an addition of the app, not part of the original recorder; "Remove" empties the slot. The slot holds one component at a time, so there is nothing to reorder. The band filter applies to new recordings (and to a recording in progress), never to recordings already made. Later free updates add more components to choose from.
+- After 1.0: a reset to "the recorder as modeled", which puts every component back to the original's behaviour and empties the slot.
 - The elapsed time and a stop button stay visible at the top or bottom, because recording or playback may be running while the user explores the inside.
 
 How it behaves:
 
-- Changes are heard immediately, on whatever is playing or being recorded. Some controls apply only to playback, some only to recording; the module shows which.
-- A few adjustments are physical conditions of a unit rather than controls, such as the battery voltage, which changes how the amplifier distorts when loud; these sit in their module as a dial with a sensible default.
-- Presets: the original recorder, a few curated variations, and the user's own saved setups.
+- Playback-side changes are heard immediately on whatever is playing. Recording-side changes apply to new recordings, and some (such as the sensitivity) also to a recording in progress; a few (the speech coder, the memory) change only between recordings. The module shows which.
+- After 1.0: a few adjustments are physical conditions of a unit rather than controls, such as the battery voltage, which changes how the amplifier distorts when loud; these sit in their module as a dial with a sensible default.
+- Presets, after 1.0: the original recorder, a few curated variations, and the user's own saved setups. (In 1.0 the only presets are the investigation screen's voice-activation presets, labelled "units differ", beside the factory default.)
 
 Feel: tactile and dense but never cramped; one module expanded at a time; everything reachable with a thumb; the meters move.
 
@@ -95,6 +95,6 @@ Feel: tactile and dense but never cramped; one module expanded at a time; everyt
 - Phone first, portrait, one-handed. iPhone sizes first.
 - Three screens, reached from each other by flipping the device over (front to inside) and by a clear move to the investigation screen; the user should always know which of the three they are on.
 - Recording and playback must never be more than one tap away on any screen, and the running time must be visible on all of them.
-- Plain labels. Name each control by what it does ("Playback speed", "Keep pitch", "Sensitivity", "Band filter") and each reading by what it measures ("Magnetic field, µT"). Avoid names that promise an outcome.
+- Plain labels. Name each control by what it does ("Playback speed", "Keep pitch", "Sensitivity", "Band filter (added)") and each reading by what it measures ("Magnetic field, µT"). Avoid names that promise an outcome.
 - Decoration and data stay separate: atmosphere in the frame, the readings in clean type.
 - Numbers in the comps are placeholders, but keep them plausible: a 60-minute recorder, five speed steps, five sensitivity steps, readings in real units.
