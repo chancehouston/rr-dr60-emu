@@ -65,6 +65,17 @@ The owner reads this section first. Each decision gives the recommendation; the 
 - Q: Do you accept the seven defaults the draft reviews chose, as one set (the type blend, the silent frequency clamp, 142 → 146, the record form 2, the ±24 dB gain, the +3.6 dB excess reported, the band-pass's 0 dB peak)? → A: Yes, all seven (owner, option A). The nine review questions' items 1 – 7 are decided as stated above; 8 and 9 stay withdrawn.
 - Q: Should the published cap on change entries per call be fixed at 1.0 with room for later components, or rise with each component? → A: Fixed with room (owner, option A): `MAX_CHANGES_PER_CALL` 158 = 2 · 64 + 3 + 8 + 16 + 3, a parameter budget of 16 for all components together (the band filter uses 4; the one-pass attains 146); a later component past the budget must fit it or move the ABI version (D5, FR-006, US AS2).
 
+### Session 2026-11-01 (the plan reviews: restatements, taken at the defaults on autopilot; the owner's sign-off at the merge)
+
+- **The filter's state is cleared at each recording's start** (hardware B2, coach 3; plan R2), as stage 2's is: the Edge Cases line "persists across recordings like the amplifier's" is restated (the amplifier's state is cleared by `start_recording`'s reset); it is cleared by `start_recording`, `reset`, `reconfigure` and `set_component`, and the one-pass keeps it across calls.
+- **An idle-only parameter setter** (hardware B3, coach 2, product M2; plan R1): `set_component_parameter(point, index, value)` and `rr_dr60_set_component_parameter`, refused while recording or playing (`ComponentWhileActive`), never a change entry; the re-render restores a recording's values with it. D3's "no plain setter" stays true of the live path.
+- **D9 holds; the record readout is unchanged** (coach 1; plan R3): the component travels in a new sized struct `RrDr60RecordComponent` with `rr_dr60_processing_record_component` and `rr_dr60_record_write_with_component`.
+- **The store is global** (hardware B7, coach 8; plan R4): each component's parameters at a fixed offset within the 16-parameter budget (the band filter 0 – 3). The per-slot reading (product M1) is the owner's question at the merge.
+- **One state, two constant mixes** (plan R5): wherever this spec says "two sections" (D3, the review's coach 1 and question 1, US1 AS2, Key Entities, FR-012), read one state with the old and new mixes `(m0, m1, m2) ∈ {−1, 0, 1}` on `(x, k·v1, v2)`; the signal is bit-identical to two sections.
+- **The response oracle's impulse length** follows the section's pole radius (hardware B5; plan R6), not `8 Q / (π f) + 0.1 s`; **the fifteen audio guards stay unmoved and the record golden is re-blessed once** (coach 6), where FR-002, SC-003 and US1 AS3 say "the sixteen guards".
+- **Wording** (product M7; plan R7): engine strings say "an addition of the emulator, not a part of the original recorder"; `band_filter.gain_db` says "can keep the recorder from pausing"; US1 AS5's "about +15 dB" is replaced by the harness bisection's printed figures (hardware B12).
+- **The frequency transition runs between the applied (clamped) endpoints** (hardware B11, coach 11); the placement identity is read on an f64 trace of the slot's input (hardware B1, coach 4).
+
 ## Overview
 
 The engine's signal chain is fixed: fifteen stages in the device's order, each one modeled on the recorder's documentation or registered as an assumption, bypassable but never inserted, moved or removed (brief.md 277). The product direction (2026-10-15, revised 2026-11-01) is that the app grows by adding components to the back-panel workbench, every one of them free, and that the places a component can go must come from the engine, not the app (brief.md 75; decisions.md 2026-11-01: the app's one planned major update after 1.0 inserts an effects module). This feature builds the mechanism and ships its first component free: a **slot** at one published **insertion point**, before the limiter on the record side, that can hold one of the engine's own **components**, and a **band filter** as the first component. A component in the record path changes what the recorder hears and therefore what it stores; the processing record carries the component and its parameter changes so a session can be reproduced. Every description says what the component is: an addition of the app, not a part of the original recorder; it describes what the filter does to a tone, never what a listener might find.
@@ -119,7 +130,7 @@ An app developer builds the workbench's "add component" from the engine's data a
 - The one-pass and the recorder share the store (D3); a landing on one stream is pending for the other.
 - The notch at a frequency a stored tone sits on: the tone attenuated by the design's depth, reported.
 - A component in the slot during the stop's flush: the flush runs through it like the input does.
-- The filter's state persists across recordings like the amplifier's; cleared by `reset`, `reconfigure` and `set_component`.
+- The filter's state is cleared at each recording's start, as stage 2's is, and by `reset`, `reconfigure` and `set_component`; the one-pass keeps it across calls (restated at the plan reviews, 2026-11-01).
 
 ## Requirements *(mandatory)*
 
