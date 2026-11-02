@@ -139,17 +139,19 @@ const _: () =
 const _: () = assert!(RECORD_COMPONENT_SIZE == 80);
 
 // The strings with a trailing NUL (a test pins them to the core's).
-const POINT_STRINGS: [(&[u8], &[u8], &[u8]); 1] = [(
+/// An identifier, a name and a third string (a placement, a description or a unit), NUL-ended.
+type CStrings = (&'static [u8], &'static [u8], &'static [u8]);
+const POINT_STRINGS: [CStrings; 1] = [(
     b"before_limiter\0",
     b"Before the limiter\0",
     b"Between stage 2, the microphone amplifier, and stage 3, the limiter, at the host rate; an addition of the emulator, the original recorder has no place for one.\0",
 )];
-const COMPONENT_STRINGS: [(&[u8], &[u8], &[u8]); 1] = [(
+const COMPONENT_STRINGS: [CStrings; 1] = [(
     b"band_filter\0",
     b"Band filter\0",
     "One second-order filter, low-pass, high-pass, band-pass or notch, at a chosen frequency and Q, then a gain of −24 to +24 dB; an addition of the emulator, not a part of the original recorder.\0".as_bytes(),
 )];
-const PARAMETER_STRINGS: [[(&[u8], &[u8], &[u8]); 4]; 1] = [[
+const PARAMETER_STRINGS: [[CStrings; 4]; 1] = [[
     (b"band_filter.type\0", b"Band filter type\0", b"\0"),
     (
         b"band_filter.frequency_hz\0",
