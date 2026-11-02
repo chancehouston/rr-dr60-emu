@@ -301,6 +301,8 @@ impl Pipeline {
             remaining_samples: self.memory.status().remaining_samples,
             events_total: 0,
             changes_total: 0,
+            component: self.component_store.component, // 024 D7
+            store: self.component_store.values,        // 024 D7
         };
         self.memory.open(Some(block))?;
         self.recorder.reset();
@@ -310,6 +312,7 @@ impl Pipeline {
         // included, are in the stages when the recording starts; no entry. The record
         // schedule is kept (D5).
         self.recorder.adopt(&self.settings);
+        self.recorder.set_store(&self.component_store); // 024 research R-06: no entry
         self.transport.counter = self.transport.counter.wrapping_add(1);
         if let Some(enc) = &mut self.encoder {
             enc.reset();
@@ -345,7 +348,8 @@ impl Pipeline {
             self.transport.fed_any = true;
         }
         // Spec 017 research R-02: values landed on the one-pass become pending here.
-        self.recorder.begin_call(&self.settings, &self.record_tags);
+        self.recorder
+            .begin_call(&self.settings, &self.record_tags, &self.component_store);
         let mut info = RecordInfo::default();
         let _ = self.feed(input, events, &mut info);
         if !input.is_empty() {
@@ -417,7 +421,8 @@ impl Pipeline {
         // Spec 017 FR-002, FR-005: the record schedule applies during the stop's feed; values
         // landed on the one-pass become pending here; the end of the recording clears the
         // schedule (`close_recording`) and the report carries the final input position.
-        self.recorder.begin_call(&self.settings, &self.record_tags);
+        self.recorder
+            .begin_call(&self.settings, &self.record_tags, &self.component_store);
         let stop_input_position = self.recorder.ctl.input; // 020 D9: before the flush
         let mut outcome = self.stop_recording_inner(events)?;
         self.take_landed_record(true);
@@ -1028,6 +1033,8 @@ impl Pipeline {
         r.remaining_samples_at_start = b.remaining_samples;
         r.events_total = b.events_total;
         r.changes_total = b.changes_total;
+        r.component = b.component; // 024 D7
+        r.store = b.store;
         // The run (spec 020 D10): consistent with the recording, or refused.
         let mut stop = run.stop;
         if stop.padding_start_sample == 0 {

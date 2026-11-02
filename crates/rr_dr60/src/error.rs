@@ -226,6 +226,21 @@ pub enum Error {
         /// The control manifest index.
         control: u32,
     },
+    /// An insertion point the engine does not publish (spec 024 D9). Nothing changes.
+    NoSuchInsertionPoint {
+        /// The requested point's value.
+        point: u32,
+    },
+    /// A component the engine does not publish, or a parameter index past the store's budget
+    /// (spec 024 D9). Nothing changes.
+    NoSuchComponent {
+        /// The requested component's value (or parameter index).
+        component: u32,
+    },
+    /// `set_component` or `set_component_parameter` while recording or playing (spec 024 D3;
+    /// plan R1): the slot's component and the parameter store change only while idle. Nothing
+    /// changes; stop first, or schedule the parameter with `schedule_change`.
+    ComponentWhileActive,
 }
 
 /// Inclusive range of `memory.capacity_s`, in seconds: one second to 24 hours (engineering
@@ -461,6 +476,19 @@ impl fmt::Display for Error {
                     "control {control} ({id}) is a settings field, not a live control: read it from the settings and change it with reconfigure or schedule_change"
                 )
             }
+            Error::NoSuchInsertionPoint { point } => {
+                write!(f, "insertion point {point} is not one the engine publishes")
+            }
+            Error::NoSuchComponent { component } => {
+                write!(
+                    f,
+                    "component or parameter {component} is not one the engine publishes"
+                )
+            }
+            Error::ComponentWhileActive => write!(
+                f,
+                "the slot's component and its parameter store change only while the engine is idle: stop recording or playback first, or schedule the parameter with schedule_change"
+            ),
         }
     }
 }

@@ -184,6 +184,14 @@ pub enum RrDr60Status {
     /// `rr_dr60_set_control_value` with the index of a settings field: change it with a settings
     /// structure and `rr_dr60_reconfigure` or with `rr_dr60_schedule_change` (spec 025 D4).
     NotAPlainLiveControl = 40, // spec 025 D7: appended
+    /// An insertion point the library does not publish (spec 024 D9).
+    NoSuchInsertionPoint = 41, // spec 024 D9: appended
+    /// A component the library does not publish, or a parameter index past the store (spec 024
+    /// D9).
+    NoSuchComponent = 42, // spec 024 D9: appended
+    /// `rr_dr60_set_component` or `rr_dr60_set_component_parameter` while recording or playing
+    /// (spec 024 D3): stop first, or schedule the parameter with `rr_dr60_schedule_change`.
+    ComponentWhileActive = 43, // spec 024 D9: appended
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -268,6 +276,10 @@ pub enum RrDr60Tap {
     /// After signal-chain stage 2 (the microphone amplifier), at the host rate. Nothing after
     /// it runs; latency 0, no events (spec 012 FR-008). Appended in 0.12.
     AfterMicAmp = 10,
+    /// After the insertion point `before_limiter` (spec 024 D6), at the host rate: stage 2's
+    /// output through the slot's component; with the slot empty it equals
+    /// `RR_DR60_TAP_AFTER_MIC_AMP`. Nothing after it runs; latency 0, no events. Appended in 0.92.
+    AfterInsert = 11,
 }
 
 /// `RR_DR60_TAP_AFTER_PLAYBACK` under the stage's name: after stage 10, before the output chain
@@ -958,6 +970,14 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
         Error::NotAPlainLiveControl { .. } => {
             (RrDr60Status::NotAPlainLiveControl, RrDr60SettingField::None)
         }
+        // Spec 024 contracts/api.md: statuses 41 – 43.
+        Error::NoSuchInsertionPoint { .. } => {
+            (RrDr60Status::NoSuchInsertionPoint, RrDr60SettingField::None)
+        }
+        Error::NoSuchComponent { .. } => (RrDr60Status::NoSuchComponent, RrDr60SettingField::None),
+        Error::ComponentWhileActive => {
+            (RrDr60Status::ComponentWhileActive, RrDr60SettingField::None)
+        }
         _ => (RrDr60Status::InvalidArgument, RrDr60SettingField::None),
     }
 }
@@ -997,6 +1017,7 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Sett
         8 => Tap::AfterEarphone,
         9 => Tap::AfterMicCapsule, // 012 FR-012
         10 => Tap::AfterMicAmp,    // 012 FR-012
+        11 => Tap::AfterInsert,    // 024 D6
         _ => return Err(invalid(RrDr60SettingField::Tap)),
     };
     let vas_mode = match s.vas_mode {
@@ -7068,6 +7089,7 @@ fn fill_settings(t: &mut RrDr60Settings, s: &Settings) {
         Tap::AfterEarphone => 8,
         Tap::AfterMicCapsule => 9,
         Tap::AfterMicAmp => 10,
+        Tap::AfterInsert => 11,
         _ => 5, // a tap this build does not know (the enum is non-exhaustive): the default
     };
     let vas_mode = match s.vas.mode {

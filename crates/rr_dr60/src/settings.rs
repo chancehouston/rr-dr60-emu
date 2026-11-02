@@ -82,6 +82,11 @@ pub enum Tap {
     /// (plus the hiss) through the amplifier's band and clipper (spec 012 FR-008). Nothing after
     /// it runs; latency 0, no events. The recorder ignores the tap. Appended in 0.12.
     AfterMicAmp,
+    /// After the insertion point `before_limiter` (spec 024 D6), **at the host rate**: stage 2's
+    /// output through the slot's component; with the slot empty it equals
+    /// [`Tap::AfterMicAmp`]. Nothing after it runs; latency 0, no events. The recorder ignores
+    /// the tap. Appended in 0.92.
+    AfterInsert,
 }
 
 impl Tap {
@@ -95,7 +100,7 @@ impl Tap {
     pub(crate) const fn is_front(self) -> bool {
         matches!(
             self,
-            Tap::AfterAgc | Tap::AfterMicCapsule | Tap::AfterMicAmp
+            Tap::AfterAgc | Tap::AfterMicCapsule | Tap::AfterMicAmp | Tap::AfterInsert
         )
     }
 

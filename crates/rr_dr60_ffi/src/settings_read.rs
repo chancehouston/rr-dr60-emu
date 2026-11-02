@@ -99,6 +99,11 @@ pub(crate) const C_FIELDS: [Option<(usize, CKind)>; CONTROL_COUNT] = [
     field!(mic_hiss_offset_db, Float),
     None, // battery_volts
     None, // playback_speed_mode
+    None, // insert.before_limiter (spec 024: not a setting)
+    None, // band_filter.type
+    None, // band_filter.frequency_hz
+    None, // band_filter.q
+    None, // band_filter.gain_db
 ];
 
 /// The reading's C form, assigned field by field (spec 022 D10).

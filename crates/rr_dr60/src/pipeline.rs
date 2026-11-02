@@ -177,6 +177,8 @@ pub struct Pipeline {
     /// The battery value (spec 018 FR-001): volts of the cell pair, a unit condition; not a
     /// setting; kept through reset and reconfigure; lands on each stream at its next call.
     pub(crate) battery_volts: f32,
+    /// Spec 024 D3: the slot's component and the parameter store.
+    pub(crate) component_store: ComponentStore,
 }
 
 // Contract (contracts/rust-api.md): `Pipeline` is Send + Sync. Fails to compile if a future
@@ -470,6 +472,30 @@ struct LiveStart {
     speed_level: u8,
     speed_mode: crate::speed::SpeedMode, // 023
     battery_volts: f32,
+    store: ComponentStore, // 024 D3: kept by reconfigure
+}
+
+/// The slot's component and the global parameter store (spec 024 D3; research R-06): created
+/// at the defaults, kept by `set_component`, `reset` and `reconfigure`; the cross-stream carrier
+/// of a parameter landing (its tag beside each value).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ComponentStore {
+    /// The component in the slot at `before_limiter`.
+    pub(crate) component: crate::components::ComponentId,
+    /// Every component's parameters at its offset (the band filter 0 – 3).
+    pub(crate) values: [f32; crate::components::COMPONENT_PARAMETER_BUDGET],
+    /// The tag of each value's last landing.
+    pub(crate) tags: [u64; crate::components::COMPONENT_PARAMETER_BUDGET],
+}
+
+impl Default for ComponentStore {
+    fn default() -> Self {
+        Self {
+            component: crate::components::ComponentId::None,
+            values: crate::components::default_store(),
+            tags: [0; crate::components::COMPONENT_PARAMETER_BUDGET],
+        }
+    }
 }
 
 #[inline]
@@ -520,6 +546,7 @@ impl Pipeline {
                 speed_level: crate::speed::DEFAULT_LEVEL, // 013 FR-001 (S-001: level 3)
                 speed_mode: crate::speed::SpeedMode::default(), // 023 D1 (A-054: the modeled default)
                 battery_volts: crate::battery::DEFAULT_BATTERY_VOLTS, // 018 FR-001 (A-056: nominal)
+                store: ComponentStore::default(),               // 024 D1: the slot empty
             },
         ))
     }
@@ -541,8 +568,10 @@ impl Pipeline {
             speed_level,
             speed_mode,
             battery_volts,
+            store,
         } = live;
         let mut one_pass = OnePass::new(&settings, plan);
+        one_pass.rec.set_store(&store); // 024 research R-06: at once, no entry
         one_pass.rec.rekey(counter); // 012 FR-009: the next recording's stream
         one_pass.rec.ctl.set_stream(Stream::OnePass); // 020 D9
         one_pass.play.ctl.set_stream(Stream::OnePass);
@@ -552,6 +581,7 @@ impl Pipeline {
         let latency = latency_samples(plan, &settings, &one_pass);
         let mut recorder = RecordPath::new(&settings, plan, false, true);
         recorder.ctl.set_stream(Stream::Record); // 020 D9
+        recorder.set_store(&store); // 024 research R-06
         Self {
             settings,
             one_pass,
@@ -565,6 +595,7 @@ impl Pipeline {
             record_tags: [0; 8],
             bypass_tags: [0; 3],
             battery_volts,
+            component_store: store,
             player: {
                 let mut p = PlaybackPath::new(&settings, plan, false);
                 p.set_start_values(route, volume, speed_level, battery_volts); // 015 D3, 018
@@ -1181,7 +1212,7 @@ impl Pipeline {
         // Spec 017 research R-02: the record side's cross-stream pending changes.
         self.one_pass
             .rec
-            .begin_call(&self.settings, &self.record_tags);
+            .begin_call(&self.settings, &self.record_tags, &self.component_store);
         let (mut produced, mut count, mut frames) = (0, 0, 0);
         for i in 0..out.len() {
             let x = match input {
@@ -1217,7 +1248,7 @@ impl Pipeline {
     /// Spec 017 D4 (research R-02): the settings follow the record-side values a stream landed,
     /// with their tags, so the other stream lands them at its next input sample.
     pub(crate) fn take_landed_record(&mut self, from_recorder: bool) {
-        let (mask, tags, values) = if from_recorder {
+        let (mask, tags, values, component) = if from_recorder {
             self.recorder.ctl.take_landed()
         } else {
             self.one_pass.rec.ctl.take_landed()
@@ -1227,8 +1258,29 @@ impl Pipeline {
         }
         for (slot, &tag) in tags.iter().enumerate() {
             if mask & (1 << slot) != 0 {
-                values.write_slot(slot, &mut self.settings);
-                self.record_tags[slot] = tag;
+                if slot < crate::changes::RECORD_VALUES {
+                    values.write_slot(slot, &mut self.settings);
+                    self.record_tags[slot] = tag;
+                } else {
+                    // Spec 024 research R-06: the store follows a component parameter landing.
+                    let i = slot - crate::changes::RECORD_VALUES;
+                    self.component_store.values[i] = component[i];
+                    #[cfg(feature = "__test-hooks")]
+                    if self.recorder.insert.mutation.skip_store_mirror
+                        || self.one_pass.rec.insert.mutation.skip_store_mirror
+                    {
+                        // The mutant: the other stream is told it already has the value.
+                        let other = if from_recorder {
+                            &mut self.one_pass.rec
+                        } else {
+                            &mut self.recorder
+                        };
+                        let mut last = other.ctl.last_component();
+                        last[i] = component[i];
+                        other.ctl.set_last_component(last);
+                    }
+                    self.component_store.tags[i] = tag;
+                }
             }
         }
     }
@@ -1365,6 +1417,9 @@ impl Pipeline {
         self.recorder.clear_schedule();
         self.one_pass.rec.adopt(&self.settings);
         self.recorder.adopt(&self.settings);
+        // 024 research R-06: the store adopted with no entry.
+        self.one_pass.rec.set_store(&self.component_store);
+        self.recorder.set_store(&self.component_store);
         self.one_pass.play.set_start_values(
             self.route,
             self.volume,
@@ -1432,6 +1487,7 @@ impl Pipeline {
                 speed_level: self.speed_level, // 013 FR-001: kept by reconfigure
                 speed_mode: self.speed_mode,   // 023 D1: kept by reconfigure
                 battery_volts: self.battery_volts, // 018 FR-001: kept by reconfigure
+                store: self.component_store,   // 024 D3: kept by reconfigure
             },
         );
         Ok(())
@@ -3158,5 +3214,284 @@ mod meters_tests {
         assert_eq!(p.meters(), play, "stop_playback leaves it");
         p.erase(1).unwrap();
         assert_eq!(p.meters(), play, "erase leaves it");
+    }
+}
+
+/// The slot and its component (spec 024 D3; research R-06).
+impl Pipeline {
+    fn component_idle(&self) -> Result<(), Error> {
+        match self.transport.state {
+            crate::transport::State::Recording | crate::transport::State::Playing => {
+                Err(Error::ComponentWhileActive)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Puts `component` into the slot at `point`, or empties it (spec 024 D3): only while
+    /// idle; never a change entry; kept by [`reset`](Self::reset) and
+    /// [`reconfigure`](Self::reconfigure); never allocates. A change clears the filter's state
+    /// and ends its transitions; the parameter store is kept. On the one-pass the change is
+    /// immediate, so an app fades or mutes around it. An addition of the emulator.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::ComponentWhileActive`] while recording or playing. Nothing changes on an error.
+    pub fn set_component(
+        &mut self,
+        point: crate::components::InsertionPointId,
+        component: crate::components::ComponentId,
+    ) -> Result<(), Error> {
+        let crate::components::InsertionPointId::BeforeLimiter = point;
+        self.component_idle()?;
+        if self.component_store.component == component {
+            return Ok(());
+        }
+        self.component_store.component = component;
+        let store = self.component_store;
+        self.one_pass.rec.set_store(&store);
+        self.recorder.set_store(&store);
+        Ok(())
+    }
+
+    /// The component in the slot at `point` (spec 024 D3).
+    pub fn component(
+        &self,
+        point: crate::components::InsertionPointId,
+    ) -> crate::components::ComponentId {
+        let crate::components::InsertionPointId::BeforeLimiter = point;
+        self.component_store.component
+    }
+
+    /// Writes parameter `index` (the global store index: the band filter's type 0, frequency
+    /// 1, Q 2, gain 3) while idle, with no change entry (spec 024 plan R1): the restore path a
+    /// re-render takes, and how an app sets a value before recording. Validated as the
+    /// schedule validates it (the range after narrowing to `f32`, the type a whole option).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NoSuchComponent`] for an index past the components' parameters;
+    /// [`Error::InvalidControlValue`] for a value out of range; [`Error::ComponentWhileActive`]
+    /// while recording or playing. Nothing changes on an error.
+    pub fn set_component_parameter(
+        &mut self,
+        point: crate::components::InsertionPointId,
+        index: u32,
+        value: f64,
+    ) -> Result<(), Error> {
+        let crate::components::InsertionPointId::BeforeLimiter = point;
+        let (_, p) = crate::components::parameter_at(index as usize)
+            .ok_or(Error::NoSuchComponent { component: index })?;
+        let v = crate::components::store_value(p, value).ok_or(Error::InvalidControlValue {
+            control: p.control_index,
+            value,
+        })?;
+        self.component_idle()?;
+        self.component_store.values[index as usize] = v;
+        let store = self.component_store;
+        self.one_pass.rec.set_store(&store);
+        self.recorder.set_store(&store);
+        Ok(())
+    }
+
+    /// Parameter `index` of the store (spec 024 D3): the most recently set or landed value (the
+    /// target during a transition).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NoSuchComponent`] for an index past the components' parameters.
+    pub fn component_parameter_value(
+        &self,
+        point: crate::components::InsertionPointId,
+        index: u32,
+    ) -> Result<f32, Error> {
+        let crate::components::InsertionPointId::BeforeLimiter = point;
+        crate::components::parameter_at(index as usize)
+            .ok_or(Error::NoSuchComponent { component: index })?;
+        Ok(self.component_store.values[index as usize])
+    }
+}
+
+#[cfg(test)]
+mod component_tests {
+    //! Spec 024 (research R-01, R-06; plan R1, R2): the slot's lifecycle in the engine.
+    use super::*;
+    use crate::changes::ChangeEntry;
+    use crate::components::{ComponentId, InsertionPointId::BeforeLimiter};
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    fn engine(rate: u32) -> Pipeline {
+        let mut s = Settings::new(rate);
+        s.speech_codec_enabled = false;
+        Pipeline::new(s).unwrap()
+    }
+
+    fn tone(n: usize) -> Vec<f32> {
+        (0..n)
+            .map(|i| (0.3 * rr_dr60_detmath::sin(0.13 * i as f64)) as f32)
+            .collect()
+    }
+
+    /// Research R-01: the flag in `run_limiter`'s padding; the slot after `ctl`.
+    #[test]
+    fn layout_offsets() {
+        use core::mem::offset_of;
+        assert_eq!(
+            offset_of!(paths::RecordPath, run_insert),
+            offset_of!(paths::RecordPath, run_limiter) + 1
+        );
+        assert!(offset_of!(paths::RecordPath, insert) > offset_of!(paths::RecordPath, ctl));
+    }
+
+    #[test]
+    fn set_component_idle_only() {
+        let mut p = engine(48_000);
+        assert_eq!(p.component(BeforeLimiter), ComponentId::None);
+        p.start_recording().unwrap();
+        assert_eq!(
+            p.set_component(BeforeLimiter, ComponentId::BandFilter),
+            Err(Error::ComponentWhileActive)
+        );
+        assert_eq!(
+            p.set_component_parameter(BeforeLimiter, 1, 500.0),
+            Err(Error::ComponentWhileActive)
+        );
+        let mut ev = vec![VasEvent::default(); 64];
+        let _ = p.stop_recording(&mut ev).unwrap();
+        p.set_component(BeforeLimiter, ComponentId::BandFilter)
+            .unwrap();
+        assert_eq!(p.component(BeforeLimiter), ComponentId::BandFilter);
+    }
+
+    #[test]
+    fn kept_by_reset_and_reconfigure() {
+        let mut p = engine(48_000);
+        p.set_component(BeforeLimiter, ComponentId::BandFilter)
+            .unwrap();
+        p.set_component_parameter(BeforeLimiter, 1, 432.0).unwrap();
+        p.reset();
+        let s = *p.settings();
+        p.reconfigure(s).unwrap();
+        assert_eq!(p.component(BeforeLimiter), ComponentId::BandFilter);
+        assert_eq!(p.component_parameter_value(BeforeLimiter, 1), Ok(432.0));
+        assert!(p.recorder.run_insert && p.one_pass.rec.run_insert);
+    }
+
+    #[test]
+    fn idle_setter_validated_and_no_entry() {
+        let mut p = engine(48_000);
+        assert!(matches!(
+            p.set_component_parameter(BeforeLimiter, 2, 11.0),
+            Err(Error::InvalidControlValue { control: 34, .. })
+        ));
+        assert_eq!(
+            p.set_component_parameter(BeforeLimiter, 4, 1.0),
+            Err(Error::NoSuchComponent { component: 4 })
+        );
+        p.set_component(BeforeLimiter, ComponentId::BandFilter)
+            .unwrap();
+        p.set_component_parameter(BeforeLimiter, 3, 6.0).unwrap();
+        let x = tone(512);
+        let mut y = vec![0.0; 512];
+        let mut ev = vec![VasEvent::default(); 64];
+        let mut ch = [ChangeEntry::default(); crate::changes::MAX_CHANGES_PER_CALL];
+        let info = p
+            .process_with_events_and_changes(&x, &mut y, &mut ev, &mut ch)
+            .unwrap();
+        assert_eq!(info.changes, 0, "the idle setter writes no entry");
+    }
+
+    /// Plan R2: the filter's state is cleared at each recording's start.
+    #[test]
+    fn start_recording_clears_filter_state() {
+        let mut s = Settings::new(48_000);
+        s.speech_codec_enabled = false;
+        s.mic.capsule_enabled = false; // each recording's hiss is its own stream (A-049)
+        let mut p = Pipeline::new(s).unwrap();
+        p.set_component(BeforeLimiter, ComponentId::BandFilter)
+            .unwrap();
+        let x = tone(4800);
+        let mut ev = vec![VasEvent::default(); 1024];
+        let mut first = Vec::new();
+        for _ in 0..2 {
+            p.start_recording().unwrap();
+            let _ = p.record(&x, &mut ev).unwrap();
+            let _ = p.stop_recording(&mut ev).unwrap();
+            let n = p.memory_status().count;
+            first.push(p.recording_digest(n).unwrap());
+        }
+        assert_eq!(
+            first[0], first[1],
+            "the second recording starts from zero state"
+        );
+    }
+
+    /// Research R-06: a recorder landing becomes the one-pass's at its next call, with its tag.
+    #[test]
+    fn store_mirror_with_tag() {
+        let mut p = engine(48_000);
+        p.set_component(BeforeLimiter, ComponentId::BandFilter)
+            .unwrap();
+        p.schedule_change(Stream::Record, 0, 33, 2000.0, 7).unwrap();
+        p.start_recording().unwrap();
+        let mut ev = vec![VasEvent::default(); 1024];
+        let mut ch = [ChangeEntry::default(); crate::changes::MAX_CHANGES_PER_CALL];
+        let info = p.record_with_changes(&tone(480), &mut ev, &mut ch).unwrap();
+        assert_eq!(info.changes, 1);
+        assert_eq!((ch[0].control, ch[0].after, ch[0].tag), (33, 2000.0, 7));
+        assert_eq!(p.component_parameter_value(BeforeLimiter, 1), Ok(2000.0));
+        let _ = p.stop_recording(&mut ev).unwrap();
+        let x = tone(64);
+        let mut y = vec![0.0; 64];
+        let info = p
+            .process_with_events_and_changes(&x, &mut y, &mut ev, &mut ch)
+            .unwrap();
+        assert_eq!(info.changes, 1);
+        assert_eq!((ch[0].control, ch[0].after, ch[0].tag), (33, 2000.0, 7));
+    }
+
+    /// Research R-06: a moved store survives `reconfigure` and `reset` with no entry.
+    #[test]
+    fn reconfigure_moved_store_no_entry() {
+        let mut p = engine(48_000);
+        p.set_component(BeforeLimiter, ComponentId::BandFilter)
+            .unwrap();
+        p.schedule_change(Stream::OnePass, 0, 35, -6.0, 3).unwrap();
+        let x = tone(64);
+        let mut y = vec![0.0; 64];
+        let mut ev = vec![VasEvent::default(); 64];
+        let mut ch = [ChangeEntry::default(); crate::changes::MAX_CHANGES_PER_CALL];
+        let _ = p
+            .process_with_events_and_changes(&x, &mut y, &mut ev, &mut ch)
+            .unwrap();
+        let s = *p.settings();
+        p.reconfigure(s).unwrap();
+        let info = p
+            .process_with_events_and_changes(&x, &mut y, &mut ev, &mut ch)
+            .unwrap();
+        assert_eq!(info.changes, 0);
+        p.reset();
+        let info = p
+            .process_with_events_and_changes(&x, &mut y, &mut ev, &mut ch)
+            .unwrap();
+        assert_eq!(info.changes, 0);
+        assert_eq!(p.component_parameter_value(BeforeLimiter, 3), Ok(-6.0));
+    }
+
+    #[test]
+    fn schedule_refusals() {
+        let mut p = engine(48_000);
+        assert!(matches!(
+            p.schedule_change(Stream::Playback, 0, 33, 500.0, 1),
+            Err(Error::ControlNotOnStream { control: 33, .. })
+        ));
+        assert!(matches!(
+            p.schedule_change(Stream::Record, 0, 32, 4.0, 1),
+            Err(Error::InvalidControlValue { control: 32, .. })
+        ));
+        // Spec 024 D4: above the ceiling but in the range: accepted.
+        p.schedule_change(Stream::Record, 0, 33, 20_000.0, 1)
+            .unwrap();
     }
 }

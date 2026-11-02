@@ -75,11 +75,22 @@ pub(crate) enum LiveControl {
     Battery,
 }
 
+/// The slot and its components' parameters (spec 024 D5; research R-04): neither settings
+/// fields nor plain live controls.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ComponentControl {
+    /// The slot's component (`insert.before_limiter`).
+    Slot,
+    /// A parameter at this global store index.
+    Parameter(u8),
+}
+
 /// What a control index stands for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Target {
     Setting(SettingAccess),
     Live(LiveControl),
+    Component(ComponentControl),
 }
 
 use LiveControl as L;
@@ -119,6 +130,11 @@ const TARGETS: [Target; CONTROL_COUNT] = [
     Set(S::MicHissOffset),
     Live(L::Battery),
     Live(L::SpeedMode),
+    Target::Component(ComponentControl::Slot),
+    Target::Component(ComponentControl::Parameter(0)),
+    Target::Component(ComponentControl::Parameter(1)),
+    Target::Component(ComponentControl::Parameter(2)),
+    Target::Component(ComponentControl::Parameter(3)),
 ];
 
 impl SettingAccess {
@@ -173,10 +189,17 @@ impl LiveControl {
 impl Target {
     /// The manifest identifier of this target.
     #[cfg(test)]
-    pub(crate) const fn identifier(self) -> &'static str {
+    pub(crate) fn identifier(self) -> &'static str {
         match self {
             Target::Setting(s) => s.identifier(),
             Target::Live(l) => l.identifier(),
+            Target::Component(ComponentControl::Slot) => "insert.before_limiter",
+            Target::Component(ComponentControl::Parameter(i)) => {
+                match crate::components::parameter_at(i as usize) {
+                    Some((_, p)) => p.identifier,
+                    None => "?",
+                }
+            }
         }
     }
 }
@@ -392,7 +415,7 @@ pub fn settings_value(s: &Settings, index: u32) -> Result<ControlReading, Error>
     #[cfg(not(feature = "__test-hooks"))]
     match target(index)? {
         Target::Setting(a) => Ok(get(s, a)),
-        Target::Live(_) => Err(Error::NotASetting { control: index }),
+        Target::Live(_) | Target::Component(_) => Err(Error::NotASetting { control: index }),
     }
 }
 
@@ -414,7 +437,7 @@ pub fn set_settings_value(
     #[cfg(not(feature = "__test-hooks"))]
     match target(index)? {
         Target::Setting(a) => set(s, a, index, reading, false),
-        Target::Live(_) => Err(Error::NotASetting { control: index }),
+        Target::Live(_) | Target::Component(_) => Err(Error::NotASetting { control: index }),
     }
 }
 
@@ -563,6 +586,7 @@ impl Pipeline {
         match target(index)? {
             Target::Setting(a) => Ok(get(self.settings(), a)),
             Target::Live(l) => Ok(live_value(self, l)),
+            Target::Component(c) => component_value(self, c),
         }
     }
 
@@ -586,7 +610,49 @@ impl Pipeline {
         match target(index)? {
             Target::Setting(_) => Err(Error::NotAPlainLiveControl { control: index }),
             Target::Live(l) => set_live(self, l, index, reading, false),
+            Target::Component(c) => set_component_control(self, c, index, reading),
         }
+    }
+}
+
+/// The value of the slot or a component parameter on `p` (spec 024 research R-04).
+fn component_value(p: &Pipeline, c: ComponentControl) -> Result<ControlReading, Error> {
+    use crate::components::InsertionPointId::BeforeLimiter;
+    Ok(match c {
+        ComponentControl::Slot => ControlReading::Choice(p.component(BeforeLimiter) as u32),
+        ComponentControl::Parameter(i) => {
+            let v = p.component_parameter_value(BeforeLimiter, u32::from(i))?;
+            match crate::components::parameter_at(i as usize).map(|(_, q)| q.value) {
+                Some(crate::controls::ControlValue::Choice { .. }) => {
+                    ControlReading::Choice(v as u32)
+                }
+                _ => ControlReading::Continuous(v),
+            }
+        }
+    })
+}
+
+/// Sets the slot (`set_component`) or a parameter (`set_component_parameter`, idle only) by
+/// index (spec 024 research R-04; plan R1).
+fn set_component_control(
+    p: &mut Pipeline,
+    c: ComponentControl,
+    index: u32,
+    r: ControlReading,
+) -> Result<(), Error> {
+    use crate::components::{ComponentId, InsertionPointId::BeforeLimiter};
+    match (c, r) {
+        (ComponentControl::Slot, ControlReading::Choice(v)) => {
+            let id = ComponentId::from_u32(v).ok_or_else(|| refuse(index, r))?;
+            p.set_component(BeforeLimiter, id)
+        }
+        (ComponentControl::Parameter(i), ControlReading::Choice(v)) => {
+            p.set_component_parameter(BeforeLimiter, u32::from(i), f64::from(v))
+        }
+        (ComponentControl::Parameter(i), ControlReading::Continuous(_)) => {
+            p.set_component_parameter(BeforeLimiter, u32::from(i), f64::from(finite(index, r)?))
+        }
+        _ => Err(refuse(index, r)),
     }
 }
 
@@ -642,7 +708,7 @@ pub mod __hooks {
     ) -> Result<ControlReading, Error> {
         match mutated_target(m, index)? {
             Target::Setting(a) => Ok(get(s, mutate(m, a))),
-            Target::Live(_) => Err(Error::NotASetting { control: index }),
+            Target::Live(_) | Target::Component(_) => Err(Error::NotASetting { control: index }),
         }
     }
 
@@ -664,7 +730,7 @@ pub mod __hooks {
                 }
                 set(s, a, index, reading, false)
             }
-            Target::Live(_) => Err(Error::NotASetting { control: index }),
+            Target::Live(_) | Target::Component(_) => Err(Error::NotASetting { control: index }),
         }
     }
 
@@ -684,6 +750,7 @@ pub mod __hooks {
                 L::Battery => ControlReading::Continuous(crate::battery::DEFAULT_BATTERY_VOLTS),
             }),
             Target::Live(l) => Ok(live_value(p, l)),
+            Target::Component(c) => component_value(p, c),
         }
     }
 
@@ -697,6 +764,7 @@ pub mod __hooks {
         match target(index)? {
             Target::Setting(_) => Err(Error::NotAPlainLiveControl { control: index }),
             Target::Live(l) => set_live(p, l, index, reading, m.wide_integer_wraps),
+            Target::Component(c) => set_component_control(p, c, index, reading),
         }
     }
 }
@@ -714,6 +782,21 @@ mod tests {
         for (i, (e, t)) in c.iter().zip(TARGETS.iter()).enumerate() {
             assert_eq!(e.identifier, t.identifier(), "index {i}");
         }
+    }
+
+    /// Spec 024 research R-04: 26 settings + 5 live + 5 component = 36.
+    #[test]
+    fn component_targets_are_5() {
+        let n = TARGETS
+            .iter()
+            .filter(|t| matches!(t, Target::Component(_)))
+            .count();
+        assert_eq!(n, 5);
+        let live = TARGETS
+            .iter()
+            .filter(|t| matches!(t, Target::Live(_)))
+            .count();
+        assert_eq!((live, TARGETS.len()), (5, 36));
     }
 
     #[test]
@@ -745,7 +828,7 @@ mod tests {
                                 .unwrap_or_else(|_| panic!("{} {}", e.identifier, o.identifier));
                             assert_eq!(get(&s, a), r, "{} {}", e.identifier, o.identifier);
                         }
-                        Target::Live(_) => {} // route and speed mode: the pipeline's tests
+                        Target::Live(_) | Target::Component(_) => {} // the pipeline's tests
                     }
                 }
             }
@@ -974,8 +1057,8 @@ mod tests {
             Err(Error::NotASetting { control: 0 })
         ));
         assert!(matches!(
-            settings_value(&s, 31),
-            Err(Error::NoSuchControl { control: 31 })
+            settings_value(&s, 36), // 31 before spec 024
+            Err(Error::NoSuchControl { control: 36 })
         ));
     }
 
@@ -1100,8 +1183,8 @@ mod tests {
             }
         }
         assert!(matches!(
-            p.control_value(31),
-            Err(Error::NoSuchControl { control: 31 })
+            p.control_value(36), // 31 before spec 024
+            Err(Error::NoSuchControl { control: 36 })
         ));
     }
 
@@ -1154,8 +1237,8 @@ mod tests {
             Err(Error::NotAPlainLiveControl { control: 10 })
         ));
         assert!(matches!(
-            p.set_control_value(31, ControlReading::Integer(0)),
-            Err(Error::NoSuchControl { control: 31 })
+            p.set_control_value(36, ControlReading::Integer(0)), // 31 before spec 024
+            Err(Error::NoSuchControl { control: 36 })
         ));
         // Nothing changed.
         let fresh = engine();
