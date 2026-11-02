@@ -8,6 +8,15 @@ A brief for the owner on the six app questions that were deferred "until engine 
 - **Claims policy.** This brief follows `CLAUDE.md`. It describes what the signal chain does to sound, says "modeled on", and makes no statement about paranormal phenomena in either direction. Every piece of draft copy below passes the engine's wording denylist and the product rule.
 - **No decision is recorded here.** The owner's answers go into decisions.md as dated rows.
 
+## The owner's answers (2026-11-01)
+
+The owner answered after reading this brief; decisions.md has the rows. Where the brief below disagrees, the answers win.
+
+- **The app is free for good.** 1.0 and every later feature and update are free: no purchase, no subscription, no ads. **O-2 and O-6 are closed**: the "equipment packages", the "All packages" item and every paid label below are withdrawn. Contradiction 1 is resolved: there is no Workbench tier.
+- **The app need not include every feature or control**, in 1.0 or at all. **O-1 becomes a scope question**: which controls the app shows (nothing is paid). The O-1 table below is now a candidate list, not a tier list.
+- **The one major update planned after 1.0 is an effects module inserted into the chain**, free. 1.0 ships without it; spec 024 is its engine side. **O-4 is answered** that way; the TestFlight beta and the D-U-N-S/enrolment advice stand.
+- Still open after these answers: O-1's scope, O-3's remaining parts, O-5, O-16, and the shape and timing of the effects update (asked of the owner the same day).
+
 ## Summary
 
 | Q | Question | Recommendation | Confidence | Unblocks |

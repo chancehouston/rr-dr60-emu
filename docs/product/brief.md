@@ -150,6 +150,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
 
 - **O-1 ★ Which controls are the free "intended user adjustments"?**
   - *2026-11-01: reopened; options and a recommendation in [app-questions-2026-11-01.md](app-questions-2026-11-01.md) › O-1.*
+  - **Answered in part 2026-11-01**: nothing is paid; the question is now which controls the app shows (decisions.md).
   - The engine has no such list yet; producing one is the dossier's first engine question.
   - The candidates fall into three groups:
     1. the device's own controls: volume, speaker or earphone, voice activation on or off, the sensitivity setting; *(corrected 2026-10-18: voice activation on or off is not a device control, since the device has no VAS switch, S-001, A-008; it is an emulator option. Playback speed, built in 0.13, is a device control. See controls-discussion.md.)*
@@ -158,6 +159,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
   - The question is whether group 2 is free, paid or split.
 - **O-2 ★ The paid boundary and its shape.**
   - *2026-11-01: reopened; options and a recommendation in [app-questions-2026-11-01.md](app-questions-2026-11-01.md) › O-2.*
+  - **Decided 2026-11-01: no paid boundary.** The app and every update are free (decisions.md).
   - One workbench unlock or several experience packs; future pack access; store presentation.
   - Where each item of the old Workbench list now sits:
     - expanded memory beyond 60 minutes and 99 recordings;
@@ -172,6 +174,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
   - Where the user sees and deletes it. The privacy labels follow from the answer.
 - **O-4 ★ Release sequencing.** What ships first:
   - *2026-11-01: reopened; options and a recommendation in [app-questions-2026-11-01.md](app-questions-2026-11-01.md) › O-4.*
+  - **Decided 2026-11-01**: 1.0 both modes, free; the one major update after it inserts an effects module, free (decisions.md).
   - Recorder mode alone, or both modes;
   - the reduced inside of 2026-10-11, or the free adjustments with it;
   - when the first paid package arrives.
@@ -179,6 +182,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
   - *2026-11-01: reopened; options and a recommendation in [app-questions-2026-11-01.md](app-questions-2026-11-01.md) › O-5.*
 - **O-6 Subscription.** The 2026-10-11 decision (none at launch) stands unless reopened. Confirm, given that "future pack access" is now an open question.
   - *2026-11-01: reopened; options and a recommendation in [app-questions-2026-11-01.md](app-questions-2026-11-01.md) › O-6.*
+  - **Decided 2026-11-01: no subscription**, ever; the app is free (decisions.md).
 
 ### Design and product (no decision needed yet)
 
