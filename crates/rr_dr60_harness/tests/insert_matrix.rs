@@ -1,6 +1,9 @@
 //! Spec 024's seven-rate matrix (research R-07, R-11): every case of the design script's table,
 //! the placement identity, the partitions, the cross-rate table, the tight bounds.
 
+// The default Q is the spec's literal 0.7071 (024 D4), not 1/√2.
+#![allow(clippy::approx_constant)]
+
 use rr_dr60::__test_hooks::InsertMutation;
 use rr_dr60::components::{ComponentId, InsertionPointId::BeforeLimiter};
 use rr_dr60::{ChangeEntry, Pipeline, Route, Stream, VasEvent};

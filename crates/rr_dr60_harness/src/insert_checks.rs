@@ -2,6 +2,9 @@
 //! section, the response reader against the design script's table, the placement identity, the
 //! transition trace, the click rows, the B1 row, the loud row and the meters' limiter-input peak.
 
+// The default Q is the spec's literal 0.7071 (024 D4), not 1/√2.
+#![allow(clippy::approx_constant)]
+
 use crate::analysis::{self, db};
 use crate::band_filter_ref::{REF_CASES, REF_ROWS, RefCase};
 use crate::configs;

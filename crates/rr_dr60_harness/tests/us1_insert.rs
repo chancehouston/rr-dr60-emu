@@ -1,5 +1,8 @@
 //! Spec 024 US1 (a filter in the chain): AS1 – AS5 at the measurement rates (research R-07).
 
+// The default Q is the spec's literal 0.7071 (024 D4), not 1/√2.
+#![allow(clippy::approx_constant)]
+
 use rr_dr60::__test_hooks::InsertMutation;
 use rr_dr60::components::{ComponentId, InsertionPointId::BeforeLimiter};
 use rr_dr60::{Error, Pipeline, Stream, VasEvent};
