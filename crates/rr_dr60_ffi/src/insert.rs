@@ -619,6 +619,41 @@ mod tests {
         assert_eq!(comp::components().len(), COMPONENT_STRINGS.len());
     }
 
+    /// The real fillers on zeroed, sized buffers (the Miri gate runs this: every byte written
+    /// is initialized; coach post-implementation 22).
+    #[test]
+    fn fillers_write_initialized_bytes() {
+        let mut p = RrDr60InsertionPoint::default();
+        let mut c = RrDr60Component::default();
+        let mut q = RrDr60ComponentParameter::default();
+        // SAFETY: sized out structs.
+        unsafe {
+            assert_eq!(rr_dr60_insertion_point(0, &mut p), RrDr60Status::Ok);
+            assert_eq!(rr_dr60_component(0, &mut c), RrDr60Status::Ok);
+            for i in 0..4 {
+                assert_eq!(rr_dr60_component_parameter(0, i, &mut q), RrDr60Status::Ok);
+            }
+        }
+        let bytes = |v: &[u8]| v.iter().map(|&b| u32::from(b)).sum::<u32>();
+        // Reading every byte proves it initialized under Miri.
+        // SAFETY: plain structs read as bytes.
+        unsafe {
+            let _ = bytes(core::slice::from_raw_parts(
+                (&p as *const RrDr60InsertionPoint).cast::<u8>(),
+                size_of::<RrDr60InsertionPoint>(),
+            ));
+            let _ = bytes(core::slice::from_raw_parts(
+                (&c as *const RrDr60Component).cast::<u8>(),
+                size_of::<RrDr60Component>(),
+            ));
+            let _ = bytes(core::slice::from_raw_parts(
+                (&q as *const RrDr60ComponentParameter).cast::<u8>(),
+                size_of::<RrDr60ComponentParameter>(),
+            ));
+        }
+        assert_eq!(p.control_index, 31);
+    }
+
     #[test]
     fn defines_match_the_core() {
         assert_eq!(

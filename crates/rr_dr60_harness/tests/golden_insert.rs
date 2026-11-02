@@ -33,6 +33,12 @@ fn golden_insert_matches() {
     let actual = ic::generate_golden();
     assert_eq!(actual.entries.len(), 84);
     if bless {
+        for rate in rr_dr60_harness::configs::all_rates() {
+            assert!(
+                ic::empty_twin_holds(rate),
+                "the empty-slot twin at {rate} (D10)"
+            );
+        }
         for e in &actual.entries {
             let want = u64::from(e.name.starts_with("schedule") || e.name == "set_then_schedule");
             assert_eq!(

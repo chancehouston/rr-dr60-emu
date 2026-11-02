@@ -29,6 +29,9 @@ fn insert_matrix_response() {
         rows.len()
     );
     assert!(worst <= 1.0 && worst_phase <= 2.0);
+    // The implementation bound (hardware post-implementation B9): about 0.01 dB with the 1e-6
+    // floor, so a missing prewarp (0.01 dB near the corner at 48 kHz) fails here too.
+    assert!(worst <= 0.1, "the implementation bound: {worst}");
 }
 
 /// The placement identity at the seven rates.
@@ -91,7 +94,8 @@ fn insert_matrix_partitions() {
 }
 
 /// The cross-rate table (hardware plan review B16): the low-pass at Q 0.7071 read at 2500 Hz,
-/// by corner and host rate, against the design script's print.
+/// by corner and host rate (reported, as the design script prints it; the two cells the guide
+/// quotes are asserted).
 #[test]
 fn insert_matrix_cross_rate() {
     for corner in [1000.0f32, 1500.0, 2000.0, 2500.0] {
@@ -113,7 +117,15 @@ fn insert_matrix_cross_rate() {
             };
             let ir = ic::impulse_response(&c);
             let h = rr_dr60_harness::analysis::dtft(&ir, 2500.0, f64::from(rate)).norm();
-            line.push_str(&format!(" {:8.2}", rr_dr60_harness::analysis::db(h)));
+            let d = rr_dr60_harness::analysis::db(h);
+            line.push_str(&format!(" {d:8.2}"));
+            // The two cells the guide quotes, from the design script's print.
+            if corner == 2000.0 && rate == 6000 {
+                assert!((d - -13.53).abs() < 0.01, "{d}");
+            }
+            if corner == 2000.0 && rate == 48_000 {
+                assert!((d - -5.41).abs() < 0.01, "{d}");
+            }
         }
         println!("{line}");
     }
@@ -124,7 +136,7 @@ fn insert_matrix_cross_rate() {
 fn insert_matrix_footprint() {
     let p = Pipeline::new(rr_dr60::Settings::new(48_000)).unwrap();
     println!(
-        "footprint {} bytes; the slot block grew by {} bytes per recording slot (a component value and the 16-value store)",
+        "footprint {} bytes; the slot block's fields grew by {} bytes per recording slot (computed from the fields)",
         p.footprint_bytes(),
         4 + 4 * rr_dr60::components::COMPONENT_PARAMETER_BUDGET
     );
@@ -196,6 +208,7 @@ fn insert_matrix_the_tight_bounds() {
     let n = 64;
     let mut yo = vec![0.0f32; n];
     let mut evo = vec![VasEvent::default(); q.max_events(n)];
+    let mut twin = q.clone();
     let mut short = vec![ChangeEntry::default(); 142];
     let info = q
         .process_with_events_and_changes(&x[..n], &mut yo, &mut evo, &mut short)
@@ -206,9 +219,40 @@ fn insert_matrix_the_tight_bounds() {
         rr_dr60::changes::MAX_CHANGES_PER_CALL
     );
     assert_eq!(info.changes, 146, "the one-pass attains 146 (R-11)");
-    assert!(
-        short.iter().all(|e| *e != ChangeEntry::default()),
-        "a 142-entry buffer is filled"
-    );
+    // The short buffer receives exactly the first 142 of the full log (coach 16); the
+    // recorder's 64 and the player's 69 are pinned by record_matrix and pitch_matrix.
+    let mut full = vec![ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
+    let mut yt = vec![0.0f32; n];
+    let mut evt = vec![VasEvent::default(); twin.max_events(n)];
+    let _ = twin
+        .process_with_events_and_changes(&x[..n], &mut yt, &mut evt, &mut full)
+        .unwrap();
+    assert_eq!(short[..], full[..142], "the first 142");
     let _ = InsertMutation::default();
+}
+
+/// US1 AS5 (research R-07; hardware plan review B12): the gain at which a quiet recording stops
+/// pausing, per type at levels 3 and 5, and a Q 10 row at 0 dB; 10 s runs, a lower estimate
+/// (spec 012's lesson). Release-only; the guide quotes these figures.
+#[test]
+#[ignore = "release-mode bisection; run with --release --ignored"]
+fn insert_matrix_gate_offset_bisection() {
+    if cfg!(debug_assertions) {
+        eprintln!("needs --release; skipped");
+        return;
+    }
+    let rate = 48_000;
+    for level in [3u8, 5] {
+        for t in 0..4u8 {
+            let g = ic::gate_stop_gain(rate, level, t, 0.7071, 10.0);
+            println!(
+                "gate at level {level}, type {t} at 1 kHz, Q 0.7071: stops pausing from {g:?} dB of gain"
+            );
+        }
+        let q10 = ic::quiet_pauses(rate, level, [0.0, 1000.0, 10.0, 0.0], 10.0);
+        println!(
+            "gate at level {level}, low-pass 1 kHz Q 10 at 0 dB: {}",
+            if q10 { "pauses" } else { "does not pause" }
+        );
+    }
 }

@@ -1472,7 +1472,6 @@ impl RecordCtl {
     }
 
     /// The last applied component parameters.
-    #[cfg_attr(not(any(test, feature = "__test-hooks")), allow(dead_code))]
     pub(crate) fn last_component(&self) -> [f32; crate::components::COMPONENT_PARAMETER_BUDGET] {
         self.last_component
     }

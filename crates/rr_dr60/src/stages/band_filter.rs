@@ -74,6 +74,12 @@ impl Ramp {
             *self = Self::at(to);
             return;
         }
+        if !self.active && to.to_bits() == self.cur.to_bits() {
+            // A landing at the value in force changes nothing (hardware post-implementation B4:
+            // a 20 ms ramp from x to x would read `exp(ln f)`, not `f`).
+            self.to = to;
+            return;
+        }
         // The `restart_from_target` mutant restarts from the previous target.
         self.from = if from_target { self.to } else { self.cur };
         self.to = to;
@@ -565,6 +571,33 @@ mod tests {
         let w = smoothstep(f64::from(f.len - k) / f64::from(f.len));
         let want = [w * 0.0 + (1.0 - w) * 1.0, 0.0, 0.0];
         assert!((f.blend.from[0] - want[0]).abs() < 1e-12);
+    }
+
+    /// Hardware post-implementation B4: a landing at the value in force, and a move wholly above
+    /// the ceiling, are bit-identical to no landing.
+    #[test]
+    fn same_value_landing_is_a_no_op() {
+        let x: Vec<f64> = (0..2000).map(|i| dm::sin(0.05 * i as f64) * 0.4).collect();
+        for (rate, values, index, to) in [
+            (48_000, DEFAULTS, 1usize, 1000.0f32),
+            (48_000, DEFAULTS, 2, 0.7071),
+            (6000, [0.0, 5000.0, 3.0, 0.0], 1, 10_000.0),
+        ] {
+            let mut a = filt(rate, values);
+            let mut b = filt(rate, values);
+            for &v in &x[..500] {
+                a.process(v);
+                b.process(v);
+            }
+            b.land(index, to, false);
+            for &v in &x[500..] {
+                assert_eq!(
+                    a.process(v).to_bits(),
+                    b.process(v).to_bits(),
+                    "{rate} {index}"
+                );
+            }
+        }
     }
 
     /// Hardware plan review B14: the state flushes below 1e-30.

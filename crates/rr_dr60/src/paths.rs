@@ -674,7 +674,14 @@ impl RecordPath {
         if self.insert.component() != store.component {
             self.insert.set_component(store.component);
         }
-        self.insert.set_all(band_values(&store.values));
+        // Only the values that differ from the stream's last applied ones snap (hardware
+        // post-implementation B3): a running transition of another parameter is kept.
+        let last = self.ctl.last_component();
+        for (i, (&v, &l)) in store.values.iter().zip(last.iter()).enumerate().take(4) {
+            if v.to_bits() != l.to_bits() {
+                self.insert.land(i, v, true);
+            }
+        }
         self.run_insert = self.insert.occupied();
         self.ctl.set_last_component(store.values);
     }

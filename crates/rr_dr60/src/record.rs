@@ -781,6 +781,9 @@ pub fn read(bytes: &[u8], out: &mut RecordReadout) -> Result<(), Error> {
     let mut host_rate: Option<u32> = None;
     let mut seed: Option<u64> = None;
     let mut unknown = 0u32;
+    // Spec 024 (hardware post-implementation B12): form 2's slot lines are required.
+    let mut seen_insert = false;
+    let mut seen_params = 0u32;
     let total = lines(bytes).count();
     for (idx, line) in lines(bytes).enumerate() {
         let n = (idx + 1) as u32;
@@ -901,6 +904,10 @@ pub fn read(bytes: &[u8], out: &mut RecordReadout) -> Result<(), Error> {
                     }
                     r.stage_model_versions[stage - 1] = parse_version(value).map_err(e)?;
                 } else if name == "insert.before_limiter" {
+                    if seen_insert {
+                        return Err(bad); // a repeated line
+                    }
+                    seen_insert = true;
                     // Spec 024 D7: an unknown component is flagged, not refused.
                     match crate::components::components()
                         .iter()
@@ -931,6 +938,10 @@ pub fn read(bytes: &[u8], out: &mut RecordReadout) -> Result<(), Error> {
                         _ => parse_f32(value).map_err(e)?,
                     };
                     r.store[at] = crate::components::store_value(p, f64::from(v)).ok_or(bad)?;
+                    if seen_params & (1 << at) != 0 {
+                        return Err(bad); // a repeated line
+                    }
+                    seen_params |= 1 << at;
                 } else if name.contains('.')
                     && !name.starts_with("setting.")
                     && !name.starts_with("stage.")
@@ -980,6 +991,22 @@ pub fn read(bytes: &[u8], out: &mut RecordReadout) -> Result<(), Error> {
         return Err(Error::MissingRecordField {
             field: req::name(bit),
         });
+    }
+    if version >= 2 && origin == Origin::Engine {
+        if !seen_insert {
+            return Err(Error::MissingRecordField {
+                field: "insert.before_limiter",
+            });
+        }
+        for c in crate::components::components() {
+            for (i, p) in c.parameters.iter().enumerate() {
+                if seen_params & (1 << (c.parameter_offset as usize + i)) == 0 {
+                    return Err(Error::MissingRecordField {
+                        field: p.identifier,
+                    });
+                }
+            }
+        }
     }
     // The settings carry the host rate and the seed from identity.
     if let Some(rate) = host_rate {
@@ -1451,6 +1478,26 @@ mod tests {
         assert_eq!(got.form_version, 1);
         assert_eq!(got.component, crate::components::ComponentId::None);
         assert_eq!(got.store, crate::components::default_store());
+    }
+
+    /// Hardware post-implementation B12: a form-2 engine record without a slot line is refused.
+    #[test]
+    fn form_2_slot_lines_required() {
+        let (ev, ch) = rows();
+        let bytes = written(&readout(), &ev, &ch);
+        for line in [
+            "insert.before_limiter = none\n",
+            "band_filter.type = low_pass\n",
+            "band_filter.frequency_hz = 1000\n",
+            "band_filter.q = 0.7071\n",
+            "band_filter.gain_db = 0\n",
+        ] {
+            let b = resign(doctor(&bytes, line, ""));
+            assert!(
+                matches!(read_err(&b), Error::MissingRecordField { .. }),
+                "{line}"
+            );
+        }
     }
 
     /// Spec 024 D7: an unknown component is flagged; an unknown parameter is counted.

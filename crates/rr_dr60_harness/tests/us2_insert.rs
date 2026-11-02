@@ -166,6 +166,8 @@ fn insert_as3_record_v2() {
     let mut got = RecordReadout::default();
     record::read(signed.as_bytes(), &mut got).unwrap();
     assert_ne!(got.flags & flags::UNKNOWN_COMPONENT, 0);
+    // The recipe refuses it (D7; coach post-implementation 7).
+    assert!(rc::re_render_checked(signed.as_bytes(), &raw, 1024, rc::Delta::None).is_err());
 }
 
 /// AS4: the C path is `ffi_parity insert_parity` / `insert_record_parity` and the smoke's
@@ -200,15 +202,54 @@ fn insert_as5_refusals_and_ceiling() {
             [0.0, ceiling.min(20_000.0) as f32, 0.7071, 0.0],
         );
         let x = rr_dr60_harness::stimulus::impulse(2048);
-        assert_eq!(
-            ic::run(&mut q, &x, 512),
-            ic::run(&mut at_ceiling, &x, 512),
-            "{rate}: the ceiling applied"
-        );
+        if ceiling < 20_000.0 {
+            assert_eq!(
+                ic::run(&mut q, &x, 512),
+                ic::run(&mut at_ceiling, &x, 512),
+                "{rate}: the ceiling applied"
+            );
+        } else {
+            // From 48 kHz the ceiling is above the published range: nothing to clamp (coach 13).
+            println!("{rate}: the ceiling {ceiling} Hz is above the range");
+        }
         assert_eq!(
             q.component_parameter_value(BeforeLimiter, 1),
             Ok(20_000.0),
             "the requested value stored"
         );
+    }
+}
+
+/// Coach post-implementation 19: every component and insertion-point string, and the guide's
+/// section, pass the house denylist.
+#[test]
+fn insert_strings_pass_the_denylist() {
+    use rr_dr60_harness::manifest_checks::denylist_hit;
+    let mut strings: Vec<&str> = Vec::new();
+    for p in components::insertion_points() {
+        strings.extend([p.identifier, p.name, p.placement]);
+    }
+    for c in components::components() {
+        strings.extend([c.identifier, c.name, c.description]);
+        for q in c.parameters {
+            strings.extend([q.identifier, q.name, q.unit]);
+        }
+    }
+    for e in &controls()[31..] {
+        strings.extend([e.name, e.description]);
+    }
+    for t in strings {
+        assert_eq!(denylist_hit(t), None, "{t}");
+    }
+    let guide = std::fs::read_to_string(
+        rr_dr60_harness::manifest_checks::repo_root().join("docs/guide.md"),
+    )
+    .unwrap();
+    let start = guide.find("## Insertable components").unwrap();
+    let end = guide[start + 1..]
+        .find("\n## ")
+        .map_or(guide.len(), |i| start + 1 + i);
+    for para in guide[start..end].split("\n\n") {
+        assert_eq!(denylist_hit(para), None, "{para}");
     }
 }

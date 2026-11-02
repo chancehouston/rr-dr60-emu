@@ -83,7 +83,7 @@ The control manifest appends entries 31 – 35 (`insert.before_limiter` Choice n
 - **The response oracle** (oracle configuration: stages 1 – 2 and the limiter bypassed, the tap `AfterInsert`): the impulse response read by `analysis::dtft` at exact frequencies; `|H − H_ref| ≤ max(0.0115·|H_ref|, 1e-6)` (0.1 dB), the phase within 2° where `|H_ref| > −80 dB`; the notch centre ≤ −120 dB, reported (hardware B9, coach 12).
 - **The impulse length** from the pole radius: `a2 = (1 − g k + g²) / (1 + g k + g²)`, `L = ⌈2·ln(1e8) / (−ln a2)⌉ + 0.1 × rate` (a −160 dB tail; hardware B5: the spec's `8 Q / (π f) + 0.1 s` leaves −70 dB tails and ignores warping); with it the zeros read ≤ −120 dB and the unity points within 1e-6 dB (SC-001; a restatement of the spec's length formula).
 - **The placement identity** (default engine, same seed and counter): a `__test-hooks` f64 trace of the slot's input (`insert_input_trace`, reserved at construction like `stage4_trace`; hardware B1, coach 4); the harness section (detmath, the engine's operation order, the flush) on that trace, narrowed, equals the run's `AfterInsert` bit for bit.
-- **The B1 row**: 48 kHz, a 100 Hz tone, Q 0.7071, the notch, band-pass and low-pass moved 21.6 kHz → 20 Hz; the metric the peak of |y| over the move plus 50 ms divided by (amplitude × the largest frozen |H| at the tone along the trajectory); the state-variable form against **transposed direct form II** in the harness (hardware B10: TDF-II reproduces the review's +14 dB, direct form I reads about +8); reported.
+- **The B1 row**: 48 kHz, a 100 Hz tone, Q 0.7071, the notch, band-pass and low-pass moved 20 kHz → 20 Hz (restated at implementation from 21.6 kHz, above the published range); the metric the peak of |y| over the move plus 50 ms divided by (amplitude × the largest frozen |H| at the tone along the trajectory); the state-variable form against **transposed direct form II** in the harness (hardware B10: TDF-II reproduces the review's +14 dB, direct form I reads about +8); reported.
 - **The click reader** (coach 13): spec 011's reader (0.5 s Hann window, 20 – 2750 Hz, the tone ±250 Hz excluded); the reference the `param_step` mutant at the same P; the floor printed beside every asserted row; asserted ≥ 30 dB on ±12 dB gain steps and one-octave moves at Q 0.7071 (the review's simulation: 45 – 50 dB), the type blend against `type_instant` reported (simulated 47.6 – 48.2 dB), Q 10 and full-range moves reported.
 - **D6 and US1 AS5** (coach 14): the meters' limiter-input peak equals the f64 peak of the slot's output at seven rates; the loud row (+24 dB) asserts gain reduction > 0 and an ADC clamp count > 0 with the empty-slot twin at 0; the gate bisection `insert_matrix::gate_offset_bisection` (release-only, per type at levels 3 and 5, a Q 10 row at 0 dB gain, a lower estimate on 10 s runs; spec 012's pattern) prints the figures the guide then quotes (hardware B12).
 
@@ -116,6 +116,14 @@ The control manifest appends entries 31 – 35 (`insert.before_limiter` Choice n
 | `state_kept_on_set` | `set_component` keeps the state | the filter → none → filter identity |
 | `skip_store_mirror` | a landing never becomes pending on the other stream | US2's cross-stream test |
 
-## Figures to measure at implementation
+## Figures to measure at implementation (as the harness printed them, 2026-11-01)
 
-The response deviation per type and rate; the placement identity's run; the B1 row; the click rows with their floors; the gate bisection per type; the cross-rate table; the slot block's growth; the empty-slot A/B; the filter's ns per sample; the worst block; coverage.
+- The response: worst 0.027 of the tolerance (|H − H_ref| ≤ max(0.0115·|H_ref|, 1e-6)), worst phase 1.3e-3°, 49 cases at the seven rates; the zeros ≤ −120 dB, the unity points within 1e-6 dB.
+- The placement identity: bit-exact on the tap branch and the production path (`front_from`), the slot's input equal to the empty twin's `AfterMicAmp`, at seven rates.
+- The click rows (spec 011's reader; floors 104 – 130 dB below the step): asserted 44.6 – 47.9 dB; the type blend 47.6 – 48.2 dB; Q 10 and full range 7.4 – 16.3 dB (reported).
+- The B1 row: state-variable +3.9 / +0.5 / 0.0 dB (notch, band-pass, low-pass) against transposed direct form II +14.2 / +12.5 / +11.3 dB.
+- The gate bisection (48 kHz, 1 kHz, Q 0.7071, 10 s runs, lower estimates): level 3 high-pass +16.5, band-pass +17.8, notch +19.3, low-pass +21.6 dB; level 5 +10.5, +11.8, +13.3, +15.6 dB; a Q 10 low-pass at 0 dB pauses.
+- The cross-rate table: a 2 kHz low-pass read at 2.5 kHz −13.53 dB at 6 kHz, −5.41 dB at 48 kHz (the script's print).
+- The slot block: 68 bytes more per recording slot (computed from the fields).
+- Cost: the empty slot −0.59 % (record path) and −0.14 % (one-pass) against feec054; the filter at rest +1.73 ns per host sample and a transition every 200 ms +0.57 ns more in the harness build (an upper bound); the worst 64-sample block with three ramps at 96 kHz 19.4 µs of 667.
+- The tight bound: the one-pass attains 146 of 158; a 142-entry buffer receives exactly the first 142.

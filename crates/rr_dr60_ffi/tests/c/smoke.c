@@ -303,7 +303,7 @@ static int print_changes(void) {
     if (rr_dr60_process_with_events_and_changes(p, cin + pos, cout + pos, n, &info, NULL, 0, entries,
                                                 RR_DR60_MAX_CHANGES_PER_CALL, &count) != RR_DR60_STATUS_OK)
       return 1;
-    for (size_t k = 0; k < count; k++) print_entry(&entries[k]);
+    for (size_t k = 0; k < count && k < RR_DR60_MAX_CHANGES_PER_CALL; k++) print_entry(&entries[k]);
     h = digest_add(h, cout + pos, info.produced);
   }
   printf("digest %016llx\n", (unsigned long long)h);
@@ -323,7 +323,7 @@ static int print_changes(void) {
     size_t count = 0;
     if (rr_dr60_play_with_changes(p, cout, CBLOCK, &info, entries, RR_DR60_MAX_CHANGES_PER_CALL, &count) != RR_DR60_STATUS_OK)
       return 1;
-    for (size_t k = 0; k < count; k++) print_entry(&entries[k]);
+    for (size_t k = 0; k < count && k < RR_DR60_MAX_CHANGES_PER_CALL; k++) print_entry(&entries[k]);
     h = digest_add(h, cout, info.produced);
     if (info.finished) break;
   }
@@ -367,7 +367,7 @@ static int print_insert(void) {
     if (rr_dr60_process_with_events_and_changes(p, iin + pos, iout + pos, n, &info, NULL, 0, entries,
                                                 RR_DR60_MAX_CHANGES_PER_CALL, &count) != RR_DR60_STATUS_OK)
       return 1;
-    for (size_t k = 0; k < count; k++) print_entry(&entries[k]);
+    for (size_t k = 0; k < count && k < RR_DR60_MAX_CHANGES_PER_CALL; k++) print_entry(&entries[k]);
     h = digest_add(h, iout + pos, info.produced);
   }
   printf("digest %016llx\n", (unsigned long long)h);
@@ -423,7 +423,7 @@ static int print_battery(void) {
       if (rr_dr60_process_with_events_and_changes(p, bin + pos, bout + pos, n, &info, NULL, 0, entries,
                                                   RR_DR60_MAX_CHANGES_PER_CALL, &count) != RR_DR60_STATUS_OK)
         return 1;
-      for (size_t k = 0; k < count; k++) print_entry(&entries[k]);
+      for (size_t k = 0; k < count && k < RR_DR60_MAX_CHANGES_PER_CALL; k++) print_entry(&entries[k]);
       SIZED(RrDr60Meters, m);
       memset(&m, 0, sizeof m);
       m.struct_size = (uint32_t)sizeof m;
@@ -489,7 +489,7 @@ static int print_bypass(void) {
     if (rr_dr60_process_with_events_and_changes(p, yin + pos, yout + pos, n, &info, NULL, 0, entries,
                                                 RR_DR60_MAX_CHANGES_PER_CALL, &count) != RR_DR60_STATUS_OK)
       return 1;
-    for (size_t k = 0; k < count; k++) print_entry(&entries[k]);
+    for (size_t k = 0; k < count && k < RR_DR60_MAX_CHANGES_PER_CALL; k++) print_entry(&entries[k]);
     h = digest_add(h, yout + pos, info.produced);
   }
   printf("digest %016llx\n", (unsigned long long)h);
@@ -527,7 +527,7 @@ static int play_pitch(RrDr60Pipeline *p, const char *name, RrDr60ChangeEntry *ke
     size_t count = 0;
     if (rr_dr60_play_with_changes(p, yout, 1024, &info, entries, RR_DR60_MAX_CHANGES_PER_CALL, &count) != RR_DR60_STATUS_OK)
       return 1;
-    for (size_t k = 0; k < count; k++) {
+    for (size_t k = 0; k < count && k < RR_DR60_MAX_CHANGES_PER_CALL; k++) {
       print_entry(&entries[k]);
       if (kept && *n_kept < 64) kept[(*n_kept)++] = entries[k];
     }
@@ -633,7 +633,7 @@ static int print_record(void) {
       return 1;
     if (info.events > PEV || info.stopped) return 1;
     for (size_t k = 0; k < info.events; k++) events[n_events++] = ev[k];
-    for (size_t k = 0; k < count; k++) changes[n_changes++] = ch[k];
+    for (size_t k = 0; k < count && k < RR_DR60_MAX_CHANGES_PER_CALL; k++) changes[n_changes++] = ch[k];
   }
   SIZED(RrDr60StopOutcome, so);
   size_t count = 0;
@@ -643,7 +643,7 @@ static int print_record(void) {
     return 1;
   if (!so.kept || so.flush_events > PEV) return 1;
   for (size_t k = 0; k < so.flush_events; k++) events[n_events++] = ev[k];
-  for (size_t k = 0; k < count; k++) changes[n_changes++] = ch[k];
+  for (size_t k = 0; k < count && k < RR_DR60_MAX_CHANGES_PER_CALL; k++) changes[n_changes++] = ch[k];
   RrDr60RunData run;
   memset(&run, 0, sizeof run);
   run.struct_size = sizeof run;
@@ -735,7 +735,7 @@ static int print_record_changes(void) {
     if (rr_dr60_record_with_changes(p, cin + pos, n, &info, NULL, 0, entries, RR_DR60_MAX_CHANGES_PER_CALL, &count,
                                     &total) != RR_DR60_STATUS_OK)
       return 1;
-    for (size_t k = 0; k < count; k++) print_entry(&entries[k]);
+    for (size_t k = 0; k < count && k < RR_DR60_MAX_CHANGES_PER_CALL; k++) print_entry(&entries[k]);
   }
   SIZED(RrDr60StopOutcome, so);
   size_t count = 0;
@@ -743,7 +743,7 @@ static int print_record_changes(void) {
   if (rr_dr60_stop_recording_with_changes(p, &so, NULL, 0, entries, RR_DR60_MAX_CHANGES_PER_CALL, &count, &total) !=
       RR_DR60_STATUS_OK)
     return 1;
-  for (size_t k = 0; k < count; k++) print_entry(&entries[k]);
+  for (size_t k = 0; k < count && k < RR_DR60_MAX_CHANGES_PER_CALL; k++) print_entry(&entries[k]);
   printf("final %llu\n", (unsigned long long)total);
   size_t len = 0;
   if (rr_dr60_export_len(p, 1, &len) != RR_DR60_STATUS_OK) return 1;

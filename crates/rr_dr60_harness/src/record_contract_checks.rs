@@ -366,7 +366,25 @@ pub fn readout(record: &[u8]) -> RecordReadout {
 /// feed-point rule up to the stop position in `block` samples, the same stop, the digest.
 /// `delta` varies one thing.
 pub fn re_render(record: &[u8], raw: &[i32], block: usize, delta: Delta) -> u64 {
+    re_render_checked(record, raw, block, delta).expect("a record the recipe can render")
+}
+
+/// The recipe's refusal (spec 024 D7): a record that names a component this library does not
+/// know is not rendered (an empty slot would render a different session).
+///
+/// # Errors
+///
+/// The reason, when the record carries `flags::UNKNOWN_COMPONENT`.
+pub fn re_render_checked(
+    record: &[u8],
+    raw: &[i32],
+    block: usize,
+    delta: Delta,
+) -> Result<u64, &'static str> {
     let r = readout(record);
+    if r.flags & rr_dr60::record::flags::UNKNOWN_COMPONENT != 0 {
+        return Err("the record names a component this library does not know");
+    }
     let mut s = r.settings;
     let mut counter = r.recording_counter;
     let mut raw = raw.to_vec();
@@ -501,7 +519,7 @@ pub fn re_render(record: &[u8], raw: &[i32], block: usize, delta: Delta) -> u64 
         }
     }
     let number = p.memory_status().count;
-    p.recording_digest(number).expect("digest")
+    Ok(p.recording_digest(number).expect("digest"))
 }
 
 /// The dirty-engine counter identity (spec US1 AS5): an engine that recorded `c` times with a

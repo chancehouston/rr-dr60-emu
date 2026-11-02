@@ -293,8 +293,8 @@ pub mod __test_hooks {
 
     /// Spec 024 (research › The six mutants): sets the slot's mutant on both record paths.
     pub fn mutate_insert(pipeline: &mut crate::Pipeline, m: InsertMutation) {
-        pipeline.one_pass.rec.insert.mutation = m;
-        pipeline.recorder.insert.mutation = m;
+        pipeline.one_pass.rec.insert.set_mutation(m);
+        pipeline.recorder.insert.set_mutation(m);
     }
 
     fn insert_of(

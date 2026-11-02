@@ -126,6 +126,8 @@ jobs:
       - name: The 0.91 ABI promise (spec 024 D9)
         # 0.91's C smoke, compiled against 0.91's header, linked to this library: exit 0 (but for
         # the appended tap's checks, plan R8) and every mode byte-identical to the current smoke's.
+        env:
+          ABI_PROMISE_SELF_TEST: "1" # the tolerance filter's own canned cases (024 plan R8)
         run: scripts/abi-promise.sh 97bbdc24e2f358f6c8d89c75f5472a62985cf276 # 97bbdc2, 0.91's merge (the full id: a shallow checkout fetches it)
 
   coverage:
@@ -212,4 +214,4 @@ jobs:
       # rule under Miri, which reports an uninitialized padding byte where a painted-byte test
       # passes by luck (the first run caught `MaybeUninit::zeroed()`'s typed move).
       - name: Miri on the ABI helper's tests
-        run: cargo +nightly miri test -p rr_dr60_ffi --lib -- abi_tests::write_sized abi_tests::readout abi_tests::default_is abi_tests::published abi_tests::settings_read abi_tests::control_reading settings_read::tests
+        run: cargo +nightly miri test -p rr_dr60_ffi --lib -- abi_tests::write_sized abi_tests::readout abi_tests::default_is abi_tests::published abi_tests::settings_read abi_tests::control_reading settings_read::tests insert::tests

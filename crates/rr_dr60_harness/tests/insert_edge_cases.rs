@@ -198,30 +198,33 @@ fn insert_edge_notch_on_a_tone() {
     }
 }
 
-/// A component in the slot during the stop's flush: the flush runs through it.
+/// A component in the slot during the stop's flush: the flush runs through it (coach
+/// post-implementation 5: the recorder's slot sees every fed sample, the stop's silence
+/// included).
 #[test]
 fn insert_edge_flush_through_the_slot() {
-    let mut s = Settings::new(48_000);
+    let mut s = Settings::new(6000);
     s.speech_codec_enabled = false;
-    s.mic.capsule_enabled = false;
-    let rec = |values: Option<[f32; 4]>| {
-        let mut p = match values {
-            Some(v) => ic::engine(s, v),
-            None => Pipeline::new(s).unwrap(),
-        };
-        p.start_recording().unwrap();
-        let mut ev = vec![VasEvent::default(); 1024];
-        let _ = p
-            .record(&stimulus::tone(500.0, 0.5, 48_000.0, 4800), &mut ev)
-            .unwrap();
-        let out = p.stop_recording(&mut ev).unwrap();
-        (out.silence_fed_samples, p.recording_digest(1).unwrap())
-    };
-    let (_, with) = rec(Some([0.0, 300.0, 4.0, 6.0]));
-    let (_, without) = rec(None);
-    assert_ne!(
-        with, without,
-        "the flush and the input both run through the slot"
+    let mut p = ic::engine(s, [0.0, 300.0, 4.0, 6.0]);
+    p.start_recording().unwrap();
+    hooks::insert_tracing(&mut p, Stream::Record, true);
+    let x = stimulus::tone(500.0, 0.5, 6000.0, 3000);
+    let mut ev = vec![VasEvent::default(); 1024];
+    let _ = p.record(&x, &mut ev).unwrap();
+    let out = p.stop_recording(&mut ev).unwrap();
+    let traced = hooks::insert_input_trace(&p, Stream::Record).len() as u64;
+    println!(
+        "flush: {} input samples, {} fed in all, {traced} through the slot",
+        x.len(),
+        out.input_samples_total
+    );
+    assert!(
+        out.input_samples_total > x.len() as u64,
+        "the stop fed silence"
+    );
+    assert_eq!(
+        traced, out.input_samples_total,
+        "every fed sample, the flush's included, went through the slot"
     );
 }
 

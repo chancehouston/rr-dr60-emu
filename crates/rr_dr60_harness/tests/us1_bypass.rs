@@ -59,11 +59,12 @@ fn as1_pre_021_configurations_unmoved() {
             checked += 1;
         }
     }
-    // Fourteen at 0.21; spec 023 added the pitch-kept guard (2026-10-31): the test reads every
-    // guard but 021's own, so it keeps checking later goldens too.
+    // Fourteen at 0.21; spec 023 added the pitch-kept guard (2026-10-31), spec 024 the insert
+    // guard (2026-11-01): the test reads every guard but 021's own, so it keeps checking later
+    // goldens too.
     assert_eq!(
-        checked, 15,
-        "the fourteen earlier golden guards and the pitch-kept one"
+        checked, 16,
+        "the fourteen earlier golden guards, the pitch-kept one and the insert one"
     );
     let mut rows = Vec::new();
     for &rate in configs::measurement_rates() {

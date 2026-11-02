@@ -67,8 +67,8 @@ description: "Task list for the insertable component slot and the band filter (0
 
 ## Phase 5: User Story 3 - Nothing else moved (P3)
 
-- [ ] T021 [P] [US3] `crates/rr_dr60_harness/tests/insert_edge_cases.rs` (the spec's nine edge cases, one test each, every name containing "insert"); `tests/mutation.rs` `mod insert` (the six mutants with their named oracles); `tests/alloc_free.rs` `insert_allocate_nothing`; `tests/determinism.rs` `insert_same_calls_same_log`.
-- [ ] T022 [P] [US3] `crates/rr_dr60_harness/tests/insert_timing.rs` (release-only: the filter's ns per host sample at 48 kHz, a transition every 200 ms, the worst 64-sample block with three ramps at 96 kHz asserted within real time); `scripts/ab-timing.sh <rev> insert` (the record path and the one-pass with the slot empty, 3 %, `RR_DR60_INSERT_COST_CEILING` 0.05) and its step in `.github/workflows/ab-timing.yml`; `configs::measurement_rates()` under `cfg(coverage)`.
+- [x] T021 [P] [US3] `crates/rr_dr60_harness/tests/insert_edge_cases.rs` (the spec's nine edge cases, one test each, every name containing "insert"); `tests/mutation.rs` `mod insert` (the six mutants with their named oracles); `tests/alloc_free.rs` `insert_allocate_nothing`; `tests/determinism.rs` `insert_same_calls_same_log`.
+- [x] T022 [P] [US3] `crates/rr_dr60_harness/tests/insert_timing.rs` (release-only: the filter's ns per host sample at 48 kHz, a transition every 200 ms, the worst 64-sample block with three ramps at 96 kHz asserted within real time); `scripts/ab-timing.sh <rev> insert` (the record path and the one-pass with the slot empty, 3 %, `RR_DR60_INSERT_COST_CEILING` 0.05) and its step in `.github/workflows/ab-timing.yml`; `configs::measurement_rates()` under `cfg(coverage)`.
 - [x] T023 [US3] Run the release-only timing solo and `scripts/ab-timing.sh feec054 insert`; record the figures in research.md › Figures to measure.
 
 ## Phase 6: Polish and cross-cutting
@@ -87,3 +87,10 @@ description: "Task list for the insertable component slot and the band filter (0
 ## Implementation strategy
 
 MVP = Phase 2 + US1 (the slot and the filter pinned to the script); US2 adds the C surface, the record and the golden; US3 the cost and the edge cases; Polish the records and the gate.
+
+## Restatements at implementation (2026-11-01, the post-implementation reviews: coach 1 – 23, hardware B1 – B12)
+
+- T008 – T012's core test names: the tests that exist cover them under other names (`changes::record_tests::record_ctl_bound` pins `RECORD_LOG` 88 and 158; `pipeline::component_tests::{layout_offsets, set_component_idle_only, kept_by_reset_and_reconfigure, idle_setter_validated_and_no_entry, start_recording_clears_filter_state, store_mirror_with_tag, reconfigure_moved_store_no_entry, schedule_refusals}`; `record::tests::{form_2_round_trip, reads_form_1_as_empty_slot, form_2_slot_lines_required, unknown_component_flagged_and_parameter_counted}`; the empty-slot, the tap and the place in `us1_insert::{insert_empty_after_insert_equals_after_mic_amp, insert_as1_response_and_placement}`).
+- T025's product notes: the free-for-good sweep and the slot's product wording are on PR #68's branch (docs-app-questions); decisions.md's spec 024 row is added after #68 merges, so the two docs changes do not conflict. The guide has no chain diagram (D12's "the chain diagram with the slot" restated: the signal chain's code block carries the slot).
+- The C smoke iterates `min(count, capacity)` in every mode; the guide and the CHANGELOG say so.
+- The promise script's tolerance (plan R8) requires a completed run and is self-tested in CI.

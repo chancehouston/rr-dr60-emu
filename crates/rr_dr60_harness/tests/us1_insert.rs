@@ -160,7 +160,10 @@ fn insert_as3_empty_slot_and_toggle() {
             plain,
             "the empty slot at {rate}"
         );
-        let mut toggled = ic::engine(s, [1.0, 500.0, 2.0, 3.0]);
+        // In the oracle configuration (nothing but the slot holds state), with no reset: the
+        // component set clears the state (coach post-implementation 10).
+        let o = ic::oracle_settings(rate);
+        let mut toggled = ic::engine(o, [1.0, 500.0, 2.0, 3.0]);
         let _ = ic::run(&mut toggled, &x, 1024);
         toggled
             .set_component(BeforeLimiter, ComponentId::None)
@@ -168,44 +171,43 @@ fn insert_as3_empty_slot_and_toggle() {
         toggled
             .set_component(BeforeLimiter, ComponentId::BandFilter)
             .unwrap();
-        toggled.reset();
-        let mut fresh = ic::engine(s, [1.0, 500.0, 2.0, 3.0]);
+        let mut fresh = ic::engine(o, [1.0, 500.0, 2.0, 3.0]);
         assert_eq!(
             ic::run(&mut toggled, &x, 1024),
             ic::run(&mut fresh, &x, 1024),
             "filter → none → filter at {rate}"
         );
     }
-    // The re-render cells with the filter in the slot (SC-004), the second recording included.
+    // The re-render cells with the filter in the slot (SC-004) in all sixteen of spec 020's
+    // cells (coach post-implementation 11), the second recording included; the named deltas at
+    // the measurement rates' first cell.
     for &rate in configs::measurement_rates() {
         let raw = rc::raw_stimulus(rate);
-        let cell = rc::Cell {
-            codec: false,
-            changes: true,
-            mute: false,
-            self_stop: false,
-        };
-        let mut p = Pipeline::new(rc::settings(cell, rate)).unwrap();
-        p.set_component_parameter(BeforeLimiter, 1, 700.0).unwrap();
-        p.set_component_parameter(BeforeLimiter, 0, 1.0).unwrap();
-        p.set_component(BeforeLimiter, ComponentId::BandFilter)
-            .unwrap();
-        let (mut p, run1) = rc::record_run_in(&mut p, cell, &raw);
-        let (_, run2) = rc::record_run_in(&mut p, cell, &raw);
-        for (k, run) in [run1, run2].iter().enumerate() {
-            let none = rc::re_render(&run.record, &raw, 1024, rc::Delta::None);
-            assert_eq!(
-                none,
-                run.digest,
-                "the re-render identity, recording {} at {rate}",
-                k + 1
-            );
-            for d in [rc::Delta::ComponentNone, rc::Delta::ParameterMoved] {
-                assert_ne!(
-                    rc::re_render(&run.record, &raw, 1024, d),
-                    run.digest,
-                    "{d:?} at {rate}"
-                );
+        for (k, cell) in rc::Cell::all().into_iter().enumerate() {
+            let mut p = Pipeline::new(rc::settings(cell, rate)).unwrap();
+            p.set_component_parameter(BeforeLimiter, 1, 700.0).unwrap();
+            p.set_component_parameter(BeforeLimiter, 0, 1.0).unwrap();
+            p.set_component(BeforeLimiter, ComponentId::BandFilter)
+                .unwrap();
+            let (mut p, run1) = rc::record_run_in(&mut p, cell, &raw);
+            let runs = if cell.self_stop {
+                vec![run1]
+            } else {
+                let (_, run2) = rc::record_run_in(&mut p, cell, &raw);
+                vec![run1, run2]
+            };
+            for (n, run) in runs.iter().enumerate() {
+                let none = rc::re_render(&run.record, &raw, 1024, rc::Delta::None);
+                assert_eq!(none, run.digest, "{cell:?} recording {} at {rate}", n + 1);
+                if k == 0 {
+                    for d in [rc::Delta::ComponentNone, rc::Delta::ParameterMoved] {
+                        assert_ne!(
+                            rc::re_render(&run.record, &raw, 1024, d),
+                            run.digest,
+                            "{d:?} at {rate}"
+                        );
+                    }
+                }
             }
         }
     }
@@ -250,7 +252,7 @@ fn insert_as4_lifecycle() {
 #[test]
 fn insert_as5_loud_and_gate() {
     for &rate in configs::measurement_rates() {
-        let ((gr, clamp), (gr0, clamp0), bare) = ic::loud_row(rate);
+        let ((gr, clamp), (gr0, clamp0), bare, bare0) = ic::loud_row(rate);
         println!(
             "AS5 loud {rate}: reduction {gr:.2} dB, clamps {clamp}; twin {gr0:.2} dB, {clamp0}; limiter bypassed: {bare} clamps"
         );
@@ -262,6 +264,10 @@ fn insert_as5_loud_and_gate() {
         assert!(
             gr0 == 0.0 && clamp0 == 0,
             "the twin at −6 dBFS stays below both"
+        );
+        assert_eq!(
+            bare0, 0,
+            "its empty-slot twin with the limiter bypassed does not clamp (B7)"
         );
         let d = ic::limiter_input_peak_row(rate);
         assert_eq!(
@@ -291,4 +297,26 @@ fn insert_latency_unchanged() {
         );
     }
     let _ = Stream::Record;
+}
+
+/// FR-007: with the slot empty the tap after the slot equals `AfterMicAmp`, bit for bit, at
+/// the seven rates, a −0.0 input sample included (the empty slot does no arithmetic).
+#[test]
+fn insert_empty_after_insert_equals_after_mic_amp() {
+    for rate in configs::all_rates() {
+        let mut x = stimulus::tone(900.0, 0.3, f64::from(rate), 4096);
+        x[17] = -0.0;
+        let a = ic::run(
+            &mut Pipeline::new(ic::placement_settings(rate)).unwrap(),
+            &x,
+            1000,
+        );
+        let mut s = ic::placement_settings(rate);
+        s.tap = rr_dr60::Tap::AfterMicAmp;
+        let b = ic::run(&mut Pipeline::new(s).unwrap(), &x, 1000);
+        assert!(
+            a.iter().zip(&b).all(|(u, v)| u.to_bits() == v.to_bits()),
+            "{rate}"
+        );
+    }
 }

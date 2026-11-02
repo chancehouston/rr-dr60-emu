@@ -2390,7 +2390,7 @@ mod insert {
     use rr_dr60_harness::stimulus;
 
     const RATE: u32 = 48_000;
-    const DEF: [f32; 4] = [0.0, 1000.0, 0.7071, 0.0];
+    const DEF: [f32; 4] = [0.0, 1000.0, ic::DEFAULT_Q, 0.0];
 
     /// The click oracle (≥ 30 dB) with `m` applied to the smooth run.
     fn click_ok(m: InsertMutation, change: (u32, f64)) -> bool {
@@ -2467,6 +2467,7 @@ mod insert {
     fn mirror_ok(m: InsertMutation) -> bool {
         let mut s = rr_dr60::Settings::new(RATE);
         s.speech_codec_enabled = false;
+        s.mic.capsule_enabled = false; // the hiss is keyed by the recording counter (A-049)
         let mut p = ic::engine(s, DEF);
         hooks::mutate_insert(&mut p, m);
         p.schedule_change(Stream::Record, 0, CONTROLS[1], 2000.0, 7)
@@ -2483,7 +2484,18 @@ mod insert {
         let info = p
             .process_with_events_and_changes(&x, &mut y, &mut ev, &mut log)
             .unwrap();
-        info.changes == 1 && log[0].control == CONTROLS[1] && log[0].tag == 7
+        // The value too (coach 18): the one-pass then runs as a twin set to 2000 Hz while idle.
+        let mut twin = rr_dr60::Settings::new(RATE);
+        twin.speech_codec_enabled = false;
+        twin.mic.capsule_enabled = false;
+        let mut t = ic::engine(twin, [0.0, 2000.0, ic::DEFAULT_Q, 0.0]);
+        let z = stimulus::tone(700.0, 0.1, f64::from(RATE), 4096);
+        let (mut a, mut b) = (vec![0.0f32; 4096], vec![0.0f32; 4096]);
+        p.reset();
+        t.reset();
+        let _ = p.process(&z, &mut a).unwrap();
+        let _ = t.process(&z, &mut b).unwrap();
+        info.changes == 1 && log[0].control == CONTROLS[1] && log[0].tag == 7 && a == b
     }
 
     #[test]

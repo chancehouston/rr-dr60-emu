@@ -1515,7 +1515,10 @@ fn insert_allocate_nothing() {
     use rr_dr60_harness::insert_checks as ic;
     let _turn = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     for &rate in configs::measurement_rates() {
-        let mut p = ic::engine(ic::placement_settings(rate), [0.0, 1000.0, 0.7071, 0.0]);
+        let mut p = ic::engine(
+            ic::placement_settings(rate),
+            [0.0, 1000.0, ic::DEFAULT_Q, 0.0],
+        );
         let x = rr_dr60_harness::stimulus::tone(700.0, 0.2, f64::from(rate), 4096);
         let mut y = vec![0.0f32; x.len()];
         let c = configs::c_settings(&ic::placement_settings(rate));

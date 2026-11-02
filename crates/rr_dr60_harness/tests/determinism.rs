@@ -1148,8 +1148,8 @@ fn settings_read_same() {
     }
 }
 
-/// Spec 024 FR-012: the same calls give the same output and log, with the slot's landings, a
-/// type blend and a recording through the filter.
+/// Spec 024 FR-012: the same calls give the same output and log, with the slot's landings and a
+/// type blend on the one-pass (the recordings through the filter: the golden's six targets).
 #[test]
 fn insert_same_calls_same_log() {
     use rr_dr60::{ChangeEntry, Stream, VasEvent};

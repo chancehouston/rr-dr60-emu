@@ -14,6 +14,9 @@ use rr_dr60::components::{ComponentId, InsertionPointId::BeforeLimiter};
 use rr_dr60::{ChangeEntry, Pipeline, Settings, Stream, Tap, VasEvent};
 use rr_dr60_detmath as dm;
 
+/// The band filter's default Q, the spec's literal (024 D4).
+pub const DEFAULT_Q: f32 = 0.7071;
+
 /// The band filter's control indices (type, frequency, Q, gain).
 pub const CONTROLS: [u32; 4] = [32, 33, 34, 35];
 /// The applied ceiling's fraction of the rate (spec 024 D4).
@@ -33,6 +36,17 @@ pub fn placement_settings(rate: u32) -> Settings {
     let mut s = Settings::new(rate);
     s.speech_codec_enabled = false;
     s.tap = Tap::AfterInsert;
+    s
+}
+
+/// The production path's configuration (hardware post-implementation B1): the default engine
+/// with the codec off and the limiter bypassed, read at the tap after the limiter, so the slot
+/// runs in `front_from` (the path every recording takes) and the tap is its output.
+pub fn production_settings(rate: u32) -> Settings {
+    let mut s = Settings::new(rate);
+    s.speech_codec_enabled = false;
+    s.agc.enabled = false;
+    s.tap = Tap::AfterAgc;
     s
 }
 
@@ -171,7 +185,15 @@ pub fn response_rows(rates: &[u32]) -> Vec<ResponseRow> {
 /// tap after the slot equals the harness section applied to the slot's traced f64 input,
 /// narrowed, bit for bit. Returns (samples compared, mismatches).
 pub fn placement_identity(rate: u32, values: [f32; 4]) -> (usize, usize) {
-    let mut p = engine(placement_settings(rate), values);
+    let (n, a) = placement_identity_in(placement_settings(rate), values);
+    let (_, b) = placement_identity_in(production_settings(rate), values);
+    (n, a + b)
+}
+
+/// The placement identity in configuration `s` (the tap branch or the production path).
+pub fn placement_identity_in(s: Settings, values: [f32; 4]) -> (usize, usize) {
+    let rate = s.host_rate_hz;
+    let mut p = engine(s, values);
     hooks::insert_tracing(&mut p, Stream::OnePass, true);
     let n = hooks::INSERT_TRACE_CAPACITY;
     let x = stimulus::tone(700.0, 0.4, f64::from(rate), n);
@@ -179,10 +201,21 @@ pub fn placement_identity(rate: u32, values: [f32; 4]) -> (usize, usize) {
     let trace = hooks::insert_input_trace(&p, Stream::OnePass).to_vec();
     assert_eq!(trace.len(), n);
     let want = reference(rate, values, &trace);
-    let bad = y
+    let mut bad = y
         .iter()
         .zip(&want)
         .filter(|(a, b)| a.to_bits() != (**b as f32).to_bits())
+        .count();
+    // The place (coach post-implementation 3): the slot's input, narrowed, equals the empty
+    // twin's `AfterMicAmp` output with the same seed and counter, so the slot sits after stage 2.
+    let mut twin_s = placement_settings(rate);
+    twin_s.tap = Tap::AfterMicAmp;
+    let mut twin = Pipeline::new(twin_s).expect("valid settings");
+    let amp = run(&mut twin, &x, 512);
+    bad += trace
+        .iter()
+        .zip(&amp)
+        .filter(|(a, b)| (**a as f32).to_bits() != b.to_bits())
         .count();
     (n, bad)
 }
@@ -299,9 +332,22 @@ pub fn click_row(rate: u32, values: [f32; 4], change: (u32, f64)) -> ClickRow {
         let mut p = engine(oracle_settings(rate), values);
         run(&mut p, &x, 1024)
     };
+    // The floor is the tone's leakage at its larger level, before or after the change (hardware
+    // post-implementation B8: a held notch removes the tone, so its own floor is degenerate).
+    let held_after = {
+        let mut v = values;
+        let i = CONTROLS.iter().position(|&c| c == change.0).unwrap();
+        v[i] = change.1 as f32;
+        let mut p = engine(oracle_settings(rate), v);
+        run(&mut p, &x, 1024)
+    };
     let e_smooth = analysis::click_energy(&smooth, rate, at as f64 + n / 2.0);
     let e_step = analysis::click_energy(&step, rate, at as f64);
-    let e_floor = analysis::click_energy(&held, rate, at as f64);
+    let e_floor = analysis::click_energy(&held, rate, at as f64).max(analysis::click_energy(
+        &held_after,
+        rate,
+        at as f64,
+    ));
     ClickRow {
         rate,
         values,
@@ -390,7 +436,7 @@ pub fn b1_row(ftype: u8) -> (f64, f64) {
 /// The loud row (spec US1 AS5; research R-07): the default record front with the filter at
 /// +24 dB on a −6 dBFS 1 kHz tone, against the empty-slot twin: (gain reduction dB, clamp
 /// count) with the filter, and the twin's.
-pub fn loud_row(rate: u32) -> ((f32, u32), (f32, u32), u32) {
+pub fn loud_row(rate: u32) -> ((f32, u32), (f32, u32), u32, u32) {
     let mut s = Settings::new(rate);
     s.speech_codec_enabled = false;
     s.tap = Tap::AfterRecord;
@@ -407,7 +453,14 @@ pub fn loud_row(rate: u32) -> ((f32, u32), (f32, u32), u32) {
     let mut no_limiter = s;
     no_limiter.agc.enabled = false;
     let mut bare = engine(no_limiter, [2.0, 1000.0, 0.7071, 24.0]);
-    (read(&mut with), read(&mut twin), read(&mut bare).1)
+    // Its empty-slot twin (hardware post-implementation B7): the limiter bypassed, no filter.
+    let mut bare_twin = Pipeline::new(no_limiter).unwrap();
+    (
+        read(&mut with),
+        read(&mut twin),
+        read(&mut bare).1,
+        read(&mut bare_twin).1,
+    )
 }
 
 /// Spec 024 D6: the meters' limiter-input peak equals the peak of the slot's output (read at
@@ -648,4 +701,86 @@ pub fn generate_golden() -> InsertGoldenFile {
         format: "rr_dr60-golden-insert".into(),
         entries: e,
     }
+}
+
+/// The golden's empty-slot twin (D10; coach post-implementation 4): the filter set then the
+/// slot emptied gives the same one-pass output and the same recording as an engine that never
+/// had it, at `rate`. Returns whether both hold.
+pub fn empty_twin_holds(rate: u32) -> bool {
+    let fs = f64::from(rate);
+    let x = stimulus::voiced(fs, 0.5, -20.0, VOICE_SEED);
+    let s = Settings::new(rate);
+    let mut emptied = engine(s, [2.0, 800.0, 3.0, 6.0]);
+    emptied
+        .set_component(BeforeLimiter, ComponentId::None)
+        .expect("idle");
+    let mut never = Pipeline::new(s).expect("valid settings");
+    let one_pass = run(&mut emptied, &x, 1024) == run(&mut never, &x, 1024);
+    let record = |p: &mut Pipeline| {
+        p.reset();
+        p.start_recording().expect("start");
+        let mut ev = vec![VasEvent::default(); p.max_record_events(x.len()).max(64)];
+        let _ = p.record(&x, &mut ev).expect("record");
+        let mut ev = vec![VasEvent::default(); p.max_record_events(0).max(64)];
+        let _ = p.stop_recording(&mut ev).expect("stop");
+        let n = p.memory_status().count;
+        p.recording_digest(n).expect("digest")
+    };
+    one_pass && record(&mut emptied) == record(&mut never)
+}
+
+/// Whether a quiet recording (the capsule's hiss only, silence in) pauses with the filter at
+/// `values` and the sensitivity `level`, over `seconds` at `rate` (US1 AS5; spec 012's pattern).
+pub fn quiet_pauses(rate: u32, level: u8, values: [f32; 4], seconds: f64) -> bool {
+    let mut s = Settings::new(rate);
+    s.speech_codec_enabled = false;
+    s.vas.sensitivity = level;
+    s.memory.capacity_s = 60;
+    let mut p = engine(s, values);
+    let x = vec![0.0f32; (seconds * f64::from(rate)) as usize];
+    p.start_recording().expect("start");
+    for block in x.chunks(4096) {
+        let mut ev = vec![VasEvent::default(); p.max_record_events(block.len())];
+        let _ = p.record(block, &mut ev).expect("record");
+    }
+    let mut ev = vec![VasEvent::default(); p.max_record_events(0).max(64)];
+    let _ = p.stop_recording(&mut ev).expect("stop");
+    // Drop mode reports a pause at its resume, so a pause that never ends has no event: the
+    // stored length tells (a recording that paused keeps less than 90 % of the input).
+    let n = p.memory_status().count;
+    if n == 0 {
+        return true;
+    }
+    let stored = p.recording_length(n).expect("length");
+    (stored as f64) < 0.9 * seconds * 6000.0
+}
+
+/// The gain at which a quiet recording stops pausing, by bisection to 0.25 dB over `seconds`
+/// (a lower estimate: a longer run can still pause; spec 012's lesson); `None` when it still
+/// pauses at +24 dB.
+pub fn gate_stop_gain(rate: u32, level: u8, ftype: u8, q: f32, seconds: f64) -> Option<f64> {
+    let at = |g: f64| {
+        quiet_pauses(
+            rate,
+            level,
+            [f32::from(ftype), 1000.0, q, g as f32],
+            seconds,
+        )
+    };
+    if at(24.0) {
+        return None;
+    }
+    let (mut lo, mut hi) = (-24.0f64, 24.0f64);
+    if !at(lo) {
+        return Some(lo);
+    }
+    while hi - lo > 0.25 {
+        let mid = 0.5 * (lo + hi);
+        if at(mid) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    Some(hi)
 }

@@ -1266,21 +1266,13 @@ impl Pipeline {
                 } else {
                     // Spec 024 research R-06: the store follows a component parameter landing.
                     let i = slot - crate::changes::RECORD_VALUES;
-                    self.component_store.values[i] = component[i];
                     #[cfg(feature = "__test-hooks")]
                     if self.recorder.insert.mutation.skip_store_mirror
                         || self.one_pass.rec.insert.mutation.skip_store_mirror
                     {
-                        // The mutant: the other stream is told it already has the value.
-                        let other = if from_recorder {
-                            &mut self.one_pass.rec
-                        } else {
-                            &mut self.recorder
-                        };
-                        let mut last = other.ctl.last_component();
-                        last[i] = component[i];
-                        other.ctl.set_last_component(last);
+                        continue; // the mutant: the store never learns the landing
                     }
+                    self.component_store.values[i] = component[i];
                     self.component_store.tags[i] = tag;
                 }
             }

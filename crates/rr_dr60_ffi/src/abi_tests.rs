@@ -228,10 +228,13 @@ fn write_sized_every_out_struct_four_cases() {
     cases::<RrDr60PlaceState>(PLACE_STATE_PUBLISHED, padding_of("RrDr60PlaceState"));
     cases::<RrDr60ControlReading>(READING_PUBLISHED, padding_of("RrDr60ControlReading"));
     // Spec 024 D9.
-    cases::<RrDr60InsertionPoint>(POINT_PUBLISHED, &[]);
-    cases::<RrDr60Component>(COMPONENT_PUBLISHED, &[]);
-    cases::<RrDr60ComponentParameter>(PARAMETER_PUBLISHED, &[]);
-    cases::<RrDr60RecordComponent>(RECORD_COMPONENT_PUBLISHED, &[]);
+    cases::<RrDr60InsertionPoint>(POINT_PUBLISHED, padding_of("RrDr60InsertionPoint"));
+    cases::<RrDr60Component>(COMPONENT_PUBLISHED, padding_of("RrDr60Component"));
+    cases::<RrDr60ComponentParameter>(PARAMETER_PUBLISHED, padding_of("RrDr60ComponentParameter"));
+    cases::<RrDr60RecordComponent>(
+        RECORD_COMPONENT_PUBLISHED,
+        padding_of("RrDr60RecordComponent"),
+    );
 }
 
 /// Every out-struct's padding runs on 64-bit targets (research R-03): the four-cases test and
@@ -249,6 +252,11 @@ fn padding_of(name: &str) -> &'static [(usize, usize)] {
         "RrDr60Control" => &[(4, 8)],
         "RrDr60ControlOption" => &[(4, 8), (20, 24)],
         "RrDr60RecordReadout" => &READOUT_PADDING,
+        // Spec 024: no implicit padding (pinned by the offsets in `sizes_are_pinned`).
+        "RrDr60InsertionPoint"
+        | "RrDr60Component"
+        | "RrDr60ComponentParameter"
+        | "RrDr60RecordComponent" => &[],
         _ => &[],
     }
 }

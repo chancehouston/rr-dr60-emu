@@ -46,7 +46,13 @@ fn main() {
                 .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                 .collect();
             let r = rc::readout(&record);
-            let got = rc::re_render(&record, &raw, 4096, Delta::None);
+            let got = match rc::re_render_checked(&record, &raw, 4096, Delta::None) {
+                Ok(d) => d,
+                Err(why) => {
+                    eprintln!("refused: {why}");
+                    std::process::exit(1);
+                }
+            };
             println!("record  fnv1a64:{:016x}", r.recording_digest);
             println!("render  fnv1a64:{got:016x}");
             println!(

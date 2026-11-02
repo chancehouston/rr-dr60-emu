@@ -21,7 +21,8 @@ pub struct InsertMutation {
     pub restart_from_target: bool,
     /// `set_component` keeps the filter's state.
     pub state_kept_on_set: bool,
-    /// A landing never becomes pending on the other stream.
+    /// The call's epilogue does not write a landed parameter into the store, so the other
+    /// stream never sees it (hardware post-implementation B11).
     pub skip_store_mirror: bool,
 }
 
@@ -71,6 +72,19 @@ impl Insert {
         }
     }
 
+    /// Test-only: sets the mutant once (hardware post-implementation B10: never copied per
+    /// sample, so a landing before the first processed sample sees it too).
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) fn set_mutation(&mut self, m: InsertMutation) {
+        self.mutation = m;
+        self.filter.mutation = crate::stages::band_filter::BandFilterMutation {
+            param_step: m.param_step,
+            type_instant: m.type_instant,
+            freq_linear: m.freq_linear,
+            restart_from_target: m.restart_from_target,
+        };
+    }
+
     /// The slot's component.
     pub(crate) fn component(&self) -> ComponentId {
         self.component
@@ -98,11 +112,6 @@ impl Insert {
         self.filter.land(index, value, at_once);
     }
 
-    /// Every band-filter parameter at once (the adopt rule, the idle setter's snap).
-    pub(crate) fn set_all(&mut self, values: [f32; 4]) {
-        self.filter.set_all(values);
-    }
-
     /// The state cleared, the transitions at their targets (`RecordPath::reset`; plan R2).
     pub(crate) fn reset(&mut self) {
         self.filter.reset();
@@ -112,17 +121,8 @@ impl Insert {
     #[inline]
     pub(crate) fn process(&mut self, x: f64) -> f64 {
         #[cfg(feature = "__test-hooks")]
-        {
-            let m = self.mutation;
-            self.filter.mutation = crate::stages::band_filter::BandFilterMutation {
-                param_step: m.param_step,
-                type_instant: m.type_instant,
-                freq_linear: m.freq_linear,
-                restart_from_target: m.restart_from_target,
-            };
-            if self.tracing && self.input_trace.len() < TRACE_CAPACITY {
-                self.input_trace.push(x);
-            }
+        if self.tracing && self.input_trace.len() < TRACE_CAPACITY {
+            self.input_trace.push(x);
         }
         let y = self.filter.process(x);
         #[cfg(feature = "__test-hooks")]

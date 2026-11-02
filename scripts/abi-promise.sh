@@ -3,8 +3,10 @@
 #
 # Compiles revision REV's C smoke program against REV's header and links it against the
 # **current** static library, then runs it: the default run must exit 0 (its CHECKs pass: the
-# ABI check with REV's sizes, every status and define it knows), and each `--x` mode's output
-# must be byte-identical to the current smoke program's (the data printed is the library's).
+# ABI check with REV's sizes, every status and define it knows), or, since 0.92 (spec 024 plan
+# R8), exit 1 having completed with its summary line and with exactly the tolerated failures
+# below; and each `--x` mode's output must be byte-identical to the current smoke program's
+# (the data printed is the library's).
 # A caller compiled against REV's header keeps working with every later library of the same ABI
 # version (spec 022 D4's promise; the first exercise is 0.23, which appends a control, functions,
 # two defines and a status).
@@ -40,14 +42,35 @@ set +e
 status=$?
 set -e
 cat "$work/default.txt"
+check_default() {
+  # $1: the default run's output file, $2: its exit status. 0 when acceptable.
+  [ "$2" -eq 0 ] && return 0
+  [ "$2" -eq 1 ] || return 1
+  local summary fails n listed
+  summary="$(grep -E '^smoke: [0-9]+ failure\(s\)$' "$1" | tail -1)"
+  [ -n "$summary" ] || return 1   # the summary prints only at the end: the run completed
+  n="$(printf '%s' "$summary" | sed -E 's/^smoke: ([0-9]+) failure.*/\1/')"
+  fails="$(grep '^smoke: FAIL ' "$1" | sed 's/^smoke: FAIL [^ ]*: //' || true)"
+  listed="$(printf '%s\n' "$fails" | grep -c -x -e 'tap = 11' -e 'struct_size = 4' || true)"
+  printf '%s\n' "$fails" | grep -q -x 'tap = 11' || return 1
+  [ "$n" -eq "$listed" ] || return 1
+  [ "$(printf '%s\n' "$fails" | grep -c . )" -eq "$listed" ] || return 1
+  return 0
+}
+if [ "${ABI_PROMISE_SELF_TEST:-0}" = "1" ]; then
+  # The filter's own check (coach post-implementation 1): canned outputs.
+  t="$work/t.txt"
+  printf 'smoke: FAIL x.c:1: tap = 11\nsmoke: FAIL x.c:2: struct_size = 4\nsmoke: 2 failure(s)\n' > "$t"; check_default "$t" 1 || { echo "self-test: the tolerated pair was refused" >&2; exit 1; }
+  printf 'smoke: FAIL x.c:1: tap = 11\nsmoke: FAIL x.c:3: other\nsmoke: 2 failure(s)\n' > "$t"; ! check_default "$t" 1 || { echo "self-test: an extra failure passed" >&2; exit 1; }
+  printf 'smoke: FAIL x.c:1: tap = 11\n' > "$t"; ! check_default "$t" 1 || { echo "self-test: a missing summary passed" >&2; exit 1; }
+  printf 'smoke: FAIL x.c:1: tap = 11\nsmoke: 1 failure(s)\n' > "$t"; ! check_default "$t" 139 || { echo "self-test: a crash passed" >&2; exit 1; }
+  echo "abi-promise: the filter's self-test passed"
+fi
+if ! check_default "$work/default.txt" "$status"; then
+  echo "abi-promise: $rev's default run failed (status $status)" >&2
+  exit 1
+fi
 if [ "$status" -ne 0 ]; then
-  fails="$(grep '^smoke: FAIL ' "$work/default.txt" | sed 's/^smoke: FAIL [^ ]*: //' || true)"
-  unexpected="$(printf '%s\n' "$fails" | grep -v -x -e 'tap = 11' -e 'struct_size = 4' | grep -v '^$' || true)"
-  if [ -n "$unexpected" ] || ! printf '%s\n' "$fails" | grep -q -x 'tap = 11'; then
-    echo "abi-promise: $rev's default run failed:" >&2
-    printf '%s\n' "$unexpected" >&2
-    exit 1
-  fi
   echo "abi-promise: $rev's default run: only the appended tap's checks differ (tap = 11, struct_size = 4; plan R8)"
 fi
 # Every mode REV's smoke knows: byte-identical to the current smoke's output.
