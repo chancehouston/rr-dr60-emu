@@ -2,6 +2,9 @@
 //! The fifteen audio golden files are untouched (the slot is empty in their configurations) and
 //! keep their own guards; the record golden moved once (form 2).
 
+// The default Q is the spec's literal 0.7071 (024 D4), not 1/√2.
+#![allow(clippy::approx_constant)]
+
 use rr_dr60_harness::insert_checks as ic;
 use sha2::{Digest, Sha256};
 

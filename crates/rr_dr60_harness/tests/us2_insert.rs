@@ -1,5 +1,8 @@
 //! Spec 024 US2 (the engine describes the slot): AS1 – AS5 (research R-04, R-05, R-09, R-11).
 
+// The default Q is the spec's literal 0.7071 (024 D4), not 1/√2.
+#![allow(clippy::approx_constant)]
+
 use rr_dr60::components::{self, ComponentId, InsertionPointId::BeforeLimiter, Scale};
 use rr_dr60::record::{self, RecordReadout, flags};
 use rr_dr60::{ControlKind, ControlTiming, ControlValue, Error, Pipeline, Stream, controls};
