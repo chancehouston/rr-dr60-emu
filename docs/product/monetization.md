@@ -1,5 +1,7 @@
 # Monetization
 
+> **Superseded 2026-11-01.** The app is free for good: 1.0 and every later feature and update, with no purchase, subscription or ads (decisions.md). Nothing below is planned. Still in force: the copy rules. This page is kept as the record.
+
 > **Partly superseded 2026-10-15.** The current position is in [brief.md](brief.md) › Value and › Open questions. Still in force: the principle that paid content is only what the device cannot do, no ads, no consumables, the models table, and the copy rules. Superseded: the single "Workbench" purchase at $7.99 and its fixed contents (paid expansion is now packages of extra components with example chains and presets; the shape and price are open, O-2), and "bypass and parameter controls" as paid (the engine's intended user adjustments are free, O-1). The free tier now also includes both modes and sensor sessions. This page is kept as the 2026-10-11 record.
 
 Decision as of 2026-10-11, to be revisited after the first review mining and interviews (see personas.md).

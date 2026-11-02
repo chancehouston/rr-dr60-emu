@@ -6,6 +6,8 @@ Public wording: **"The front is the recorder. The inside is the model."** (Decid
 
 > **Partly superseded 2026-10-15.** The current brief is [brief.md](brief.md). The flip, the honesty of motion, the empty sockets, the status badges and header, the wording rules and the accessibility rules stand. Superseded: "the free inside has no controls" and "see free, touch paid" (the engine's intended user adjustments are free, O-1), and the raw capture as Workbench-only (O-3). The "now" column and the engine-request status describe engine 0.5; the 0.11.0 facts are in brief.md › Engine capabilities. The app now has two modes (Recorder and Investigation) that both use this front and inside.
 
+> **Superseded in part 2026-11-01** (decisions.md). The app and every update are **free for good**: there is no Workbench, no purchase and no paid package, so every "free", "Workbench" and "paid" label below is the 2026-10-11 record, not a plan. Which controls the app shows is a scope choice: **app 1.0** shows the device controls on the front (route, volume, playback speed with its keep-pitch switch, sensitivity) and the inside **without controls** (the board, meters, badges, header and cards with their read-outs and sources), which is close to this note's 2026-10-11 "reduced inside". Bypass, parameters and "Listen here" in the cards may come in free updates. The original microphone audio is kept for every recording with "Delete original only" and a storage screen (O-3). The one planned major update after 1.0 adds **one component slot** before the limiter (spec 024; the band filter first, free).
+
 ## Part 1: the brief (Chance, 2026-10-11)
 
 The `rr_dr60` library is the machine on the bench: the stages, components and behaviours that together recreate the recorder. The app shows that machine from two sides.
@@ -36,7 +38,7 @@ The inside supports the positioning in decisions.md ("stage by stage, from the s
 ### Rules that keep it honest
 
 1. **Honesty of motion.** A component animates only from a number the engine returned for the current block. Stages that are not yet modeled render as labelled empty sockets ("not yet modeled"), with their source and assumption IDs. The sockets are a feature: they are the visible work list and the appeal for captures. Nothing on the inside moves for effect.
-2. **No global controls.** *(Partly superseded 2026-10-15: controls are no longer all paid, brief.md O-1; the card, dot and "device default" rules stand.)* The free inside has no controls at all. Every Workbench control lives in the card of the component it belongs to; a dot on the component marks it as off the device default; each card has one "device default" button. (Decided 2026-10-11.)
+2. **No global controls.** *(Partly superseded 2026-10-15: controls are no longer all paid, brief.md O-1; the card, dot and "device default" rules stand. Superseded 2026-11-01 for the tier: nothing is paid; app 1.0's cards carry no controls by scope.)* The free inside has no controls at all. Every Workbench control lives in the card of the component it belongs to; a dot on the component marks it as off the device default; each card has one "device default" button. (Decided 2026-10-11.)
 3. **The front is the default.** The app opens on the front, recording starts from the front, and after a period without touch the inside drops to a low frame rate. Investigation sessions run an hour or more on battery.
 
 ### Scope: the first cut
@@ -73,9 +75,9 @@ Tapping a component raises a card; dismissing it returns to the board. Nothing e
 1. One neutral sentence on what the stage does to sound.
 2. The live read-out, large.
 3. Source and assumption IDs, confidence, and the engine version that last changed the stage.
-4. Workbench only: "Listen here" (plays the current recording as heard at this stage), bypass, and the stage's parameters, with the "device default" button.
+4. Workbench only: "Listen here" (plays the current recording as heard at this stage), bypass, and the stage's parameters, with the "device default" button. *(Superseded 2026-11-01: no Workbench; these are left out of app 1.0 and may come in a free update.)*
 
-"Listen here" needs the recording's raw microphone capture. *(Superseded 2026-10-15: an Investigation session keeps the original microphone audio and sessions are free; Recorder mode is open, brief.md O-3.)* **Decided 2026-10-11:** the Workbench keeps the raw capture per recording; it is visible in the recording's details with a delete option, and the app's privacy label lists it. The free tier keeps only the device-rate render.
+"Listen here" needs the recording's raw microphone capture. *(Superseded 2026-10-15: an Investigation session keeps the original microphone audio and sessions are free; Recorder mode is open, brief.md O-3.)* **Decided 2026-10-11:** the Workbench keeps the raw capture per recording; it is visible in the recording's details with a delete option, and the app's privacy label lists it. The free tier keeps only the device-rate render. *(Superseded 2026-10-29 and 2026-11-01: the original is kept for every recording in both modes, with "Delete original only" in its details and a storage screen; there is no tier, decisions.md.)*
 
 ### Status badges and the header
 
@@ -96,7 +98,7 @@ A fourth state, **Checked against a real unit**, applies to no stage today. The 
 
 ### Free and Workbench: see free, touch paid
 
-*Superseded 2026-10-15: the engine's intended user adjustments are free and paid expansion is component packages (brief.md › Value, O-1, O-2). Kept as the 2026-10-11 record.*
+*Superseded 2026-10-15: the engine's intended user adjustments are free and paid expansion is component packages (brief.md › Value, O-1, O-2). Kept as the 2026-10-11 record.* *Superseded again 2026-11-01: nothing is paid, now or later; app 1.0 shows the device controls only, and the rest is a scope choice for free updates (decisions.md).*
 
 Consistent with the decision that the free tier is the whole device and the Workbench is only what the device cannot do (decisions.md, monetization.md).
 
@@ -125,9 +127,9 @@ Avoid: an "activity" indicator (name it "encoding" or "frames"), "detects", "sen
 Already in the engine (0.5): `BlockInfo.paused`, VAS events through `process_with_events` and `max_events`, per-stage bypass flags, one output `Tap`, `latency_samples`, `version_string`. The limiter's state is a test-only hook and its gain read-out is test-only. Each request below is phrased for `/speckit-specify`.
 
 - **E-A: per-stage meters (new; the inside depends on it).** *As an app showing the chain live, I want one read-out per processed block of the input peak, the limiter's gain reduction (block minimum, dB) and hold-capacitor charge (0–1), the post-filter peak, the number of clamp hits, the VAS state and hang time remaining, and the post-playback peak, so that every moving element on screen is a number the engine computed.* A pull API that fills a caller-provided plain struct during processing; no allocation; the meters never change the output or its determinism. Tier: free.
-- **E-B: a scope copy at a chosen stage (new).** *I want a read-only copy of one stage's output per block, written into my buffer, independent of the output tap, so a waveform at that stage can be shown or played without the tap change altering which stages run, the latency or the VAS behaviour.* Today `Tap::AfterAgc` skips the rate conversion and the VAS, so switching the tap live changes the chain. Caller buffer, block granularity. Tier: free to view, Workbench to listen.
+- **E-B: a scope copy at a chosen stage (new).** *I want a read-only copy of one stage's output per block, written into my buffer, independent of the output tap, so a waveform at that stage can be shown or played without the tap change altering which stages run, the latency or the VAS behaviour.* Today `Tap::AfterAgc` skips the rate conversion and the VAS, so switching the tap live changes the chain. Caller buffer, block granularity. Tier: free to view, Workbench to listen. *(2026-11-01: no tier; free.)*
 - **E-C: the record/playback split with the flash model (already decided; see decisions.md).** Adds storage used, the output route (speaker or earphone) and mute-while-recording as readable state. Tier: free.
 - **E-D: a stage manifest (new; small, high value).** *I want the library to export, for each of the 15 stages, its name, a one-sentence neutral description of what it does to sound, its status (sourced, assumed, not modeled, checked against a unit), its source and assumption IDs, its confidence, and the version that last changed it, as static strings, so that the About view is generated from the engine and cannot drift from the registers.* **Decided 2026-10-11:** the engine may carry these short, neutral, English strings; apps localize on their side. Not a real-time call; read at start-up. Benefits every library customer. Tier: free.
-- **E-E: limiter ceiling events (later; Workbench review tools).** *I want the position and duration of each ceiling hold, in the same caller-buffer form as the VAS events, so review tools can mark where the limiter acted.*
+- **E-E: limiter ceiling events (later; review tools, free since 2026-11-01).** *I want the position and duration of each ceiling hold, in the same caller-buffer form as the VAS events, so review tools can mark where the limiter acted.*
 
 Real-time safety: E-A, E-B and E-E are plain writes into caller memory per block and respect the no-allocation, no-I/O rule. Callbacks and spectrum analysis stay out of the core; the band display's spectrum is the app's job. *Closed 2026-10-31 (spec 021): `reconfigure` rebuilds the engine and resets every path, so the live bypass is not built on it; the playback-side switches are scheduled changes that blend over 20 ms with the stage kept running. The record-side switches stay `reconfigure` (the offline re-render compares them).*
