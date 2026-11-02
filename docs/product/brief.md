@@ -149,6 +149,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
 ### Needing a decision before the dependent work (★)
 
 - **O-1 ★ Which controls are the free "intended user adjustments"?**
+  - *2026-11-01: reopened; options and a recommendation in [app-questions-2026-11-01.md](app-questions-2026-11-01.md) › O-1.*
   - The engine has no such list yet; producing one is the dossier's first engine question.
   - The candidates fall into three groups:
     1. the device's own controls: volume, speaker or earphone, voice activation on or off, the sensitivity setting; *(corrected 2026-10-18: voice activation on or off is not a device control, since the device has no VAS switch, S-001, A-008; it is an emulator option. Playback speed, built in 0.13, is a device control. See controls-discussion.md.)*
@@ -156,6 +157,7 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
     3. effects beyond the device, which the dossier places in paid packages.
   - The question is whether group 2 is free, paid or split.
 - **O-2 ★ The paid boundary and its shape.**
+  - *2026-11-01: reopened; options and a recommendation in [app-questions-2026-11-01.md](app-questions-2026-11-01.md) › O-2.*
   - One workbench unlock or several experience packs; future pack access; store presentation.
   - Where each item of the old Workbench list now sits:
     - expanded memory beyond 60 minutes and 99 recordings;
@@ -164,15 +166,19 @@ These earlier decisions no longer hold. Each is marked in its own note, and each
     - folders and search;
     - review tools (candidates added 2026-10-21: reverse playback and a spectrogram; slow playback is the device's own speed control, free).
 - **O-3 ★ Raw microphone audio.**
+  - *2026-11-01: reopened; options and a recommendation in [app-questions-2026-11-01.md](app-questions-2026-11-01.md) › O-3.*
   - Kept in both modes or only in Investigation sessions; free or paid in Recorder mode.
   - How it interacts with voice activation (the dossier asks this).
   - Where the user sees and deletes it. The privacy labels follow from the answer.
 - **O-4 ★ Release sequencing.** What ships first:
+  - *2026-11-01: reopened; options and a recommendation in [app-questions-2026-11-01.md](app-questions-2026-11-01.md) › O-4.*
   - Recorder mode alone, or both modes;
   - the reduced inside of 2026-10-11, or the free adjustments with it;
   - when the first paid package arrives.
 - **O-5 Default mode.** Which mode the app opens in, and how the user chooses or switches.
+  - *2026-11-01: reopened; options and a recommendation in [app-questions-2026-11-01.md](app-questions-2026-11-01.md) › O-5.*
 - **O-6 Subscription.** The 2026-10-11 decision (none at launch) stands unless reopened. Confirm, given that "future pack access" is now an open question.
+  - *2026-11-01: reopened; options and a recommendation in [app-questions-2026-11-01.md](app-questions-2026-11-01.md) › O-6.*
 
 ### Design and product (no decision needed yet)
 
