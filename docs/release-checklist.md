@@ -14,14 +14,18 @@ release PR or issue and tick each item. The reason for each item is in brackets.
 ## Manual gates (not covered by hosted CI)
 
 - [ ] **Golden files on a physical iOS device.** Run `scripts/ios-device-golden.sh` with a
-      device connected (it covers the nine golden files, 001 through the speed control, plus
-      determinism; the script's header lists the device setup), then paste its PASS line here:
+      device connected (it runs fourteen test binaries: determinism, every golden file and the
+      manifest texts; the script's header lists the device setup), then paste its PASS line here:
 
       ios-device-golden: PASS on <model> (iOS <version>), rr_dr60 <version>, <commit>
 
-      Last run outside a release: `ios-device-golden: PASS on iPhone 15 Pro (iOS 27.0.1),
-      rr_dr60 0.13.0, a19690d` (2026-10-18, the first device run). Run it again on the release
-      commit.
+      Last run: `ios-device-golden: PASS on iPhone 15 Pro (iOS 27.2), rr_dr60 0.91.0, f4e64f2`
+      (2026-11-01). The 0.90.0 attempts the same day failed: `determinism`, then
+      `golden_speed`, read golden files from the build machine's path, which does not exist on
+      the phone, and cargo stops at the first failing binary, so the golden binaries after it
+      never ran (an earlier report that they passed was wrong). PRs #65 and #66 build those
+      files into the binaries. Previous PASS: iPhone 15 Pro (iOS 27.0.1), rr_dr60 0.13.0,
+      `a19690d` (2026-10-18, the first device run). Run it again on the release commit.
 
       [FR-014, SC-003; clarified 2026-10-08: the iOS device check must pass before each release]
 - [ ] **Windows ARM64**, only if the `windows-11-arm` hosted runner was removed from
