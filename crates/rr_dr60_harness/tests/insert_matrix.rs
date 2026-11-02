@@ -256,3 +256,52 @@ fn insert_matrix_gate_offset_bisection() {
         );
     }
 }
+
+/// US3 AS2 on the record stream (converge T029): a recording through the filter with scheduled
+/// parameter changes gives the same stored form and log at block sizes 1, 64, 4096 and
+/// irregular.
+#[test]
+fn insert_matrix_record_partitions() {
+    for &rate in configs::measurement_rates() {
+        let fs = f64::from(rate);
+        let x = stimulus::voiced(fs, 0.5, -20.0, 3);
+        let run = |block: &dyn Fn(usize) -> usize| {
+            let mut s = rr_dr60::Settings::new(rate);
+            s.speech_codec_enabled = false;
+            let mut p = ic::engine(s, [0.0, 1000.0, ic::DEFAULT_Q, 0.0]);
+            let q = u64::from(rate) / 10;
+            p.schedule_change(Stream::Record, q, CONTROLS[1], 2500.0, 1)
+                .unwrap();
+            p.schedule_change(Stream::Record, q + 3, CONTROLS[0], 3.0, 2)
+                .unwrap();
+            p.schedule_change(Stream::Record, 3 * q, CONTROLS[3], -6.0, 3)
+                .unwrap();
+            p.start_recording().unwrap();
+            let mut log = vec![ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
+            let mut entries = Vec::new();
+            let (mut pos, mut k) = (0, 0);
+            while pos < x.len() {
+                let n = block(k).min(x.len() - pos);
+                let mut ev = vec![VasEvent::default(); p.max_record_events(n)];
+                let info = p
+                    .record_with_changes(&x[pos..pos + n], &mut ev, &mut log)
+                    .unwrap();
+                entries.extend_from_slice(&log[..info.changes]);
+                pos += n;
+                k += 1;
+            }
+            let mut ev = vec![VasEvent::default(); p.max_record_events(0).max(64)];
+            let _ = p.stop_recording(&mut ev).unwrap();
+            (p.recording_digest(1).unwrap(), entries)
+        };
+        let base = run(&|_| 1);
+        assert_eq!(base.1.len(), 3, "every change landed");
+        for b in [
+            &(|_: usize| 64usize) as &dyn Fn(usize) -> usize,
+            &|_: usize| 4096usize,
+            &|k: usize| [7usize, 333, 1, 64, 1000][k % 5],
+        ] {
+            assert_eq!(run(b), base, "{rate}");
+        }
+    }
+}

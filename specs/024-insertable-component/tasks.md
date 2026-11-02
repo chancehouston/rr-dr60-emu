@@ -77,7 +77,7 @@ description: "Task list for the insertable component slot and the band filter (0
 - [x] T025 The records from records.md (the guide's new section, the chain diagram, § Changes, § Settings read, the meters' limiter-input peak wording; README; CHANGELOG; decisions.md's row; the product notes by section; signal-chain.md's note; CLAUDE.md's Spec 024 reports and status entry); `scripts/check-traceability.sh` clean; `us2_cross_check` green (the denylist on every new sentence).
 - [x] T026 Run every manifest-pinning binary (us1_controls, us2_controls, us2_cross_check, us2_abi, us2_pitch, us2_bypass, bypass_matrix, pitch_matrix, ffi_parity), then the full gate: fmt, clippy, the feature-less `-D warnings` build, the iOS build, the header drift check, `cargo test --all-features` (count recorded), the MSRV build, the C smoke, Miri, the simulator goldens, `swift test`, coverage detached (within 1 point of 96.69 %); the fifteen audio guards and every earlier smoke hash unmoved (T002).
 - [x] T027 The post-implementation reviews: `speckit-coach` and `hw-emulation-reviewer` on the branch (read-only); apply their findings at the defaults; re-run the gate.
-- [ ] T028 Push the branch, open the PR with the `ab-timing` label (the body: D1 – D12, R1 – R7 for the owner, the figures, the re-blesses), CI green; `/speckit-converge`; the owner merges; the post-merge records (spec status, CLAUDE.md, the memory bookmark).
+- [x] T028 Push the branch, open the PR with the `ab-timing` label (the body: D1 – D12, R1 – R7 for the owner, the figures, the re-blesses), CI green; `/speckit-converge`; the owner merges; the post-merge records (spec status, CLAUDE.md, the memory bookmark).
 
 ## Dependencies
 
@@ -94,3 +94,7 @@ MVP = Phase 2 + US1 (the slot and the filter pinned to the script); US2 adds the
 - T025's product notes: the free-for-good sweep and the slot's product wording are on PR #68's branch (docs-app-questions); decisions.md's spec 024 row is added after #68 merges, so the two docs changes do not conflict. The guide has no chain diagram (D12's "the chain diagram with the slot" restated: the signal chain's code block carries the slot).
 - The C smoke iterates `min(count, capacity)` in every mode; the guide and the CHANGELOG say so.
 - The promise script's tolerance (plan R8) requires a completed run and is self-tested in CI.
+
+## Phase 7: Convergence
+
+- [x] T029 Add the record-stream partition identity (a recording through the filter with scheduled parameter changes on `Stream::Record`, block sizes 1 / 64 / 4096 / irregular: equal digests and logs) in `crates/rr_dr60_harness/tests/insert_matrix.rs` per US3/AC2 and FR-012 (partial)
