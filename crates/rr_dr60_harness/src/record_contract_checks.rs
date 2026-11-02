@@ -117,10 +117,12 @@ pub fn samples(raw: &[i32]) -> Vec<f32> {
 pub fn filler(encoding: Encoding, units: u64) -> Vec<u8> {
     let mut s = crate::configs::settings("bypass_all", 6000);
     s.speech_codec_enabled = encoding == Encoding::Frames;
-    s.memory.capacity_s = CAPACITY_S.max((units / 6000) as u32 + 1);
+    let n = units as usize * encoding.unit_samples();
+    // The capacity in seconds of device samples (units are frames with the codec on; spec 024's
+    // second-recording cells first needed a fill larger than the units-as-samples estimate).
+    s.memory.capacity_s = CAPACITY_S.max((n / 6000) as u32 + 1);
     let mut p = Pipeline::new(s).expect("the filler engine");
     p.start_recording().expect("start");
-    let n = units as usize * encoding.unit_samples();
     let _ = p.record(&vec![0.0f32; n], &mut []).expect("record");
     let out = p.stop_recording(&mut []).expect("stop");
     let StopResult::Kept { number, length } = out.result else {
