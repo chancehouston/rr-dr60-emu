@@ -2379,3 +2379,149 @@ mod settings_read {
         assert_eq!(one_hot_fails(m), 0, "the one-hot alone cannot see it");
     }
 }
+
+mod insert {
+    //! Spec 024 (research › The six mutants): each slot mutant caught by its named oracle; the
+    //! committed slot passes every one.
+    use rr_dr60::__test_hooks::{self as hooks, InsertMutation};
+    use rr_dr60::components::{ComponentId, InsertionPointId::BeforeLimiter};
+    use rr_dr60::{ChangeEntry, Pipeline, Stream, VasEvent};
+    use rr_dr60_harness::insert_checks::{self as ic, CONTROLS};
+    use rr_dr60_harness::stimulus;
+
+    const RATE: u32 = 48_000;
+    const DEF: [f32; 4] = [0.0, 1000.0, 0.7071, 0.0];
+
+    /// The click oracle (≥ 30 dB) with `m` applied to the smooth run.
+    fn click_ok(m: InsertMutation, change: (u32, f64)) -> bool {
+        let fs = f64::from(RATE);
+        let x = stimulus::tone(1000.0, 0.1, fs, (1.5 * fs) as usize);
+        let at = (0.5 * fs) as u64;
+        let (y, _) = ic::change_run(RATE, DEF, &x, at, change, m, 1024);
+        let (step, _) = ic::change_run(
+            RATE,
+            DEF,
+            &x,
+            at,
+            change,
+            InsertMutation { param_step: true, type_instant: true, ..InsertMutation::default() },
+            1024,
+        );
+        let n = (0.02 * fs).round();
+        let e = rr_dr60_harness::analysis::click_energy(&y, RATE, at as f64 + n / 2.0);
+        let s = rr_dr60_harness::analysis::click_energy(&step, RATE, at as f64);
+        rr_dr60_harness::analysis::db(s / e.max(1e-300)) / 2.0 >= 30.0
+    }
+
+    /// The trajectory oracle (within 1e-9 of the log smoothstep, a second landing restarting
+    /// from the current value).
+    fn trajectory_ok(m: InsertMutation) -> bool {
+        let mut p = ic::engine(ic::oracle_settings(RATE), DEF);
+        hooks::mutate_insert(&mut p, m);
+        let at = 100usize;
+        let n = 960usize;
+        p.schedule_change(Stream::OnePass, at as u64, CONTROLS[1], 2000.0, 1).unwrap();
+        p.schedule_change(Stream::OnePass, (at + n / 2) as u64, CONTROLS[1], 500.0, 2).unwrap();
+        let x = stimulus::tone(1000.0, 0.1, f64::from(RATE), at + 2 * n);
+        let _ = ic::run(&mut p, &x[..at], 64);
+        hooks::insert_tracing(&mut p, Stream::OnePass, true);
+        let _ = ic::run(&mut p, &x[at..], 64);
+        let t = hooks::insert_trace(&p, Stream::OnePass).to_vec();
+        let (l0, l1) = (rr_dr60_detmath::ln(1000.0), rr_dr60_detmath::ln(2000.0));
+        let half = n / 2;
+        let mid = rr_dr60_detmath::exp(l0 + ic::smoothstep(half as f64 / n as f64) * (l1 - l0));
+        let first_ok = (0..half).all(|i| {
+            let m = (i + 1) as f64;
+            let want = rr_dr60_detmath::exp(l0 + ic::smoothstep(m / n as f64) * (l1 - l0));
+            (t[i].0 - want).abs() / want < 1e-9
+        });
+        // The restart: the second ramp begins at the value in force (mid), not at 2000 Hz.
+        let restart_ok = (t[half].0 - mid).abs() / mid < 0.01;
+        first_ok && restart_ok
+    }
+
+    /// filter → none → filter, with no reset, equals a fresh filter (in the oracle
+    /// configuration, where nothing but the slot holds state).
+    fn toggle_ok(m: InsertMutation) -> bool {
+        let x = stimulus::tone(800.0, 0.3, f64::from(RATE), 4096);
+        let mut toggled = ic::engine(ic::oracle_settings(RATE), [1.0, 500.0, 2.0, 3.0]);
+        hooks::mutate_insert(&mut toggled, m);
+        let _ = ic::run(&mut toggled, &x, 1024);
+        toggled.set_component(BeforeLimiter, ComponentId::None).unwrap();
+        toggled.set_component(BeforeLimiter, ComponentId::BandFilter).unwrap();
+        let mut clean = ic::engine(ic::oracle_settings(RATE), [1.0, 500.0, 2.0, 3.0]);
+        ic::run(&mut toggled, &x[..512], 512) == ic::run(&mut clean, &x[..512], 512)
+    }
+
+    /// The cross-stream oracle: a recorder landing becomes the one-pass's at its next call.
+    fn mirror_ok(m: InsertMutation) -> bool {
+        let mut s = rr_dr60::Settings::new(RATE);
+        s.speech_codec_enabled = false;
+        let mut p = ic::engine(s, DEF);
+        hooks::mutate_insert(&mut p, m);
+        p.schedule_change(Stream::Record, 0, CONTROLS[1], 2000.0, 7).unwrap();
+        p.start_recording().unwrap();
+        let mut ev = vec![VasEvent::default(); 1024];
+        let _ = p.record(&stimulus::tone(500.0, 0.1, f64::from(RATE), 480), &mut ev).unwrap();
+        let _ = p.stop_recording(&mut ev).unwrap();
+        let mut log = vec![ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
+        let x = stimulus::tone(500.0, 0.1, f64::from(RATE), 64);
+        let mut y = vec![0.0f32; 64];
+        let info = p.process_with_events_and_changes(&x, &mut y, &mut ev, &mut log).unwrap();
+        info.changes == 1 && log[0].control == CONTROLS[1] && log[0].tag == 7
+    }
+
+    #[test]
+    fn the_committed_slot_passes() {
+        let none = InsertMutation::default();
+        assert!(click_ok(none, (CONTROLS[1], 2000.0)));
+        assert!(click_ok(none, (CONTROLS[0], 1.0)));
+        assert!(trajectory_ok(none));
+        assert!(toggle_ok(none));
+        assert!(mirror_ok(none));
+    }
+
+    #[test]
+    fn param_step_is_caught_by_the_click_rows() {
+        assert!(!click_ok(InsertMutation { param_step: true, ..Default::default() }, (CONTROLS[1], 2000.0)));
+    }
+
+    #[test]
+    fn type_instant_is_caught_by_the_type_click_row() {
+        assert!(!click_ok(InsertMutation { type_instant: true, ..Default::default() }, (CONTROLS[0], 1.0)));
+    }
+
+    #[test]
+    fn freq_linear_is_caught_by_the_trace() {
+        assert!(!trajectory_ok(InsertMutation { freq_linear: true, ..Default::default() }));
+    }
+
+    #[test]
+    fn restart_from_target_is_caught_by_the_trace() {
+        assert!(!trajectory_ok(InsertMutation { restart_from_target: true, ..Default::default() }));
+    }
+
+    #[test]
+    fn state_kept_on_set_is_caught_by_the_toggle_identity() {
+        assert!(!toggle_ok(InsertMutation { state_kept_on_set: true, ..Default::default() }));
+    }
+
+    #[test]
+    fn skip_store_mirror_is_caught_by_the_cross_stream_test() {
+        assert!(!mirror_ok(InsertMutation { skip_store_mirror: true, ..Default::default() }));
+    }
+
+    #[test]
+    fn six_mutants() {
+        let _ = Pipeline::new(rr_dr60::Settings::new(RATE)).unwrap();
+        let m = InsertMutation::default();
+        let InsertMutation {
+            param_step: _,
+            type_instant: _,
+            freq_linear: _,
+            restart_from_target: _,
+            state_kept_on_set: _,
+            skip_store_mirror: _,
+        } = m;
+    }
+}
