@@ -274,6 +274,11 @@ pub fn record_run_in(p: &mut Pipeline, cell: Cell, raw: &[i32]) -> (Pipeline, Ru
 pub enum Delta {
     /// Nothing: the contract.
     None,
+    /// Spec 024 SC-004: the slot left empty in the re-render while the record names a
+    /// component.
+    ComponentNone,
+    /// Spec 024 SC-004: one parameter of the store moved (the frequency × 1.5).
+    ParameterMoved,
     /// The seed + 1.
     Seed,
     /// The counter + 1.
@@ -410,6 +415,25 @@ pub fn re_render(record: &[u8], raw: &[i32], block: usize, delta: Delta) -> u64 
         _ => {}
     }
     let mut p = Pipeline::new_at_counter(s, counter).expect("the record's configuration");
+    // Spec 024 D7 (plan R1): the slot and its store restored before the schedule and the start.
+    {
+        use rr_dr60::components::{ComponentId, InsertionPointId::BeforeLimiter};
+        let mut store = r.store;
+        if delta == Delta::ParameterMoved {
+            store[1] = (store[1] * 1.5).min(20_000.0);
+        }
+        for (i, v) in store.iter().enumerate().take(4) {
+            p.set_component_parameter(BeforeLimiter, i as u32, f64::from(*v))
+                .expect("the record's parameter");
+        }
+        let c = if delta == Delta::ComponentNone {
+            ComponentId::None
+        } else {
+            r.component
+        };
+        p.set_component(BeforeLimiter, c)
+            .expect("the record's component");
+    }
     match delta {
         Delta::TwinVolume => p.set_volume(0.5).unwrap(),
         Delta::TwinRoute => p.set_route(rr_dr60::Route::Earphone),

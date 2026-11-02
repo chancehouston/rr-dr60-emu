@@ -162,7 +162,7 @@ fn shift_digests_against_the_reference() {
 /// attains 69 in one call (64 scheduled at position 0 plus the five plain changes).
 #[test]
 fn the_tight_bounds() {
-    assert_eq!(MAX_CHANGES_PER_CALL, 142);
+    assert_eq!(MAX_CHANGES_PER_CALL, 158); // restated 2026-11-01 (spec 024 D5); the player still 69
     let x = pc::vowel(0.5);
     let mut p = pc::engine(&standard, "speed_default", 48_000, &x);
     for i in 0..64u64 {

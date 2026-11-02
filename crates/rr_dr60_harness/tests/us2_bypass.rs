@@ -341,7 +341,7 @@ fn as7_cost_pointer() {
 /// US2 AS8: the C path is covered by `ffi_parity bypass_parity` and the smoke's `--bypass`.
 #[test]
 fn as8_c_parity_pointer() {
-    assert_eq!(rr_dr60::changes::MAX_CHANGES_PER_CALL, 142);
+    assert_eq!(rr_dr60::changes::MAX_CHANGES_PER_CALL, 158); // 142 before spec 024 D5
 }
 
 /// US2 AS9 (FR-004): the trap and its recipe.

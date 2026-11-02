@@ -308,11 +308,11 @@ fn c_api_validate_agrees_with_create() {
     };
     let bad_size_and_tap = RrDr60Settings {
         struct_size: 24,
-        tap: 11,
+        tap: 12, // 11 is a tap since 0.92 (spec 024 D6)
         ..base
     };
     let bad_tap_and_rate = RrDr60Settings {
-        tap: 11,
+        tap: 12,
         host_rate_hz: 22_050,
         ..base
     };
@@ -443,7 +443,7 @@ fn error_table() {
         RrDr60Status::UnsupportedHostRate
     );
     assert_eq!(
-        status(RrDr60Settings { tap: 11, ..ok }, &mut out), // 0 – 10 are taps since 0.12
+        status(RrDr60Settings { tap: 12, ..ok }, &mut out), // 0 – 10 taps since 0.12, 11 since 0.92
         RrDr60Status::InvalidArgument
     );
     assert_eq!(
@@ -3820,8 +3820,8 @@ fn bypass_parity() {
     };
     use rr_dr60_harness::bypass_checks as bp;
     assert_eq!(RrDr60Status::StageNotConfigured as u32, 36);
-    assert_eq!(rr_dr60_ffi::RR_DR60_MAX_CHANGES_PER_CALL, 142);
-    assert_eq!(MAX_CHANGES_PER_CALL, 142);
+    assert_eq!(rr_dr60_ffi::RR_DR60_MAX_CHANGES_PER_CALL, 158); // 142 before spec 024 D5
+    assert_eq!(MAX_CHANGES_PER_CALL, 158);
     // The level function, no handle.
     for (route, c_route, pos) in [
         (Route::Earphone, 1u32, rr_dr60::output::VOLUME_REFERENCE),
@@ -4671,7 +4671,7 @@ fn pitch_parity() {
     assert_eq!(RrDr60Status::InvalidSpeedMode as u32, 38);
     assert_eq!(rr_dr60_ffi::RR_DR60_SPEED_MODE_PITCH_WITH_SPEED, 0);
     assert_eq!(rr_dr60_ffi::RR_DR60_SPEED_MODE_PITCH_KEPT, 1);
-    assert_eq!(rr_dr60_ffi::RR_DR60_MAX_CHANGES_PER_CALL, 142);
+    assert_eq!(rr_dr60_ffi::RR_DR60_MAX_CHANGES_PER_CALL, 158); // 142 before spec 024 D5
     let stored = pc::square17(9000);
     for &rate in configs::measurement_rates() {
         let s = configs::settings("speed_default_no_codec", rate);
@@ -4932,7 +4932,8 @@ fn settings_read_parity() {
             RrDr60Status::Ok
         );
         assert_eq!(got, cw, "{rate} Hz: the C read equals the reconfigure");
-        for i in 0..31u32 {
+        for i in 0..36u32 {
+            // 31 before spec 024
             let mut out = RrDr60ControlReading::default();
             // SAFETY: a live handle and a local reading.
             assert_eq!(
@@ -4983,7 +4984,7 @@ fn settings_read_parity() {
                 ControlReading::Continuous(-3.0),
                 RrDr60Status::NotAPlainLiveControl,
             ),
-            (31, ControlReading::Integer(0), RrDr60Status::NoSuchControl),
+            (36, ControlReading::Integer(0), RrDr60Status::NoSuchControl), // 31 before spec 024
         ];
         for (i, r, st) in cases {
             let e = p.set_control_value(i, r).unwrap_err();

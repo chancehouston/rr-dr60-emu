@@ -52,7 +52,7 @@ fn thirty_entries_in_order() {
         .map(|e| e.identifier.to_string())
         .collect();
     assert_eq!(got, want);
-    assert_eq!(got.len(), 31); // 014: 29; spec 018 appends `battery_volts` at 29; 023 the mode at 30
+    assert_eq!(got.len(), 36); // 014: 29; spec 018 appends `battery_volts` at 29; 023 the mode at 30; 024 the slot and the band filter at 31 – 35
 }
 
 #[test]

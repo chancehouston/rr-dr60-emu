@@ -19,6 +19,7 @@ pub mod configs;
 pub mod controls_checks;
 pub mod crossfade_checks;
 pub mod golden;
+pub mod insert_checks;
 pub mod manifest_checks;
 pub mod meters_checks;
 pub mod mic_checks;

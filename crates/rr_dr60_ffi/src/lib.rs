@@ -429,7 +429,7 @@ pub const RR_DR60_SCHEDULE_CAPACITY: usize = 64; // 015 D4: equal to `rr_dr60::c
 
 /// A `changes_capacity` that is always enough for one call (spec 015 FR-005). Equal to the
 /// Rust `changes::MAX_CHANGES_PER_CALL`.
-pub const RR_DR60_MAX_CHANGES_PER_CALL: usize = 142; // 015 FR-005; 017 FR-005; 021 FR-001: equal to `rr_dr60::changes::MAX_CHANGES_PER_CALL` (a literal so cbindgen emits the define; the unit test pins it)
+pub const RR_DR60_MAX_CHANGES_PER_CALL: usize = 158; // 015 FR-005; 017 FR-005; 021 FR-001; 024 D5 (142 → 158, the 16-parameter budget): equal to `rr_dr60::changes::MAX_CHANGES_PER_CALL` (a literal so cbindgen emits the define; the unit test pins it)
 
 /// The engine's state (spec 006 FR-003), in `RrDr60EngineState.state`.
 #[repr(u32)]
@@ -4408,7 +4408,7 @@ mod tests {
         let mut s = rr_dr60_settings_default(48_000);
         assert_eq!(s.struct_size as usize, size_of::<RrDr60Settings>());
         assert!(to_settings(&s).is_ok());
-        s.tap = 11; // 0 – 10 are taps since 0.12 (spec 012 contracts/c-api.md)
+        s.tap = 12; // 0 – 10 are taps since 0.12 (spec 012 contracts/c-api.md), 11 since 0.92 (024)
         assert_eq!(
             to_settings(&s),
             Err((RrDr60Status::InvalidArgument, RrDr60SettingField::Tap))
@@ -4699,12 +4699,17 @@ mod tests {
             s.tap = v;
             assert_eq!(to_settings(&s).unwrap().tap, t, "{v}");
         }
-        // Spec 012 FR-012: taps 9 and 10 after the microphone stages; 11 is refused.
-        for (v, t) in [(9, Tap::AfterMicCapsule), (10, Tap::AfterMicAmp)] {
+        // Spec 012 FR-012: taps 9 and 10 after the microphone stages; spec 024 D6: 11 after the
+        // slot; 12 is refused.
+        for (v, t) in [
+            (9, Tap::AfterMicCapsule),
+            (10, Tap::AfterMicAmp),
+            (11, Tap::AfterInsert),
+        ] {
             s.tap = v;
             assert_eq!(to_settings(&s).unwrap().tap, t, "{v}");
         }
-        s.tap = 11;
+        s.tap = 12; // 11 is `after_insert` since 0.92 (spec 024 D6)
         assert!(to_settings(&s).is_err());
         assert_eq!(RrDr60Status::InvalidVolume as u32, 23);
         assert_eq!(RrDr60Status::TapNotOnRoute as u32, 24);
@@ -6187,7 +6192,7 @@ mod changes_tests {
         assert_eq!(RrDr60Status::ScheduleFull as u32, 27);
         assert_eq!(RrDr60Status::ControlNotOnStream as u32, 28);
         assert_eq!(RrDr60Status::NoSuchClock as u32, 29); // spec 017
-        assert_eq!(RR_DR60_MAX_CHANGES_PER_CALL, 142); // spec 017 FR-005; spec 021 FR-001
+        assert_eq!(RR_DR60_MAX_CHANGES_PER_CALL, 158); // spec 017 FR-005; spec 021 FR-001; 024 D5 (142 → 158)
         assert_eq!(
             status_from_error(Error::ReservedStream {
                 stream: Stream::Record
@@ -6723,7 +6728,7 @@ use rr_dr60::timeline::{self, KeptOrRemoved};
 
 /// The processing record form's version this library writes (spec 020 D2); it reads every
 /// earlier one and refuses 0 and any later one. Equal to the Rust `record::FORM_VERSION`.
-pub const RR_DR60_PROCESSING_RECORD_VERSION: u32 = 1; // 020 D2 (a literal so cbindgen emits the define; the unit test pins it)
+pub const RR_DR60_PROCESSING_RECORD_VERSION: u32 = 2; // 020 D2; 024 D7 (form 2 carries the slot) (a literal so cbindgen emits the define; the unit test pins it)
 
 /// `RrDr60RecordReadout.flags`: the record's library version differs from this library's.
 pub const RR_DR60_RECORD_FLAG_LIBRARY_DIFFERS: u32 = 1;
@@ -6742,6 +6747,9 @@ pub const RR_DR60_RECORD_FLAG_IMPORTED_ORIGIN: u32 = 32;
 /// Checked against a recording in memory (`rr_dr60_recording_digest_matches`): the digests
 /// differ.
 pub const RR_DR60_RECORD_FLAG_DIGEST_MISMATCH: u32 = 64;
+/// The record names a component this library does not know (spec 024 D7): the re-render is
+/// refused.
+pub const RR_DR60_RECORD_FLAG_UNKNOWN_COMPONENT: u32 = 128;
 
 /// `RrDr60StopFields.how`: the host called `rr_dr60_stop_recording` (also when its flush
 /// filled the memory).
@@ -8246,6 +8254,10 @@ mod record_contract_tests {
             RR_DR60_RECORD_FLAG_DIGEST_MISMATCH,
             record::flags::DIGEST_MISMATCH
         );
+        assert_eq!(
+            RR_DR60_RECORD_FLAG_UNKNOWN_COMPONENT,
+            record::flags::UNKNOWN_COMPONENT
+        );
         assert_eq!(RR_DR60_STREAM_WORD_PLAYBACK, rr_dr60::STREAM_PLAYBACK);
         assert_eq!(RR_DR60_STREAM_WORD_ONE_PASS, rr_dr60::STREAM_ONE_PASS);
         assert_eq!(RR_DR60_STREAM_WORD_RECORD, rr_dr60::STREAM_RECORD);
@@ -8280,7 +8292,7 @@ mod record_contract_tests {
         // SAFETY: the first 376 bytes are a filled struct.
         let c = unsafe { big.0.as_ptr().cast::<RrDr60RecordReadout>().read() };
         assert_eq!(c.struct_size, READOUT_SIZE);
-        assert_eq!(c.to_core().unwrap().form_version, 1);
+        assert_eq!(c.to_core().unwrap().form_version, 2); // 024 D7: form 2
         let mut small = Big([0; READOUT_SIZE as usize + 16]);
         small.0[..4].copy_from_slice(&(READOUT_SIZE - 1).to_ne_bytes());
         // SAFETY: a writable buffer.

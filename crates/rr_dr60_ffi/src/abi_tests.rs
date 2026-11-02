@@ -1233,7 +1233,7 @@ fn control_reading_engine_order() {
     let mut b = Painted::new(24);
     // SAFETY: as above.
     assert_eq!(
-        unsafe { rr_dr60_control_value(h, 31, b.ptr()) },
+        unsafe { rr_dr60_control_value(h, 36, b.ptr()) },
         RrDr60Status::NoSuchControl
     );
     assert!(b.untouched_after(4));
@@ -1380,7 +1380,7 @@ fn control_reading_settings_write_order() {
     // SAFETY: local values.
     unsafe {
         assert_eq!(
-            rr_dr60_set_settings_control_value(&mut s, 31, &ok),
+            rr_dr60_set_settings_control_value(&mut s, 36, &ok),
             RrDr60Status::NoSuchControl
         );
         assert_eq!(
@@ -1484,7 +1484,7 @@ fn control_reading_live_write_order() {
             RrDr60Status::InvalidArgument
         );
         assert_eq!(
-            rr_dr60_set_control_value(h, 31, &vol),
+            rr_dr60_set_control_value(h, 36, &vol),
             RrDr60Status::NoSuchControl
         );
         assert_eq!(

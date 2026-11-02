@@ -1479,7 +1479,8 @@ fn settings_read_allocate_nothing() {
         MEASURING.with(|m| m.set(true));
         let before = counts();
         let mut ok = 0usize;
-        for i in 0..32u32 {
+        for i in 0..37u32 {
+            // 36 controls since spec 024 (31 before), plus one index past the manifest.
             ok += usize::from(p.control_value(i).is_ok());
             ok += usize::from(control_map::settings_value(&s, i).is_ok());
             let _ = control_map::set_settings_value(&mut s, i, ControlReading::Continuous(1.0));
@@ -1498,7 +1499,7 @@ fn settings_read_allocate_nothing() {
         let after = counts();
         MEASURING.with(|m| m.set(false));
         assert_eq!(st, RrDr60Status::Ok);
-        assert_eq!(ok, 31 + 26, "{rate} Hz: every read ran");
+        assert_eq!(ok, 36 + 26, "{rate} Hz: every read ran");
         assert_eq!(after, before, "{rate} Hz: the settings read allocated");
         // SAFETY: destroying the handle once.
         unsafe { rr_dr60_destroy(handle) };
