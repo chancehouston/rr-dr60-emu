@@ -3,36 +3,7 @@
 //!
 //! Run: `cargo run -q -p rr_dr60_harness --example manifest`
 
-use rr_dr60::{Confidence, StagePath, StageStatus, manifest};
-
-fn status(s: StageStatus) -> &'static str {
-    match s {
-        StageStatus::NotModeled => "not_modeled",
-        StageStatus::Assumed => "assumed",
-        StageStatus::Sourced => "sourced",
-        StageStatus::Checked => "checked",
-        _ => "unknown",
-    }
-}
-
-fn path(p: StagePath) -> &'static str {
-    match p {
-        StagePath::Record => "record",
-        StagePath::Playback => "playback",
-        StagePath::Both => "both",
-        _ => "unknown",
-    }
-}
-
-fn confidence(c: Confidence) -> &'static str {
-    match c {
-        Confidence::NotApplicable => "not_applicable",
-        Confidence::Low => "low",
-        Confidence::Medium => "medium",
-        Confidence::High => "high",
-        _ => "unknown",
-    }
-}
+use rr_dr60::manifest;
 
 /// Prints `key: value`, or `key:` with nothing after the colon when the value is empty.
 fn line(key: &str, value: &str) {
@@ -63,9 +34,9 @@ fn main() {
         println!("stage {} {}", s.number, s.identifier);
         println!("name: {}", s.name);
         println!("description: {}", s.description);
-        println!("status: {}", status(s.status));
-        println!("path: {}", path(s.path));
-        println!("confidence: {}", confidence(s.confidence));
+        println!("status: {}", s.status.token());
+        println!("path: {}", s.path.token());
+        println!("confidence: {}", s.confidence.token());
         line("sources", &s.sources.join(", "));
         line("assumptions", &s.assumptions.join(", "));
         line("coverage", s.coverage);

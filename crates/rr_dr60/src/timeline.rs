@@ -210,7 +210,10 @@ pub fn input_to_kept(
 
 /// The one-pass's clocks (spec 015 and 017's pointer to 020): the input-clock position an
 /// output-clock `position` aligns with, through the one-pass's `latency` (the engine's
-/// [`latency_samples`](crate::Pipeline::latency_samples), host samples) and, with the gate in
+/// [`latency_samples`](crate::Pipeline::latency_samples), host samples; for the
+/// voice-activation reports' positions, which exclude the speech coder's delay, pass
+/// [`one_pass_report_latency_samples`](crate::Pipeline::one_pass_report_latency_samples): spec
+/// 026 D1) and, with the gate in
 /// `drop` mode, the host samples its voice-activation `events` removed at or before the output
 /// (in mute mode nothing is removed); `(input, clamped)` with the clamp at 0 (the first outputs
 /// align with inputs before the stream's start).

@@ -217,6 +217,7 @@ mod form;
 pub mod input;
 pub mod manifest;
 mod memory;
+pub mod meters;
 pub mod mic;
 pub mod output;
 mod paths;
@@ -233,6 +234,7 @@ mod test_util;
 pub mod timeline;
 mod transport;
 mod validate;
+pub mod wording;
 
 pub use changes::{ChangeEntry, Clock, STREAM_ONE_PASS, STREAM_PLAYBACK, STREAM_RECORD, Stream};
 pub use controls::{

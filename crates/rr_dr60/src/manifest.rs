@@ -84,6 +84,70 @@ pub enum Confidence {
     High = 3,
 }
 
+impl StageStatus {
+    /// The canonical text's word (spec 026 D6): `not_modeled`, `assumed`, `sourced`, `checked`.
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::NotModeled => "not_modeled",
+            Self::Assumed => "assumed",
+            Self::Sourced => "sourced",
+            Self::Checked => "checked",
+        }
+    }
+
+    /// The display label (spec 026 D6), lowercase (a host capitalizes): never "checked" alone.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::NotModeled => "not modeled",
+            Self::Assumed => "assumed",
+            Self::Sourced => "sourced",
+            Self::Checked => "checked against a real unit",
+        }
+    }
+}
+
+impl StagePath {
+    /// The canonical text's word (spec 026 D6): `record`, `playback`, `both`.
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::Record => "record",
+            Self::Playback => "playback",
+            Self::Both => "both",
+        }
+    }
+
+    /// The display label (spec 026 D6), lowercase.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Record => "record",
+            Self::Playback => "playback",
+            Self::Both => "record and playback",
+        }
+    }
+}
+
+impl Confidence {
+    /// The canonical text's word (spec 026 D6): `not_applicable`, `low`, `medium`, `high`.
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::NotApplicable => "not_applicable",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+
+    /// The display label (spec 026 D6), lowercase; a display adds the noun ("low confidence").
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::NotApplicable => "not applicable",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+}
+
 /// How many stages carry each [`StageStatus`] (spec 007 FR-003); the four sum to
 /// [`Header::stage_count`].
 #[non_exhaustive]

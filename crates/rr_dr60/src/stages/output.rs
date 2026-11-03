@@ -605,6 +605,21 @@ impl OutputChain {
         }
     }
 
+    /// Spec 026 D4: whether a playback-group meter field the chain writes is reached (the
+    /// rules of [`finalize_into`](Self::finalize_into)): `route_peak` (9) and
+    /// `output_clamp_count` (10, also the clamp option) at the route output; `amp_clip_count`
+    /// (11) at the knee's taps on the speaker route with stage 11 on (the live route);
+    /// `battery_ceiling` (12) at the knee's taps.
+    pub(crate) fn meter_reached(&self, field: usize) -> bool {
+        match field {
+            9 => self.meter_route,
+            10 => self.meter_route && self.clamp,
+            11 => self.meter_amp && self.route == Route::Speaker && self.run_amp,
+            12 => self.meter_amp,
+            _ => false,
+        }
+    }
+
     /// Spec 016 (research R-01): writes the route figures into `m` when the return point is
     /// the route output (otherwise `m` keeps its rest values) and clears the accumulators.
     pub(crate) fn finalize_into(&mut self, m: &mut crate::pipeline::Meters) {

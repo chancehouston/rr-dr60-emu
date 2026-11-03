@@ -201,10 +201,12 @@ impl RecordHalf {
             run_record: settings.record_stage_enabled,
             clamp: ClampStage::new(settings.adc_clamp_enabled),
             vas: VasStage::new(&settings.vas),
-            run_vas: settings.vas.enabled
-                && (!honour_tap
-                    || matches!(settings.tap, Tap::AfterVas | Tap::AfterDecoder)
-                    || settings.tap.is_after_stage_10()),
+            // Spec 026 D1: the one-pass rule is the published one.
+            run_vas: if honour_tap {
+                settings.one_pass_vas_runs()
+            } else {
+                settings.vas.enabled
+            },
             mute: settings.vas.mode == VasMode::Mute,
             forced: false,
             after_drop: false,
@@ -596,6 +598,26 @@ pub(crate) struct RecordPath {
 }
 
 impl RecordPath {
+    /// Spec 026 D4: whether a record-group meter field (0 – 7) is reached on this path: the
+    /// point processed at the tap and its stage running.
+    pub(crate) fn meter_reached(&self, field: usize) -> bool {
+        let to = |stop: FrontStop| !self.front_tap || self.front_stop as u8 >= stop as u8;
+        match field {
+            0 => true,
+            1 => to(FrontStop::Amp),
+            2 | 3 => self.run_limiter && to(FrontStop::Limiter),
+            4 => !self.front_tap,
+            5 => !self.front_tap && self.half.clamp.enabled(),
+            6 | 7 => !self.front_tap && self.half.run_vas,
+            _ => false,
+        }
+    }
+
+    /// The record path's latency to the encoder's input in host samples (stage 4's point).
+    pub(crate) fn pre_encoder_latency(&self) -> u32 {
+        self.latency
+    }
+
     /// A record path for validated `settings` and its `plan`. `honour_tap`: the one-pass tap
     /// rules apply (no converter at the "after AGC" tap; the VAS off at the taps before it);
     /// `device_positions`: VAS events are placed in device samples from the start (the
@@ -617,10 +639,11 @@ impl RecordPath {
         };
         // Spec 008 FR-004, FR-015: the codec runs after the recorder whenever it is on, and
         // after the one-pass record path at the taps from the decoder's on.
-        let codec_runs = settings.speech_codec_enabled
-            && (!honour_tap
-                || settings.tap == Tap::AfterDecoder
-                || settings.tap.is_after_stage_10());
+        let codec_runs = if honour_tap {
+            settings.one_pass_codec_runs() // spec 026 D1: the published rule
+        } else {
+            settings.speech_codec_enabled
+        };
         let codec_delay = if codec_runs {
             codec_delay_host_samples(settings.host_rate_hz)
         } else {
@@ -1144,6 +1167,15 @@ pub(crate) struct PlaybackPath {
 }
 
 impl PlaybackPath {
+    /// Spec 026 D4: whether a playback-group meter field (8 – 12) is reached on this path.
+    pub(crate) fn meter_reached(&self, field: usize) -> bool {
+        match field {
+            8 => self.meter_playback,
+            9..=12 => self.chain.meter_reached(field),
+            _ => false,
+        }
+    }
+
     /// A playback path for validated `settings` and its `plan`. Allocates (the interpolator);
     /// construction time only.
     pub(crate) fn new(settings: &Settings, plan: &RatePlan, honour_tap: bool) -> Self {

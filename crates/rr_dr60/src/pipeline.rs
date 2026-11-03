@@ -1329,6 +1329,46 @@ impl Pipeline {
         self.meters
     }
 
+    /// Whether `call` reaches the point of meter field `field` (the index in
+    /// [`meters::FIELDS`](crate::meters::FIELDS)) at these settings (spec 026 D4): the engine's
+    /// own rule, from its construction-time state and, for `amp_clip_count`, the live route.
+    /// A field a call does not reach reads its rest value. `false` for an index past the fields.
+    /// Real-time safe.
+    pub fn meter_reached(&self, field: usize, call: crate::meters::MeterCall) -> bool {
+        use crate::meters::MeterCall;
+        match (call, field) {
+            (MeterCall::OnePass, 0..=7) => self.one_pass.rec.meter_reached(field),
+            (MeterCall::OnePass, 8..=12) => self.one_pass.play.meter_reached(field),
+            (MeterCall::Record, 0..=7) => self.recorder.meter_reached(field),
+            (MeterCall::Play, 8..=12) => self.player.meter_reached(field),
+            _ => false,
+        }
+    }
+
+    /// How far behind its reference meter field `field`'s point runs, in host samples (spec 026
+    /// D4), for `call`. For the one-pass and the recorder the reference is the input: 0 at the
+    /// front points (fields 0 – 3); the record path's latency to the encoder (the conversion
+    /// and stage 4) at the device-rate points (4 – 7). For the playback group the reference is
+    /// the stored samples on a play call (the playback latency, at speed level 3; at other
+    /// levels see [`timeline::place_at`](crate::timeline::place_at)) and the input on the
+    /// one-pass (the one-pass latency), up to the output chain's input: the chain's own small
+    /// group delay is not included. `None` for an index past the fields or a field the call
+    /// does not reach. Real-time safe.
+    pub fn meter_lag_samples(&self, field: usize, call: crate::meters::MeterCall) -> Option<u32> {
+        use crate::meters::MeterCall;
+        if !self.meter_reached(field, call) {
+            return None;
+        }
+        Some(match (call, field) {
+            (_, 0..=3) => 0,
+            (MeterCall::OnePass, 4..=7) => self.one_pass.rec.pre_encoder_latency(),
+            (MeterCall::Record, 4..=7) => self.recorder.pre_encoder_latency(),
+            (MeterCall::Play, _) => self.player.latency_host_samples(),
+            (MeterCall::OnePass, _) => self.latency,
+            _ => return None,
+        })
+    }
+
     /// This engine's rest read-out (spec 016 FR-001): [`Meters::default`] with the configured
     /// hang length in `hang_remaining_samples`.
     pub fn rest_meters(&self) -> Meters {
@@ -1373,6 +1413,21 @@ impl Pipeline {
     /// FR-001).
     pub fn latency_samples(&self) -> u32 {
         self.latency
+    }
+
+    /// The latency the one-pass's voice-activation reports align with (spec 026 D1):
+    /// [`latency_samples`](Self::latency_samples) without the speech coder's delay when it runs
+    /// ([`Settings::one_pass_codec_runs`]). The reports' positions exclude the coder's delay;
+    /// the coder's term is added after the single rounding, so this is exact. Pass it to
+    /// [`timeline::onepass_output_to_input`](crate::timeline::onepass_output_to_input) for the
+    /// reports. Real-time safe.
+    pub fn one_pass_report_latency_samples(&self) -> u32 {
+        if self.settings.one_pass_codec_runs() {
+            self.latency
+                .saturating_sub(paths::codec_delay_host_samples(self.settings.host_rate_hz))
+        } else {
+            self.latency
+        }
     }
 
     /// The memory's encoding (spec 008 FR-012): speech-codec frames with the codec on,

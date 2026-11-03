@@ -95,9 +95,9 @@ impl Tap {
     pub const AFTER_STAGE_10: Tap = Tap::AfterPlayback;
 
     /// A host-rate tap at the front of the record path, where no conversion or later stage
-    /// runs: after stage 1, after stage 2 or after the limiter (spec 005 FR-001; spec 012
-    /// FR-008).
-    pub(crate) const fn is_front(self) -> bool {
+    /// runs: after stage 1, after stage 2, after the insertion slot or after the limiter (spec
+    /// 005 FR-001; spec 012 FR-008; public since spec 026 D1).
+    pub const fn is_front(self) -> bool {
         matches!(
             self,
             Tap::AfterAgc | Tap::AfterMicCapsule | Tap::AfterMicAmp | Tap::AfterInsert
@@ -105,8 +105,8 @@ impl Tap {
     }
 
     /// Whether everything through stage 10 runs for this tap: [`Tap::AfterPlayback`] and the
-    /// four output-chain taps (spec 009 FR-011).
-    pub(crate) const fn is_after_stage_10(self) -> bool {
+    /// four output-chain taps (spec 009 FR-011; public since spec 026 D1).
+    pub const fn is_after_stage_10(self) -> bool {
         matches!(
             self,
             Tap::AfterPlayback
@@ -550,6 +550,25 @@ pub struct Settings {
 }
 
 impl Settings {
+    /// Whether the voice-activation gate runs on the **one-pass** for these settings (spec 026
+    /// D1): enabled, and the tap at the gate, the decoder or after stage 10. The recorder runs
+    /// the gate whenever it is enabled: it ignores the tap.
+    #[must_use]
+    pub const fn one_pass_vas_runs(&self) -> bool {
+        self.vas.enabled
+            && (matches!(self.tap, Tap::AfterVas | Tap::AfterDecoder)
+                || self.tap.is_after_stage_10())
+    }
+
+    /// Whether the speech coder runs on the **one-pass** for these settings (spec 026 D1): on,
+    /// and the tap at or after the decoder. The recorder runs the coder whenever it is on; the
+    /// one-pass's latency includes its delay exactly when this is true.
+    #[must_use]
+    pub const fn one_pass_codec_runs(&self) -> bool {
+        self.speech_codec_enabled
+            && (matches!(self.tap, Tap::AfterDecoder) || self.tap.is_after_stage_10())
+    }
+
     /// Default settings for the given host rate: the limiter and the VAS on with the device
     /// values, both band-limit stages and the ADC clamp on, the speech codec on, the output
     /// chain on, the tap at the route output (since 0.9, spec 009 FR-010; 0.8's output is
