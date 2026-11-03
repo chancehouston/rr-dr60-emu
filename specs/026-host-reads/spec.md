@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-03
 
-**Status**: Draft reviewed 2026-11-03 (coach 1 – 10, hardware B1 – B9, product M1 – M7, applied at the defaults below); clarified 2026-11-03 (four questions, every answer the recommended one). **Spec approved by the owner 2026-11-03 (D1 – D9).** The plan next.
+**Status**: Draft reviewed 2026-11-03 (coach 1 – 10, hardware B1 – B9, product M1 – M7, applied at the defaults below); clarified 2026-11-03 (four questions, every answer the recommended one). **Spec approved by the owner 2026-11-03 (D1 – D9).** Plan reviewed (coach 1 – 11, hardware B1 – B12, product M1 – M6) and **approved by the owner 2026-11-03**, with D2's front taps reporting their own stages' settle. Tasks next.
 
 **Input**: Engine issues #72 – #75, #77 – #79, filed by the desktop workbench (rr-dr60-workbench, features 001 – 006) under its constitution principle I: an engine gap becomes an engine issue, and the workbench does not hide it. Each asks the engine to publish a rule or a read that a host reaches today only by quoting crate-private code or the unpublished harness; #77 is a Swift divergence. **The re-render (#76) is not in this spec**: the draft reviews split it into its own feature (027) because it allocates, takes the i24 feed point, adds errors and a delta API, and the app's Rebuild needs it to return the rebuilt stored form, not a digest (product M1).
 
@@ -21,7 +21,7 @@
 
 ### Session 2026-11-03 (the plan reviews: restatements for the plan sign-off)
 
-- **D2's figure** (coach 1, hardware B1 – B6). It is defined once: the silence until every kept sample is out and the output is within 10⁻⁵ of its own peak against a silent-input twin, while the gate stays open. It counts both converters (4·D) and uses the SVF's corrected settle rule, with the worst case about 2.43 s at 96 kHz rather than 1.83 s. **At the front taps it reports the front stages' settle, not 0**: the owner's decision at the plan sign-off, since D2 as approved says 0.
+- **D2's figure** (coach 1, hardware B1 – B6). It is defined once: the silence until every kept sample is out and the output is within 10⁻⁵ of its own peak against a silent-input twin, while the gate stays open. It counts both converters (4·D) and uses the SVF's corrected settle rule, with the worst case about 2.43 s at 96 kHz rather than 1.83 s. **At the front taps it reports the front stages' settle, not 0** (the owner's decision at the plan sign-off, 2026-11-03; D2's "0 at the front taps" is superseded).
 - **D3's matcher** returns the matched span. Its word class is Unicode `\w` with ASCII folding, and the regex oracle is permanent. AS2's "before the regex is deleted" is struck.
 - **D4's lag and reach** are calls with the call (and the live route), not struct fields. `RrDr60MeterField` is 40 bytes.
 - **D6's labels** are as plan R-06 lists them. The README keeps "—" by its generator's rule, so AS1 covers every non-empty cell.

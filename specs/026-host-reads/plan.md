@@ -1,6 +1,6 @@
 # Implementation Plan: Host reads
 
-**Branch**: `026-host-reads` | **Date**: 2026-11-03 | **Spec**: [spec.md](spec.md) (approved by the owner 2026-11-03)
+**Branch**: `026-host-reads` | **Date**: 2026-11-03 | **Spec**: [spec.md](spec.md) (approved by the owner 2026-11-03) | **Plan approved by the owner 2026-11-03**
 
 ## Summary
 
@@ -40,7 +40,7 @@ The R-items are mirrored in [research.md](research.md); the types in [data-model
   - C: three functions taking a settings pointer or a handle, with an `out` and the 022 order of refusals.
 - **R-02 D2** (restated by the plan reviews: hardware B1 – B6, coach 1, 6).
   - **The definition**: the host input samples of silence after the input until every kept sample is out and the output is within 10⁻⁵ of the stimulus's own output peak against a silent-input twin (same counter and seed), while the gate stays open.
-  - **At the front taps** the figure is the settle of the front stages that run: 0 at `AfterMicCapsule`; stage 2's at `AfterMicAmp`; plus the band filter's at `AfterInsert` and `AfterAgc`. This is the owner's decision at plan sign-off; the spec's D2 says "0 at the front taps".
+  - **At the front taps** the figure is the settle of the front stages that run: 0 at `AfterMicCapsule`; stage 2's at `AfterMicAmp`; plus the band filter's at `AfterInsert` and `AfterAgc`. The owner's decision at the plan sign-off, 2026-11-03.
   - **The sum** (host samples):
     - N_front: stage 2's three first-order sections at the host rate. Plus N_band, the band filter's settle, when the slot holds it.
     - Then, where `l ≠ m`: 4·D, both converters' full responses (B1: the player's 2D covers one), plus ⌈(N₄·[record stage] + 180·[coder] + N₁₀·[stage 10] + 1)·m/l⌉. N₄ = 160, N₁₀ = 121 device samples (reproduced); the + 1 is the device grid's phase.
