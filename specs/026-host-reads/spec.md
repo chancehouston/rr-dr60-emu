@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-03
 
-**Status**: Draft reviewed 2026-11-03 (coach 1 – 10, hardware B1 – B9, product M1 – M7, applied at the defaults below); clarified 2026-11-03 (four questions, every answer the recommended one). The owner's spec sign-off next.
+**Status**: Draft reviewed 2026-11-03 (coach 1 – 10, hardware B1 – B9, product M1 – M7, applied at the defaults below); clarified 2026-11-03 (four questions, every answer the recommended one). **Spec approved by the owner 2026-11-03 (D1 – D9).** The plan next.
 
 **Input**: Engine issues #72 – #75, #77 – #79, filed by the desktop workbench (rr-dr60-workbench, features 001 – 006) under its constitution principle I: an engine gap becomes an engine issue, and the workbench does not hide it. Each asks the engine to publish a rule or a read that a host reaches today only by quoting crate-private code or the unpublished harness; #77 is a Swift divergence. **The re-render (#76) is not in this spec**: the draft reviews split it into its own feature (027) because it allocates, takes the i24 feed point, adds errors and a delta API, and the app's Rebuild needs it to return the rebuilt stored form, not a digest (product M1).
 
