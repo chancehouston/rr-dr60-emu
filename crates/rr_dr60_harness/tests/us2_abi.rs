@@ -388,11 +388,16 @@ fn spec_026_appended_only() {
         return;
     }
     let old = String::from_utf8(out.stdout).unwrap();
-    let new = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../rr_dr60_ffi/include/rr_dr60.h"
-    ))
-    .unwrap();
+    // Restated by spec 027 (spec 023's lesson): the two revisions, 0.92's and 0.93's merges, so a
+    // later feature's additions do not move this pin.
+    let Some(out) = git(&["show", "3890bfe:crates/rr_dr60_ffi/include/rr_dr60.h"]) else {
+        return;
+    };
+    if !out.status.success() {
+        eprintln!("3890bfe unavailable: skipped");
+        return;
+    }
+    let new = String::from_utf8(out.stdout).unwrap();
     let functions = |src: &str| -> std::collections::BTreeSet<String> {
         src.lines()
             .filter(|l| {
@@ -463,6 +468,152 @@ fn spec_026_appended_only() {
     );
     assert_eq!(added(&types), ["RrDr60MeterField"]);
     assert_eq!(RrDr60Status::NoSuchManifestWord as u32, 48);
+    let rows = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../swift/Tests/RRDR60Tests/Fixtures/abi-rows-48000.txt"
+    ))
+    .unwrap();
+    assert!(!rows.contains("MeterField") && !rows.contains("meter_field"));
+}
+
+/// Spec 027 D8 (FR-008, SC-003): from 0.93's merge (3890bfe) to the working header, every
+/// function, status and type is kept and the additions are exactly the ten reads, the one
+/// struct and the five statuses; `RrDr60MeterField` stays out of the frozen `--abi` rows.
+#[test]
+fn spec_027_appended_only() {
+    let Some(out) = git(&["show", "3890bfe:crates/rr_dr60_ffi/include/rr_dr60.h"]) else {
+        eprintln!("git unavailable: skipped");
+        return;
+    };
+    if !out.status.success() {
+        eprintln!("3890bfe unavailable: skipped");
+        return;
+    }
+    let old = String::from_utf8(out.stdout).unwrap();
+    let new = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../rr_dr60_ffi/include/rr_dr60.h"
+    ))
+    .unwrap();
+    let functions = |src: &str| -> std::collections::BTreeSet<String> {
+        src.lines()
+            .filter(|l| {
+                l.starts_with("RrDr60Status rr_dr60_") || l.starts_with("uint32_t rr_dr60_")
+            })
+            .filter_map(|l| {
+                let i = l.find("rr_dr60_")?;
+                Some(
+                    l[i..]
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect(),
+                )
+            })
+            .collect()
+    };
+    let statuses = |src: &str| -> std::collections::BTreeSet<String> {
+        src.lines()
+            .filter_map(|l| l.trim().strip_prefix("RR_DR60_STATUS_"))
+            .map(|r| {
+                r.chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect()
+            })
+            .collect()
+    };
+    let types = |src: &str| -> std::collections::BTreeSet<String> {
+        src.lines()
+            .filter_map(|l| l.strip_prefix("typedef struct "))
+            .map(|r| r.chars().take_while(|c| c.is_alphanumeric()).collect())
+            .collect()
+    };
+    let added = |f: &dyn Fn(&str) -> std::collections::BTreeSet<String>| {
+        let (o, n) = (f(&old), f(&new));
+        assert!(
+            o.is_subset(&n),
+            "removed: {:?}",
+            o.difference(&n).collect::<Vec<_>>()
+        );
+        n.difference(&o).cloned().collect::<Vec<_>>()
+    };
+    let mut fns = added(&functions);
+    fns.sort();
+    let want: Vec<String> = [
+        "rr_dr60_fill_to_remaining",
+        "rr_dr60_rerender_destroy",
+        "rr_dr60_rerender_export",
+        "rr_dr60_rerender_export_len",
+        "rr_dr60_rerender_feed_f32",
+        "rr_dr60_rerender_feed_i24",
+        "rr_dr60_rerender_finish",
+        "rr_dr60_rerender_into_pipeline",
+        "rr_dr60_rerender_meters",
+        "rr_dr60_rerender_new",
+        "rr_dr60_rerender_plan_clone",
+        "rr_dr60_rerender_plan_component",
+        "rr_dr60_rerender_plan_control_value",
+        "rr_dr60_rerender_plan_counter",
+        "rr_dr60_rerender_plan_destroy",
+        "rr_dr60_rerender_plan_edited",
+        "rr_dr60_rerender_plan_flags",
+        "rr_dr60_rerender_plan_from_record",
+        "rr_dr60_rerender_plan_insert_row",
+        "rr_dr60_rerender_plan_parameter",
+        "rr_dr60_rerender_plan_remaining_samples",
+        "rr_dr60_rerender_plan_remove_row",
+        "rr_dr60_rerender_plan_row",
+        "rr_dr60_rerender_plan_row_count",
+        "rr_dr60_rerender_plan_seed",
+        "rr_dr60_rerender_plan_set_collect_run",
+        "rr_dr60_rerender_plan_set_component",
+        "rr_dr60_rerender_plan_set_control_value",
+        "rr_dr60_rerender_plan_set_counter",
+        "rr_dr60_rerender_plan_set_parameter",
+        "rr_dr60_rerender_plan_set_remaining_samples",
+        "rr_dr60_rerender_plan_set_row",
+        "rr_dr60_rerender_plan_set_seed",
+        "rr_dr60_rerender_progress",
+        "rr_dr60_rerender_record_len",
+        "rr_dr60_rerender_record_write",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    // `void` destroys are not `RrDr60Status`/`uint32_t` declarations: read them separately.
+    let voids: Vec<String> = new
+        .lines()
+        .filter_map(|l| l.strip_prefix("void rr_dr60_rerender_"))
+        .map(|r| format!("rr_dr60_rerender_{}", r.split('(').next().unwrap()))
+        .collect();
+    let mut got = fns.clone();
+    got.extend(voids);
+    got.sort();
+    got.dedup();
+    assert_eq!(got, want);
+    assert_eq!(
+        added(&statuses),
+        [
+            "FEED_KIND_MIXED",
+            "HOST_RATE_FIXED",
+            "IMPORTED_RECORD",
+            "INPUT_SHORT",
+            "INVALID_SAMPLE",
+            "RERENDER_STATE",
+            "RUN_NOT_COLLECTED",
+            "RUN_TOO_LARGE",
+            "UNKNOWN_COMPONENT",
+        ]
+    );
+    assert_eq!(
+        added(&types),
+        [
+            "RrDr60ReRender",
+            "RrDr60ReRenderFed",
+            "RrDr60ReRenderOutcome",
+            "RrDr60ReRenderPlan"
+        ]
+    );
+    assert_eq!(RrDr60Status::UnknownComponent as u32, 57);
     let rows = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../swift/Tests/RRDR60Tests/Fixtures/abi-rows-48000.txt"
