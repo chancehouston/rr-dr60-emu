@@ -373,3 +373,100 @@ fn spec_025_moved_nothing() {
     assert_eq!(size_of::<RrDr60ControlReading>(), 24);
     assert_eq!(RrDr60Status::InvalidSpeedMode as u32, 38);
 }
+
+/// Spec 026 D7 (FR-007, SC-003): from 0.92's merge (2a170d4) to the working header, every
+/// function, status and type is kept and the additions are exactly the ten reads, the one
+/// struct and the five statuses; `RrDr60MeterField` stays out of the frozen `--abi` rows.
+#[test]
+fn spec_026_appended_only() {
+    let Some(out) = git(&["show", "2a170d4:crates/rr_dr60_ffi/include/rr_dr60.h"]) else {
+        eprintln!("git unavailable: skipped");
+        return;
+    };
+    if !out.status.success() {
+        eprintln!("2a170d4 unavailable: skipped");
+        return;
+    }
+    let old = String::from_utf8(out.stdout).unwrap();
+    let new = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../rr_dr60_ffi/include/rr_dr60.h"
+    ))
+    .unwrap();
+    let functions = |src: &str| -> std::collections::BTreeSet<String> {
+        src.lines()
+            .filter(|l| {
+                l.starts_with("RrDr60Status rr_dr60_") || l.starts_with("uint32_t rr_dr60_")
+            })
+            .filter_map(|l| {
+                let i = l.find("rr_dr60_")?;
+                Some(
+                    l[i..]
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect(),
+                )
+            })
+            .collect()
+    };
+    let statuses = |src: &str| -> std::collections::BTreeSet<String> {
+        src.lines()
+            .filter_map(|l| l.trim().strip_prefix("RR_DR60_STATUS_"))
+            .map(|r| {
+                r.chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect()
+            })
+            .collect()
+    };
+    let types = |src: &str| -> std::collections::BTreeSet<String> {
+        src.lines()
+            .filter_map(|l| l.strip_prefix("typedef struct "))
+            .map(|r| r.chars().take_while(|c| c.is_alphanumeric()).collect())
+            .collect()
+    };
+    let added = |f: &dyn Fn(&str) -> std::collections::BTreeSet<String>| {
+        let (o, n) = (f(&old), f(&new));
+        assert!(
+            o.is_subset(&n),
+            "removed: {:?}",
+            o.difference(&n).collect::<Vec<_>>()
+        );
+        n.difference(&o).cloned().collect::<Vec<_>>()
+    };
+    let mut fns = added(&functions);
+    fns.sort();
+    assert_eq!(
+        fns,
+        [
+            "rr_dr60_manifest_word",
+            "rr_dr60_meter_field",
+            "rr_dr60_meter_field_count",
+            "rr_dr60_meter_lag_samples",
+            "rr_dr60_meter_reached",
+            "rr_dr60_one_pass_drain_samples",
+            "rr_dr60_one_pass_report_latency_samples",
+            "rr_dr60_settings_one_pass_codec_runs",
+            "rr_dr60_settings_one_pass_vas_runs",
+            "rr_dr60_wording_first_hit",
+        ]
+    );
+    assert_eq!(
+        added(&statuses),
+        [
+            "INVALID_UTF8",
+            "NO_SUCH_MANIFEST_WORD",
+            "NO_SUCH_METER_CALL",
+            "NO_SUCH_METER_FIELD",
+            "NO_SUCH_WORDING_KIND",
+        ]
+    );
+    assert_eq!(added(&types), ["RrDr60MeterField"]);
+    assert_eq!(RrDr60Status::NoSuchManifestWord as u32, 48);
+    let rows = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../swift/Tests/RRDR60Tests/Fixtures/abi-rows-48000.txt"
+    ))
+    .unwrap();
+    assert!(!rows.contains("MeterField") && !rows.contains("meter_field"));
+}

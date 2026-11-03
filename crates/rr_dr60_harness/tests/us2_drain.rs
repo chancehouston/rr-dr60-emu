@@ -42,21 +42,24 @@ fn linear(rate: u32, tap: Tap) -> Settings {
     s
 }
 
-/// A tone at `f` ending on a peak, then a burst: the stimulus the settle is read on.
-fn stim(rate: u32, f: f64) -> Vec<f32> {
-    let fs = f64::from(rate);
-    // About 0.2 s of the tone, cut a quarter period after a whole number of periods (a peak).
-    let periods = (0.2 * f).floor().max(1.0);
-    let n = ((periods + 0.25) * fs / f).round() as usize + 1;
-    let mut x = stimulus::tone(f, 0.05, fs, n);
-    x.extend(stimulus::tone(1000.0, 0.05, fs, (fs * 0.05) as usize));
-    x
+/// The stimulus the bound is asserted on: an impulse (0.05) as the input's last sample, so the
+/// output's peak is that sample's response (the impulse rule of the figure, restated 2026-11-03).
+fn impulse() -> Vec<f32> {
+    vec![0.05]
 }
 
-/// `teeth`: the row's bound has one dominant term (the converters alone, the band filter), so
-/// the figure must be under twice the silence actually needed; elsewhere the sum of settles is
-/// looser and the needed silence is reported.
-fn check(s: Settings, slot: Option<(f64, f64)>, f: f64, teeth: bool, tag: &str) {
+/// A low tone cut on a peak (0.2 s), the case the figure does not cover at the front taps
+/// (hardware review B1): reported, not asserted.
+fn tone_cut(rate: u32, f: f64) -> Vec<f32> {
+    let fs = f64::from(rate);
+    let periods = (0.2 * f).floor().max(1.0);
+    let n = ((periods + 0.25) * fs / f).round() as usize + 1;
+    stimulus::tone(f, 0.05, fs, n)
+}
+
+/// `teeth`: the row's bound has one dominant term, so the figure must be under twice the
+/// silence the impulse actually needs; elsewhere the sum of settles is looser and reported.
+fn check(s: Settings, slot: Option<(f64, f64)>, teeth: bool, tag: &str) {
     let mk = || {
         let mut p = Pipeline::new(s).unwrap();
         if let Some((freq, q)) = slot {
@@ -68,25 +71,29 @@ fn check(s: Settings, slot: Option<(f64, f64)>, f: f64, teeth: bool, tag: &str) 
         }
         p
     };
-    let d = mk().one_pass_drain_samples() as usize;
-    let x = stim(s.host_rate_hz, f);
+    let p = mk();
+    let d = p.one_pass_drain_samples() as usize;
+    let latency = p.latency_samples() as usize;
+    assert!(d >= latency, "{tag}: drain {d} < latency {latency}");
+    let x = impulse();
     // A long tail (4 × the figure and a second) for the exact reading.
     let y = run(&mut mk(), &x, 4 * d + s.host_rate_hz as usize);
-    assert!(
-        y.len() >= x.len() + d.min(y.len() - x.len()),
-        "{tag}: every kept sample emitted"
-    );
     let n = needed(&y, x.len());
     assert!(n <= d, "{tag}: needed {n} > drain {d}");
     if teeth {
-        // One dominant term: the figure is no more than twice what is needed.
         assert!(
             2 * n > d,
             "{tag}: needed {n}, drain {d}: the bound is loose"
         );
-    } else {
-        println!("{tag}: drain {d}, needed {n}");
     }
+    // The tone cut on a peak, reported (the figure's documented gap at the front taps).
+    let f = if slot.is_some() { 20.0 } else { 40.0 };
+    let xt = tone_cut(s.host_rate_hz, f);
+    let yt = run(&mut mk(), &xt, 4 * d + s.host_rate_hz as usize);
+    println!(
+        "{tag}: drain {d}, impulse needs {n}, a {f} Hz tone cut on a peak needs {}",
+        needed(&yt, xt.len())
+    );
 }
 
 #[test]
@@ -98,27 +105,46 @@ fn as1_emits_and_settles() {
         bare.record_stage_enabled = false;
         bare.agc.enabled = false;
         if rate != 6000 {
-            check(bare, None, 1000.0, true, &format!("{rate} stages off"));
+            check(bare, None, true, &format!("{rate} stages off"));
         }
         check(
             linear(rate, Tap::AfterRecord),
             None,
-            300.0,
-            false,
+            true, // one dominant term: stage 4's settle (coach 8)
             &format!("{rate} record stage"),
         );
+        // Stage 2 alone at its tap (hardware review B2).
+        check(
+            linear(rate, Tap::AfterMicAmp),
+            None,
+            true,
+            &format!("{rate} stage 2"),
+        );
+        // Stage 10 alone (and the converters), the record side and the chain off.
+        let mut st10 = linear(rate, Tap::AfterPlayback);
+        st10.mic.amp_enabled = false;
+        st10.record_stage_enabled = false;
+        st10.agc.enabled = false;
+        check(st10, None, true, &format!("{rate} stage 10"));
         check(
             linear(rate, Tap::RouteOutput),
             None,
-            300.0,
             false,
             &format!("{rate} route output"),
+        );
+        // With the speech codec on, every kept sample still comes out within the figure.
+        let mut codec = linear(rate, Tap::RouteOutput);
+        codec.speech_codec_enabled = true;
+        let p = Pipeline::new(codec).unwrap();
+        assert!(
+            p.one_pass_drain_samples() >= p.latency_samples(),
+            "{rate}: the codec's delay inside the figure"
         );
         // Mute mode with the gate on keeps every sample.
         let mut mute = linear(rate, Tap::RouteOutput);
         mute.vas.enabled = true;
         mute.vas.mode = VasMode::Mute;
-        check(mute, None, 300.0, false, &format!("{rate} mute mode"));
+        check(mute, None, false, &format!("{rate} mute mode"));
         // The default engine's residual against its silent twin is reported, not asserted.
         let s = Settings::new(rate);
         let p = Pipeline::new(s).unwrap();
@@ -174,7 +200,6 @@ fn as3_taps_and_band_filter() {
         check(
             linear(rate, Tap::AfterInsert),
             Some((20.0, 10.0)),
-            20.0,
             true,
             &format!("{rate} slot"),
         );

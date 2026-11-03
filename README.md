@@ -13,7 +13,7 @@ The RR-DR60 is a pocket digital voice recorder Panasonic sold in the late 1990s.
 
 | | |
 |---|---|
-| **Version** | 0.92.0, pre-alpha; the engine is feature complete (0.90) and the 0.9x series takes the fixes the app surfaces. Not yet released or published to crates.io; the API may still change before 1.0. |
+| **Version** | 0.93.0, pre-alpha; the engine is feature complete (0.90) and the 0.9x series takes the fixes the app surfaces. Not yet released or published to crates.io; the API may still change before 1.0. |
 | **Signal chain** | 13 of the 15 stages are modeled and on by default (the power supply as the battery's effect on the speaker amplifier's clip ceiling, a user-set value). Not modeled: noise reduction (no evidence the device has it) and the clock. |
 | **Accuracy** | Every modeled stage is built from documents (the service manual, the owner's manual, datasheets) plus recorded assumptions. **No stage has been checked against a real unit**; see [Accuracy](#accuracy). |
 | **Platforms** | Rust library (`no_std`), C API (64-bit targets) and a Swift package for iOS and macOS. Bit-identical output on Linux, macOS, Windows, the iOS simulator and an iOS device. |
@@ -43,6 +43,8 @@ What you hear, in the model's default configuration:
 Each stage can be switched off or tapped on its own, for example to hear the codec alone; the four playback-side stages (the codec output filter, the volume and amplifier, the speaker, the earphone output) can also be switched **while a recording plays**, as a 20 ms blend (since 0.21, an emulator convention).
 
 **An optional effect before the limiter (since 0.92).** One slot between the microphone amplifier and the limiter holds none (the default) or the engine's **band filter**: a low-pass, high-pass, band-pass or notch at a chosen frequency and Q, then a gain, with its parameters changeable while recording. It is an addition of the emulator, not part of the original recorder; see the [user guide](docs/guide.md#insertable-components-the-slot-before-the-limiter).
+
+**Host reads (since 0.93).** Optional, appended reads that answer from the engine itself what a host used to copy from its code: whether the voice-activated pause and the speech codec run on the one-pass at a tap, the latency the pause's reports align with, how much silence drains the one-pass, the meter fields' descriptions with their reach and lag, the stage manifest's words, and the word lists the engine's own strings avoid (C: `rr_dr60_settings_one_pass_vas_runs` … `rr_dr60_manifest_word`, ten functions; Swift: `MeterManifest`, `ManifestWord`). A host built on 0.92 needs none of them; see the [guide](docs/guide.md#host-reads-since-093).
 
 ## Quick start
 

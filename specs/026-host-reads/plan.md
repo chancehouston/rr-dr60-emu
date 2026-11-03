@@ -50,7 +50,7 @@ The R-items are mirrored in [research.md](research.md); the types in [data-model
     - N_band = ⌈15.3 / −ln r⌉ + 4. That covers the near-repeated poles at Q ≈ 0.5, where ⌈ln 1e-5 / ln r⌉ reads up to 1.44× short (B2). The worst case is about 2.43 s at 96 kHz.
     - During ramps, the box bound kφ_min = min(k)·min(φ(g_cur), φ(g_tgt)), φ = g/(1 + g²), plus the longer remaining ramp (B3).
     - **The band term is computed on read** from the filter's g, k and ramp counters (O(1)); the static terms are cached at construction and `reconfigure` (B4).
-  - **The prints** (coach 6): `design_band_filter.py --drain` prints the rule and asserts it against brute-force impulse responses on the grid (7 rates, 20 Hz – 0.45·fs, Q 0.5 – 10, four mixes; worst ratio ≤ 1.0). `design_voiceband.py --drain` prints N₄ and N₁₀. `design_mic_chain.py --drain` prints stage 2's per-rate settle. The per-rate figures go to a new generated file, `stages/drain_coeffs.rs` (`--write`, byte-identical), so the existing tables stay untouched. A test recomputes each print (008's lesson).
+  - **The prints** (coach 6): `design_band_filter.py --drain` prints the rule and asserts it against brute-force impulse responses on the grid (7 rates, 20 Hz – 0.45·fs, Q 0.5 – 10, four mixes; worst ratio ≤ 1.0). `design_voiceband.py --drain` prints N₄ and N₁₀. `design_mic_chain.py --drain` prints stage 2's per-rate settle. *(Restated 2026-11-03: no generated file; the core computes the settles from the committed tables and its tests pin the prints. Spec Clarifications.)* A test recomputes each print (008's lesson).
   - **The oracles** (B5):
     - A linear twin's residual against its silent twin, ≤ 10⁻⁵ of its output peak. The stimulus is a tone at the filter's frequency ending on a peak, plus a burst.
     - Rows: the stages-off configuration, the band filter at `AfterInsert`, the record stage, the coder off.
@@ -163,7 +163,7 @@ Each acceptance scenario's named test (the spec), plus:
 - `abi_tests` for `RrDr60MeterField` (sizes, the published list, painted padding, Miri);
 - `alloc_free host_reads`;
 - the C smoke's `--host-reads` against `examples/host_reads_rows.rs`;
-- the promise steps in `ci.yml` (three revisions);
+- the promise steps in `ci.yml` (four revisions; restated 2026-11-03);
 - the design scripts' `--drain` prints pinned by a test that recomputes them (008's lesson).
 
 ## Project structure

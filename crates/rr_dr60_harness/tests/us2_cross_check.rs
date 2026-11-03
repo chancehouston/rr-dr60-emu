@@ -1406,10 +1406,11 @@ fn guide_host_reads() {
         assert!(section.contains(name), "{name}");
     }
     // The list's own words are quoted in one paragraph: the rest passes both lists.
-    let rest: String = section
+    let rest = section
         .split("\n\n")
         .filter(|para| !para.starts_with("**The words the engine"))
-        .collect();
+        .collect::<Vec<_>>()
+        .join("\n\n");
     assert_eq!(rr_dr60::wording::first_claim_hit(&rest), None);
     assert_eq!(
         mc::denylist_hit(&rest.to_lowercase()),

@@ -537,7 +537,6 @@ mod tests {
         }
     }
 
-    /// Research R-02: n = 1 at P, the target exact at P + N − 1, log of the applied frequency.
     /// Spec 026 D2 (hardware B2): the settle bound against brute-force impulse responses on a
     /// grid of rates, frequencies, Qs and the four types: the bound is never short.
     #[test]
@@ -573,6 +572,42 @@ mod tests {
         assert!(worst > 0.5, "the bound is not loose: worst ratio {worst}");
     }
 
+    /// Spec 026 D2 (coach 10): mid-ramp, the box bound (the smallest k and φ of the current and
+    /// target values, plus the remaining ramp) covers an impulse given there: 1 kHz, Q 0.7071
+    /// ramping to 20 Hz, Q 10 and back, the impulse a quarter and three quarters into the ramp.
+    #[test]
+    fn settle_bound_covers_a_mid_ramp_impulse() {
+        for &rate in &[6000u32, 48_000] {
+            for (from, to) in [
+                ([1000.0f32, 0.7071], [20.0f32, 10.0]),
+                ([20.0, 10.0], [1000.0, 0.7071]),
+            ] {
+                for quarter in [1usize, 3] {
+                    let mut bf = filt(rate, [0.0, from[0], from[1], 0.0]);
+                    bf.land(1, to[0], false);
+                    bf.land(2, to[1], false);
+                    for _ in 0..bf.len as usize * quarter / 4 {
+                        bf.process(0.0);
+                    }
+                    let bound = bf.settle_bound() as usize;
+                    let n = bound * 2 + 64;
+                    let h: alloc::vec::Vec<f64> = (0..n)
+                        .map(|i| bf.process(if i == 0 { 1.0 } else { 0.0 }).abs())
+                        .collect();
+                    let peak = h.iter().copied().fold(0.0, f64::max);
+                    let last = h
+                        .iter()
+                        .rposition(|v| *v >= 1e-5 * peak)
+                        .map_or(0, |i| i + 1);
+                    assert!(
+                        last <= bound,
+                        "{rate} {from:?}->{to:?} q{quarter}: {last} > {bound}"
+                    );
+                }
+            }
+        }
+    }
+
     /// Spec 026 D2: the bound at rest equals the print of `uv run
     /// tools/band-filter/design_band_filter.py --drain` (20 Hz, Q 10, the seven rates).
     #[test]
@@ -584,6 +619,7 @@ mod tests {
         }
     }
 
+    /// Research R-02: n = 1 at P, the target exact at P + N − 1, log of the applied frequency.
     #[test]
     fn ramp_trajectory() {
         let rate = 48_000;

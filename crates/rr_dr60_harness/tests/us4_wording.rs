@@ -138,3 +138,16 @@ fn as4_new_strings_pass() {
         assert!(wording::first_claim_hit(s).is_none(), "{s}");
     }
 }
+
+/// The documented differences from the regex's Unicode `\w` (`wording`'s module doc; restated
+/// 2026-11-03, coach 4), pinned so a change of either side is seen: a superscript digit is a
+/// word character in the core and not in the regex; a combining mark is the reverse. On the
+/// engine's own strings the two agree (`as2_differential`; the guide's `2²³` is no list word).
+#[test]
+fn as5_documented_differences() {
+    let re = mc::denylist_regex();
+    let sup = "a ghost\u{b2} here";
+    assert!(re.is_match(sup) && wording::first_hit(sup).is_none());
+    let mark = "a ghost\u{301} here";
+    assert!(!re.is_match(mark) && wording::first_hit(mark).is_some());
+}
