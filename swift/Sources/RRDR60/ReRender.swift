@@ -186,7 +186,7 @@ public final class ReRenderSession {
         }
     }
 
-    /// Replaces row `i` (validated as `rr_dr60_schedule_change` on the record stream).
+    /// Replaces row `i` (validated like a scheduled change on the record stream).
     public func setRow(_ i: UInt64, _ row: RrDr60ChangeEntry) throws {
         var r = row
         try Self.check(rr_dr60_rerender_plan_set_row(try editPlan(), i, &r))
