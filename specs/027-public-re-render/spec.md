@@ -4,13 +4,20 @@
 
 **Created**: 2026-11-03
 
-**Status**: Draft reviewed 2026-11-03 (coach 1 – 13, hardware B1 – B10, product M1 – M9, applied at the defaults below); `/speckit-clarify` next, then the owner's sign-off.
+**Status**: Draft reviewed 2026-11-03 (coach 1 – 13, hardware B1 – B10, product M1 – M9, applied at the defaults below); clarified 2026-11-03 (four questions, every answer the recommended one). The owner's sign-off next.
 
 **Input**: Engine issue #76, filed by the desktop workbench (rr-dr60-workbench, feature 005): spec 020's processing record is re-rendered by a recipe that lives only in the unpublished harness (`record_contract_checks::re_render_checked`, `filler`, `fill_to_remaining`) and in the Swift package (`ProcessingRecord.reRender`, `fill`). A Rust host has no public way to re-render a record and must mirror the recipe: an engine at the record's counter, a fill by import of a filler made on a throwaway engine, the slot and its store, the schedule refilled below 64 pending, the feed up to the stop position, the stop rule (no stop call after a self-stop), the digest of the last item. Each mirror can drift from the engine. Spec 026's clarification moved this here and named the app's need: **the Rebuild** (re-process a recording's kept microphone audio with changed settings) needs the rebuilt stored form and a new record, not only a digest.
 
 Everything is appended (version 0.94.0); a host built on 0.93 runs unchanged.
 
 ## Clarifications
+
+### Session 2026-11-03
+
+- Q: A Rebuild whose worst-case pause count is huge (an edited hang near zero): refuse above a cap, allocate whatever it needs, or make Rebuilds digest-only? → A: **Refuse above the cap** (16 Mi events, `RunTooLarge`); the host can set `collect_run: false` for a digest-only session (D5).
+- Q: "Listen here" on a past recording (a tap's audio during a re-render): in 027 or a later feature? → A: **A later feature** (Assumptions, out of scope).
+- Q: Keep the `f32` feed beside the 24-bit feed point? → A: **Keep both**, one kind per session (D3).
+- Q: Which engine does app 1.0 pin when the app resumes? → A: **The first release that contains 027** (a product decision recorded here; it changes nothing in 027).
 
 ### Session 2026-11-03 (restatement)
 
