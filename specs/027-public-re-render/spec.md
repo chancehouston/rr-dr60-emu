@@ -30,6 +30,12 @@ Everything is appended (version 0.94.0); a host built on 0.93 runs unchanged.
 - **The meters** read the last engine call, at most 4096 host samples (hardware P8, coach plan 4).
 - **US4 AS4's mutants** become: no split; a stop call after a self-stop; the fill rounded up; the store left at its defaults; `feed` converting by `x / (2²³ − 1)`; one event dropped (hardware P1, P2, P11): the order of store and component is equivalent at the recording's start.
 
+### Session 2026-11-03 (implementation restatements)
+
+- **D9's guard count**: the golden files read from the harness are seventeen (the sixteen audio guards and the record golden); all are unmoved, read from `git diff 3890bfe`.
+- **The dense-row oracle** (US1 AS5): 80 knee rows (−30 / −1 dBFS), 64 one sample apart from input sample 50 and the last 16 inside the first voiced segment, each held longer than the limiter's dead time; hiss-offset rows were tried first and changed nothing measurable in the stored form, so they could not show a late row.
+- **US2 AS1's moved row** is spec 020's `EntryMovedFar` (the first row moved 0.1 s) with the codec on: one device sample is below a frame's reach there, as spec 020 found.
+
 ### Session 2026-11-03 (restatement)
 
 - **Timing** (coach 12): spec 026 placed this feature after app 1.0, with app 1.0 pinned to v0.92.0. The owner changed that on 2026-11-03: the app's first release is delayed for non-technical reasons, so the planned engine work proceeds now and 027 lands before the app. Which engine version app 1.0 pins is decided when the app resumes.

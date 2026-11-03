@@ -1418,3 +1418,29 @@ fn guide_host_reads() {
         "the house denylist"
     );
 }
+
+#[test]
+fn guide_rerender() {
+    // Spec 027 R-13: the guide's section carries the five verdict sentences verbatim, and the
+    // section passes both wording lists.
+    let text = std::fs::read_to_string(mc::repo_root().join("docs/guide.md")).unwrap();
+    let start = text
+        .find("### The re-render, as an API (since 0.94)")
+        .expect("the guide's section");
+    let end = text[start + 4..]
+        .find("\n## ")
+        .map_or(text.len(), |i| start + 4 + i);
+    let section = &text[start..end];
+    for sentence in [
+        "\"This recording re-renders identically from the included microphone audio with these settings (model 0.x).\"",
+        "\"Re-rendering from the included microphone audio with these settings gives a different result; the audio, the record or the library version is not the original's (see the flags).\"",
+        "\"The changed settings gave the same stored recording: the audio never reached the point where they act.\"",
+        "\"A new recording rebuilt from the original microphone audio with changed settings. The original recording is unchanged.\"",
+        "\"With these settings nothing was kept, so no recording was made.\"",
+    ] {
+        assert!(section.contains(sentence), "{sentence}");
+    }
+    assert!(section.contains("they do not vouch for what the input contains"));
+    assert_eq!(rr_dr60::wording::first_claim_hit(section), None);
+    assert_eq!(mc::denylist_hit(&section.to_lowercase()), None, "the house denylist");
+}

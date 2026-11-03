@@ -34,5 +34,5 @@ Test-first. The traceability table is in plan.md; the build order is plan.md's.
 
 ## Phase 6: records and the gate
 
-- [ ] T012 `ci.yml`'s fifth promise step (3890bfe, full id) and the Miri filter; version 0.94.0 (Cargo ×4, `RR_DR60_VERSION_MINOR`, header, the stage and control manifests' version lines, the guide's copied blocks, the Swift fixture); the guide section with the five sentences and `us2_cross_check guide_rerender`; the CHANGELOG; the README; the real-time lists; the golden guard count restated from `us2_abi`.
+- [X] T012 `ci.yml`'s fifth promise step (3890bfe, full id) and the Miri filter; version 0.94.0 (Cargo ×4, `RR_DR60_VERSION_MINOR`, header, the stage and control manifests' version lines, the guide's copied blocks, the Swift fixture); the guide section with the five sentences and `us2_cross_check guide_rerender`; the CHANGELOG; the README; the real-time lists; the golden guard count restated from `us2_abi`.
 - [ ] T013 The full gate (fmt, clippy, tests, the feature-less ffi build with `-D warnings`, llvm-cov, MSRV, the C smoke, the five promises, `scripts/ab-timing.sh 3890bfe record`, the Swift package, the simulator goldens); the post-implementation reviews (coach, hardware).

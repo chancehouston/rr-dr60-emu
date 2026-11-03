@@ -57,7 +57,7 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 93
+#define RR_DR60_VERSION_MINOR 94
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
