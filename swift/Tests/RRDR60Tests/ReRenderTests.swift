@@ -221,3 +221,27 @@ private let storeValues: [Double] = [Double(RR_DR60_BAND_FILTER_HIGH_PASS), 900,
         #expect(v == Float(c) / 8_388_608)
     }
 }
+
+/// Convergence T015: the session's row and identity reads and edits over the C plan.
+@Test func sessionRowsAndIdentity() throws {
+    let raw = squareWithGap()
+    let (record, _) = try recordAndWrite(raw: raw, schedule: [(10000, kneeControl, -30), (30000, hissControl, 3)])
+    let s = try ReRenderSession(record: record)
+    let rows = try s.rows()
+    #expect(rows.count == 2 && rows[0].position == 10000 && rows[1].control == hissControl)
+    var moved = rows[1]
+    moved.position = 31000
+    try s.setRow(1, moved)
+    #expect(try s.rows()[1].position == 31000)
+    try s.insertRow(rows[1])
+    #expect(try s.rows().count == 3)
+    try s.removeRow(2)
+    let id = try s.identity()
+    try s.setSeed(id.seed ^ 1)
+    try s.setCounter(id.counter)
+    try s.setRemainingSamples(id.remaining)
+    #expect(try s.identity().seed == id.seed ^ 1)
+    #expect(try s.edited())
+    _ = try s.feed(i24: raw[...])
+    #expect(try s.finish().outcome.verdict == .rebuilt)
+}

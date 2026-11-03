@@ -174,6 +174,62 @@ public final class ReRenderSession {
         return b
     }
 
+    /// The plan's change rows, in position order.
+    public func rows() throws -> [RrDr60ChangeEntry] {
+        let p = try editPlan()
+        var n: UInt64 = 0
+        try Self.check(rr_dr60_rerender_plan_row_count(p, &n))
+        return try (0..<n).map { i in
+            var e = RrDr60ChangeEntry()
+            try Self.check(rr_dr60_rerender_plan_row(p, i, &e))
+            return e
+        }
+    }
+
+    /// Replaces row `i` (validated as `rr_dr60_schedule_change` on the record stream).
+    public func setRow(_ i: UInt64, _ row: RrDr60ChangeEntry) throws {
+        var r = row
+        try Self.check(rr_dr60_rerender_plan_set_row(try editPlan(), i, &r))
+    }
+
+    /// Inserts a row (kept in position order after the rows at the same position).
+    public func insertRow(_ row: RrDr60ChangeEntry) throws {
+        var r = row
+        try Self.check(rr_dr60_rerender_plan_insert_row(try editPlan(), &r))
+    }
+
+    /// Removes row `i`.
+    public func removeRow(_ i: UInt64) throws {
+        try Self.check(rr_dr60_rerender_plan_remove_row(try editPlan(), i))
+    }
+
+    /// The plan's seed, recording counter and remaining capacity at the start (device samples).
+    public func identity() throws -> (seed: UInt64, counter: UInt64, remaining: UInt64) {
+        let p = try editPlan()
+        var a: UInt64 = 0
+        var b: UInt64 = 0
+        var c: UInt64 = 0
+        try Self.check(rr_dr60_rerender_plan_seed(p, &a))
+        try Self.check(rr_dr60_rerender_plan_counter(p, &b))
+        try Self.check(rr_dr60_rerender_plan_remaining_samples(p, &c))
+        return (a, b, c)
+    }
+
+    /// Sets the plan's seed.
+    public func setSeed(_ seed: UInt64) throws {
+        try Self.check(rr_dr60_rerender_plan_set_seed(try editPlan(), seed))
+    }
+
+    /// Sets the plan's recording counter.
+    public func setCounter(_ counter: UInt64) throws {
+        try Self.check(rr_dr60_rerender_plan_set_counter(try editPlan(), counter))
+    }
+
+    /// Sets the remaining capacity at the start (checked when the session is built).
+    public func setRemainingSamples(_ remaining: UInt64) throws {
+        try Self.check(rr_dr60_rerender_plan_set_remaining_samples(try editPlan(), remaining))
+    }
+
     /// Collects the run (the default) or not (a digest-only session).
     public func setCollectRun(_ collect: Bool) throws {
         try Self.check(rr_dr60_rerender_plan_set_collect_run(try editPlan(), collect))

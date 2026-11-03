@@ -240,3 +240,36 @@ fn as6_rerender_record_bytes() {
         }
     });
 }
+
+/// Convergence T014 (Edge Cases; plan R-02): two band-filter rows at one position (the
+/// frequency and the Q, scheduled in that order) re-render `Identical`, and the new record
+/// keeps their order.
+#[test]
+fn as7_rerender_two_rows_at_one_position() {
+    at(|rate| {
+        let raw = rc::raw_stimulus(rate);
+        let at_pos = u64::from(rate) / 5;
+        let make = move |s: Settings| {
+            let mut p = Pipeline::new(s).unwrap();
+            p.set_component(BeforeLimiter, ComponentId::BandFilter)
+                .unwrap();
+            let rec = rr_dr60::changes::Stream::Record;
+            p.schedule_change(rec, at_pos, 33, 1500.0, 41).unwrap();
+            p.schedule_change(rec, at_pos, 34, 4.0, 42).unwrap();
+            p
+        };
+        let cell = Cell {
+            codec: true,
+            changes: false,
+            mute: false,
+            self_stop: false,
+        };
+        let (_, run) = rc::record_run(&make, rate, cell, &raw);
+        let tags: Vec<u64> = run.changes.iter().map(|c| c.tag).collect();
+        assert_eq!(tags, [41, 42], "{rate} Hz: both landed, in order");
+        assert!(run.changes.iter().all(|c| c.position == at_pos));
+        let (o, bytes) = session(&run.record, &raw, &[4096]);
+        assert_eq!(o.verdict, Verdict::Identical, "{rate} Hz");
+        assert_eq!(bytes, run.record, "{rate} Hz: the order kept");
+    });
+}

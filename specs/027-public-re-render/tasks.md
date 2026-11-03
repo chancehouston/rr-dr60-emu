@@ -36,3 +36,9 @@ Test-first. The traceability table is in plan.md; the build order is plan.md's.
 
 - [X] T012 `ci.yml`'s fifth promise step (3890bfe, full id) and the Miri filter; version 0.94.0 (Cargo ×4, `RR_DR60_VERSION_MINOR`, header, the stage and control manifests' version lines, the guide's copied blocks, the Swift fixture); the guide section with the five sentences and `us2_cross_check guide_rerender`; the CHANGELOG; the README; the real-time lists; the golden guard count restated from `us2_abi`.
 - [X] T013 The full gate (fmt, clippy, tests, the feature-less ffi build with `-D warnings`, llvm-cov, MSRV, the C smoke, the five promises, `scripts/ab-timing.sh 3890bfe record`, the Swift package, the simulator goldens); the post-implementation reviews (coach, hardware).
+
+## Phase 7: Convergence
+
+- [X] T014 Add an end-to-end cell with two band-filter parameter rows at one position (recorded, re-rendered `Identical`, their order kept in the new record) per Edge Cases "two rows at one position" / plan R-02 (partial)
+- [X] T015 Add the Swift `ReRenderSession` reads and edits of the rows, the seed, the counter and the remaining capacity over the C plan calls, with a test, per D8 / plan R-11 (partial)
+- [X] T016 File the workbench issue for dropping its re-render mirror once 0.94 merges per SC-004 / plan R-13 (missing)
