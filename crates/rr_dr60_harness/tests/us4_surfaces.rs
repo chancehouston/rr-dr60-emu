@@ -40,7 +40,11 @@ fn as3_fill() {
             a.fill_to_remaining(target).unwrap();
             rc::fill_to_remaining(&mut b, target);
             assert_eq!(a.memory_status(), b.memory_status(), "{rate} codec {codec}");
-            assert_eq!(record_digest(&mut a), record_digest(&mut b), "{rate} codec {codec}");
+            assert_eq!(
+                record_digest(&mut a),
+                record_digest(&mut b),
+                "{rate} codec {codec}"
+            );
 
             // Not a whole number of frames: floored, the remaining at or above the target.
             let mut c = engine(rate, codec);
@@ -66,7 +70,10 @@ fn as3_fill() {
             e.start_recording().unwrap();
             assert_eq!(e.fill_to_remaining(0), Err(Error::RecordingInProgress));
             let _ = e
-                .record(&stimulus::tone(1000.0, 0.1, f64::from(rate), rate as usize / 10), &mut [])
+                .record(
+                    &stimulus::tone(1000.0, 0.1, f64::from(rate), rate as usize / 10),
+                    &mut [],
+                )
                 .unwrap();
             let _ = e.stop_recording(&mut []).unwrap();
             e.start_playback(1).unwrap();

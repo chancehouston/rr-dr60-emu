@@ -224,6 +224,7 @@ mod paths;
 mod pipeline;
 mod rate;
 pub mod record;
+pub mod rerender;
 mod resample;
 mod sanitize;
 mod settings;

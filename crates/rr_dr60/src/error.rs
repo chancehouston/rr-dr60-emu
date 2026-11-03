@@ -241,6 +241,33 @@ pub enum Error {
     /// plan R1): the slot's component and the parameter store change only while idle. Nothing
     /// changes; stop first, or schedule the parameter with `schedule_change`.
     ComponentWhileActive,
+    /// A re-render's `finish` before the input reached the record's stop position (spec 027
+    /// D6): feed the rest and call `finish` again.
+    InputShort {
+        /// The host input samples still needed.
+        needed: u64,
+    },
+    /// A 24-bit input code outside −2²³ … 2²³ − 1 (spec 027 D3); nothing taken.
+    InvalidSample,
+    /// A re-render plan whose run could need more events than the session reserves (spec 027
+    /// D5): set `collect_run` false for a digest-only session.
+    RunTooLarge {
+        /// The bound on the run's events.
+        events: u64,
+    },
+    /// A re-render fed both 24-bit codes and engine samples (spec 027 D3).
+    FeedKindMixed,
+    /// A re-render plan edit that changes the host rate (spec 027 D4).
+    HostRateFixed,
+    /// The rebuilt item's record read from a session without `collect_run` (spec 027 D5).
+    RunNotCollected,
+    /// A re-render call in the wrong state: a feed after `finish`, an item read before it
+    /// (spec 027 D2).
+    ReRenderState,
+    /// A record of imported origin has no run to re-render (spec 027 D6).
+    ImportedRecord,
+    /// A record naming a component this library does not know (spec 027 D6; spec 024 D7).
+    UnknownComponent,
 }
 
 /// Inclusive range of `memory.capacity_s`, in seconds: one second to 24 hours (engineering
@@ -489,6 +516,34 @@ impl fmt::Display for Error {
                 f,
                 "the slot's component and its parameter store change only while the engine is idle: stop recording or playback first, or schedule the parameter with schedule_change"
             ),
+            Error::InputShort { needed } => write!(
+                f,
+                "the input ended before the record's stop position: {needed} more host samples are needed"
+            ),
+            Error::InvalidSample => write!(f, "a 24-bit input code lies outside -2^23 .. 2^23 - 1"),
+            Error::RunTooLarge { events } => write!(
+                f,
+                "the run could need {events} events, above the session's cap; re-render without collecting the run"
+            ),
+            Error::FeedKindMixed => write!(
+                f,
+                "a re-render is fed either 24-bit codes or engine samples, not both"
+            ),
+            Error::HostRateFixed => write!(f, "a re-render keeps the record's host rate"),
+            Error::RunNotCollected => write!(
+                f,
+                "this re-render did not collect its run, so it has no processing record"
+            ),
+            Error::ReRenderState => write!(
+                f,
+                "a re-render call in the wrong state (a feed after finish, or an item read before it)"
+            ),
+            Error::ImportedRecord => {
+                write!(f, "a record of imported origin has no run to re-render")
+            }
+            Error::UnknownComponent => {
+                write!(f, "the record names a component this library does not know")
+            }
         }
     }
 }
