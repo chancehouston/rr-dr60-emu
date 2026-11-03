@@ -1,6 +1,6 @@
 # Implementation Plan: The public re-render
 
-**Branch**: `027-public-re-render` | **Date**: 2026-11-03 | **Spec**: [spec.md](spec.md) (approved by the owner 2026-11-03; the plan reviews' restatements in its Clarifications) | Plan reviewed (coach 1 – 13, hardware P1 – P11, product M1 – M9, applied at the defaults below); the owner's plan sign-off next.
+**Branch**: `027-public-re-render` | **Date**: 2026-11-03 | **Spec**: [spec.md](spec.md) (approved by the owner 2026-11-03; the plan reviews' restatements in its Clarifications) | Plan reviewed (coach 1 – 13, hardware P1 – P11, product M1 – M9, applied at the defaults below); **plan approved by the owner 2026-11-03**, with D7's direct-write fill confirmed.
 
 ## Summary
 
