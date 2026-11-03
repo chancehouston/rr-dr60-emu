@@ -2,11 +2,9 @@
 //! harness's independent recipe and the recording's own digest and record, at the measurement
 //! rates.
 
-use rr_dr60::changes::{ChangeEntry, STREAM_RECORD, Stream};
 use rr_dr60::components::{ComponentId, InsertionPointId::BeforeLimiter};
-use rr_dr60::record::{RunData, StopFields};
 use rr_dr60::rerender::{Plan, ReRender, Verdict, re_render};
-use rr_dr60::{Pipeline, Settings, VasEvent};
+use rr_dr60::{Pipeline, Settings};
 use rr_dr60_harness::checks::standard;
 use rr_dr60_harness::configs;
 use rr_dr60_harness::record_contract_checks::{self as rc, Cell, Delta};
@@ -191,66 +189,6 @@ fn as4_rerender_differs() {
     });
 }
 
-/// A recording with `count` knee rows (−30 / −1 dBFS: the limiter engages on −20 dBFS voice) spaced `step` host samples apart from `first`, made at
-/// block size 1 with the schedule topped up after every sample (never late by construction);
-/// returns (record, digest).
-fn dense_recording(rate: u32, raw: &[i32], positions: &[u64]) -> (Vec<u8>, u64) {
-    let count = positions.len() as u64;
-    let mut s = Settings::new(rate);
-    s.vas.hang_ms = 100.0;
-    s.memory.capacity_s = 20;
-    let mut p = Pipeline::new(s).unwrap();
-    let rows: Vec<(u64, f64)> = positions
-        .iter()
-        .enumerate()
-        .map(|(i, &p)| (p, if i % 2 == 0 { -30.0 } else { -1.0 }))
-        .collect();
-    let mut next = 0;
-    let top = |p: &mut Pipeline, next: &mut usize| {
-        while *next < rows.len() && p.pending_changes(Stream::Record).unwrap() < 64 {
-            let (pos, v) = rows[*next];
-            p.schedule_change(Stream::Record, pos, rc::KNEE, v, *next as u64 + 1)
-                .unwrap();
-            *next += 1;
-        }
-    };
-    top(&mut p, &mut next);
-    p.start_recording().unwrap();
-    let x = rc::samples(raw);
-    let (mut events, mut changes) = (Vec::new(), Vec::new());
-    let mut ev = vec![VasEvent::default(); 8];
-    let mut ch = vec![ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
-    for v in &x {
-        let info = p
-            .record_with_changes(std::slice::from_ref(v), &mut ev, &mut ch)
-            .unwrap();
-        events.extend_from_slice(&ev[..info.events]);
-        changes.extend_from_slice(&ch[..info.changes]);
-        top(&mut p, &mut next);
-    }
-    let mut ev = vec![VasEvent::default(); p.max_record_events(rate as usize)];
-    let out = p.stop_recording_with_changes(&mut ev, &mut ch).unwrap();
-    events.extend_from_slice(&ev[..out.flush.events]);
-    changes.extend_from_slice(&ch[..out.changes]);
-    assert_eq!(
-        changes.len() as u64,
-        count,
-        "every row landed in the original"
-    );
-    assert!(changes.iter().all(|c| c.stream == STREAM_RECORD));
-    let number = p.memory_status().count;
-    let run = RunData {
-        events: &events,
-        changes: &changes,
-        stop: StopFields::from(&out),
-    };
-    let mut record = vec![0u8; p.processing_record_len(number, &run).unwrap()];
-    let _ = p
-        .processing_record_write(number, &run, &mut record)
-        .unwrap();
-    (record, p.recording_digest(number).unwrap())
-}
-
 /// AS5 (hardware B1): 80 rows inside the first 4096-sample block: 64 early (from input sample
 /// 50, one apart) and the last 16 inside the first voiced segment, each held longer than the
 /// limiter's dead time (from 1500, 3.1 ms apart, at least 75 samples). The session reads
@@ -266,7 +204,7 @@ fn as5_rerender_dense_rows() {
             .chain((0..16).map(|i| 1500 + i * step))
             .collect();
         assert!(*positions.last().unwrap() < 4096);
-        let (record, digest) = dense_recording(rate, &raw, &positions);
+        let (record, digest) = rc::dense_recording(rate, &raw, &positions);
         assert_eq!(
             rc::re_render(&record, &raw, 1, Delta::None),
             digest,

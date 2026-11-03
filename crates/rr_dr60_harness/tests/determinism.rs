@@ -1181,3 +1181,29 @@ fn insert_same_calls_same_log() {
         assert_eq!(run(), run(), "{rate}");
     }
 }
+
+/// Spec 027: the same record and input re-render to the same outcome, stored form and record.
+#[test]
+fn rerender_same_input_same_result() {
+    use rr_dr60::rerender::{Plan, re_render};
+    use rr_dr60_harness::record_contract_checks::{self as rc, Cell};
+    for &rate in configs::measurement_rates() {
+        let raw = rc::raw_stimulus(rate);
+        let cell = Cell {
+            codec: true,
+            changes: true,
+            mute: true,
+            self_stop: false,
+        };
+        let (_, run) = rc::record_run(&rr_dr60_harness::checks::standard, rate, cell, &raw);
+        let go = || {
+            let r = re_render(Plan::from_record(&run.record).unwrap(), &raw).unwrap();
+            let mut e = vec![0u8; r.export_len().unwrap()];
+            let _ = r.export(&mut e).unwrap();
+            let mut b = vec![0u8; r.record_len().unwrap()];
+            let _ = r.record_write(&mut b).unwrap();
+            (r.outcome().unwrap(), e, b)
+        };
+        assert_eq!(go(), go(), "{rate} Hz");
+    }
+}

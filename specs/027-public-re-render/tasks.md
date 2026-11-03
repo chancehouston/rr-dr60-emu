@@ -13,19 +13,19 @@ Test-first. The traceability table is in plan.md; the build order is plan.md's.
 
 ## Phase 2: D4, the plan
 
-- [ ] T003 [US2] Tests `us2_rebuild::as3_refusals` and core tests (failing): reads, edits, the refusals (host rate, a row's control and stream, a 65th row at one position, an unknown component, imported origin, remaining 0 or above the capacity), `edited()` by field compare incl. −0.0.
-- [ ] T004 [US2] `rr_dr60::rerender::Plan` in `crates/rr_dr60/src/rerender.rs` (R-02).
+- [X] T003 [US2] Tests `us2_rebuild::as3_refusals` and core tests (failing): reads, edits, the refusals (host rate, a row's control and stream, a 65th row at one position, an unknown component, imported origin, remaining 0 or above the capacity), `edited()` by field compare incl. −0.0.
+- [X] T004 [US2] `rr_dr60::rerender::Plan` in `crates/rr_dr60/src/rerender.rs` (R-02).
 
 ## Phase 3: D1, D2, D5, D6, the session
 
 - [X] T005 [US1] Tests `us1_rerender::{as1_sixteen_cells, as2_slot_and_form_1, as3_partitions, as4_differs, as5_dense_rows, as6_record_bytes}` (failing; the dense-row cell first shown failing on the harness recipe at block 4096).
 - [X] T006 [US1] `ReRender::{new, feed, feed_f32, progress, meters, finish}`, `Fed`, `Outcome`, `Verdict`, `Reason`, the export/record/into_pipeline reads, `re_render` (R-03 – R-09).
-- [ ] T007 [US2] Tests `us2_rebuild::{as1_equals_direct, as2_record_round_trip, as4_self_stop_both_ways, as5_unreached_edit, as6_empty}`; fixes as they show.
-- [ ] T008 [US3] Tests `us3_stream::{as1_alloc_free, as3_cancel, as4_input_short, as5_feed_edges}` and the release `as2_hour`; `alloc_free rerender`, `determinism rerender`.
+- [X] T007 [US2] Tests `us2_rebuild::{as1_equals_direct, as2_record_round_trip, as4_self_stop_both_ways, as5_unreached_edit, as6_empty}`; fixes as they show.
+- [X] T008 [US3] Tests `us3_stream::{as1_alloc_free, as3_cancel, as4_input_short, as5_feed_edges}` and the release `as2_hour`; `alloc_free rerender`, `determinism rerender`.
 
 ## Phase 4: FR-010, the mutants
 
-- [ ] T009 `RerenderMutation::{no_split, stop_after_self_stop, fill_rounded_up, store_skipped, i24_scale, drop_event}` behind `__test-hooks`; `mutation rerender::` shows each failing its test.
+- [X] T009 `RerenderMutation::{no_split, stop_after_self_stop, fill_rounded_up, store_skipped, i24_scale, drop_event}` behind `__test-hooks`; `mutation rerender::` shows each failing its test.
 
 ## Phase 5: D8, C and Swift
 
