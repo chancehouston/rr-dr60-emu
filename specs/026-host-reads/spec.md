@@ -19,6 +19,14 @@
 - Q: For the one-pass drain, document the gate-open scope, or add a flush call that holds the gate open? → A: **Document it** (D2 as written; no new call).
 - Q: Does the meter manifest give each point's lag in host samples now? → A: **Yes** (D4 as written).
 
+### Session 2026-11-03 (the plan reviews: restatements for the plan sign-off)
+
+- **D2's figure** (coach 1, hardware B1 – B6). It is defined once: the silence until every kept sample is out and the output is within 10⁻⁵ of its own peak against a silent-input twin, while the gate stays open. It counts both converters (4·D) and uses the SVF's corrected settle rule, with the worst case about 2.43 s at 96 kHz rather than 1.83 s. **At the front taps it reports the front stages' settle, not 0**: the owner's decision at the plan sign-off, since D2 as approved says 0.
+- **D3's matcher** returns the matched span. Its word class is Unicode `\w` with ASCII folding, and the regex oracle is permanent. AS2's "before the regex is deleted" is struck.
+- **D4's lag and reach** are calls with the call (and the live route), not struct fields. `RrDr60MeterField` is 40 bytes.
+- **D6's labels** are as plan R-06 lists them. The README keeps "—" by its generator's rule, so AS1 covers every non-empty cell.
+- **D7's promise** runs against four revisions, 0.92's merge (2a170d4) included.
+
 ## Decisions for sign-off
 
 The owner reads this section first. Each decision gives the recommendation; the alternatives are in the Assumptions section.
