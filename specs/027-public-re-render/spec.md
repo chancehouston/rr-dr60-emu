@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-03
 
-**Status**: Draft reviewed 2026-11-03 (coach 1 – 13, hardware B1 – B10, product M1 – M9, applied at the defaults below); clarified 2026-11-03 (four questions, every answer the recommended one). The owner's sign-off next.
+**Status**: Draft reviewed 2026-11-03 (coach 1 – 13, hardware B1 – B10, product M1 – M9, applied at the defaults below); clarified 2026-11-03 (four questions, every answer the recommended one). **Spec approved by the owner 2026-11-03 (D1 – D9).** The plan next.
 
 **Input**: Engine issue #76, filed by the desktop workbench (rr-dr60-workbench, feature 005): spec 020's processing record is re-rendered by a recipe that lives only in the unpublished harness (`record_contract_checks::re_render_checked`, `filler`, `fill_to_remaining`) and in the Swift package (`ProcessingRecord.reRender`, `fill`). A Rust host has no public way to re-render a record and must mirror the recipe: an engine at the record's counter, a fill by import of a filler made on a throwaway engine, the slot and its store, the schedule refilled below 64 pending, the feed up to the stop position, the stop rule (no stop call after a self-stop), the digest of the last item. Each mirror can drift from the engine. Spec 026's clarification moved this here and named the app's need: **the Rebuild** (re-process a recording's kept microphone audio with changed settings) needs the rebuilt stored form and a new record, not only a digest.
 
