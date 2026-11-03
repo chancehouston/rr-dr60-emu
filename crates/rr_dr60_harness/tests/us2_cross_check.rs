@@ -1442,5 +1442,9 @@ fn guide_rerender() {
     }
     assert!(section.contains("they do not vouch for what the input contains"));
     assert_eq!(rr_dr60::wording::first_claim_hit(section), None);
-    assert_eq!(mc::denylist_hit(&section.to_lowercase()), None, "the house denylist");
+    assert_eq!(
+        mc::denylist_hit(&section.to_lowercase()),
+        None,
+        "the house denylist"
+    );
 }

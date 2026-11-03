@@ -23,13 +23,13 @@ use crate::record::{self, Origin, RecordReadout, RunData, StopFields};
 use crate::{Error, Meters, Pipeline, Settings, StopResult, VasEvent};
 
 /// The host samples one engine call takes at most (plan R-03): the scratch buffers' size.
-pub const CHUNK: usize = 4096;
+pub const CHUNK: usize = 4096; // engineering target (027 plan R-03)
 
 /// The cap on a collected run's events (spec 027 D5, the owner's answer): 16 Mi.
-pub const MAX_RUN_EVENTS: u64 = 16 * 1024 * 1024;
+pub const MAX_RUN_EVENTS: u64 = 16 * 1024 * 1024; // engineering target (027 D5, the owner's answer)
 
 /// The schedule's capacity per stream (spec 015).
-const SCHEDULE: u32 = crate::changes::SCHEDULE_CAPACITY as u32;
+const SCHEDULE: u32 = crate::changes::SCHEDULE_CAPACITY as u32; // engineering target (015: the schedule's capacity)
 
 /// What a re-render runs: a record read, editable before [`ReRender::new`] (spec 027 D4).
 #[derive(Clone, Debug)]
