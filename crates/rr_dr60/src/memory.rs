@@ -488,6 +488,51 @@ impl Memory {
         Ok(self.spans.len() as u32)
     }
 
+    /// Spec 027 D7 (as restated): appends a filler item of `units` stored units exactly as an
+    /// import does (its span, no slot block, counted against the recordings): zeros with the
+    /// codec bypassed; `frame` repeated with the codec on. Within the reserved capacity, so it
+    /// allocates nothing. `units` 0 adds nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::DoesNotFit`] (time or slots); the memory is unchanged.
+    pub(crate) fn fill_item(&mut self, units: usize, frame: &[u8]) -> Result<(), Error> {
+        debug_assert!(!self.in_progress);
+        if units == 0 {
+            return Ok(());
+        }
+        if self.spans.len() >= self.max_recordings {
+            return Err(Error::DoesNotFit);
+        }
+        match &mut self.store {
+            Store::Samples(store) => {
+                if units > self.capacity_units - store.len() {
+                    return Err(Error::DoesNotFit);
+                }
+                let start = store.len();
+                store.resize(start + units, 0.0);
+                self.spans.push(Span { start, len: units });
+            }
+            Store::Frames(store) => {
+                let b = self.encoding.unit_bytes();
+                debug_assert_eq!(frame.len(), b, "one stored frame");
+                let used = store.len() / b;
+                if units > self.capacity_units - used {
+                    return Err(Error::DoesNotFit);
+                }
+                for _ in 0..units {
+                    store.extend_from_slice(frame);
+                }
+                self.spans.push(Span {
+                    start: used,
+                    len: units,
+                });
+            }
+        }
+        self.blocks.push(None); // as an import: no slot block
+        Ok(())
+    }
+
     /// Erases every recording (spec 006 FR-013; S-001 "erase all"); the capacity is kept.
     /// Must not be called with a recording in progress.
     pub(crate) fn erase_all(&mut self) {

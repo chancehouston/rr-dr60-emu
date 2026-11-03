@@ -8,8 +8,8 @@ Test-first. The traceability table is in plan.md; the build order is plan.md's.
 
 ## Phase 1: D7, the fill
 
-- [ ] T001 [US4] Test `us4_surfaces::as3_fill` (failing): `Pipeline::fill_to_remaining` against the harness's `fill_to_remaining` on both encodings (equal remaining, equal digest of a recording made afterwards), a codec-on target of 120·k + 7 (floored), two different fillers one digest, 0 units no item, the refusals (recording, playing, fuller, no slot).
-- [ ] T002 [US4] `memory::fill_item(units)` (an import-shaped item: zeros, or one encoder frame for silence from rest repeated) and `Pipeline::fill_to_remaining` (public, idle only) in `crates/rr_dr60/src/{memory.rs, transport.rs}`.
+- [X] T001 [US4] Test `us4_surfaces::as3_fill` (failing): `Pipeline::fill_to_remaining` against the harness's `fill_to_remaining` on both encodings (equal remaining, equal digest of a recording made afterwards), a codec-on target of 120·k + 7 (floored), two different fillers one digest, 0 units no item, the refusals (recording, playing, fuller, no slot).
+- [X] T002 [US4] `memory::fill_item(units)` (an import-shaped item: zeros, or one encoder frame for silence from rest repeated) and `Pipeline::fill_to_remaining` (public, idle only) in `crates/rr_dr60/src/{memory.rs, transport.rs}`.
 
 ## Phase 2: D4, the plan
 

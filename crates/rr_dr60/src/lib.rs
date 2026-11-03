@@ -271,6 +271,27 @@ pub mod __test_hooks {
         crate::stages::voiceband_coeffs::PLAYBACK_SOS
     }
 
+    /// Deliberate defects of the re-render for the spec 027 mutation tests (plan R-12);
+    /// `Default` is the committed behavior. Each fails a named test: `no_split` the dense-row
+    /// cell, `stop_after_self_stop` the self-stop cells, `fill_rounded_up` the fill's
+    /// non-whole-frame target, `store_skipped` the non-default store, `i24_scale` the codec-off
+    /// cells, `drop_event` the record's bytes.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct RerenderMutation {
+        /// The schedule topped up only between host blocks.
+        pub no_split: bool,
+        /// A stop call after a self-stop.
+        pub stop_after_self_stop: bool,
+        /// The fill's units rounded up.
+        pub fill_rounded_up: bool,
+        /// The component store left at its defaults.
+        pub store_skipped: bool,
+        /// The 24-bit input converted by `x / (2²³ − 1)`.
+        pub i24_scale: bool,
+        /// One event dropped from the run.
+        pub drop_event: bool,
+    }
+
     /// Deliberate defects of the meter read-out for the spec 016 mutation tests (research
     /// R-12); `Default` is the committed behavior. Each is caught by a named oracle: the
     /// clamp-on cells of AS3 (a peak read after the clamp), the 0.01 dB onset rows of AS2 (the

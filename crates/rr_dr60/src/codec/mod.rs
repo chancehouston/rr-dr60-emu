@@ -228,6 +228,17 @@ impl Default for SpeechEncoder {
     }
 }
 
+/// The frame a fresh encoder emits for a frame of zeros (spec 027 D7: a filler item's content);
+/// a standalone encoder, so the engine's own is untouched.
+pub(crate) fn silent_frame() -> Frame {
+    let mut e = SpeechEncoder::new();
+    loop {
+        if let Some(f) = e.push(0.0) {
+            return f;
+        }
+    }
+}
+
 impl SpeechEncoder {
     pub(crate) fn new() -> Self {
         Self::default()
