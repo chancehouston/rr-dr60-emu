@@ -192,6 +192,16 @@ pub enum RrDr60Status {
     /// `rr_dr60_set_component` or `rr_dr60_set_component_parameter` while recording or playing
     /// (spec 024 D3): stop first, or schedule the parameter with `rr_dr60_schedule_change`.
     ComponentWhileActive = 43, // spec 024 D9: appended
+    /// A meter field index past `rr_dr60_meter_field_count` (spec 026 D4).
+    NoSuchMeterField = 44, // spec 026: appended
+    /// A meter call other than `RR_DR60_METER_CALL_*` (spec 026 D4).
+    NoSuchMeterCall = 45, // spec 026: appended
+    /// Text passed to `rr_dr60_wording_first_hit` that is not UTF-8 (spec 026 D3).
+    InvalidUtf8 = 46, // spec 026: appended
+    /// A wording kind other than `RR_DR60_WORDING_*` (spec 026 D3).
+    NoSuchWordingKind = 47, // spec 026: appended
+    /// A manifest word kind, value or form the library does not publish (spec 026 D6).
+    NoSuchManifestWord = 48, // spec 026: appended
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -997,15 +1007,9 @@ fn validate_c(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Setti
     Ok(settings)
 }
 
-/// Converts C settings to Rust settings, validating `struct_size`, `tap` and `vas_mode`, and
-/// naming the failing field (spec 003 contracts/c-api.md › Conversion rules). The two reserved
-/// AGC slots are ignored (spec 005 contracts/c-api.md).
-fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60SettingField)> {
-    let invalid = |field| (RrDr60Status::InvalidArgument, field);
-    if s.struct_size != SETTINGS_SIZE {
-        return Err(invalid(RrDr60SettingField::StructSize));
-    }
-    let tap = match s.tap {
+/// The C tap value's `Tap`, or `None` for an unassigned value.
+fn tap_from_c(tap: u32) -> Option<Tap> {
+    Some(match tap {
         0 => Tap::AfterRecord,
         1 => Tap::AfterPlayback,
         2 => Tap::AfterAgc,
@@ -1018,8 +1022,19 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Sett
         9 => Tap::AfterMicCapsule, // 012 FR-012
         10 => Tap::AfterMicAmp,    // 012 FR-012
         11 => Tap::AfterInsert,    // 024 D6
-        _ => return Err(invalid(RrDr60SettingField::Tap)),
-    };
+        _ => return None,
+    })
+}
+
+/// Converts C settings to Rust settings, validating `struct_size`, `tap` and `vas_mode`, and
+/// naming the failing field (spec 003 contracts/c-api.md › Conversion rules). The two reserved
+/// AGC slots are ignored (spec 005 contracts/c-api.md).
+fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60SettingField)> {
+    let invalid = |field| (RrDr60Status::InvalidArgument, field);
+    if s.struct_size != SETTINGS_SIZE {
+        return Err(invalid(RrDr60SettingField::StructSize));
+    }
+    let tap = tap_from_c(s.tap).ok_or(invalid(RrDr60SettingField::Tap))?;
     let vas_mode = match s.vas_mode {
         0 => VasMode::Drop,
         1 => VasMode::Mute,
@@ -4387,6 +4402,8 @@ mod settings_read;
 pub use settings_read::*;
 mod insert;
 pub use insert::*;
+mod host_reads;
+pub use host_reads::*;
 
 #[cfg(test)]
 mod abi_tests;

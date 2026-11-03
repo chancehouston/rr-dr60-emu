@@ -29,6 +29,13 @@ fn sizes_are_pinned() {
     assert_eq!(size_of::<RrDr60RunData>(), 80);
     assert_eq!(size_of::<RrDr60Settings>(), 120);
     assert_eq!(size_of::<RrDr60ControlReading>(), 24); // spec 025 R-02
+    assert_eq!(size_of::<RrDr60MeterField>(), 40); // spec 026 D4
+    assert_eq!(offset_of!(RrDr60MeterField, index), 4);
+    assert_eq!(offset_of!(RrDr60MeterField, identifier), 8);
+    assert_eq!(offset_of!(RrDr60MeterField, unit), 16);
+    assert_eq!(offset_of!(RrDr60MeterField, sentence), 24);
+    assert_eq!(offset_of!(RrDr60MeterField, kind), 32);
+    assert_eq!(offset_of!(RrDr60MeterField, side), 36);
     // Spec 024 D9: the four new structs, no implicit padding.
     assert_eq!(size_of::<RrDr60InsertionPoint>(), 40);
     assert_eq!(size_of::<RrDr60Component>(), 48);
@@ -81,6 +88,8 @@ fn published_lists_end_in_size_of() {
     check::<RrDr60PlaceState>(PLACE_STATE_PUBLISHED);
     check::<RrDr60ControlReading>(READING_PUBLISHED);
     assert_eq!(READING_PUBLISHED, &[24]);
+    check::<RrDr60MeterField>(METER_FIELD_PUBLISHED);
+    assert_eq!(METER_FIELD_PUBLISHED, &[40]);
     assert_eq!(METERS_PUBLISHED, &[56, 64]);
     assert_eq!(READOUT_PUBLISHED, &[376]);
 }
@@ -227,6 +236,7 @@ fn write_sized_every_out_struct_four_cases() {
     cases::<RrDr60InputAlignment>(ALIGNMENT_PUBLISHED, padding_of("RrDr60InputAlignment"));
     cases::<RrDr60PlaceState>(PLACE_STATE_PUBLISHED, padding_of("RrDr60PlaceState"));
     cases::<RrDr60ControlReading>(READING_PUBLISHED, padding_of("RrDr60ControlReading"));
+    cases::<RrDr60MeterField>(METER_FIELD_PUBLISHED, padding_of("RrDr60MeterField"));
     // Spec 024 D9.
     cases::<RrDr60InsertionPoint>(POINT_PUBLISHED, padding_of("RrDr60InsertionPoint"));
     cases::<RrDr60Component>(COMPONENT_PUBLISHED, padding_of("RrDr60Component"));
@@ -256,7 +266,8 @@ fn padding_of(name: &str) -> &'static [(usize, usize)] {
         "RrDr60InsertionPoint"
         | "RrDr60Component"
         | "RrDr60ComponentParameter"
-        | "RrDr60RecordComponent" => &[],
+        | "RrDr60RecordComponent"
+        | "RrDr60MeterField" => &[], // spec 026: none (the offsets above)
         _ => &[],
     }
 }
@@ -396,9 +407,10 @@ fn default_is_zeroed_plus_size() {
     check::<RrDr60InputAlignment>("RrDr60InputAlignment");
     check::<RrDr60PlaceState>("RrDr60PlaceState");
     check::<RrDr60ControlReading>("RrDr60ControlReading");
+    check::<RrDr60MeterField>("RrDr60MeterField");
 }
 
-const OUT_STRUCTS: [&str; 16] = [
+const OUT_STRUCTS: [&str; 17] = [
     "RrDr60BlockInfo",
     "RrDr60RecordInfo",
     "RrDr60StopOutcome",
@@ -415,6 +427,7 @@ const OUT_STRUCTS: [&str; 16] = [
     "RrDr60InputAlignment",
     "RrDr60PlaceState",
     "RrDr60ControlReading", // spec 025
+    "RrDr60MeterField",     // spec 026
 ];
 
 /// The construction rule, mechanically (coach 5): no out-struct derives `Default`, and no
@@ -488,6 +501,8 @@ fn no_out_struct_derives_default_and_no_whole_writes() {
     let findings = scan_source(include_str!("lib.rs"));
     assert!(findings.is_empty(), "{findings:?}");
     let findings = scan_source(include_str!("settings_read.rs"));
+    assert!(findings.is_empty(), "{findings:?}");
+    let findings = scan_source(include_str!("host_reads.rs"));
     assert!(findings.is_empty(), "{findings:?}");
     // The scan has teeth: a doctored source fails on both rules.
     let doctored = "#[repr(C)]\n#[derive(Clone, Copy, Default)]\npub struct RrDr60BlockInfo {\n}\npub unsafe extern \"C\" fn f(out: *mut RrDr60BlockInfo) {\n    unsafe { put(out, v) };\n}\n    fn fill(&mut self, r: &R) {\n        self.settings = settings_to_c(&r.settings);\n    }\n";
@@ -1585,4 +1600,161 @@ fn settings_read_poisoned() {
     assert!(r.untouched_after(4));
     // SAFETY: destroying once.
     unsafe { rr_dr60_destroy(h) };
+}
+
+/// Spec 026's refusal orders (plan R-08): constant reads NULL, size, index; handle reads the
+/// handle, NULL, then the index and the call; nothing written on a refusal.
+#[test]
+fn host_reads_order() {
+    // The meter field: NULL, then the size, then the index.
+    // SAFETY: NULL allowed.
+    assert_eq!(
+        unsafe { rr_dr60_meter_field(99, core::ptr::null_mut()) },
+        RrDr60Status::NullPointer
+    );
+    let mut small = Painted::new(39);
+    // SAFETY: a painted buffer of 4200 bytes.
+    assert_eq!(
+        unsafe { rr_dr60_meter_field(99, small.ptr()) },
+        RrDr60Status::InvalidArgument
+    );
+    assert!(small.untouched_after(4));
+    let mut ok = Painted::new(48);
+    // SAFETY: as above.
+    assert_eq!(
+        unsafe { rr_dr60_meter_field(13, ok.ptr()) },
+        RrDr60Status::NoSuchMeterField
+    );
+    assert!(ok.untouched_after(4));
+    // SAFETY: as above.
+    assert_eq!(
+        unsafe { rr_dr60_meter_field(12, ok.ptr()) },
+        RrDr60Status::Ok
+    );
+    assert_eq!(ok.size(), 40);
+    assert!(ok.zero_in(40, 48) && ok.untouched_after(48));
+    assert_eq!(rr_dr60_meter_field_count(), 13);
+    // The handle reads.
+    let mut v = 7u64;
+    let mut b = true;
+    // SAFETY: NULL handle allowed.
+    unsafe {
+        assert_eq!(
+            rr_dr60_one_pass_drain_samples(core::ptr::null_mut(), &mut v),
+            RrDr60Status::NullPointer
+        );
+        assert_eq!(
+            rr_dr60_meter_reached(core::ptr::null_mut(), 99, 99, core::ptr::null_mut()),
+            RrDr60Status::NullPointer
+        );
+    }
+    let h = handle();
+    // SAFETY: a live handle.
+    unsafe {
+        assert_eq!(
+            rr_dr60_one_pass_drain_samples(h, core::ptr::null_mut()),
+            RrDr60Status::NullPointer
+        );
+        assert_eq!(
+            rr_dr60_meter_reached(h, 99, 99, core::ptr::null_mut()),
+            RrDr60Status::NullPointer
+        );
+        assert_eq!(
+            rr_dr60_meter_reached(h, 13, 99, &mut b),
+            RrDr60Status::NoSuchMeterField
+        );
+        assert_eq!(
+            rr_dr60_meter_reached(h, 12, 3, &mut b),
+            RrDr60Status::NoSuchMeterCall
+        );
+        assert_eq!(
+            rr_dr60_meter_lag_samples(h, 13, 3, &mut v),
+            RrDr60Status::NoSuchMeterField
+        );
+        assert_eq!(
+            rr_dr60_meter_lag_samples(h, 12, 3, &mut v),
+            RrDr60Status::NoSuchMeterCall
+        );
+        assert!(b, "nothing written on a refusal");
+        assert_eq!(v, 7);
+        assert_eq!(
+            rr_dr60_meter_lag_samples(h, 8, RR_DR60_METER_CALL_RECORD, &mut v),
+            RrDr60Status::Ok
+        );
+        assert_eq!(v, RR_DR60_METER_NOT_REACHED);
+        assert_eq!(rr_dr60_one_pass_drain_samples(h, &mut v), RrDr60Status::Ok);
+        assert_eq!(v, u64::from((*h).inner.one_pass_drain_samples()));
+        let mut l = 0u32;
+        assert_eq!(
+            rr_dr60_one_pass_report_latency_samples(h, &mut l),
+            RrDr60Status::Ok
+        );
+        assert_eq!(l, (*h).inner.one_pass_report_latency_samples());
+        rr_dr60_destroy(h);
+    }
+    // The settings readers: NULL, then the size, a switch byte, the tap.
+    let mut s = rr_dr60_settings_default(48_000);
+    // SAFETY: NULL allowed.
+    assert_eq!(
+        unsafe { rr_dr60_settings_one_pass_codec_runs(core::ptr::null(), &mut b) },
+        RrDr60Status::NullPointer
+    );
+    s.struct_size = 112;
+    // SAFETY: a valid structure, its size doctored.
+    assert_eq!(
+        unsafe { rr_dr60_settings_one_pass_codec_runs(&s, &mut b) },
+        RrDr60Status::InvalidArgument
+    );
+    // The word and the wording reads: NULL first.
+    // SAFETY: NULL allowed.
+    unsafe {
+        assert_eq!(
+            rr_dr60_manifest_word(9, 9, 9, core::ptr::null_mut()),
+            RrDr60Status::NullPointer
+        );
+        assert_eq!(
+            rr_dr60_wording_first_hit(
+                core::ptr::null(),
+                1,
+                9,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut()
+            ),
+            RrDr60Status::NullPointer
+        );
+        let (mut e, mut a, mut z) = (core::ptr::null(), 1, 1);
+        assert_eq!(
+            rr_dr60_wording_first_hit(core::ptr::null(), 0, 0, &mut e, &mut a, &mut z),
+            RrDr60Status::Ok
+        );
+        assert!(e.is_null() && a == 0 && z == 0);
+    }
+}
+
+/// A forced panic poisons the handle; the host reads then keep the poisoned status.
+#[test]
+#[cfg(feature = "ffi-test-panic")]
+fn host_reads_poisoned() {
+    let h = handle();
+    let mut v = 7u64;
+    let mut b = true;
+    // SAFETY: a live handle; the forced panic poisons it.
+    unsafe {
+        rr_dr60__test_force_panic(h);
+        assert_eq!(
+            rr_dr60_one_pass_drain_samples(h, &mut v),
+            RrDr60Status::InternalError
+        );
+        assert_eq!(
+            rr_dr60_meter_reached(h, 0, 0, &mut b),
+            RrDr60Status::InternalError
+        );
+        assert_eq!(
+            rr_dr60_meter_lag_samples(h, 0, 0, &mut v),
+            RrDr60Status::InternalError
+        );
+        assert_eq!((v, b), (7, true));
+        rr_dr60_destroy(h);
+    }
 }
