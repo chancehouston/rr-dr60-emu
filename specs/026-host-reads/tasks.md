@@ -35,6 +35,6 @@ Test-first. The traceability table is in plan.md.
 ## Phase 6: C, Swift, records
 
 - [X] T012 C: the functions of contracts/c-api.md, `RrDr60MeterField`, statuses 44 – 48, the defines; `abi_tests` (sizes, published list, painted padding, refusal orders, the settings readers field-local, panic guards), Miri; `ffi_parity host_reads meters_manifest`; `alloc_free host_reads`; the header; `smoke --host-reads` against `examples/host_reads_rows.rs`.
-- [ ] T013 D5: Swift `ReRender` slot loop and frame-floored fill; `ReRenderTests` (empty slot, non-default store: digest and state); the Swift wrappers of D9 (meter manifest, words).
+- [X] T013 D5: Swift `ReRender` slot loop and frame-floored fill; `ReRenderTests` (empty slot, non-default store: digest and state); the Swift wrappers of D9 (meter manifest, words).
 - [ ] T014 `ci.yml`: the fourth promise step (2a170d4, full id); the version 0.93.0 (Cargo ×4, `RR_DR60_VERSION_MINOR`, header, the manifest's version line re-blessed with only that line differing, the Swift fixture if needed); the guide's sections (opening with "optional reads, all appended…"); the CHANGELOG; the README's C list; the traceability audit.
 - [ ] T015 The full gate (fmt, clippy, tests, the feature-less ffi build with `-D warnings`, llvm-cov, the MSRV build, the C smoke, the Swift package, the simulator goldens); the post-implementation reviews (coach, hardware).

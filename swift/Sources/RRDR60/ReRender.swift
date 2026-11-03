@@ -71,22 +71,23 @@ public enum ProcessingRecord {
         var status = RrDr60MemoryStatus.sized
         guard rr_dr60_memory_status(p, &status) == Int32(RR_DR60_STATUS_OK.rawValue) else { return nil }
         if status.remaining_samples > r.remaining_samples_at_start {
-            let missing = status.remaining_samples - r.remaining_samples_at_start
-            guard fill(p, samples: missing, codec: settings.speech_codec_enabled) else { return nil }
+            // Spec 026 D5: the missing samples floored to the stored unit (whole frames with
+            // the coder on), as the harness's `fill_to_remaining` does.
+            let unit = settings.speech_codec_enabled ? UInt64(frameSamples() ?? 0) : 1
+            guard unit > 0 else { return nil }
+            let missing = (status.remaining_samples - r.remaining_samples_at_start) / unit * unit
+            if missing > 0 {
+                guard fill(p, samples: missing, codec: settings.speech_codec_enabled) else { return nil }
+            }
         }
         // Spec 024 D7 (plan R1): the slot's component and its store restored before the schedule
         // and the start; a record naming a component this library does not know is refused.
         guard r.flags & UInt32(RR_DR60_RECORD_FLAG_UNKNOWN_COMPONENT) == 0,
             let slot = try component(of: record)
         else { return nil }
-        if slot.parameter_count > 0 {
-            for i in 0..<4 {
-                let v = withUnsafeBytes(of: slot.store) { $0.load(fromByteOffset: i * 4, as: Float.self) }
-                guard rr_dr60_set_component_parameter(p, UInt32(RR_DR60_INSERTION_POINT_BEFORE_LIMITER), UInt32(i), Double(v))
-                        == Int32(RR_DR60_STATUS_OK.rawValue)
-                else { return nil }
-            }
-        }
+        // Spec 026 D5: every component's stored parameters at `parameter_offset + i`, whatever
+        // the component, then the component (the harness's order).
+        if slot.parameter_count > 0, !restoreStore(p, slot) { return nil }
         guard rr_dr60_set_component(p, UInt32(RR_DR60_INSERTION_POINT_BEFORE_LIMITER), slot.component)
                 == Int32(RR_DR60_STATUS_OK.rawValue)
         else { return nil }
@@ -130,6 +131,31 @@ public enum ProcessingRecord {
         var digest: UInt64 = 0
         guard rr_dr60_recording_digest(p, status.count, &digest) == Int32(RR_DR60_STATUS_OK.rawValue) else { return nil }
         return digest
+    }
+
+    /// The speech coder's frame length in device samples, or `nil` when the library refuses.
+    static func frameSamples() -> UInt32? {
+        var info = RrDr60SpeechCodecInfo.sized
+        return rr_dr60_speech_codec_info(&info) == Int32(RR_DR60_STATUS_OK.rawValue) ? info.frame_samples : nil
+    }
+
+    /// Restores the record's store: every published component's parameters, at its offset.
+    static func restoreStore(_ p: OpaquePointer, _ slot: RrDr60RecordComponent) -> Bool {
+        let point = UInt32(RR_DR60_INSERTION_POINT_BEFORE_LIMITER)
+        let count = withUnsafeBytes(of: slot.store) { $0.count / MemoryLayout<Float>.size }
+        for c in 0..<rr_dr60_component_count() {
+            var comp = RrDr60Component.sized
+            guard rr_dr60_component(c, &comp) == Int32(RR_DR60_STATUS_OK.rawValue) else { return false }
+            for i in 0..<comp.parameter_count {
+                let at = Int(comp.parameter_offset + i)
+                guard at < count else { return false }
+                let v = withUnsafeBytes(of: slot.store) { $0.load(fromByteOffset: at * 4, as: Float.self) }
+                guard rr_dr60_set_component_parameter(p, point, comp.parameter_offset + i, Double(v))
+                        == Int32(RR_DR60_STATUS_OK.rawValue)
+                else { return false }
+            }
+        }
+        return true
     }
 
     /// Imports a filler of `samples` device samples of zeros (whole frames with the codec on).
