@@ -613,6 +613,11 @@ impl RecordPath {
         }
     }
 
+    /// Spec 026 D2: stage 4's record band-limit runs.
+    pub(crate) fn record_stage_runs(&self) -> bool {
+        self.half.run_record
+    }
+
     /// The record path's latency to the encoder's input in host samples (stage 4's point).
     pub(crate) fn pre_encoder_latency(&self) -> u32 {
         self.latency
@@ -1167,6 +1172,21 @@ pub(crate) struct PlaybackPath {
 }
 
 impl PlaybackPath {
+    /// Spec 026 D2: stage 10 runs on this path's output (the playback group is read and the
+    /// stage is on).
+    pub(crate) fn stage10_runs(&self) -> bool {
+        self.meter_playback && self.half.runs()
+    }
+
+    /// Spec 026 D2: the output chain's settle `N_OUT` when any of its stages runs, else 0.
+    pub(crate) fn chain_settle(&self) -> u32 {
+        if self.chain.runs_any() {
+            self.chain.n_out()
+        } else {
+            0
+        }
+    }
+
     /// Spec 026 D4: whether a playback-group meter field (8 – 12) is reached on this path.
     pub(crate) fn meter_reached(&self, field: usize) -> bool {
         match field {

@@ -460,7 +460,11 @@ pub fn denylist_regex() -> &'static Regex {
             .iter()
             .map(|p| format!(r"\b(?i-u:{})\b", regex::escape(p)))
             .collect::<Vec<_>>();
-        let all = stems.into_iter().chain(phrases).collect::<Vec<_>>().join("|");
+        let all = stems
+            .into_iter()
+            .chain(phrases)
+            .collect::<Vec<_>>()
+            .join("|");
         Regex::new(&format!("({all})")).unwrap()
     })
 }

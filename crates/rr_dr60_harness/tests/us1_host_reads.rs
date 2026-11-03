@@ -101,8 +101,16 @@ fn as1_codec_runs() {
             } else {
                 0
             };
-            assert_eq!(pa.latency_samples(), pb.latency_samples() + delay, "{rate} {tap:?}");
-            assert_eq!(pa.one_pass_report_latency_samples(), pb.latency_samples(), "{rate} {tap:?}");
+            assert_eq!(
+                pa.latency_samples(),
+                pb.latency_samples() + delay,
+                "{rate} {tap:?}"
+            );
+            assert_eq!(
+                pa.one_pass_report_latency_samples(),
+                pb.latency_samples(),
+                "{rate} {tap:?}"
+            );
         }
         // The pinned rows: AfterDecoder with the coder off runs the gate, not the coder;
         // AfterInsert and AfterRecord run neither.
@@ -141,7 +149,11 @@ fn as1_report_latency() {
                 off_pos,
                 "{rate}"
             );
-            assert_ne!(map(a, pa.latency_samples(), &ea), off_pos, "{rate}: the full latency misses");
+            assert_ne!(
+                map(a, pa.latency_samples(), &ea),
+                off_pos,
+                "{rate}: the full latency misses"
+            );
         }
     }
 }

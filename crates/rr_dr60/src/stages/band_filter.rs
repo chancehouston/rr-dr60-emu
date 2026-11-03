@@ -339,6 +339,43 @@ impl BandFilter {
         (f, q, self.gain_db.cur)
     }
 
+    /// The samples after which the filter's impulse response stays below 10⁻⁵ of its peak, a
+    /// bound (spec 026 D2; plan R-02, hardware B2, B3): for the TPT state-variable filter the
+    /// pole radius is −ln r = atanh(k·φ) with φ = g / (1 + g²), and the bound is
+    /// ⌈15.3 / atanh(kφ)⌉ + 4 (it covers the near-repeated poles at Q ≈ 0.5). During a ramp
+    /// the box bound uses the smallest k and the smallest φ of the current and target values,
+    /// plus the longest remaining ramp. The gain and the type blend do not move the poles.
+    pub(crate) fn settle_bound(&self) -> u32 {
+        let (f_cur, q_cur, _) = self.applied();
+        let phi = |f: f64| {
+            let x = core::f64::consts::PI * f / self.rate;
+            let g = dm::sin(x) / dm::cos(x);
+            g / (1.0 + g * g)
+        };
+        let q_max = q_cur.max(self.q_to);
+        let k_min = 1.0 / q_max;
+        let kphi = (k_min * phi(f_cur).min(phi(self.freq_hz_to))).min(1.0 - 1e-15);
+        let atanh = 0.5 * dm::ln((1.0 + kphi) / (1.0 - kphi));
+        let n = if atanh > 0.0 {
+            15.3 / atanh
+        } else {
+            f64::from(u32::MAX)
+        };
+        let rem = |r: &Ramp| {
+            if r.active {
+                self.len.saturating_sub(r.n)
+            } else {
+                0
+            }
+        };
+        let ramps = rem(&self.freq).max(rem(&self.q));
+        let n = n.min(f64::from(u32::MAX / 2));
+        // ⌈n⌉ without `f64::ceil` (the core is `no_std`).
+        let t = n as u32;
+        let up = if f64::from(t) < n { t + 1 } else { t };
+        up.saturating_add(4).saturating_add(ramps)
+    }
+
     fn recompute(&mut self) {
         let (f, q, _) = self.applied();
         let x = core::f64::consts::PI * f / self.rate;
@@ -501,6 +538,41 @@ mod tests {
     }
 
     /// Research R-02: n = 1 at P, the target exact at P + N − 1, log of the applied frequency.
+    /// Spec 026 D2 (hardware B2): the settle bound against brute-force impulse responses on a
+    /// grid of rates, frequencies, Qs and the four types: the bound is never short.
+    #[test]
+    fn settle_bound_covers_the_impulse() {
+        let mut worst = 0.0f64;
+        for &rate in &[6000u32, 16_000, 48_000] {
+            for &f in &[20.0f32, 100.0, 1000.0, 0.4 * rate as f32] {
+                for &q in &[0.5f32, 0.7071, 2.0, 10.0] {
+                    for t in 0..4u8 {
+                        let mut bf = BandFilter::new(rate, rate / 50, [f32::from(t), f, q, 0.0]);
+                        let bound = bf.settle_bound() as usize;
+                        let n = bound * 2 + 64;
+                        let mut peak = 0.0f64;
+                        let mut last = 0usize;
+                        let mut h = alloc::vec::Vec::with_capacity(n);
+                        for i in 0..n {
+                            h.push(bf.process(if i == 0 { 1.0 } else { 0.0 }).abs());
+                        }
+                        for v in &h {
+                            peak = peak.max(*v);
+                        }
+                        for (i, v) in h.iter().enumerate() {
+                            if *v >= 1e-5 * peak {
+                                last = i + 1;
+                            }
+                        }
+                        worst = worst.max(last as f64 / bound as f64);
+                        assert!(last <= bound, "{rate} {f} {q} type {t}: {last} > {bound}");
+                    }
+                }
+            }
+        }
+        assert!(worst > 0.5, "the bound is not loose: worst ratio {worst}");
+    }
+
     #[test]
     fn ramp_trajectory() {
         let rate = 48_000;

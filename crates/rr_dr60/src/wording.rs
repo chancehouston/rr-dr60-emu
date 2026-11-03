@@ -131,9 +131,10 @@ pub fn first_hit_in(lists: &Lists, text: &str) -> Option<Hit> {
             if starts_with_ci(text, at, stem) {
                 let rest = at + stem.len();
                 if rest == end_word
-                    || lists.suffixes.iter().any(|sfx| {
-                        rest + sfx.len() == end_word && starts_with_ci(text, rest, sfx)
-                    })
+                    || lists
+                        .suffixes
+                        .iter()
+                        .any(|sfx| rest + sfx.len() == end_word && starts_with_ci(text, rest, sfx))
                 {
                     return Some(Hit {
                         entry: stem,
@@ -146,7 +147,9 @@ pub fn first_hit_in(lists: &Lists, text: &str) -> Option<Hit> {
         for &phrase in lists.phrases {
             if starts_with_ci(text, at, phrase) && boundary(text, at + phrase.len()) {
                 let excepted = lists.exceptions.iter().any(|(p, before)| {
-                    *p == phrase && at >= before.len() && starts_with_ci(text, at - before.len(), before)
+                    *p == phrase
+                        && at >= before.len()
+                        && starts_with_ci(text, at - before.len(), before)
                 });
                 if !excepted {
                     return Some(Hit {
@@ -178,13 +181,28 @@ mod tests {
     #[test]
     fn whole_words_and_suffixes() {
         assert_eq!(first_hit("a gate event").map(|h| h.entry), Some("event"));
-        assert_eq!(first_hit("Events here").map(|h| (h.start, h.end)), Some((0, 6)));
-        assert!(first_hit("The sensitivity setting").is_none(), "sens + itivity is no suffix");
+        assert_eq!(
+            first_hit("Events here").map(|h| (h.start, h.end)),
+            Some((0, 6))
+        );
+        assert!(
+            first_hit("The sensitivity setting").is_none(),
+            "sens + itivity is no suffix"
+        );
         assert!(first_hit("prevented").is_none(), "inside a word");
-        assert_eq!(first_hit("we are listening for it").map(|h| h.entry), Some("listening for"));
-        assert_eq!(first_claim_hit("an accurate copy").map(|h| h.entry), Some("accurate"));
+        assert_eq!(
+            first_hit("we are listening for it").map(|h| h.entry),
+            Some("listening for")
+        );
+        assert_eq!(
+            first_claim_hit("an accurate copy").map(|h| h.entry),
+            Some("accurate")
+        );
         assert!(first_claim_hit("not measured").is_none());
         assert!(first_claim_hit("measured on a unit").is_some());
-        assert!(first_claim_hit("revealing").is_none(), "only the listed forms");
+        assert!(
+            first_claim_hit("revealing").is_none(),
+            "only the listed forms"
+        );
     }
 }

@@ -7,6 +7,7 @@
 pub(crate) mod band_filter;
 pub(crate) mod biquad;
 pub(crate) mod clamp;
+pub(crate) mod drain;
 // Spec 021: the live stage bypass's crossfade, one per playback-side stage (10 – 13).
 pub(crate) mod fade;
 pub(crate) mod first_order;

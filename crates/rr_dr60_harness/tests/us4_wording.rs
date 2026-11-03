@@ -13,7 +13,14 @@ fn as1_lists() {
     for w in ["ghost", "spirit", "evp", "detect", "event"] {
         assert!(ENGINE_STRINGS.stems.contains(&w), "{w}");
     }
-    for w in ["accurate", "authentic", "reveal", "uncover", "hidden voice", "measured"] {
+    for w in [
+        "accurate",
+        "authentic",
+        "reveal",
+        "uncover",
+        "hidden voice",
+        "measured",
+    ] {
         assert!(CLAIMS.phrases.contains(&w), "{w}");
     }
     assert_eq!(CLAIMS.exceptions, &[("measured", "not ")]);
@@ -47,9 +54,12 @@ fn fuzz() -> Vec<String> {
         tokens.extend(l.suffixes.iter().map(|s| (*s).to_owned()));
     }
     tokens.extend(
-        ["EVENT", "Ghost", "x", "_", "1", " ", " ", "-", ".", "'", "é", "ü", "ß", "中", "ab", "not "]
-            .iter()
-            .map(|s| (*s).to_owned()),
+        [
+            "EVENT", "Ghost", "x", "_", "1", " ", " ", "-", ".", "'", "é", "ü", "ß", "中", "ab",
+            "not ",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned()),
     );
     let mut x: u64 = 0x2026_0003_D3D3_0001;
     let mut next = move || {
@@ -80,7 +90,10 @@ fn as2_differential() {
         checked += 1;
         hits += usize::from(ours.is_some());
     }
-    assert!(hits > 1000, "the corpus exercises hits: {hits} of {checked}");
+    assert!(
+        hits > 1000,
+        "the corpus exercises hits: {hits} of {checked}"
+    );
     // A documented difference: no non-ASCII case folding (no engine string uses these).
     assert!(wording::first_hit("ſpirit").is_none());
     assert!(wording::first_hit("\u{212A}ghost").is_none());
@@ -98,13 +111,23 @@ fn as3_one_source() {
 fn as4_new_strings_pass() {
     use rr_dr60::{Confidence, StagePath, StageStatus};
     let mut v: Vec<&str> = Vec::new();
-    for s in [StageStatus::NotModeled, StageStatus::Assumed, StageStatus::Sourced, StageStatus::Checked] {
+    for s in [
+        StageStatus::NotModeled,
+        StageStatus::Assumed,
+        StageStatus::Sourced,
+        StageStatus::Checked,
+    ] {
         v.extend([s.token(), s.label()]);
     }
     for p in [StagePath::Record, StagePath::Playback, StagePath::Both] {
         v.extend([p.token(), p.label()]);
     }
-    for c in [Confidence::NotApplicable, Confidence::Low, Confidence::Medium, Confidence::High] {
+    for c in [
+        Confidence::NotApplicable,
+        Confidence::Low,
+        Confidence::Medium,
+        Confidence::High,
+    ] {
         v.extend([c.token(), c.label()]);
     }
     for f in rr_dr60::meters::FIELDS {

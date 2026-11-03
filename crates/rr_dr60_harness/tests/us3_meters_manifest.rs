@@ -109,7 +109,11 @@ fn as1_fields() {
     ids.sort_unstable();
     ids.dedup();
     assert_eq!(ids.len(), 13);
-    assert!(FIELDS.iter().all(|f| !f.unit.is_empty() && f.sentence.ends_with('.')));
+    assert!(
+        FIELDS
+            .iter()
+            .all(|f| !f.unit.is_empty() && f.sentence.ends_with('.'))
+    );
 }
 
 /// Unreached fields never leave their rest value on the stress set; reached maxima move.
@@ -133,7 +137,10 @@ fn as2_reach() {
                         for (i, fld) in FIELDS.iter().enumerate() {
                             let reached = p.meter_reached(i, call);
                             let moved = rows.iter().any(|m| value(m, i) != value(&rest, i));
-                            let tag = format!("{rate} {tap:?} agc {agc} clamp {clamp} {route:?} {call:?} {}", fld.identifier);
+                            let tag = format!(
+                                "{rate} {tap:?} agc {agc} clamp {clamp} {route:?} {call:?} {}",
+                                fld.identifier
+                            );
                             if !reached {
                                 assert!(!moved, "{tag}: unreached but moved");
                             } else if fld.kind == MeterKind::Maximum {
@@ -162,7 +169,8 @@ fn as3_lag() {
                 // The output clamp's count is unreached with the option off (its default).
                 _ => assert_eq!(
                     p.meter_lag_samples(i, MeterCall::Play),
-                    p.meter_reached(i, MeterCall::Play).then(|| p.playback_latency_samples())
+                    p.meter_reached(i, MeterCall::Play)
+                        .then(|| p.playback_latency_samples())
                 ),
             }
             // A call that does not reach a field has no lag.
@@ -175,4 +183,3 @@ fn as3_lag() {
         assert_eq!(p.meter_lag_samples(99, MeterCall::OnePass), None);
     }
 }
-

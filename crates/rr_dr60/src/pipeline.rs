@@ -127,6 +127,9 @@ pub struct Pipeline {
     /// R-01; Complexity Tracking row 1).
     pub(crate) one_pass: OnePass,
     pub(crate) latency: u32,
+    /// The one-pass drain's static terms (spec 026 D2), computed beside the latency; the slot's
+    /// band term is added on read.
+    pub(crate) drain_static: u32,
     /// The split engine's record path (spec 006 FR-001): ignores the tap, device-sample event
     /// positions, reset at every `start_recording`.
     pub(crate) recorder: RecordPath,
@@ -581,6 +584,7 @@ impl Pipeline {
             .play
             .set_start_values(route, volume, speed_level, battery_volts); // 015 D3, 018
         let latency = latency_samples(plan, &settings, &one_pass);
+        let drain_static = one_pass_drain_static(plan, &settings, &one_pass);
         let mut recorder = RecordPath::new(&settings, plan, false, true);
         recorder.ctl.set_stream(Stream::Record); // 020 D9
         recorder.set_store(&store); // 024 research R-06
@@ -588,6 +592,7 @@ impl Pipeline {
             settings,
             one_pass,
             latency,
+            drain_static,
             meters: Meters {
                 hang_remaining_samples: recorder.hang_samples(),
                 battery_ceiling: crate::battery::ceiling_factor(battery_volts), // 018
@@ -1415,6 +1420,27 @@ impl Pipeline {
         self.latency
     }
 
+    /// The one-pass drain (spec 026 D2): the host input samples of silence after the input that
+    /// bring every kept sample to the output and settle it within 10⁻⁵ of its own peak, while
+    /// the gate stays open, at the current settings, tap and slot values. A bound: the sum of the
+    /// stages' settles (each by the −100 dB rule of `N_OUT`), both converters' responses and the
+    /// speech coder's delay. At the front taps, the settle of the front stages that run (0 at
+    /// the capsule's tap). **Excluded**: the limiter's charge (a state: a gain on silence
+    /// outputs zero), the hiss (a steady source), the decoder's idle output (quiet, never zero)
+    /// and pending scheduled changes. **In drop mode** a gate that pauses before the kept
+    /// samples are out holds them until the next resume; the figure holds in mute mode, with
+    /// the gate off, or while the hang outlasts it. The slot's band term is computed on read
+    /// (a high-Q, low band filter reaches about 2.4 s at 96 kHz). Not the player's
+    /// [`drain_samples`](Self::drain_samples). Real-time safe.
+    pub fn one_pass_drain_samples(&self) -> u32 {
+        let band = if matches!(self.settings.tap, Tap::AfterMicCapsule | Tap::AfterMicAmp) {
+            0
+        } else {
+            self.one_pass.rec.insert.settle_bound()
+        };
+        self.drain_static.saturating_add(band)
+    }
+
     /// The latency the one-pass's voice-activation reports align with (spec 026 D1):
     /// [`latency_samples`](Self::latency_samples) without the speech coder's delay when it runs
     /// ([`Settings::one_pass_codec_runs`]). The reports' positions exclude the coder's delay;
@@ -1573,6 +1599,7 @@ impl Pipeline {
             .play
             .replace_playback_stage(PlaybackStage::with_sos(playback), &plan);
         p.latency = latency_samples(&plan, &settings, &p.one_pass);
+        p.drain_static = one_pass_drain_static(&plan, &settings, &p.one_pass);
         Ok(p)
     }
 
@@ -1820,6 +1847,51 @@ impl Pipeline {
 /// included. The limiter adds nothing; at the "after AGC" tap nothing after it runs, so the
 /// latency is 0 (spec 005 FR-001). Spec 006 FR-016 reports the two paths' latencies rounded
 /// separately; this single rounding is kept for the one-pass figure.
+/// Spec 026 D2 (plan R-02): the one-pass drain's static terms in host samples. At the front
+/// taps the settle of the front stages that run (0 at the capsule's tap; stage 2's after it;
+/// the slot's band term is added on read after the slot); otherwise stage 2's settle, both
+/// converters' full responses (4·D, where the conversion runs), and the device-rate terms
+/// ⌈(N₄·[stage 4] + 180·[coder] + N₁₀·[stage 10] + 1)·m / l⌉ (the + 1: the device grid's phase),
+/// plus the output chain's `N_OUT` when it runs.
+fn one_pass_drain_static(plan: &RatePlan, settings: &Settings, one_pass: &OnePass) -> u32 {
+    use crate::stages::drain;
+    let idx = crate::stages::output::rate_index(settings.host_rate_hz).unwrap_or(0);
+    let mic = if settings.mic.amp_enabled {
+        drain::mic_amp_settle(idx)
+    } else {
+        0
+    };
+    match settings.tap {
+        Tap::AfterMicCapsule => return 0,
+        Tap::AfterMicAmp | Tap::AfterInsert | Tap::AfterAgc => return mic,
+        _ => {}
+    }
+    let (l, m) = paths::l_m(plan);
+    let device = u64::from(if one_pass.rec.record_stage_runs() {
+        drain::record_settle()
+    } else {
+        0
+    }) + if settings.one_pass_codec_runs() {
+        u64::from(codec::DELAY_SAMPLES)
+    } else {
+        0
+    } + if one_pass.play.stage10_runs() {
+        paths::N10 as u64
+    } else {
+        0
+    } + 1;
+    let conversion = if l == m {
+        0
+    } else {
+        4 * u64::from(plan.delay_host_samples())
+    };
+    let total = u64::from(mic)
+        + conversion
+        + (u128::from(device) * u128::from(m)).div_ceil(u128::from(l)) as u64
+        + u64::from(one_pass.play.chain_settle());
+    u32::try_from(total).unwrap_or(u32::MAX)
+}
+
 fn latency_samples(plan: &RatePlan, settings: &Settings, one_pass: &OnePass) -> u32 {
     if settings.tap.is_front() {
         return 0;
