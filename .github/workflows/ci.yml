@@ -222,4 +222,4 @@ jobs:
       # rule under Miri, which reports an uninitialized padding byte where a painted-byte test
       # passes by luck (the first run caught `MaybeUninit::zeroed()`'s typed move).
       - name: Miri on the ABI helper's tests
-        run: cargo +nightly miri test -p rr_dr60_ffi --lib -- abi_tests::write_sized abi_tests::readout abi_tests::default_is abi_tests::published abi_tests::settings_read abi_tests::control_reading settings_read::tests insert::tests abi_tests::host_reads abi_tests::meter_field host_reads::tests abi_tests::rerender abi_tests::write_sized
+        run: cargo +nightly miri test -p rr_dr60_ffi --lib -- abi_tests::write_sized abi_tests::readout abi_tests::default_is abi_tests::published abi_tests::settings_read abi_tests::control_reading settings_read::tests insert::tests abi_tests::host_reads abi_tests::meter_field host_reads::tests abi_tests::rerender_order

@@ -2642,17 +2642,27 @@ mod rerender {
     }
 
     #[test]
-    fn stop_after_self_stop_is_caught_by_the_self_stop_cells() {
+    fn self_stop_fields_dropped_is_caught_by_the_record_bytes() {
+        // Behavioural (hardware post-implementation Q2): the digest still matches; the new
+        // record's stop lines differ from the original's (or the writer refuses the run).
         let raw = rc::raw_stimulus(RATE);
         let (_, run) = rc::record_run(&standard, RATE, cell(true, true), &raw);
-        assert!(!identical(
-            &run.record,
-            &raw,
-            RerenderMutation {
-                stop_after_self_stop: true,
-                ..Default::default()
-            }
-        ));
+        let mut plan = Plan::from_record(&run.record).unwrap();
+        plan.__set_mutation(RerenderMutation {
+            self_stop_fields_dropped: true,
+            ..Default::default()
+        });
+        let mut r = ReRender::new(plan).unwrap();
+        let _ = r.feed(&raw).unwrap();
+        let o = r.finish().unwrap();
+        assert_eq!(o.verdict, Verdict::Identical, "the digest does not see it");
+        let mut b = vec![0u8; r.record_len().unwrap_or(0)];
+        let written = r.record_write(&mut b);
+        println!(
+            "self_stop_fields_dropped: record_write {:?}",
+            written.map(|_| b == run.record)
+        );
+        assert!(written.is_err() || b != run.record);
     }
 
     #[test]
@@ -2733,7 +2743,7 @@ mod rerender {
     fn six_mutants() {
         let RerenderMutation {
             no_split: _,
-            stop_after_self_stop: _,
+            self_stop_fields_dropped: _,
             fill_rounded_up: _,
             store_skipped: _,
             i24_scale: _,

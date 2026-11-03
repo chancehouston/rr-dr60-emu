@@ -302,3 +302,29 @@ fn as6_rerender_empty() {
     plan.set_remaining_samples(0);
     assert_eq!(ReRender::new(plan).unwrap_err(), Error::MemoryFull);
 }
+
+/// Hardware review Q3: an edited plan's rows past what the engine reaches do not land, and
+/// `rows_landed` says so (70 rows past the stop position).
+#[test]
+fn as4_rerender_rows_past_the_stop() {
+    let raw = rc::raw_stimulus(6000);
+    let (_, run) = rc::record_run(&standard, 6000, CHANGES, &raw);
+    let mut plan = Plan::from_record(&run.record).unwrap();
+    let stop = plan.readout().stop.stop_input_position;
+    for i in 0..70u64 {
+        plan.insert_row(ChangeEntry::new(
+            stop + 100_000 + i,
+            rc::KNEE,
+            0.0,
+            -10.0,
+            100 + i,
+            STREAM_RECORD,
+        ))
+        .unwrap();
+    }
+    let total = plan.rows().len() as u64;
+    let r = re_render(plan, &raw).unwrap();
+    let o = r.outcome().unwrap();
+    assert!(o.rows_landed < total, "{} of {total}", o.rows_landed);
+    assert_eq!(o.rows_landed, total - 70);
+}

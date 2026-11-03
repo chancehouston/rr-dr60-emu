@@ -35,6 +35,18 @@ Everything is appended (version 0.94.0); a host built on 0.93 runs unchanged.
 - **D9's guard count**: the golden files read from the harness are seventeen (the sixteen audio guards and the record golden); all are unmoved, read from `git diff 3890bfe`.
 - **The dense-row oracle** (US1 AS5): 80 knee rows (−30 / −1 dBFS), 64 one sample apart from input sample 50 and the last 16 inside the first voiced segment, each held longer than the limiter's dead time; hiss-offset rows were tried first and changed nothing measurable in the stored form, so they could not show a late row.
 - **US2 AS1's moved row** is spec 020's `EntryMovedFar` (the first row moved 0.1 s) with the codec on: one device sample is below a frame's reach there, as spec 020 found.
+- **The post-implementation reviews** (coach 1 – 12, hardware Q1 – Q9), dated 2026-11-03:
+  - **Test names**: every harness test carries `rerender` in its name (`as1_rerender_sixteen_cells`, …), so one filter matches every binary; US2 AS1 and AS2 share `as1_rerender_equals_direct_and_as2_round_trip`; the artifacts name them as they are.
+  - **Form 1** has no flag of its own: `Plan::readout().form_version` is the signal, and a real form-1 record (0.20 – 0.23) always carries `LIBRARY_DIFFERS`. AS2 builds its form-1 record from a current one with the slot lines removed (spec 024's method) rather than from a committed 0.23 fixture.
+  - **A record from another library version** cannot read `Identical`: the stored form's header carries the version (spec 024's lesson), so `Differs` with `LIBRARY_DIFFERS` is the expected verdict there; the guide says so. **Raised at the merge for the app's wording.**
+  - **A remaining capacity above the capacity** is refused at `new` (`DoesNotFit`), not at the edit (the capacity is the engine's, known only once it is built).
+  - **D9's count** is seventeen golden files (D9, FR-009, SC-003 read "sixteen guards" as the audio guards; all seventeen are unmoved).
+  - **Swift on every cell**: the C session is shown equal to Rust on all sixteen cells (`ffi_parity rerender`); Swift wraps the C calls and is shown on its own six cases (SC-001 restated).
+  - **The self-stop mutant** is `self_stop_fields_dropped`: the first (`stop_after_self_stop`) was caught only by an error path.
+  - **Rows are validated when the record is read** (D6: a doctored row is refused at `Plan::from_record`, never mid-feed).
+  - **The hour's figures** are from three solo runs with the stimulus precomputed: 24 – 29 s, 125 – 152× real time, the feed 0.97 – 1.24× the record path; `new` on a nearly full memory 2 – 6 ms.
+  - **Miri** runs the real C session once (about 26 min under the interpreter); CI's nightly job runs the ordering test.
+  - **The "Rebuilt, matching the original" sentence** says the audio never reached the point where the changes act; a −0.0 edit acts with no effect. **Raised at the merge** (the alternative: "The changed settings gave the same stored recording.").
 
 ### Session 2026-11-03 (restatement)
 
@@ -62,12 +74,12 @@ A host holding a recording's processing record and its kept 24-bit microphone au
 
 **Independent Test**: the core's session against the harness's independent recipe and the recording's own digest and record, at seven rates.
 
-1. **Given** spec 020's sixteen cells (codec × changes × drop/mute × stop call/self-stop), **When** each record and input are re-rendered through the session, **Then** the digest equals the recording's and the harness recipe's, `matches_original` is true and the verdict is `Identical` (`us1_rerender::as1_sixteen_cells`).
-2. **Given** spec 024's slot cells (the band filter; a non-default store with an empty slot) and a committed form-1 record, **Then** the same holds; the form-1 record is flagged (`us1_rerender::as2_slot_and_form_1`).
-3. **Given** a session fed in blocks of 1, 64, 4096 and an irregular schedule, **Then** every partition gives the same digest and the same new record (`us1_rerender::as3_partitions`).
-4. **Given** a burst added to the input of a cell, and the stop moved one frame earlier in the record, **Then** the verdict is `Differs` (`us1_rerender::as4_differs`).
-5. **Given** more than 64 rows packed inside one 4096-sample block, fed at 4096 and at 1, **Then** both read `Identical`, and the harness recipe at block 4096 does not (the test's teeth; hardware B1) (`us1_rerender::as5_dense_rows`).
-6. **Given** an unedited plan at the record's library version, **Then** the new record equals the original record byte for byte (the events and change rows, which the digest does not cover; coach 1) (`us1_rerender::as6_record_bytes`).
+1. **Given** spec 020's sixteen cells (codec × changes × drop/mute × stop call/self-stop), **When** each record and input are re-rendered through the session, **Then** the digest equals the recording's and the harness recipe's, `matches_original` is true and the verdict is `Identical` (`us1_rerender::as1_rerender_sixteen_cells`).
+2. **Given** spec 024's slot cells (the band filter; a non-default store with an empty slot) and a committed form-1 record, **Then** the same holds; the form-1 record is flagged (`us1_rerender::as2_rerender_slot_and_form_1`).
+3. **Given** a session fed in blocks of 1, 64, 4096 and an irregular schedule, **Then** every partition gives the same digest and the same new record (`us1_rerender::as3_rerender_partitions`).
+4. **Given** a burst added to the input of a cell, and the stop moved one frame earlier in the record, **Then** the verdict is `Differs` (`us1_rerender::as4_rerender_differs`).
+5. **Given** more than 64 rows packed inside one 4096-sample block, fed at 4096 and at 1, **Then** both read `Identical`, and the harness recipe at block 4096 does not (the test's teeth; hardware B1) (`us1_rerender::as5_rerender_dense_rows`).
+6. **Given** an unedited plan at the record's library version, **Then** the new record equals the original record byte for byte (the events and change rows, which the digest does not cover; coach 1) (`us1_rerender::as6_rerender_record_bytes`).
 
 ### User Story 2 - A host rebuilds a recording with changed settings (Priority: P1)
 
@@ -75,12 +87,12 @@ A host takes a record, changes a setting (a knee, the sensitivity, the band filt
 
 **Independent Test**: the rebuilt item against the harness recipe with the same delta and against a direct recording at the edited settings; its new record's own re-render.
 
-1. **Given** a plan with one edit (the knee to −30 dBFS; the band filter's frequency; one row moved; the seed), **When** it is rebuilt, **Then** its digest equals the harness's `re_render(…, Delta::{Knee, ParameterMoved, EntryMoved, Seed})` and a direct recording at the edited settings, `edited` is true and the verdict is `Rebuilt` with `matches_original` false (`us2_rebuild::as1_equals_direct`).
-2. **Given** the rebuilt item's new record and the same input, **Then** a faithful re-render of it is `Identical` (`us2_rebuild::as2_record_round_trip`).
-3. **Given** edits that do not validate (a knee out of range, a row with an unknown control or another stream, the host rate, a remaining capacity above the capacity), **Then** each is refused with the engine's own error, nothing built (`us2_rebuild::as3_refusals`).
-4. **Given** a smaller and a larger capacity than the original's, **Then** the rebuild self-stops earlier, or does not self-stop where the original did, and ends where the engine ends it (`us2_rebuild::as4_self_stop_both_ways`).
-5. **Given** an edit the input never reaches (a playback-side setting; a same-value edit), **Then** `edited` follows the field compare and `matches_original` is true (`us2_rebuild::as5_unreached_edit`).
-6. **Given** a plan with a remaining capacity of 0, **Then** `new` refuses with `MemoryFull` (an empty Rebuild cannot occur; restated, see Clarifications) (`us2_rebuild::as6_empty`).
+1. **Given** a plan with one edit (the knee to −30 dBFS; the band filter's frequency; one row moved; the seed), **When** it is rebuilt, **Then** its digest equals the harness's `re_render(…, Delta::{Knee, ParameterMoved, EntryMoved, Seed})` and a direct recording at the edited settings, `edited` is true and the verdict is `Rebuilt` with `matches_original` false (`us2_rebuild::as1_rerender_equals_direct_and_as2_round_trip`).
+2. **Given** the rebuilt item's new record and the same input, **Then** a faithful re-render of it is `Identical` (`us2_rebuild::as1_rerender_equals_direct_and_as2_round_trip`).
+3. **Given** edits that do not validate (a knee out of range, a row with an unknown control or another stream, the host rate, a remaining capacity above the capacity), **Then** each is refused with the engine's own error, nothing built (`us2_rebuild::as3_rerender_refusals`).
+4. **Given** a smaller and a larger capacity than the original's, **Then** the rebuild self-stops earlier, or does not self-stop where the original did, and ends where the engine ends it (`us2_rebuild::as4_rerender_self_stop_both_ways`).
+5. **Given** an edit the input never reaches (a playback-side setting; a same-value edit), **Then** `edited` follows the field compare and `matches_original` is true (`us2_rebuild::as5_rerender_unreached_edit`).
+6. **Given** a plan with a remaining capacity of 0, **Then** `new` refuses with `MemoryFull` (an empty Rebuild cannot occur; restated, see Clarifications) (`us2_rebuild::as6_rerender_empty`).
 
 ### User Story 3 - A host streams, shows progress and cancels (Priority: P2)
 
@@ -88,11 +100,11 @@ A host re-renders an hour-long recording without holding the whole input in memo
 
 **Independent Test**: allocation counts, the cost against the record path, the progress figure and the early drop.
 
-1. **Given** a session, **Then** `feed`, `meters` and `finish` allocate nothing (the allocation counter), and `new`'s peak memory is reported per encoding (`us3_stream::as1_alloc_free`).
-2. **Given** a 60-minute recording at 48 kHz (release only), **Then** the re-render reads `Identical`, `feed`'s cost per host sample is within 1.5× of the record path's own figure (at least 20× real time), and `new` on a nearly full memory is timed separately (`us3_stream::as2_hour`).
-3. **Given** a session dropped half-way, **Then** nothing leaks and a new session on the same record still reads `Identical` (`us3_stream::as3_cancel`).
-4. **Given** an input that ends before the stop position, **Then** `finish` refuses with `InputShort` and the samples still needed (a session-only check: the harness recipe feeds what it has) (`us3_stream::as4_input_short`).
-5. **Given** an out-of-range i24 code, mixed `feed` and `feed_f32`, input past the stop position, a plan whose event bound exceeds the cap, and `collect_run: false`, **Then** each behaves as D2, D3, D5 and D6 say (`us3_stream::as5_feed_edges`).
+1. **Given** a session, **Then** `feed`, `meters` and `finish` allocate nothing (the allocation counter), and `new`'s peak memory is reported per encoding (`us3_stream::as1_rerender_meters_and_footprint`).
+2. **Given** a 60-minute recording at 48 kHz (release only), **Then** the re-render reads `Identical`, `feed`'s cost per host sample is within 1.5× of the record path's own figure (at least 20× real time), and `new` on a nearly full memory is timed separately (`us3_stream::as2_rerender_hour`).
+3. **Given** a session dropped half-way, **Then** nothing leaks and a new session on the same record still reads `Identical` (`us3_stream::as3_rerender_cancel_and_progress`).
+4. **Given** an input that ends before the stop position, **Then** `finish` refuses with `InputShort` and the samples still needed (a session-only check: the harness recipe feeds what it has) (`us3_stream::as4_rerender_input_short`).
+5. **Given** an out-of-range i24 code, mixed `feed` and `feed_f32`, input past the stop position, a plan whose event bound exceeds the cap, and `collect_run: false`, **Then** each behaves as D2, D3, D5 and D6 say (`us3_stream::as5_rerender_feed_edges`).
 
 ### User Story 4 - One recipe on every surface (Priority: P2)
 
@@ -101,8 +113,8 @@ Rust, C and Swift re-render through the same engine code.
 **Independent Test**: parity, the source and the fill.
 
 1. **Given** the sixteen cells, **Then** the C session and the Swift `ReRenderSession` give the Rust digest, outcome, stored form and new record byte for byte (`ffi_parity rerender`, `swift test ReRenderTests`).
-2. **Given** the Swift package's sources, **Then** no fill, schedule refill or stop rule remains in Swift (a source scan) (`us4_surfaces::as2_no_swift_recipe`).
-3. **Given** `Pipeline::fill_to_remaining` and the harness's fill on both encodings, **Then** the remaining capacities and the digests of a recording made afterwards are equal, two different fillers give the same digest, and the call refuses while active or when fuller (`us4_surfaces::as3_fill`).
+2. **Given** the Swift package's sources, **Then** no fill, schedule refill or stop rule remains in Swift (a source scan) (`us4_surfaces::as2_rerender_no_swift_recipe`).
+3. **Given** `Pipeline::fill_to_remaining` and the harness's fill on both encodings, **Then** the remaining capacities and the digests of a recording made afterwards are equal, two different fillers give the same digest, and the call refuses while active or when fuller (`us4_surfaces::as3_rerender_fill`).
 4. **Given** six mutants (no refill split; a stop call after a self-stop; the fill rounded up; the store left at its defaults; `feed` converting by `x / (2²³ − 1)`; one event dropped from the run), **Then** each fails a named test (`mutation rerender::`) *(restated, see Clarifications)*.
 
 ### Edge Cases
@@ -117,12 +129,12 @@ Rust, C and Swift re-render through the same engine code.
 ## Requirements *(mandatory)*
 
 - **FR-001**: D1's core recipe, matching the harness recipe on every cell (`us1_rerender`).
-- **FR-002**: D2's streaming session, split-and-top-up, allocation-free after `new`, with the meters (`us1_rerender::as3_partitions`, `as5_dense_rows`, `us3_stream`).
-- **FR-003**: D3's feed point (`us1_rerender`, `us3_stream::as5_feed_edges`).
+- **FR-002**: D2's streaming session, split-and-top-up, allocation-free after `new`, with the meters (`us1_rerender::as3_rerender_partitions`, `as5_rerender_dense_rows`, `us3_stream`).
+- **FR-003**: D3's feed point (`us1_rerender`, `us3_stream::as5_rerender_feed_edges`).
 - **FR-004**: D4's editable plan with the engine's own validation and the refused edits (`us2_rebuild`).
-- **FR-005**: D5's outcome, including the new record byte for byte and the empty outcome (`us1_rerender::as6_record_bytes`, `us2_rebuild`).
-- **FR-006**: D6's stop rule, refusals and flags (`us2_rebuild::as3_refusals`, `as4_self_stop_both_ways`, `us3_stream::as4_input_short`, `as5_feed_edges`).
-- **FR-007**: D7's public fill (`us4_surfaces::as3_fill`).
+- **FR-005**: D5's outcome, including the new record byte for byte and the empty outcome (`us1_rerender::as6_rerender_record_bytes`, `us2_rebuild`).
+- **FR-006**: D6's stop rule, refusals and flags (`us2_rebuild::as3_rerender_refusals`, `as4_rerender_self_stop_both_ways`, `us3_stream::as4_rerender_input_short`, `as5_rerender_feed_edges`).
+- **FR-007**: D7's public fill (`us4_surfaces::as3_rerender_fill`).
 - **FR-008**: D8's C handles and Swift wrapper, appended (`ffi_parity rerender`, `abi_tests`, `swift test`, the five promise steps).
 - **FR-009**: D9: no audio guard moves (`us2_abi`'s guard list, the golden SHA guards).
 - **FR-010**: every mutant of US4 AS4 fails a named test (`mutation rerender::`).

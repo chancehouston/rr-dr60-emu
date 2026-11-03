@@ -75,6 +75,14 @@ impl Plan {
                 reason: "a change row on another stream than the record stream",
             });
         }
+        // Every row validated as an edit is (coach post-implementation 11), so a doctored row
+        // is refused here, never mid-feed.
+        for c in &rows {
+            let slot = slot_of(c.control).ok_or(Error::InconsistentRun {
+                reason: "a change row of a control that is not a record-side value",
+            })?;
+            record_value(slot, c.after)?;
+        }
         let original = Snapshot {
             settings: r.settings,
             component: r.component,
@@ -188,7 +196,8 @@ impl Plan {
     ///
     /// # Errors
     ///
-    /// [`Error::NoSuchComponent`], [`Error::InvalidControlValue`].
+    /// [`Error::NoSuchComponent`] (its field carries the store index),
+    /// [`Error::InvalidControlValue`].
     pub fn set_parameter(&mut self, index: u32, value: f64) -> Result<(), Error> {
         let (_, p) = components::parameter_at(index as usize)
             .ok_or(Error::NoSuchComponent { component: index })?;
@@ -308,7 +317,7 @@ impl Plan {
 #[derive(Clone, Copy, Default)]
 struct Mutation {
     no_split: bool,
-    stop_after_self_stop: bool,
+    self_stop_fields_dropped: bool,
     store_skipped: bool,
     i24_scale: bool,
     drop_event: bool,
@@ -384,7 +393,9 @@ pub struct Outcome {
     pub flags: u32,
     /// The remaining capacity the fill reached, in device samples.
     pub remaining_at_start: u64,
-    /// The change rows the engine applied.
+    /// The change rows the engine applied. An edited plan's rows past the input it took (after
+    /// an earlier self-stop, past the stop's flush, or more than the schedule's 64 pending at
+    /// the stop) do not land and are not counted.
     pub rows_landed: u64,
 }
 
@@ -619,7 +630,9 @@ impl ReRender {
             x = &x[used.min(x.len())..];
             if info.stopped.is_some() {
                 self.self_stopped = true;
-                self.stop = StopFields::from(&info);
+                if !self.m.self_stop_fields_dropped {
+                    self.stop = StopFields::from(&info);
+                }
                 break;
             }
             if !self.m.no_split {
@@ -673,7 +686,8 @@ impl ReRender {
         (self.input, self.stop_position)
     }
 
-    /// The engine's meter read-out of its last call, at most [`CHUNK`] host samples (spec 016).
+    /// The engine's meter read-out of its last call, 1 … [`CHUNK`] host samples (a call ends
+    /// early at a row it has to schedule; spec 016).
     pub fn meters(&self) -> Meters {
         self.p.meters()
     }
@@ -703,8 +717,6 @@ impl ReRender {
             self.collect_call(out.flush.events, out.changes)?;
             kept = matches!(out.result, StopResult::Kept { .. });
             self.stop = StopFields::from(&out);
-        } else if self.m.stop_after_self_stop {
-            let _ = self.p.stop_recording(&mut self.ev)?;
         }
         let digest = if kept {
             self.number = self.p.memory_status().count;
@@ -736,6 +748,15 @@ impl ReRender {
         };
         self.outcome = Some(o);
         Ok(o)
+    }
+
+    /// The bytes the session holds: the engine's footprint and its reserved buffers (spec 027
+    /// US3 AS1).
+    pub fn footprint_bytes(&self) -> usize {
+        use core::mem::size_of;
+        self.p.footprint_bytes()
+            + (self.ev.len() + self.run_events.len()) * size_of::<VasEvent>()
+            + (self.ch.len() + self.run_changes.len() + self.rows.len()) * size_of::<ChangeEntry>()
     }
 
     /// The outcome, after a successful `finish`.
@@ -833,4 +854,100 @@ pub fn re_render(plan: Plan, codes: &[i32]) -> Result<ReRender, Error> {
     let _ = r.feed(codes)?;
     let _ = r.finish()?;
     Ok(r)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::changes::ChangeEntry;
+
+    fn plan() -> Plan {
+        let r = RecordReadout::default();
+        let original = Snapshot {
+            settings: r.settings,
+            component: r.component,
+            store: r.store,
+            rows: Vec::new(),
+            counter: 0,
+            remaining: 100,
+        };
+        Plan {
+            settings: r.settings,
+            component: r.component,
+            store: r.store,
+            rows: Vec::new(),
+            counter: 0,
+            remaining: 100,
+            readout: r,
+            collect_run: true,
+            original,
+            #[cfg(feature = "__test-hooks")]
+            mutation: Default::default(),
+        }
+    }
+
+    const KNEE: u32 = 10;
+
+    #[test]
+    fn rerender_rows_sorted_stable_and_limited() {
+        let mut p = plan();
+        let row = |pos, after, tag| ChangeEntry::new(pos, KNEE, 0.0, after, tag, STREAM_RECORD);
+        p.insert_row(row(20, -10.0, 1)).unwrap();
+        p.insert_row(row(10, -12.0, 2)).unwrap();
+        p.insert_row(row(20, -14.0, 3)).unwrap();
+        let tags: Vec<u64> = p.rows().iter().map(|r| r.tag).collect();
+        assert_eq!(tags, [2, 1, 3], "position order, stable at equal positions");
+        for t in 0..62 {
+            p.insert_row(row(20, -10.0, 10 + t)).unwrap();
+        }
+        assert!(matches!(
+            p.insert_row(row(20, -10.0, 99)),
+            Err(Error::ScheduleFull { .. })
+        ));
+        // Moving a row onto the full position is refused too; replacing a row there is not.
+        assert!(matches!(
+            p.set_row(0, row(20, -10.0, 2)),
+            Err(Error::ScheduleFull { .. })
+        ));
+        p.set_row(1, row(20, -11.0, 1)).unwrap();
+        assert!(
+            p.insert_row(row(5, 99.0, 1)).is_err(),
+            "out of the knee's range"
+        );
+        assert!(matches!(
+            p.insert_row(ChangeEntry::new(5, 2, 0.0, 1.0, 1, STREAM_RECORD)),
+            Err(Error::ControlNotOnStream { .. })
+        ));
+        assert!(matches!(
+            p.remove_row(999),
+            Err(Error::NoSuchControl { .. })
+        ));
+    }
+
+    #[test]
+    fn rerender_edited_by_bits() {
+        let mut p = plan();
+        assert!(!p.edited());
+        let s = *p.settings();
+        p.set_settings(s).unwrap();
+        assert!(!p.edited(), "a same-value write");
+        let mut s = *p.settings();
+        s.mic.hiss_offset_db = -0.0;
+        p.set_settings(s).unwrap();
+        assert!(p.edited(), "-0.0 by bits");
+        let mut q = plan();
+        q.set_seed(q.seed() ^ 1);
+        assert!(q.edited());
+        let mut q = plan();
+        q.set_parameter(1, 500.0).unwrap();
+        assert!(q.edited());
+        assert!(matches!(
+            q.set_parameter(99, 1.0),
+            Err(Error::NoSuchComponent { .. })
+        ));
+        let mut q = plan();
+        let mut s = *q.settings();
+        s.host_rate_hz = 48_000;
+        assert_eq!(q.set_settings(s), Err(Error::HostRateFixed));
+    }
 }

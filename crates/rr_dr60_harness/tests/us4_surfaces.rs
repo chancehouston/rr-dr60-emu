@@ -31,7 +31,7 @@ fn record_digest(p: &mut Pipeline) -> u64 {
 /// enters a later recording's digest); floored to whole frames with the codec on; zero units
 /// add no item; the refusals.
 #[test]
-fn as3_fill() {
+fn as3_rerender_fill() {
     for &rate in measurement_rates() {
         for codec in [false, true] {
             let mut a = engine(rate, codec);
@@ -84,7 +84,7 @@ fn as3_fill() {
 
 /// No slot left: refused, the memory unchanged.
 #[test]
-fn as3_fill_no_slot() {
+fn as3_rerender_fill_no_slot() {
     let mut s = Settings::new(6000);
     s.memory.max_recordings = 1;
     let mut p = Pipeline::new(s).unwrap();
@@ -98,7 +98,7 @@ fn as3_fill_no_slot() {
 /// AS2: the Swift package keeps no copy of the recipe: no fill, schedule refill, stop rule or
 /// slot restore; it calls the C session (a source scan, spec 027 D8).
 #[test]
-fn as2_no_swift_recipe() {
+fn as2_rerender_no_swift_recipe() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../swift/Sources");
     let mut src = String::new();
     for dir in std::fs::read_dir(&root).unwrap() {
@@ -122,4 +122,36 @@ fn as2_no_swift_recipe() {
         assert!(!src.contains(w), "the Swift sources still use {w}");
     }
     assert!(src.contains("rr_dr60_rerender_new") && src.contains("rr_dr60_rerender_feed_i24"));
+}
+
+/// Hardware review Q6: the filler item exports, imports into a fresh engine and plays to the end
+/// with finite samples (its level reported, not a contract: its content is unspecified).
+#[test]
+fn as3_rerender_filler_plays() {
+    for codec in [false, true] {
+        let mut a = engine(48_000, codec);
+        let r = a.memory_status().remaining_samples;
+        a.fill_to_remaining(r - 6000 * 2).unwrap();
+        let mut bytes = vec![0u8; a.export_len(1).unwrap()];
+        let _ = a.export(1, &mut bytes).unwrap();
+        let mut b = engine(48_000, codec);
+        let n = b.import(&bytes).unwrap();
+        b.start_playback(n).unwrap();
+        let mut out = vec![0.0f32; 4800];
+        let mut peak = 0.0f32;
+        loop {
+            let info = b.play(&mut out).unwrap();
+            for v in &out[..info.produced] {
+                assert!(v.is_finite());
+                peak = peak.max(v.abs());
+            }
+            if info.finished {
+                break;
+            }
+        }
+        println!(
+            "codec {codec}: the filler plays with peak {:.1} dBFS",
+            rr_dr60_harness::analysis::db(f64::from(peak.max(1e-12)))
+        );
+    }
 }

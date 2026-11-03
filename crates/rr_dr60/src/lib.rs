@@ -274,15 +274,15 @@ pub mod __test_hooks {
 
     /// Deliberate defects of the re-render for the spec 027 mutation tests (plan R-12);
     /// `Default` is the committed behavior. Each fails a named test: `no_split` the dense-row
-    /// cell, `stop_after_self_stop` the self-stop cells, `fill_rounded_up` the fill's
+    /// cell, `self_stop_fields_dropped` the self-stop cells' record bytes, `fill_rounded_up` the fill's
     /// non-whole-frame target, `store_skipped` the non-default store, `i24_scale` the codec-off
     /// cells, `drop_event` the record's bytes.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub struct RerenderMutation {
         /// The schedule topped up only between host blocks.
         pub no_split: bool,
-        /// A stop call after a self-stop.
-        pub stop_after_self_stop: bool,
+        /// A self-stopping call's stop fields not taken (the record's stop lines then wrong).
+        pub self_stop_fields_dropped: bool,
         /// The fill's units rounded up.
         pub fill_rounded_up: bool,
         /// The component store left at its defaults.

@@ -46,7 +46,9 @@
 //! `rr_dr60_one_pass_report_latency_samples`, `rr_dr60_one_pass_drain_samples`,
 //! `rr_dr60_wording_first_hit`, `rr_dr60_meter_field_count`, `rr_dr60_meter_field`,
 //! `rr_dr60_meter_reached`, `rr_dr60_meter_lag_samples`, `rr_dr60_manifest_word`). Not
-//! real-time safe:
+//! real-time safe (offline work: `rr_dr60_rerender_*` and `rr_dr60_fill_to_remaining`, spec
+//! 027; `rr_dr60_rerender_new` allocates, and `_feed_i24`, `_feed_f32`, `_progress`, `_meters`
+//! and `_finish` allocate nothing but are not meant for an audio thread):
 //! `rr_dr60_create`, `rr_dr60_destroy`, `rr_dr60_reconfigure` (allocate), `rr_dr60_erase`,
 //! `rr_dr60_erase_all` (a bounded memmove), `rr_dr60_export`, `rr_dr60_import` (a CRC over
 //! the recording).

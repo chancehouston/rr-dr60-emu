@@ -1842,3 +1842,71 @@ fn rerender_order_and_state() {
     assert_eq!(RrDr60Status::UnknownComponent as u32, 57);
     let _ = &mut fed;
 }
+
+/// Spec 027 (coach post-implementation 7): a real session through the C calls, small enough for
+/// Miri: a 6 kHz recording of 600 samples, re-rendered, finished into a painted outcome of 56
+/// bytes (filled) and 64 (tail zeroed), and a refused size of 55 (nothing processed).
+#[test]
+fn rerender_real_session_fills() {
+    use rr_dr60::record::{RunData, StopFields};
+    let mut s = Settings::new(6000);
+    s.speech_codec_enabled = false;
+    s.mic.capsule_enabled = false;
+    s.memory.capacity_s = 2;
+    let mut p = Pipeline::new(s).unwrap();
+    p.start_recording().unwrap();
+    let codes: Vec<i32> = (0..600)
+        .map(|i| if i % 12 < 6 { 1 << 20 } else { -(1 << 20) })
+        .collect();
+    let x: Vec<f32> = codes.iter().map(|&c| c as f32 / 8_388_608.0).collect();
+    let mut ev = vec![rr_dr60::VasEvent::default(); 16];
+    let info = p.record(&x, &mut ev).unwrap();
+    let mut events = ev[..info.events].to_vec();
+    let mut ev2 = vec![rr_dr60::VasEvent::default(); 64];
+    let out = p.stop_recording(&mut ev2).unwrap();
+    events.extend_from_slice(&ev2[..out.flush.events]);
+    let run = RunData {
+        events: &events,
+        changes: &[],
+        stop: StopFields::from(&out),
+    };
+    let n = p.memory_status().count;
+    let mut record = vec![0u8; p.processing_record_len(n, &run).unwrap()];
+    let _ = p.processing_record_write(n, &run, &mut record).unwrap();
+    for size in [56u32, 64, 55] {
+        // SAFETY: every pointer is a live local or a handle made here.
+        unsafe {
+            let mut plan = core::ptr::null_mut();
+            assert_eq!(
+                rr_dr60_rerender_plan_from_record(record.as_ptr(), record.len(), &mut plan),
+                RrDr60Status::Ok
+            );
+            let mut r = core::ptr::null_mut();
+            assert_eq!(rr_dr60_rerender_new(plan, &mut r), RrDr60Status::Ok);
+            let mut fed = Painted::new(24);
+            assert_eq!(
+                rr_dr60_rerender_feed_i24(r, codes.as_ptr(), codes.len(), fed.ptr()),
+                RrDr60Status::Ok
+            );
+            assert!(fed.zero_in(6, 8) && fed.untouched_after(24));
+            let mut o = Painted::new(size);
+            let st = rr_dr60_rerender_finish(r, o.ptr());
+            if size == 55 {
+                assert_eq!(st, RrDr60Status::InvalidArgument);
+                assert!(o.untouched_after(4));
+            } else {
+                assert_eq!(st, RrDr60Status::Ok);
+                assert_eq!(o.size(), 56);
+                assert!(
+                    o.zero_in(19, 24)
+                        && o.zero_in(56, size as usize)
+                        && o.untouched_after(size as usize)
+                );
+                let outcome = o.ptr::<RrDr60ReRenderOutcome>().read();
+                assert_eq!(outcome.verdict, 0);
+                assert!(outcome.matches_original && outcome.has_digest);
+            }
+            rr_dr60_rerender_destroy(r);
+        }
+    }
+}

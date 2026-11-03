@@ -32,7 +32,7 @@ Rust 2024, MSRV 1.85, `no_std` + `alloc` core (the session allocates at construc
   - `Plan::from_record(bytes) -> Result<Plan, Error>`: `record::read` (spec 020's reader and refusals), then the rows by `record::record_changes`; a row whose `stream` word is not the record stream's (3) is `Error::InconsistentRun`. The plan holds the read-out, the rows (`Vec<ChangeEntry>`, scheduled later **with their recorded tags**), the component and the 16-value store, `collect_run` (true) and an untouched copy for `edited()`.
   - **Reads** (product M2): `settings()`, `component()`, `parameter(index)`, `rows()`, `seed()`, `counter()`, `remaining_samples()`, `collect_run()`, `edited()`, `flags()`, `readout()`.
   - **Edits**: `set_settings(s)` (validated by `Settings::validate`; a different `host_rate_hz` is `Error::HostRateFixed`); `set_component(id)`; `set_parameter(index, value)` (the component manifest's ranges, as `set_component_parameter` validates without an engine); `set_row(i, entry)`, `insert_row(entry)`, `remove_row(i)` (the control must be a record-side live control, spec 017's eight or the slot's 32 – 35, the value validated as `schedule_change` does; the list kept sorted, stable for equal positions; **a 65th row at one position is `Error::ScheduleFull`** at the edit); `set_seed`, `set_counter`, `set_remaining_samples` (above the capacity's device samples, refused at `new`; 0 refused at `new` with `MemoryFull`); `set_collect_run`.
-  - `edited()`: a field compare against the untouched copy (f32 by bits). Spec 025's C write turns −0.0 into 0.0, so a read-and-write-back of a −0.0 field reads as edited while `matches_original` stays true; documented in the guide and asserted in `as5_unreached_edit`.
+  - `edited()`: a field compare against the untouched copy (f32 by bits). Spec 025's C write turns −0.0 into 0.0, so a read-and-write-back of a −0.0 field reads as edited while `matches_original` stays true; documented in the guide and asserted in `as5_rerender_unreached_edit`.
   - Form 1 (0.20 – 0.23): the reader gives an empty slot and the default store; the flags carry it.
 
 - **R-03 The split-and-top-up rule (D2, hardware draft B1).** The session keeps `next`, the next unscheduled row. `feed(samples)`:
@@ -76,13 +76,13 @@ Rust 2024, MSRV 1.85, `no_std` + `alloc` core (the session allocates at construc
 
 - **R-11 Swift (D8; product M5, M6).** `ReRenderSession` (a non-`Sendable` final class owning the handle; `deinit` destroys it): `init(record:)`, the plan reads and edits by control identifier (`ControlIndex(identifier:)`, spec 025), `feed(i24:)`, `feed(f32:)`, `progress`, `meters`, `finish() throws -> ReRenderResult` (`outcome`, `storedForm: Data?`, `record: Data?`, copied eagerly; nil after `DiscardedEmpty` or without the run), `intoPipeline()`. `Verdict` and `Reason` Swift enums, the flags an `OptionSet`. `ProcessingRecord.reRender(record:raw:block:)` keeps its signature, runs on the session and checks `Task.checkCancellation()` between chunks (`CancellationError`). The old `fill`, `restoreStore`, `frameSamples` and refill loop are deleted (US4 AS2's source scan).
 
-- **R-12 Mutants (FR-010; hardware P1, P2, P11).** Behind `__test-hooks`, `RerenderMutation::{no_split, stop_after_self_stop, fill_rounded_up, store_skipped, i24_scale, drop_event}`, each folded into a value read at `new` (no branch on the hot path):
-  - `no_split`: top up only between host blocks → fails `us1_rerender::as5_dense_rows`;
-  - `stop_after_self_stop` → fails the self-stop cells of `as1_sixteen_cells` (`NotRecording` or a different digest);
-  - `fill_rounded_up` → fails `us4_surfaces::as3_fill` at a codec-on target of 120·k + 7 (the self-stop cells' fills are whole frames, so they cannot see it);
-  - `store_skipped` (the store left at its defaults) → fails `as2_slot_and_form_1`'s non-default-store cell (the order of store and component is equivalent at the start, so that mutant was dropped);
-  - `i24_scale` (`x / (2²³ − 1)`) → fails `as1_sixteen_cells`' codec-off cells;
-  - `drop_event` → fails `as6_record_bytes` only (the teeth for the run rows).
+- **R-12 Mutants (FR-010; hardware P1, P2, P11).** Behind `__test-hooks`, `RerenderMutation::{no_split, self_stop_fields_dropped, fill_rounded_up, store_skipped, i24_scale, drop_event}`, each folded into a value read at `new` (no branch on the hot path):
+  - `no_split`: top up only between host blocks → fails `us1_rerender::as5_rerender_dense_rows`;
+  - `self_stop_fields_dropped` (a self-stopping call's stop fields not taken; restated from `stop_after_self_stop`, which only an error path caught) → the record writer refuses the run on a self-stop cell while the digest still matches;
+  - `fill_rounded_up` → fails `us4_surfaces::as3_rerender_fill` at a codec-on target of 120·k + 7 (the self-stop cells' fills are whole frames, so they cannot see it);
+  - `store_skipped` (the store left at its defaults) → fails `as2_rerender_slot_and_form_1`'s non-default-store cell (the order of store and component is equivalent at the start, so that mutant was dropped);
+  - `i24_scale` (`x / (2²³ − 1)`) → fails `as1_rerender_sixteen_cells`' codec-off cells;
+  - `drop_event` → fails `as6_rerender_record_bytes` only (the teeth for the run rows).
   Each mutant is shown failing before the gate relies on it.
 
 - **R-13 Records.**
@@ -99,9 +99,9 @@ Rust 2024, MSRV 1.85, `no_std` + `alloc` core (the session allocates at construc
 
 ## Build order (test-first)
 
-1. `fill_to_remaining` and `fill_item` with `us4_surfaces::as3_fill` (red, then green).
-2. `Plan`: reads, edits, refusals, `edited()` (`us2_rebuild::as3_refusals`, core tests).
-3. The session against the harness oracle: `us1_rerender` (the dense-row cell's red teeth on the harness at 4096 first), then `as6_record_bytes`.
+1. `fill_to_remaining` and `fill_item` with `us4_surfaces::as3_rerender_fill` (red, then green).
+2. `Plan`: reads, edits, refusals, `edited()` (`us2_rebuild::as3_rerender_refusals`, core tests).
+3. The session against the harness oracle: `us1_rerender` (the dense-row cell's red teeth on the harness at 4096 first), then `as6_rerender_record_bytes`.
 4. US2 (`us2_rebuild`), then US3 (`us3_stream`, the hour last, release).
 5. The six mutants, each shown failing.
 6. C: the handles, `abi_tests`, Miri, `ffi_parity rerender`, the smoke's `--rerender` against `examples/rerender_rows.rs`, the header.
@@ -112,18 +112,18 @@ Rust 2024, MSRV 1.85, `no_std` + `alloc` core (the session allocates at construc
 
 | Item | R | Tests |
 |---|---|---|
-| D1, FR-001 | R-01, R-04 | `us1_rerender::{as1_sixteen_cells, as2_slot_and_form_1, as4_differs}` |
-| D2, FR-002 | R-03, R-04, R-08 | `us1_rerender::{as3_partitions, as5_dense_rows}`, `us3_stream::{as1_alloc_free, as3_cancel}` (the meters against a direct engine; progress) |
-| D3, FR-003 | R-09 | `us3_stream::as5_feed_edges`, `ffi_parity rerender` |
-| D4, FR-004 | R-02 | `us2_rebuild::{as1_equals_direct, as3_refusals, as5_unreached_edit}` |
-| D5, FR-005 | R-07 | `us1_rerender::as6_record_bytes`, `us2_rebuild::{as2_record_round_trip, as6_empty}`, `us3_stream::as5_feed_edges` (`RunTooLarge`, `collect_run`) |
-| D6, FR-006 | R-04, R-06 | `us2_rebuild::{as3_refusals, as4_self_stop_both_ways}`, `us3_stream::{as4_input_short, as5_feed_edges}` |
-| D7, FR-007 | R-05 | `us4_surfaces::as3_fill` |
-| D8, FR-008 | R-10, R-11 | `ffi_parity rerender`, `abi_tests rerender`, `us4_surfaces::as2_no_swift_recipe`, `swift test`, the five promise steps |
+| D1, FR-001 | R-01, R-04 | `us1_rerender::{as1_rerender_sixteen_cells, as2_rerender_slot_and_form_1, as4_rerender_differs}` |
+| D2, FR-002 | R-03, R-04, R-08 | `us1_rerender::{as3_rerender_partitions, as5_rerender_dense_rows}`, `us3_stream::{as1_rerender_meters_and_footprint, as3_rerender_cancel_and_progress}` (the meters against a direct engine; progress) |
+| D3, FR-003 | R-09 | `us3_stream::as5_rerender_feed_edges`, `ffi_parity rerender` |
+| D4, FR-004 | R-02 | `us2_rebuild::{as1_rerender_equals_direct_and_as2_round_trip, as3_rerender_refusals, as5_rerender_unreached_edit}` |
+| D5, FR-005 | R-07 | `us1_rerender::as6_rerender_record_bytes`, `us2_rebuild::{as1_rerender_equals_direct_and_as2_round_trip, as6_rerender_empty}`, `us3_stream::as5_rerender_feed_edges` (`RunTooLarge`, `collect_run`) |
+| D6, FR-006 | R-04, R-06 | `us2_rebuild::{as3_rerender_refusals, as4_rerender_self_stop_both_ways}`, `us3_stream::{as4_rerender_input_short, as5_rerender_feed_edges}` |
+| D7, FR-007 | R-05 | `us4_surfaces::as3_rerender_fill` |
+| D8, FR-008 | R-10, R-11 | `ffi_parity rerender`, `abi_tests rerender`, `us4_surfaces::as2_rerender_no_swift_recipe`, `swift test`, the five promise steps |
 | D9, FR-009 | R-13 | the golden SHA guards, `us2_abi` |
 | FR-010 | R-12 | `mutation rerender::` |
-| SC-001 | — | `us1_rerender`, `ffi_parity rerender`, `swift test ReRenderSessionTests` |
-| SC-002 | R-03 | `us3_stream::as2_hour` (release; the input generated in blocks, never one vector; the record path timed in the same solo run; the iPhone figure from the release checklist's device run, reported) |
+| SC-001 | — | `us1_rerender`, `ffi_parity rerender`, `swift test ReRenderTests` |
+| SC-002 | R-03 | `us3_stream::as2_rerender_hour` (release; the input generated in blocks, never one vector; the record path timed in the same solo run; the iPhone figure from the release checklist's device run, reported) |
 | SC-003 | R-10 | the golden SHA guards, the five promise steps |
 | SC-004 | R-13 | a workbench issue (its adoption feature) |
 | The guide | R-13 | `us2_cross_check guide_rerender` |

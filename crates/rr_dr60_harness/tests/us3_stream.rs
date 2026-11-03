@@ -155,41 +155,37 @@ fn as5_rerender_feed_edges() {
 }
 
 /// AS2 (SC-002, release only): a 60-minute recording at 48 kHz re-renders `Identical`, its feed
-/// within 1.5× of the record path's own cost and at least 20× real time; the input generated in
-/// blocks, never one vector.
+/// within 1.5× of the record path's own cost and at least 20× real time. The stimulus is one
+/// exact 10 s period (440 Hz: 4400 whole cycles, 7 s on and 3 s off), computed once and
+/// converted once, so neither timed loop generates or allocates anything (hardware review Q1).
 #[test]
 #[ignore = "release only: an hour at 48 kHz"]
 fn as2_rerender_hour() {
     use std::time::Instant;
     let rate = 48_000u32;
+    let period = 10 * rate as usize;
+    let codes: Vec<i32> = (0..period)
+        .map(|i| {
+            let on = i < 7 * rate as usize;
+            let v = rr_dr60_harness::stimulus::tone_sample(440.0, 0.1, f64::from(rate), i);
+            if on { (v * 8_388_608.0) as i32 } else { 0 }
+        })
+        .collect();
+    let mut x = vec![0.0f32; period];
+    rr_dr60::input::samples_from_i24(&codes, &mut x);
     let block = 4800usize;
     let blocks = 3600 * rate as usize / block;
-    let input_block = |k: usize, out: &mut Vec<i32>| {
-        out.clear();
-        let t0 = k * block;
-        for i in 0..block {
-            let v = rr_dr60_harness::stimulus::tone_sample(440.0, 0.1, f64::from(rate), t0 + i)
-                * if (t0 + i) / rate as usize % 10 < 7 {
-                    1.0
-                } else {
-                    0.0
-                };
-            out.push((v * 8_388_608.0) as i32);
-        }
-    };
-    let s = Settings::new(rate);
-    let mut p = Pipeline::new(s).unwrap();
+    let at = |k: usize| (k * block) % period;
+    let mut p = Pipeline::new(Settings::new(rate)).unwrap();
     p.start_recording().unwrap();
-    let mut codes = Vec::with_capacity(block);
-    let (mut events, mut changes) = (Vec::new(), Vec::new());
+    let (mut events, mut changes) = (Vec::with_capacity(1 << 16), Vec::with_capacity(64));
     let mut ev = vec![rr_dr60::VasEvent::default(); p.max_record_events(block)];
     let mut ch = vec![rr_dr60::ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
     let t = Instant::now();
     let mut stopped = None;
     for k in 0..blocks {
-        input_block(k, &mut codes);
         let info = p
-            .record_with_changes(&rc::samples(&codes), &mut ev, &mut ch)
+            .record_with_changes(&x[at(k)..at(k) + block], &mut ev, &mut ch)
             .unwrap();
         events.extend_from_slice(&ev[..info.events]);
         changes.extend_from_slice(&ch[..info.changes]);
@@ -217,26 +213,23 @@ fn as2_rerender_hour() {
     };
     let mut record = vec![0u8; p.processing_record_len(n, &run).unwrap()];
     let _ = p.processing_record_write(n, &run, &mut record).unwrap();
-    let t = Instant::now();
     let mut r = ReRender::new(Plan::from_record(&record).unwrap()).unwrap();
-    let new_time = t.elapsed();
     let t = Instant::now();
     for k in 0..blocks {
-        input_block(k, &mut codes);
-        let f = r.feed(&codes).unwrap();
+        let f = r.feed(&codes[at(k)..at(k) + block]).unwrap();
         if f.reached_stop || f.self_stopped {
             break;
         }
     }
     let o = r.finish().unwrap();
     let feed_time = t.elapsed();
-    let secs = record_time.as_secs_f64();
-    let ratio = feed_time.as_secs_f64() / secs;
+    let ratio = feed_time.as_secs_f64() / record_time.as_secs_f64();
     println!(
-        "hour at 48 kHz: record {secs:.2} s, new {:.3} s, feed {:.2} s, ratio {ratio:.3}, {:.0}x real time",
-        new_time.as_secs_f64(),
+        "hour at 48 kHz: record {:.2} s, feed {:.2} s, ratio {ratio:.3}, {:.0}x real time; the session holds {} bytes",
+        record_time.as_secs_f64(),
         feed_time.as_secs_f64(),
-        3600.0 / feed_time.as_secs_f64()
+        3600.0 / feed_time.as_secs_f64(),
+        r.footprint_bytes()
     );
     assert_eq!(o.verdict, Verdict::Identical);
     assert!(ratio <= 1.5, "the feed within 1.5x of the record path");
@@ -244,4 +237,32 @@ fn as2_rerender_hour() {
         3600.0 / feed_time.as_secs_f64() >= 20.0,
         "at least 20x real time"
     );
+}
+
+/// AS2 (coach post-implementation 5): `new` on a nearly full 60-minute memory, both encodings:
+/// the fill is a direct write, so it stays short (reported; asserted under one second).
+#[test]
+#[ignore = "release only: a 60-minute memory"]
+fn as2_rerender_new_on_a_full_memory() {
+    use std::time::Instant;
+    for codec in [false, true] {
+        let rate = 48_000;
+        let raw = rc::raw_stimulus(rate);
+        let make = move |mut s: Settings| {
+            s.memory.capacity_s = 3600;
+            s.speech_codec_enabled = codec;
+            Pipeline::new(s).unwrap()
+        };
+        let (_, run) = rc::record_run(&make, rate, Cell { codec, ..CELL }, &raw);
+        let mut plan = Plan::from_record(&run.record).unwrap();
+        plan.set_remaining_samples(6000 * 10); // ten seconds left of the hour
+        let t = Instant::now();
+        let r = ReRender::new(plan).unwrap();
+        let dt = t.elapsed().as_secs_f64();
+        println!(
+            "codec {codec}: new on a memory 59 min 50 s full: {dt:.3} s, the session holds {} bytes",
+            r.footprint_bytes()
+        );
+        assert!(dt < 1.0);
+    }
 }
