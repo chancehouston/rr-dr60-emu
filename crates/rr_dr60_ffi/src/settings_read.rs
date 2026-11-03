@@ -107,7 +107,7 @@ pub(crate) const C_FIELDS: [Option<(usize, CKind)>; CONTROL_COUNT] = [
 ];
 
 /// The reading's C form, assigned field by field (spec 022 D10).
-fn fill_reading(t: &mut RrDr60ControlReading, r: ControlReading) {
+pub(crate) fn fill_reading(t: &mut RrDr60ControlReading, r: ControlReading) {
     let (ty, i, f) = match r {
         ControlReading::Switch(b) => (RrDr60ControlValueType::Switch, u64::from(b), 0.0),
         ControlReading::Integer(n) => (RrDr60ControlValueType::Integer, n, 0.0),
@@ -122,7 +122,7 @@ fn fill_reading(t: &mut RrDr60ControlReading, r: ControlReading) {
 
 /// The reading of a caller's C form, or `None` for an unknown type, a switch other than 0 or 1
 /// or a choice above `u32` (the unused fields ignored).
-fn reading_of(c: &RrDr60ControlReading) -> Option<ControlReading> {
+pub(crate) fn reading_of(c: &RrDr60ControlReading) -> Option<ControlReading> {
     Some(match c.value_type {
         0 => ControlReading::Switch(match c.int_value {
             0 => false,

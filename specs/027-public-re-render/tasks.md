@@ -29,7 +29,7 @@ Test-first. The traceability table is in plan.md; the build order is plan.md's.
 
 ## Phase 5: D8, C and Swift
 
-- [ ] T010 C: `crates/rr_dr60_ffi/src/rerender.rs` (the two handles, R-10), the statuses, `RrDr60ReRenderFed` / `RrDr60ReRenderOutcome` with published offsets, `rr_dr60_fill_to_remaining`; `abi_tests rerender`, Miri, `ffi_parity rerender`, the header; `smoke --rerender` against `examples/rerender_rows.rs`.
+- [X] T010 C: `crates/rr_dr60_ffi/src/rerender.rs` (the two handles, R-10), the statuses, `RrDr60ReRenderFed` / `RrDr60ReRenderOutcome` with published offsets, `rr_dr60_fill_to_remaining`; `abi_tests rerender`, Miri, `ffi_parity rerender`, the header; `smoke --rerender` against `examples/rerender_rows.rs`.
 - [ ] T011 Swift: `ReRenderSession`, `ReRenderResult`, the rewritten `ProcessingRecord.reRender` with cancellation; the old recipe deleted; `us4_surfaces::as2_no_swift_recipe`; `swift test`, the simulator.
 
 ## Phase 6: records and the gate

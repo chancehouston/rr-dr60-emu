@@ -207,6 +207,26 @@ pub enum RrDr60Status {
     NoSuchWordingKind = 47, // spec 026: appended
     /// A manifest word kind, value or form the library does not publish (spec 026 D6).
     NoSuchManifestWord = 48, // spec 026: appended
+    /// A re-render's input ended before the record's stop position (spec 027 D6): the samples
+    /// still needed are the stop position minus the input position (`rr_dr60_rerender_progress`).
+    InputShort = 49, // spec 027: appended
+    /// A 24-bit input code outside −2²³ … 2²³ − 1 (spec 027 D3); nothing taken.
+    InvalidSample = 50, // spec 027: appended
+    /// A re-render plan whose run could need more events than the session reserves (spec 027
+    /// D5): set `collect_run` false and retry.
+    RunTooLarge = 51, // spec 027: appended
+    /// A re-render fed both 24-bit codes and engine samples (spec 027 D3).
+    FeedKindMixed = 52, // spec 027: appended
+    /// A re-render plan edit that changes the host rate (spec 027 D4).
+    HostRateFixed = 53, // spec 027: appended
+    /// The rebuilt item's record read from a session without `collect_run` (spec 027 D5).
+    RunNotCollected = 54, // spec 027: appended
+    /// A re-render call in the wrong state: a feed after finish, an item read before it.
+    RerenderState = 55, // spec 027: appended
+    /// A record of imported origin has no run to re-render (spec 027 D6).
+    ImportedRecord = 56, // spec 027: appended
+    /// A record naming a component this library does not know (spec 027 D6).
+    UnknownComponent = 57, // spec 027: appended
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -844,6 +864,19 @@ pub struct RrDr60Pipeline {
     force_panic: bool,
 }
 
+impl RrDr60Pipeline {
+    /// A handle around an engine built elsewhere (spec 027: a finished re-render's engine).
+    pub(crate) fn from_inner(inner: Pipeline) -> Self {
+        RrDr60Pipeline {
+            inner,
+            poisoned: false,
+            last_paused: false,
+            #[cfg(feature = "ffi-test-panic")]
+            force_panic: false,
+        }
+    }
+}
+
 const SETTINGS_SIZE: u32 = size_of::<RrDr60Settings>() as u32;
 
 /// Checks `struct_size` before anything else is read, and only then forms a reference to the
@@ -993,6 +1026,15 @@ fn error_to_status_and_field(e: Error) -> (RrDr60Status, RrDr60SettingField) {
         Error::ComponentWhileActive => {
             (RrDr60Status::ComponentWhileActive, RrDr60SettingField::None)
         }
+        Error::InputShort { .. } => (RrDr60Status::InputShort, RrDr60SettingField::None),
+        Error::InvalidSample => (RrDr60Status::InvalidSample, RrDr60SettingField::None),
+        Error::RunTooLarge { .. } => (RrDr60Status::RunTooLarge, RrDr60SettingField::None),
+        Error::FeedKindMixed => (RrDr60Status::FeedKindMixed, RrDr60SettingField::None),
+        Error::HostRateFixed => (RrDr60Status::HostRateFixed, RrDr60SettingField::HostRate),
+        Error::RunNotCollected => (RrDr60Status::RunNotCollected, RrDr60SettingField::None),
+        Error::ReRenderState => (RrDr60Status::RerenderState, RrDr60SettingField::None),
+        Error::ImportedRecord => (RrDr60Status::ImportedRecord, RrDr60SettingField::None),
+        Error::UnknownComponent => (RrDr60Status::UnknownComponent, RrDr60SettingField::None),
         _ => (RrDr60Status::InvalidArgument, RrDr60SettingField::None),
     }
 }
@@ -4409,6 +4451,8 @@ mod insert;
 pub use insert::*;
 mod host_reads;
 pub use host_reads::*;
+mod rerender;
+pub use rerender::*;
 
 #[cfg(test)]
 mod abi_tests;

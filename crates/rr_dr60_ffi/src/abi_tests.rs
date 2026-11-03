@@ -30,6 +30,22 @@ fn sizes_are_pinned() {
     assert_eq!(size_of::<RrDr60Settings>(), 120);
     assert_eq!(size_of::<RrDr60ControlReading>(), 24); // spec 025 R-02
     assert_eq!(size_of::<RrDr60MeterField>(), 40); // spec 026 D4
+    assert_eq!(size_of::<RrDr60ReRenderFed>(), 24); // spec 027 R-10
+    assert_eq!(offset_of!(RrDr60ReRenderFed, reached_stop), 4);
+    assert_eq!(offset_of!(RrDr60ReRenderFed, self_stopped), 5);
+    assert_eq!(offset_of!(RrDr60ReRenderFed, taken), 8);
+    assert_eq!(offset_of!(RrDr60ReRenderFed, reserved), 16);
+    assert_eq!(size_of::<RrDr60ReRenderOutcome>(), 56);
+    assert_eq!(offset_of!(RrDr60ReRenderOutcome, reason), 4);
+    assert_eq!(offset_of!(RrDr60ReRenderOutcome, verdict), 8);
+    assert_eq!(offset_of!(RrDr60ReRenderOutcome, flags), 12);
+    assert_eq!(offset_of!(RrDr60ReRenderOutcome, edited), 16);
+    assert_eq!(offset_of!(RrDr60ReRenderOutcome, matches_original), 17);
+    assert_eq!(offset_of!(RrDr60ReRenderOutcome, has_digest), 18);
+    assert_eq!(offset_of!(RrDr60ReRenderOutcome, digest), 24);
+    assert_eq!(offset_of!(RrDr60ReRenderOutcome, remaining_at_start), 32);
+    assert_eq!(offset_of!(RrDr60ReRenderOutcome, rows_landed), 40);
+    assert_eq!(offset_of!(RrDr60ReRenderOutcome, reserved), 48);
     assert_eq!(offset_of!(RrDr60MeterField, index), 4);
     assert_eq!(offset_of!(RrDr60MeterField, identifier), 8);
     assert_eq!(offset_of!(RrDr60MeterField, unit), 16);
@@ -90,6 +106,10 @@ fn published_lists_end_in_size_of() {
     assert_eq!(READING_PUBLISHED, &[24]);
     check::<RrDr60MeterField>(METER_FIELD_PUBLISHED);
     assert_eq!(METER_FIELD_PUBLISHED, &[40]);
+    check::<RrDr60ReRenderFed>(rerender::FED_PUBLISHED);
+    check::<RrDr60ReRenderOutcome>(rerender::OUTCOME_PUBLISHED);
+    assert_eq!(rerender::FED_PUBLISHED, &[24]);
+    assert_eq!(rerender::OUTCOME_PUBLISHED, &[56]);
     assert_eq!(METERS_PUBLISHED, &[56, 64]);
     assert_eq!(READOUT_PUBLISHED, &[376]);
 }
@@ -237,6 +257,11 @@ fn write_sized_every_out_struct_four_cases() {
     cases::<RrDr60PlaceState>(PLACE_STATE_PUBLISHED, padding_of("RrDr60PlaceState"));
     cases::<RrDr60ControlReading>(READING_PUBLISHED, padding_of("RrDr60ControlReading"));
     cases::<RrDr60MeterField>(METER_FIELD_PUBLISHED, padding_of("RrDr60MeterField"));
+    cases::<RrDr60ReRenderFed>(rerender::FED_PUBLISHED, padding_of("RrDr60ReRenderFed"));
+    cases::<RrDr60ReRenderOutcome>(
+        rerender::OUTCOME_PUBLISHED,
+        padding_of("RrDr60ReRenderOutcome"),
+    );
     // Spec 024 D9.
     cases::<RrDr60InsertionPoint>(POINT_PUBLISHED, padding_of("RrDr60InsertionPoint"));
     cases::<RrDr60Component>(COMPONENT_PUBLISHED, padding_of("RrDr60Component"));
@@ -261,6 +286,8 @@ fn padding_of(name: &str) -> &'static [(usize, usize)] {
         "RrDr60StageEntry" => &[(52, 56)], // before the 8-aligned `coverage` pointer
         "RrDr60Control" => &[(4, 8)],
         "RrDr60ControlOption" => &[(4, 8), (20, 24)],
+        "RrDr60ReRenderFed" => &[(6, 8)],       // spec 027 R-10
+        "RrDr60ReRenderOutcome" => &[(19, 24)], // spec 027 R-10
         "RrDr60RecordReadout" => &READOUT_PADDING,
         // Spec 024: no implicit padding (pinned by the offsets in `sizes_are_pinned`).
         "RrDr60InsertionPoint"
@@ -408,9 +435,11 @@ fn default_is_zeroed_plus_size() {
     check::<RrDr60PlaceState>("RrDr60PlaceState");
     check::<RrDr60ControlReading>("RrDr60ControlReading");
     check::<RrDr60MeterField>("RrDr60MeterField");
+    check::<RrDr60ReRenderFed>("RrDr60ReRenderFed");
+    check::<RrDr60ReRenderOutcome>("RrDr60ReRenderOutcome");
 }
 
-const OUT_STRUCTS: [&str; 17] = [
+const OUT_STRUCTS: [&str; 19] = [
     "RrDr60BlockInfo",
     "RrDr60RecordInfo",
     "RrDr60StopOutcome",
@@ -426,8 +455,10 @@ const OUT_STRUCTS: [&str; 17] = [
     "RrDr60RecordReadout",
     "RrDr60InputAlignment",
     "RrDr60PlaceState",
-    "RrDr60ControlReading", // spec 025
-    "RrDr60MeterField",     // spec 026
+    "RrDr60ControlReading",  // spec 025
+    "RrDr60MeterField",      // spec 026
+    "RrDr60ReRenderFed",     // spec 027
+    "RrDr60ReRenderOutcome", // spec 027
 ];
 
 /// The construction rule, mechanically (coach 5): no out-struct derives `Default`, and no
@@ -503,6 +534,8 @@ fn no_out_struct_derives_default_and_no_whole_writes() {
     let findings = scan_source(include_str!("settings_read.rs"));
     assert!(findings.is_empty(), "{findings:?}");
     let findings = scan_source(include_str!("host_reads.rs"));
+    assert!(findings.is_empty(), "{findings:?}");
+    let findings = scan_source(include_str!("rerender.rs"));
     assert!(findings.is_empty(), "{findings:?}");
     // The scan has teeth: a doctored source fails on both rules.
     let doctored = "#[repr(C)]\n#[derive(Clone, Copy, Default)]\npub struct RrDr60BlockInfo {\n}\npub unsafe extern \"C\" fn f(out: *mut RrDr60BlockInfo) {\n    unsafe { put(out, v) };\n}\n    fn fill(&mut self, r: &R) {\n        self.settings = settings_to_c(&r.settings);\n    }\n";
@@ -1780,4 +1813,32 @@ fn meter_field_every_index() {
         assert_eq!((m.index as usize, s(m.identifier)), (i, f.identifier));
         assert_eq!((s(m.unit), s(m.sentence)), (f.unit, f.sentence));
     }
+}
+
+/// Spec 027 R-10: the session's refusal orders (the handle, then NULL, then size, then the
+/// call's own checks), the plan consumed on success only, the state rules.
+#[test]
+fn rerender_order_and_state() {
+    use rr_dr60::rerender::Plan;
+    let mut fed = Painted::new(24);
+    // SAFETY: NULL handles.
+    unsafe {
+        assert_eq!(
+            rr_dr60_rerender_feed_i24(core::ptr::null_mut(), core::ptr::null(), 0, fed.ptr()),
+            RrDr60Status::NullPointer
+        );
+        let mut out = core::ptr::null_mut();
+        assert_eq!(
+            rr_dr60_rerender_plan_from_record(core::ptr::null(), 0, &mut out),
+            RrDr60Status::NullPointer
+        );
+        assert_eq!(
+            rr_dr60_rerender_plan_from_record(b"no".as_ptr(), 2, &mut out),
+            RrDr60Status::MalformedRecord
+        );
+    }
+    let _ = Plan::from_record(b"x").unwrap_err();
+    assert_eq!(RrDr60Status::InputShort as u32, 49);
+    assert_eq!(RrDr60Status::UnknownComponent as u32, 57);
+    let _ = &mut fed;
 }

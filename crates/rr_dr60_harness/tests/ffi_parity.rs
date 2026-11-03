@@ -5465,3 +5465,115 @@ fn meters_manifest_parity() {
         }
     }
 }
+
+/// Spec 027 US4 AS1: the C session gives the Rust digest, outcome, stored form and new record
+/// byte for byte on every cell; a knee edit through `_plan_set_control_value` equals the Rust
+/// edit; the plan survives a failed `new`; a finished session becomes a playable engine.
+#[test]
+fn rerender_parity() {
+    use rr_dr60::rerender::{Plan, re_render};
+    use rr_dr60_harness::record_contract_checks::{self as rc, Cell, KNEE};
+    // SAFETY (whole test): every pointer passed is a live local or a handle made here.
+    let c_run = |record: &[u8], raw: &[i32], knee: Option<f32>| unsafe {
+        let mut plan = std::ptr::null_mut();
+        assert_eq!(
+            rr_dr60_rerender_plan_from_record(record.as_ptr(), record.len(), &mut plan),
+            RrDr60Status::Ok
+        );
+        if let Some(k) = knee {
+            let mut v = RrDr60ControlReading::default();
+            v.value_type = 2;
+            v.float_value = k;
+            assert_eq!(
+                rr_dr60_rerender_plan_set_control_value(plan, KNEE, &v),
+                RrDr60Status::Ok
+            );
+        }
+        let mut r = std::ptr::null_mut();
+        assert_eq!(rr_dr60_rerender_new(plan, &mut r), RrDr60Status::Ok);
+        for block in raw.chunks(4096) {
+            let mut fed = RrDr60ReRenderFed::default();
+            assert_eq!(
+                rr_dr60_rerender_feed_i24(r, block.as_ptr(), block.len(), &mut fed),
+                RrDr60Status::Ok
+            );
+            if fed.reached_stop || fed.self_stopped {
+                break;
+            }
+        }
+        let mut o = RrDr60ReRenderOutcome::default();
+        assert_eq!(rr_dr60_rerender_finish(r, &mut o), RrDr60Status::Ok);
+        let (mut el, mut rl, mut w) = (0usize, 0usize, 0usize);
+        assert_eq!(rr_dr60_rerender_export_len(r, &mut el), RrDr60Status::Ok);
+        let mut e = vec![0u8; el];
+        assert_eq!(
+            rr_dr60_rerender_export(r, e.as_mut_ptr(), el, &mut w),
+            RrDr60Status::Ok
+        );
+        assert_eq!(rr_dr60_rerender_record_len(r, &mut rl), RrDr60Status::Ok);
+        let mut b = vec![0u8; rl];
+        assert_eq!(
+            rr_dr60_rerender_record_write(r, b.as_mut_ptr(), rl, &mut w),
+            RrDr60Status::Ok
+        );
+        let mut p = std::ptr::null_mut();
+        assert_eq!(rr_dr60_rerender_into_pipeline(r, &mut p), RrDr60Status::Ok);
+        let mut st = RrDr60MemoryStatus::default();
+        assert_eq!(rr_dr60_memory_status(p, &mut st), RrDr60Status::Ok);
+        assert!(st.count >= 1);
+        rr_dr60_destroy(p);
+        (o, e, b)
+    };
+    for &rate in configs::measurement_rates() {
+        let raw = rc::raw_stimulus(rate);
+        for cell in Cell::all() {
+            let (_, run) = rc::record_run(&rr_dr60_harness::checks::standard, rate, cell, &raw);
+            for knee in [None, Some(-30.0f32)] {
+                let mut plan = Plan::from_record(&run.record).unwrap();
+                if let Some(k) = knee {
+                    let mut s = *plan.settings();
+                    s.agc.knee_dbfs = k;
+                    plan.set_settings(s).unwrap();
+                }
+                let r = re_render(plan, &raw).unwrap();
+                let ro = r.outcome().unwrap();
+                let mut e = vec![0u8; r.export_len().unwrap()];
+                let _ = r.export(&mut e).unwrap();
+                let mut b = vec![0u8; r.record_len().unwrap()];
+                let _ = r.record_write(&mut b).unwrap();
+                let (co, ce, cb) = c_run(&run.record, &raw, knee);
+                let tag = format!("{rate} Hz {} knee {knee:?}", cell.name());
+                assert_eq!(co.digest, ro.digest.unwrap(), "{tag}");
+                assert_eq!(co.matches_original, ro.matches_original, "{tag}");
+                assert_eq!(co.edited, ro.edited, "{tag}");
+                assert_eq!(co.rows_landed, ro.rows_landed, "{tag}");
+                assert_eq!((ce, cb), (e, b), "{tag}");
+            }
+        }
+    }
+    // The plan survives a failed `new` (RUN_TOO_LARGE → a digest-only retry).
+    let raw = rc::raw_stimulus(6000);
+    let cell = Cell::all()[0];
+    let (_, run) = rc::record_run(&rr_dr60_harness::checks::standard, 6000, cell, &raw);
+    // SAFETY: as above.
+    unsafe {
+        let mut plan = std::ptr::null_mut();
+        assert_eq!(
+            rr_dr60_rerender_plan_from_record(run.record.as_ptr(), run.record.len(), &mut plan),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_rerender_plan_set_remaining_samples(plan, 0),
+            RrDr60Status::Ok
+        );
+        let mut r = std::ptr::null_mut();
+        assert_eq!(rr_dr60_rerender_new(plan, &mut r), RrDr60Status::MemoryFull);
+        let mut rem = 0u64;
+        assert_eq!(
+            rr_dr60_rerender_plan_remaining_samples(plan, &mut rem),
+            RrDr60Status::Ok
+        );
+        assert_eq!(rem, 0, "the plan is still the caller's");
+        rr_dr60_rerender_plan_destroy(plan);
+    }
+}
