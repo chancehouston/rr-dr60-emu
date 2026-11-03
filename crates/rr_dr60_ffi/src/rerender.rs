@@ -195,80 +195,201 @@ pub unsafe extern "C" fn rr_dr60_rerender_plan_clone(
     }
 }
 
-macro_rules! plan_read {
-    ($name:ident, $t:ty, |$p:ident| $e:expr, $doc:literal) => {
-        #[doc = $doc]
-        ///
-        /// # Safety
-        ///
-        /// `plan` NULL or a live plan; `out` NULL or writable.
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $name(
-            plan: *const RrDr60ReRenderPlan,
-            out: *mut $t,
-        ) -> RrDr60Status {
-            // SAFETY: the caller's contract.
-            let Some(h) = (unsafe { plan.as_ref() }) else {
-                return RrDr60Status::NullPointer;
-            };
-            if out.is_null() {
-                return RrDr60Status::NullPointer;
-            }
-            let $p = &h.inner;
-            match guard(|| Ok($e)) {
-                Ok(v) => {
-                    // SAFETY: out is non-null and writable (caller contract).
-                    unsafe { out.write(v) };
-                    RrDr60Status::Ok
-                }
-                Err(s) => s,
-            }
-        }
+/// The plan's slot component (`RR_DR60_COMPONENT_*`).
+///
+/// # Safety
+///
+/// `plan` NULL or a live plan; `out` NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_rerender_plan_component(
+    plan: *const RrDr60ReRenderPlan,
+    out: *mut u32,
+) -> RrDr60Status {
+    // SAFETY: the caller's contract.
+    let Some(h) = (unsafe { plan.as_ref() }) else {
+        return RrDr60Status::NullPointer;
     };
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let p = &h.inner;
+    match guard(|| Ok(p.component() as u32)) {
+        Ok(v) => {
+            // SAFETY: out is non-null and writable (caller contract).
+            unsafe { out.write(v) };
+            RrDr60Status::Ok
+        }
+        Err(s) => s,
+    }
 }
 
-plan_read!(
-    rr_dr60_rerender_plan_component,
-    u32,
-    |p| p.component() as u32,
-    "The plan's slot component (`RR_DR60_COMPONENT_*`)."
-);
-plan_read!(
-    rr_dr60_rerender_plan_row_count,
-    u64,
-    |p| p.rows().len() as u64,
-    "The plan's change-row count."
-);
-plan_read!(
-    rr_dr60_rerender_plan_seed,
-    u64,
-    |p| p.seed(),
-    "The plan's seed."
-);
-plan_read!(
-    rr_dr60_rerender_plan_counter,
-    u64,
-    |p| p.counter(),
-    "The plan's recording counter."
-);
-plan_read!(
-    rr_dr60_rerender_plan_remaining_samples,
-    u64,
-    |p| p.remaining_samples(),
-    "The plan's remaining capacity at the start, in device samples."
-);
-plan_read!(
-    rr_dr60_rerender_plan_flags,
-    u32,
-    |p| p.flags(),
-    "The record's flags (`RR_DR60_RECORD_FLAG_*`)."
-);
-plan_read!(
-    rr_dr60_rerender_plan_edited,
-    bool,
-    |p| p.edited(),
-    "Whether the plan's values differ from the record's (a field compare)."
-);
+/// The plan's change-row count.
+///
+/// # Safety
+///
+/// `plan` NULL or a live plan; `out` NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_rerender_plan_row_count(
+    plan: *const RrDr60ReRenderPlan,
+    out: *mut u64,
+) -> RrDr60Status {
+    // SAFETY: the caller's contract.
+    let Some(h) = (unsafe { plan.as_ref() }) else {
+        return RrDr60Status::NullPointer;
+    };
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let p = &h.inner;
+    match guard(|| Ok(p.rows().len() as u64)) {
+        Ok(v) => {
+            // SAFETY: out is non-null and writable (caller contract).
+            unsafe { out.write(v) };
+            RrDr60Status::Ok
+        }
+        Err(s) => s,
+    }
+}
+
+/// The plan's seed.
+///
+/// # Safety
+///
+/// `plan` NULL or a live plan; `out` NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_rerender_plan_seed(
+    plan: *const RrDr60ReRenderPlan,
+    out: *mut u64,
+) -> RrDr60Status {
+    // SAFETY: the caller's contract.
+    let Some(h) = (unsafe { plan.as_ref() }) else {
+        return RrDr60Status::NullPointer;
+    };
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let p = &h.inner;
+    match guard(|| Ok(p.seed())) {
+        Ok(v) => {
+            // SAFETY: out is non-null and writable (caller contract).
+            unsafe { out.write(v) };
+            RrDr60Status::Ok
+        }
+        Err(s) => s,
+    }
+}
+
+/// The plan's recording counter.
+///
+/// # Safety
+///
+/// `plan` NULL or a live plan; `out` NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_rerender_plan_counter(
+    plan: *const RrDr60ReRenderPlan,
+    out: *mut u64,
+) -> RrDr60Status {
+    // SAFETY: the caller's contract.
+    let Some(h) = (unsafe { plan.as_ref() }) else {
+        return RrDr60Status::NullPointer;
+    };
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let p = &h.inner;
+    match guard(|| Ok(p.counter())) {
+        Ok(v) => {
+            // SAFETY: out is non-null and writable (caller contract).
+            unsafe { out.write(v) };
+            RrDr60Status::Ok
+        }
+        Err(s) => s,
+    }
+}
+
+/// The plan's remaining capacity at the start, in device samples.
+///
+/// # Safety
+///
+/// `plan` NULL or a live plan; `out` NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_rerender_plan_remaining_samples(
+    plan: *const RrDr60ReRenderPlan,
+    out: *mut u64,
+) -> RrDr60Status {
+    // SAFETY: the caller's contract.
+    let Some(h) = (unsafe { plan.as_ref() }) else {
+        return RrDr60Status::NullPointer;
+    };
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let p = &h.inner;
+    match guard(|| Ok(p.remaining_samples())) {
+        Ok(v) => {
+            // SAFETY: out is non-null and writable (caller contract).
+            unsafe { out.write(v) };
+            RrDr60Status::Ok
+        }
+        Err(s) => s,
+    }
+}
+
+/// The record's flags (`RR_DR60_RECORD_FLAG_*`).
+///
+/// # Safety
+///
+/// `plan` NULL or a live plan; `out` NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_rerender_plan_flags(
+    plan: *const RrDr60ReRenderPlan,
+    out: *mut u32,
+) -> RrDr60Status {
+    // SAFETY: the caller's contract.
+    let Some(h) = (unsafe { plan.as_ref() }) else {
+        return RrDr60Status::NullPointer;
+    };
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let p = &h.inner;
+    match guard(|| Ok(p.flags())) {
+        Ok(v) => {
+            // SAFETY: out is non-null and writable (caller contract).
+            unsafe { out.write(v) };
+            RrDr60Status::Ok
+        }
+        Err(s) => s,
+    }
+}
+
+/// Whether the plan's values differ from the record's (a field compare).
+///
+/// # Safety
+///
+/// `plan` NULL or a live plan; `out` NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_rerender_plan_edited(
+    plan: *const RrDr60ReRenderPlan,
+    out: *mut bool,
+) -> RrDr60Status {
+    // SAFETY: the caller's contract.
+    let Some(h) = (unsafe { plan.as_ref() }) else {
+        return RrDr60Status::NullPointer;
+    };
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    let p = &h.inner;
+    match guard(|| Ok(p.edited())) {
+        Ok(v) => {
+            // SAFETY: out is non-null and writable (caller contract).
+            unsafe { out.write(v) };
+            RrDr60Status::Ok
+        }
+        Err(s) => s,
+    }
+}
 
 /// The plan's value of settings control `index` (spec 025's reading; the live controls are
 /// `NOT_A_SETTING`).
@@ -373,36 +494,152 @@ fn core_row(e: &RrDr60ChangeEntry) -> rr_dr60::ChangeEntry {
     rr_dr60::ChangeEntry::new(e.position, e.control, e.before, e.after, e.tag, e.stream)
 }
 
-macro_rules! plan_edit {
-    ($name:ident, ($($arg:ident: $t:ty),*), |$p:ident| $e:expr, $doc:literal) => {
-        #[doc = $doc]
-        ///
-        /// # Safety
-        ///
-        /// `plan` NULL or a live plan; every pointer argument NULL or valid.
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $name(plan: *mut RrDr60ReRenderPlan $(, $arg: $t)*) -> RrDr60Status {
-            // SAFETY: the caller's contract.
-            let $p = match unsafe { plan_mut(plan) } {
-                Ok(p) => p,
-                Err(s) => return s,
-            };
-            st(guard(|| $e))
-        }
+/// Sets the plan's seed.
+///
+/// # Safety
+///
+/// `plan` NULL or a live plan.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_rerender_plan_set_seed(
+    plan: *mut RrDr60ReRenderPlan,
+    seed: u64,
+) -> RrDr60Status {
+    // SAFETY: the caller's contract.
+    let p = match unsafe { plan_mut(plan) } {
+        Ok(p) => p,
+        Err(s) => return s,
     };
+    st(guard(|| {
+        p.set_seed(seed);
+        Ok(())
+    }))
 }
 
-plan_edit!(rr_dr60_rerender_plan_set_seed, (seed: u64), |p| { p.set_seed(seed); Ok(()) }, "Sets the plan's seed.");
-plan_edit!(rr_dr60_rerender_plan_set_counter, (counter: u64), |p| { p.set_counter(counter); Ok(()) }, "Sets the plan's recording counter.");
-plan_edit!(rr_dr60_rerender_plan_set_remaining_samples, (remaining: u64), |p| { p.set_remaining_samples(remaining); Ok(()) }, "Sets the remaining capacity at the start (checked at `rr_dr60_rerender_new`).");
-plan_edit!(rr_dr60_rerender_plan_set_collect_run, (collect: bool), |p| { p.set_collect_run(collect); Ok(()) }, "Collects the run (the default) or not (a digest-only session).");
-plan_edit!(rr_dr60_rerender_plan_set_component, (component: u32), |p| {
-    let c = ComponentId::from_u32(component).ok_or(RrDr60Status::NoSuchComponent)?;
-    p.set_component(c);
-    Ok(())
-}, "Sets the plan's slot component (`RR_DR60_COMPONENT_*`).");
-plan_edit!(rr_dr60_rerender_plan_set_parameter, (index: u32, value: f64), |p| p.set_parameter(index, value).map_err(status_from_error), "Writes store value `index`, validated as `rr_dr60_set_component_parameter` validates it.");
-plan_edit!(rr_dr60_rerender_plan_remove_row, (i: u64), |p| p.remove_row(i as usize).map_err(status_from_error), "Removes row `i`.");
+/// Sets the plan's recording counter.
+///
+/// # Safety
+///
+/// `plan` NULL or a live plan.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_rerender_plan_set_counter(
+    plan: *mut RrDr60ReRenderPlan,
+    counter: u64,
+) -> RrDr60Status {
+    // SAFETY: the caller's contract.
+    let p = match unsafe { plan_mut(plan) } {
+        Ok(p) => p,
+        Err(s) => return s,
+    };
+    st(guard(|| {
+        p.set_counter(counter);
+        Ok(())
+    }))
+}
+
+/// Sets the remaining capacity at the start (checked at `rr_dr60_rerender_new`).
+///
+/// # Safety
+///
+/// `plan` NULL or a live plan.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_rerender_plan_set_remaining_samples(
+    plan: *mut RrDr60ReRenderPlan,
+    remaining: u64,
+) -> RrDr60Status {
+    // SAFETY: the caller's contract.
+    let p = match unsafe { plan_mut(plan) } {
+        Ok(p) => p,
+        Err(s) => return s,
+    };
+    st(guard(|| {
+        p.set_remaining_samples(remaining);
+        Ok(())
+    }))
+}
+
+/// Collects the run (the default) or not (a digest-only session).
+///
+/// # Safety
+///
+/// `plan` NULL or a live plan.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_rerender_plan_set_collect_run(
+    plan: *mut RrDr60ReRenderPlan,
+    collect: bool,
+) -> RrDr60Status {
+    // SAFETY: the caller's contract.
+    let p = match unsafe { plan_mut(plan) } {
+        Ok(p) => p,
+        Err(s) => return s,
+    };
+    st(guard(|| {
+        p.set_collect_run(collect);
+        Ok(())
+    }))
+}
+
+/// Sets the plan's slot component (`RR_DR60_COMPONENT_*`).
+///
+/// # Safety
+///
+/// `plan` NULL or a live plan.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_rerender_plan_set_component(
+    plan: *mut RrDr60ReRenderPlan,
+    component: u32,
+) -> RrDr60Status {
+    // SAFETY: the caller's contract.
+    let p = match unsafe { plan_mut(plan) } {
+        Ok(p) => p,
+        Err(s) => return s,
+    };
+    st(guard(|| {
+        let c = ComponentId::from_u32(component).ok_or(RrDr60Status::NoSuchComponent)?;
+        p.set_component(c);
+        Ok(())
+    }))
+}
+
+/// Writes store value `index`, validated as `rr_dr60_set_component_parameter` validates it.
+///
+/// # Safety
+///
+/// `plan` NULL or a live plan.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_rerender_plan_set_parameter(
+    plan: *mut RrDr60ReRenderPlan,
+    index: u32,
+    value: f64,
+) -> RrDr60Status {
+    // SAFETY: the caller's contract.
+    let p = match unsafe { plan_mut(plan) } {
+        Ok(p) => p,
+        Err(s) => return s,
+    };
+    st(guard(|| {
+        p.set_parameter(index, value).map_err(status_from_error)
+    }))
+}
+
+/// Removes row `i`.
+///
+/// # Safety
+///
+/// `plan` NULL or a live plan.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_rerender_plan_remove_row(
+    plan: *mut RrDr60ReRenderPlan,
+    i: u64,
+) -> RrDr60Status {
+    // SAFETY: the caller's contract.
+    let p = match unsafe { plan_mut(plan) } {
+        Ok(p) => p,
+        Err(s) => return s,
+    };
+    st(guard(|| {
+        p.remove_row(i as usize).map_err(status_from_error)
+    }))
+}
 
 /// Sets settings control `index` in the plan (spec 025's reading; settings controls only: the
 /// live controls are `NOT_A_SETTING` and the slot's 31 – 35 go through

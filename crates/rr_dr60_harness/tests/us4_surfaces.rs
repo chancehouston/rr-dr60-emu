@@ -94,3 +94,32 @@ fn as3_fill_no_slot() {
     assert_eq!(p.fill_to_remaining(r - 1200), Err(Error::DoesNotFit));
     assert_eq!(p.memory_status(), st);
 }
+
+/// AS2: the Swift package keeps no copy of the recipe: no fill, schedule refill, stop rule or
+/// slot restore; it calls the C session (a source scan, spec 027 D8).
+#[test]
+fn as2_no_swift_recipe() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../swift/Sources");
+    let mut src = String::new();
+    for dir in std::fs::read_dir(&root).unwrap() {
+        for f in std::fs::read_dir(dir.unwrap().path()).unwrap() {
+            let p = f.unwrap().path();
+            if p.extension().is_some_and(|e| e == "swift") {
+                src.push_str(&std::fs::read_to_string(p).unwrap());
+            }
+        }
+    }
+    for w in [
+        "rr_dr60_pending_changes",
+        "rr_dr60_schedule_change",
+        "rr_dr60_import",
+        "rr_dr60_stop_recording",
+        "rr_dr60_set_component_parameter",
+        "rr_dr60_create_at_counter",
+        "func fill(",
+        "restoreStore",
+    ] {
+        assert!(!src.contains(w), "the Swift sources still use {w}");
+    }
+    assert!(src.contains("rr_dr60_rerender_new") && src.contains("rr_dr60_rerender_feed_i24"));
+}

@@ -54,142 +54,206 @@ public enum ProcessingRecord {
         return Array(rows.prefix(got))
     }
 
-    /// Re-renders `raw` (24-bit samples) from `record` and returns the stored form's digest, or
-    /// `nil` when a step is refused; throws `RRDR60Error.abiMismatch` on a header mismatch. The caller compares it with the read-out's
-    /// `recording_digest`.
+    /// Re-renders `raw` (24-bit samples) from `record` through the engine's session (spec 027)
+    /// and returns the rebuilt item's digest, or `nil` when a step is refused; throws
+    /// `RRDR60Error.abiMismatch` on a header mismatch and `CancellationError` when the task is
+    /// cancelled between chunks. The caller compares it with the read-out's `recording_digest`.
     public static func reRender(record: [UInt8], raw: [Int32], block: Int = 4096) throws -> UInt64? {
         try RRDR60.checkABI()
-        guard let r = try read(record), r.origin == RR_DR60_ORIGIN_ENGINE else { return nil }
-        var settings = r.settings
-        var handle: OpaquePointer?
-        guard rr_dr60_create_at_counter(&settings, r.recording_counter, &handle) == Int32(RR_DR60_STATUS_OK.rawValue),
-            let p = handle
-        else { return nil }
-        defer { rr_dr60_destroy(p) }
-        // The fill by import: a throwaway 6 kHz engine with every record stage off and the
-        // same codec setting records zeros, exports, this engine imports.
-        var status = RrDr60MemoryStatus.sized
-        guard rr_dr60_memory_status(p, &status) == Int32(RR_DR60_STATUS_OK.rawValue) else { return nil }
-        if status.remaining_samples > r.remaining_samples_at_start {
-            // Spec 026 D5: the missing samples floored to the stored unit (whole frames with
-            // the coder on), as the harness's `fill_to_remaining` does.
-            let unit = settings.speech_codec_enabled ? UInt64(frameSamples() ?? 0) : 1
-            guard unit > 0 else { return nil }
-            let missing = (status.remaining_samples - r.remaining_samples_at_start) / unit * unit
-            if missing > 0 {
-                guard fill(p, samples: missing, codec: settings.speech_codec_enabled) else { return nil }
-            }
-        }
-        // Spec 024 D7 (plan R1): the slot's component and its store restored before the schedule
-        // and the start; a record naming a component this library does not know is refused.
-        guard r.flags & UInt32(RR_DR60_RECORD_FLAG_UNKNOWN_COMPONENT) == 0,
-            let slot = try component(of: record)
-        else { return nil }
-        // Spec 026 D5: every component's stored parameters at `parameter_offset + i`, whatever
-        // the component, then the component (the harness's order).
-        if slot.parameter_count > 0, !restoreStore(p, slot) { return nil }
-        guard rr_dr60_set_component(p, UInt32(RR_DR60_INSERTION_POINT_BEFORE_LIMITER), slot.component)
-                == Int32(RR_DR60_STATUS_OK.rawValue)
-        else { return nil }
-        let entries = try changes(of: record, count: r.change_count)
-        var next = 0
-        func schedule() -> Bool {
-            while next < entries.count {
-                var pending: UInt32 = 0
-                guard rr_dr60_pending_changes(p, UInt32(RR_DR60_STREAM_RECORD.rawValue), &pending) == Int32(RR_DR60_STATUS_OK.rawValue)
-                else { return false }
-                if pending >= 64 { return true }
-                let e = entries[next]
-                guard rr_dr60_schedule_change(p, UInt32(RR_DR60_STREAM_RECORD.rawValue), e.position, e.control, e.after, e.tag)
-                        == Int32(RR_DR60_STATUS_OK.rawValue)
-                else { return false }
-                next += 1
-            }
-            return true
-        }
-        guard schedule(), rr_dr60_start_recording(p) == Int32(RR_DR60_STATUS_OK.rawValue) else { return nil }
-        let x = samplesFromI24(raw)
-        let fed = min(Int(r.stop.stop_input_position), x.count)
+        guard let session = try? ReRenderSession(record: record) else { return nil }
         var pos = 0
-        var stopped = false
-        while pos < fed {
-            let n = min(block, fed - pos)
-            var info = RrDr60RecordInfo.sized
-            let st = x.withUnsafeBufferPointer { buf in
-                rr_dr60_record(p, buf.baseAddress! + pos, UInt(n), &info, nil, 0)
-            }
-            guard st == Int32(RR_DR60_STATUS_OK.rawValue) else { return nil }
+        while pos < raw.count {
+            try Task.checkCancellation()
+            let n = min(block, raw.count - pos)
+            guard let fed = try? session.feed(i24: raw[pos ..< pos + n]) else { return nil }
             pos += n
-            guard schedule() else { return nil }
-            if info.stopped { stopped = true; break }
+            if fed.reachedStop || fed.selfStopped { break }
         }
-        if !stopped {
-            var outcome = RrDr60StopOutcome.sized
-            guard rr_dr60_stop_recording(p, &outcome, nil, 0) == Int32(RR_DR60_STATUS_OK.rawValue) else { return nil }
-        }
-        guard rr_dr60_memory_status(p, &status) == Int32(RR_DR60_STATUS_OK.rawValue) else { return nil }
-        var digest: UInt64 = 0
-        guard rr_dr60_recording_digest(p, status.count, &digest) == Int32(RR_DR60_STATUS_OK.rawValue) else { return nil }
-        return digest
+        guard let result = try? session.finish() else { return nil }
+        return result.outcome.digest
+    }
+}
+
+/// A re-render session over the C API (spec 027 D8): the plan read from a record and editable
+/// before the first feed, the streaming feed, progress, the meters and the result. Not
+/// `Sendable`: use it from one task. The handle is destroyed with the object.
+public final class ReRenderSession {
+    /// The verdict of a re-render; it describes processing only and does not vouch for what the
+    /// input contains.
+    public enum Verdict: UInt32, Sendable { case identical = 0, differs = 1, rebuilt = 2 }
+    /// Why the session ended as it did.
+    public enum Reason: UInt32, Sendable { case kept = 0, discardedEmpty = 1 }
+    /// The record's flags (`RR_DR60_RECORD_FLAG_*`).
+    public struct Flags: OptionSet, Sendable {
+        public let rawValue: UInt32
+        public init(rawValue: UInt32) { self.rawValue = rawValue }
+    }
+    /// What `finish` returns.
+    public struct Outcome: Sendable {
+        public let reason: Reason
+        public let verdict: Verdict
+        public let edited: Bool
+        public let matchesOriginal: Bool
+        public let digest: UInt64?
+        public let flags: Flags
+        public let remainingAtStart: UInt64
+        public let rowsLanded: UInt64
+    }
+    /// The outcome with the rebuilt item's bytes, copied eagerly (nil when nothing was kept or
+    /// the run was not collected).
+    public struct Result: Sendable {
+        public let outcome: Outcome
+        public let storedForm: [UInt8]?
+        public let record: [UInt8]?
+    }
+    /// What one feed did.
+    public struct Fed: Sendable {
+        public let taken: UInt64
+        public let reachedStop: Bool
+        public let selfStopped: Bool
     }
 
-    /// The speech coder's frame length in device samples, or `nil` when the library refuses.
-    static func frameSamples() -> UInt32? {
-        var info = RrDr60SpeechCodecInfo.sized
-        return rr_dr60_speech_codec_info(&info) == Int32(RR_DR60_STATUS_OK.rawValue) ? info.frame_samples : nil
+    private var plan: OpaquePointer?
+    private var session: OpaquePointer?
+
+    /// Reads `record` into a plan (spec 020's reader); throws the library's status.
+    public init(record: [UInt8]) throws {
+        try RRDR60.checkABI()
+        var p: OpaquePointer?
+        let st = record.withUnsafeBufferPointer { rr_dr60_rerender_plan_from_record($0.baseAddress, UInt($0.count), &p) }
+        try Self.check(st)
+        plan = p
     }
 
-    /// Restores the record's store: every published component's parameters, at its offset.
-    static func restoreStore(_ p: OpaquePointer, _ slot: RrDr60RecordComponent) -> Bool {
-        let point = UInt32(RR_DR60_INSERTION_POINT_BEFORE_LIMITER)
-        let count = withUnsafeBytes(of: slot.store) { $0.count / MemoryLayout<Float>.size }
-        for c in 0..<rr_dr60_component_count() {
-            var comp = RrDr60Component.sized
-            guard rr_dr60_component(c, &comp) == Int32(RR_DR60_STATUS_OK.rawValue) else { return false }
-            for i in 0..<comp.parameter_count {
-                let at = Int(comp.parameter_offset + i)
-                guard at < count else { return false }
-                let v = withUnsafeBytes(of: slot.store) { $0.load(fromByteOffset: at * 4, as: Float.self) }
-                guard rr_dr60_set_component_parameter(p, point, comp.parameter_offset + i, Double(v))
-                        == Int32(RR_DR60_STATUS_OK.rawValue)
-                else { return false }
-            }
+    deinit {
+        if let s = session { rr_dr60_rerender_destroy(s) }
+        if let p = plan { rr_dr60_rerender_plan_destroy(p) }
+    }
+
+    private static func check(_ status: Int32) throws {
+        if status != Int32(RR_DR60_STATUS_OK.rawValue) { throw RRDR60Error.status(status) }
+    }
+
+    private func editPlan() throws -> OpaquePointer {
+        guard session == nil, let p = plan else { throw RRDR60Error.status(Int32(RR_DR60_STATUS_RERENDER_STATE.rawValue)) }
+        return p
+    }
+
+    /// A settings control's value in the plan, by identifier.
+    public func value(of identifier: String) throws -> ControlReading {
+        guard let i = ControlIndex(identifier: identifier) else { throw RRDR60Error.status(Int32(RR_DR60_STATUS_NO_SUCH_CONTROL.rawValue)) }
+        var r = RrDr60ControlReading.sized
+        try Self.check(rr_dr60_rerender_plan_control_value(try editPlan(), i.rawValue, &r))
+        guard let v = ControlReading(r) else { throw RRDR60Error.status(Int32(RR_DR60_STATUS_INTERNAL_ERROR.rawValue)) }
+        return v
+    }
+
+    /// Sets a settings control in the plan, by identifier (validated as `reconfigure` does).
+    public func setValue(of identifier: String, _ value: ControlReading) throws {
+        guard let i = ControlIndex(identifier: identifier) else { throw RRDR60Error.status(Int32(RR_DR60_STATUS_NO_SUCH_CONTROL.rawValue)) }
+        var c = value.c
+        try Self.check(rr_dr60_rerender_plan_set_control_value(try editPlan(), i.rawValue, &c))
+    }
+
+    /// Store value `index` of the plan.
+    public func parameter(_ index: UInt32) throws -> Double {
+        var v = 0.0
+        try Self.check(rr_dr60_rerender_plan_parameter(try editPlan(), index, &v))
+        return v
+    }
+
+    /// Writes store value `index` in the plan.
+    public func setParameter(_ index: UInt32, _ value: Double) throws {
+        try Self.check(rr_dr60_rerender_plan_set_parameter(try editPlan(), index, value))
+    }
+
+    /// Whether the plan's values differ from the record's.
+    public func edited() throws -> Bool {
+        var b = false
+        try Self.check(rr_dr60_rerender_plan_edited(try editPlan(), &b))
+        return b
+    }
+
+    /// Collects the run (the default) or not (a digest-only session).
+    public func setCollectRun(_ collect: Bool) throws {
+        try Self.check(rr_dr60_rerender_plan_set_collect_run(try editPlan(), collect))
+    }
+
+    private func started() throws -> OpaquePointer {
+        if let s = session { return s }
+        guard let p = plan else { throw RRDR60Error.status(Int32(RR_DR60_STATUS_RERENDER_STATE.rawValue)) }
+        var s: OpaquePointer?
+        try Self.check(rr_dr60_rerender_new(p, &s))
+        plan = nil // consumed on success
+        session = s
+        return s!
+    }
+
+    /// Feeds 24-bit codes (the first feed builds the session).
+    public func feed(i24 codes: ArraySlice<Int32>) throws -> Fed {
+        let s = try started()
+        var f = RrDr60ReRenderFed.sized
+        let st = codes.withUnsafeBufferPointer { rr_dr60_rerender_feed_i24(s, $0.baseAddress, UInt($0.count), &f) }
+        try Self.check(st)
+        return Fed(taken: f.taken, reachedStop: f.reached_stop, selfStopped: f.self_stopped)
+    }
+
+    /// Feeds engine samples (identical only for samples equal to `samplesFromI24` of the codes).
+    public func feed(f32 samples: ArraySlice<Float>) throws -> Fed {
+        let s = try started()
+        var f = RrDr60ReRenderFed.sized
+        let st = samples.withUnsafeBufferPointer { rr_dr60_rerender_feed_f32(s, $0.baseAddress, UInt($0.count), &f) }
+        try Self.check(st)
+        return Fed(taken: f.taken, reachedStop: f.reached_stop, selfStopped: f.self_stopped)
+    }
+
+    /// The input position and the record's stop position, in host samples.
+    public var progress: (input: UInt64, stop: UInt64) {
+        guard let s = try? started() else { return (0, 0) }
+        var a: UInt64 = 0
+        var b: UInt64 = 0
+        _ = rr_dr60_rerender_progress(s, &a, &b)
+        return (a, b)
+    }
+
+    /// The engine's meter read-out of its last call.
+    public func meters() throws -> RrDr60Meters {
+        var m = RrDr60Meters.sized
+        try Self.check(rr_dr60_rerender_meters(try started(), &m))
+        return m
+    }
+
+    /// Stops and reads the rebuilt item, copying its bytes.
+    public func finish() throws -> Result {
+        let s = try started()
+        var o = RrDr60ReRenderOutcome.sized
+        try Self.check(rr_dr60_rerender_finish(s, &o))
+        let outcome = Outcome(
+            reason: Reason(rawValue: o.reason) ?? .kept, verdict: Verdict(rawValue: o.verdict) ?? .differs,
+            edited: o.edited, matchesOriginal: o.matches_original, digest: o.has_digest ? o.digest : nil,
+            flags: Flags(rawValue: o.flags), remainingAtStart: o.remaining_at_start, rowsLanded: o.rows_landed)
+        func bytes(_ len: (OpaquePointer, UnsafeMutablePointer<UInt>) -> Int32,
+                   _ write: (OpaquePointer, UnsafeMutablePointer<UInt8>?, UInt, UnsafeMutablePointer<UInt>) -> Int32) -> [UInt8]? {
+            var n: UInt = 0
+            guard len(s, &n) == Int32(RR_DR60_STATUS_OK.rawValue), n > 0 else { return nil }
+            var b = [UInt8](repeating: 0, count: Int(n))
+            var w: UInt = 0
+            let st = b.withUnsafeMutableBufferPointer { write(s, $0.baseAddress, n, &w) }
+            return st == Int32(RR_DR60_STATUS_OK.rawValue) ? b : nil
         }
-        return true
+        return Result(
+            outcome: outcome,
+            storedForm: bytes(rr_dr60_rerender_export_len, rr_dr60_rerender_export),
+            record: bytes(rr_dr60_rerender_record_len, rr_dr60_rerender_record_write))
     }
 
-    /// Imports a filler of `samples` device samples of zeros (whole frames with the codec on).
-    static func fill(_ p: OpaquePointer, samples: UInt64, codec: Bool) -> Bool {
-        var s = rr_dr60_settings_default(6000)
-        s.record_stage_enabled = false
-        s.adc_clamp_enabled = false
-        s.agc_enabled = false
-        s.vas_enabled = false
-        s.mic_capsule_enabled = false
-        s.mic_amp_enabled = false
-        s.speech_codec_enabled = codec
-        s.memory_capacity_s = UInt32(samples / 6000) + 1
-        var handle: OpaquePointer?
-        guard rr_dr60_create(&s, &handle) == Int32(RR_DR60_STATUS_OK.rawValue), let q = handle else { return false }
-        defer { rr_dr60_destroy(q) }
-        let zeros = [Float](repeating: 0, count: Int(samples))
-        var info = RrDr60RecordInfo.sized
-        var outcome = RrDr60StopOutcome.sized
-        guard rr_dr60_start_recording(q) == Int32(RR_DR60_STATUS_OK.rawValue),
-            zeros.withUnsafeBufferPointer({ rr_dr60_record(q, $0.baseAddress, UInt(zeros.count), &info, nil, 0) })
-                == Int32(RR_DR60_STATUS_OK.rawValue),
-            rr_dr60_stop_recording(q, &outcome, nil, 0) == Int32(RR_DR60_STATUS_OK.rawValue), outcome.kept,
-            outcome.length_samples == samples
-        else { return false }
-        var len: UInt = 0
-        guard rr_dr60_export_len(q, outcome.number, &len) == Int32(RR_DR60_STATUS_OK.rawValue) else { return false }
-        var bytes = [UInt8](repeating: 0, count: Int(len))
-        var written: UInt = 0
-        guard bytes.withUnsafeMutableBufferPointer({ rr_dr60_export(q, outcome.number, $0.baseAddress, len, &written) })
-                == Int32(RR_DR60_STATUS_OK.rawValue)
-        else { return false }
-        var number: UInt32 = 0
-        return bytes.withUnsafeBufferPointer { rr_dr60_import(p, $0.baseAddress, len, &number) }
-            == Int32(RR_DR60_STATUS_OK.rawValue)
+    /// The engine holding the rebuilt item as its last recording (to play it); consumes the
+    /// session. The caller destroys the returned handle with `rr_dr60_destroy`.
+    public func intoPipeline() throws -> OpaquePointer {
+        let s = try started()
+        var p: OpaquePointer?
+        try Self.check(rr_dr60_rerender_into_pipeline(s, &p))
+        session = nil
+        return p!
     }
 }

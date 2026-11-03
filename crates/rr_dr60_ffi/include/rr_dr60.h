@@ -3302,6 +3302,56 @@ void rr_dr60_rerender_plan_destroy(struct RrDr60ReRenderPlan *plan);
 RrDr60Status rr_dr60_rerender_plan_clone(const struct RrDr60ReRenderPlan *plan,
                                          struct RrDr60ReRenderPlan **out);
 
+// The plan's slot component (`RR_DR60_COMPONENT_*`).
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_plan_component(const struct RrDr60ReRenderPlan *plan, uint32_t *out);
+
+// The plan's change-row count.
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_plan_row_count(const struct RrDr60ReRenderPlan *plan, uint64_t *out);
+
+// The plan's seed.
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_plan_seed(const struct RrDr60ReRenderPlan *plan, uint64_t *out);
+
+// The plan's recording counter.
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_plan_counter(const struct RrDr60ReRenderPlan *plan, uint64_t *out);
+
+// The plan's remaining capacity at the start, in device samples.
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_plan_remaining_samples(const struct RrDr60ReRenderPlan *plan,
+                                                     uint64_t *out);
+
+// The record's flags (`RR_DR60_RECORD_FLAG_*`).
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_plan_flags(const struct RrDr60ReRenderPlan *plan, uint32_t *out);
+
+// Whether the plan's values differ from the record's (a field compare).
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_plan_edited(const struct RrDr60ReRenderPlan *plan, bool *out);
+
 // The plan's value of settings control `index` (spec 025's reading; the live controls are
 // `NOT_A_SETTING`).
 //
@@ -3329,6 +3379,59 @@ RrDr60Status rr_dr60_rerender_plan_parameter(const struct RrDr60ReRenderPlan *pl
 RrDr60Status rr_dr60_rerender_plan_row(const struct RrDr60ReRenderPlan *plan,
                                        uint64_t i,
                                        struct RrDr60ChangeEntry *out);
+
+// Sets the plan's seed.
+//
+// # Safety
+//
+// `plan` NULL or a live plan.
+RrDr60Status rr_dr60_rerender_plan_set_seed(struct RrDr60ReRenderPlan *plan, uint64_t seed);
+
+// Sets the plan's recording counter.
+//
+// # Safety
+//
+// `plan` NULL or a live plan.
+RrDr60Status rr_dr60_rerender_plan_set_counter(struct RrDr60ReRenderPlan *plan, uint64_t counter);
+
+// Sets the remaining capacity at the start (checked at `rr_dr60_rerender_new`).
+//
+// # Safety
+//
+// `plan` NULL or a live plan.
+RrDr60Status rr_dr60_rerender_plan_set_remaining_samples(struct RrDr60ReRenderPlan *plan,
+                                                         uint64_t remaining);
+
+// Collects the run (the default) or not (a digest-only session).
+//
+// # Safety
+//
+// `plan` NULL or a live plan.
+RrDr60Status rr_dr60_rerender_plan_set_collect_run(struct RrDr60ReRenderPlan *plan, bool collect);
+
+// Sets the plan's slot component (`RR_DR60_COMPONENT_*`).
+//
+// # Safety
+//
+// `plan` NULL or a live plan.
+RrDr60Status rr_dr60_rerender_plan_set_component(struct RrDr60ReRenderPlan *plan,
+                                                 uint32_t component);
+
+// Writes store value `index`, validated as `rr_dr60_set_component_parameter` validates it.
+//
+// # Safety
+//
+// `plan` NULL or a live plan.
+RrDr60Status rr_dr60_rerender_plan_set_parameter(struct RrDr60ReRenderPlan *plan,
+                                                 uint32_t index,
+                                                 double value);
+
+// Removes row `i`.
+//
+// # Safety
+//
+// `plan` NULL or a live plan.
+RrDr60Status rr_dr60_rerender_plan_remove_row(struct RrDr60ReRenderPlan *plan, uint64_t i);
 
 // Sets settings control `index` in the plan (spec 025's reading; settings controls only: the
 // live controls are `NOT_A_SETTING` and the slot's 31 – 35 go through

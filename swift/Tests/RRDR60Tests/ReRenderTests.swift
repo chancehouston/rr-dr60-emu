@@ -151,31 +151,57 @@ private func squareWithGap() -> [Int32] {
 /// The non-default store of `storeOnly` (the band filter's type, frequency, Q and gain).
 private let storeValues: [Double] = [Double(RR_DR60_BAND_FILTER_HIGH_PASS), 900, 2.5, 4]
 
-/// Spec 026 D5 (#77): an empty slot with a non-default store re-renders to the digest, and the
-/// restore leaves every stored parameter on the engine (controls 32 – 35 read back the store).
+/// Spec 026 D5 (#77), on the spec 027 session: an empty slot with a non-default store
+/// re-renders to the digest, and the plan reads the store back (every parameter at its offset).
 @Test func reRenderRestoresTheStoreWithAnEmptySlot() throws {
     let raw = squareWithGap()
     let (record, digest) = try recordAndWrite(raw: raw, schedule: [], storeOnly: true)
     let slot = try #require(try ProcessingRecord.component(of: record))
     #expect(slot.component == UInt32(RR_DR60_COMPONENT_NONE))
     #expect(try ProcessingRecord.reRender(record: record, raw: raw) == digest)
-    var s = rr_dr60_settings_default(48000)
-    var h: OpaquePointer?
-    #expect(isOK(rr_dr60_create(&s, &h)))
-    let p = try #require(h)
-    defer { rr_dr60_destroy(p) }
-    #expect(ProcessingRecord.restoreStore(p, slot))
+    let session = try ReRenderSession(record: record)
     for (i, v) in storeValues.enumerated() {
-        var r = RrDr60ControlReading.sized
-        #expect(isOK(rr_dr60_control_value(p, UInt32(32 + i), &r)))
-        let got = r.value_type == 3 ? Double(r.int_value) : Double(r.float_value)
-        #expect(got == v, "parameter \(i)")
+        #expect(try session.parameter(UInt32(i)) == v, "parameter \(i)")
     }
 }
 
-/// Spec 026 D5: the fill floors the missing samples to whole frames with the coder on.
-@Test func frameSamplesIs120() {
-    #expect(ProcessingRecord.frameSamples() == 120)
+/// Spec 027: the session's faithful result, a knee Rebuild with its stored form and a record
+/// that itself re-renders identically, and a digest-only session.
+@Test func sessionRebuildAndRoundTrip() throws {
+    let raw = squareWithGap()
+    let (record, digest) = try recordAndWrite(raw: raw, schedule: [(10000, kneeControl, -30)])
+    let faithful = try ReRenderSession(record: record)
+    _ = try faithful.feed(i24: raw[...])
+    let a = try faithful.finish()
+    #expect(a.outcome.verdict == .identical && a.outcome.digest == digest)
+    #expect(a.record == record)
+
+    let rebuild = try ReRenderSession(record: record)
+    try rebuild.setValue(of: "vas.hang_ms", .continuous(300))
+    #expect(try rebuild.edited())
+    _ = try rebuild.feed(i24: raw[...])
+    let b = try rebuild.finish()
+    #expect(b.outcome.verdict == .rebuilt && b.outcome.edited)
+    let newRecord = try #require(b.record)
+    #expect(b.storedForm != nil)
+    let back = try ReRenderSession(record: newRecord)
+    _ = try back.feed(i24: raw[...])
+    #expect(try back.finish().outcome.verdict == .identical)
+
+    let digestOnly = try ReRenderSession(record: record)
+    try digestOnly.setCollectRun(false)
+    _ = try digestOnly.feed(i24: raw[...])
+    let c = try digestOnly.finish()
+    #expect(c.outcome.digest == digest && c.record == nil)
+}
+
+/// Spec 027 R-11: the one-call re-render stops on a cancelled task.
+@Test func reRenderCancels() async throws {
+    let raw = squareWithGap()
+    let (record, _) = try recordAndWrite(raw: raw, schedule: [])
+    let task = Task { try ProcessingRecord.reRender(record: record, raw: raw, block: 64) }
+    task.cancel()
+    await #expect(throws: CancellationError.self) { _ = try await task.value }
 }
 
 @Test func scheduleRefillPast64() throws {
