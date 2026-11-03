@@ -296,6 +296,7 @@ def main() -> int:
     ap.add_argument("--shift-record-hp-hz", type=float, default=0.0, help="shift the record high-pass corner (fixtures only)")
     ap.add_argument("--shift-record-lp-hz", type=float, default=0.0, help="shift the record low-pass stopband edge (fixtures only; negative = toward the band)")
     ap.add_argument("--shift-playback-lp-hz", type=float, default=0.0, help="shift the playback low-pass stopband edge (fixtures only)")
+    ap.add_argument("--drain", action="store_true", help="print the settles N4 and N10 (spec 026); write nothing")
     ap.add_argument("--emit-fixture", type=Path, help="write a test fixture instead of the coefficient file")
     ap.add_argument("--output", type=Path, default=OUTPUT, help=argparse.SUPPRESS)
     args = ap.parse_args()
@@ -326,6 +327,16 @@ def main() -> int:
         any_failed |= bool(failed)
         designs.append((t, sos, note, rows))
 
+    if args.drain:
+        # Spec 026 D2 (plan R-02): the last sample of each template's impulse response at 6 kHz
+        # at or above 1e-5 of its peak (the -100 dB rule of N_OUT); the core pins N4 and N10.
+        for (t, sos, _, _), name in zip(designs, ("N4 (record band-pass)", "N10 (playback low-pass)")):
+            x = np.zeros(40_000)
+            x[0] = 1.0
+            h = np.abs(signal.sosfilt(sos, x))
+            last = int(np.nonzero(h >= 1e-5 * h.max())[0][-1]) + 1
+            print(f"drain: {name} = {last}")
+        return 0
     if args.emit_fixture:
         args.emit_fixture.write_text(render_file(designs, args.family, shifts, fixture=True))
         print(f"\nwrote fixture {args.emit_fixture}")

@@ -33,6 +33,11 @@
  *   and the stage manifest reads rr_dr60_manifest_stage_count, rr_dr60_manifest_header,
  *   rr_dr60_manifest_stage, rr_dr60_manifest_stage_source, rr_dr60_manifest_stage_assumption
  *   (spec 007; they need no handle and their strings are static for the life of the process).
+ *   Spec 026's host reads: rr_dr60_settings_one_pass_vas_runs,
+ *   rr_dr60_settings_one_pass_codec_runs, rr_dr60_one_pass_report_latency_samples,
+ *   rr_dr60_one_pass_drain_samples, rr_dr60_wording_first_hit, rr_dr60_meter_field_count,
+ *   rr_dr60_meter_field, rr_dr60_meter_reached, rr_dr60_meter_lag_samples,
+ *   rr_dr60_manifest_word (all appended; none is needed by a host built on 0.92).
  * Not real-time safe: rr_dr60_create, rr_dr60_destroy, rr_dr60_reconfigure (allocate);
  *   rr_dr60_erase, rr_dr60_erase_all (a bounded memmove); rr_dr60_export, rr_dr60_import
  *   (a CRC over the recording). The memory's figures and lengths are device samples:
@@ -52,7 +57,7 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 92
+#define RR_DR60_VERSION_MINOR 93
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0

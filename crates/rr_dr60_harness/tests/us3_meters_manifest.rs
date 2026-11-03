@@ -183,3 +183,14 @@ fn as3_lag() {
         assert_eq!(p.meter_lag_samples(99, MeterCall::OnePass), None);
     }
 }
+
+/// The fields' strings pass both wording lists (spec 026 D3, D4).
+#[test]
+fn as4_sentences_pass() {
+    for f in FIELDS {
+        for s in [f.identifier, f.unit, f.sentence] {
+            assert_eq!(rr_dr60::wording::first_hit(s), None, "{s}");
+            assert_eq!(rr_dr60::wording::first_claim_hit(s), None, "{s}");
+        }
+    }
+}

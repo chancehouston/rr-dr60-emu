@@ -1735,7 +1735,7 @@ fn host_reads_order() {
 /// A forced panic poisons the handle; the host reads then keep the poisoned status.
 #[test]
 #[cfg(feature = "ffi-test-panic")]
-fn host_reads_poisoned() {
+fn panic_guard_host_reads() {
     let h = handle();
     let mut v = 7u64;
     let mut b = true;
@@ -1756,5 +1756,28 @@ fn host_reads_poisoned() {
         );
         assert_eq!((v, b), (7, true));
         rr_dr60_destroy(h);
+    }
+}
+
+/// Spec 026 D4: every meter field fills a painted buffer of exactly 40 bytes with the core's
+/// strings, nothing past it (no implicit padding to leave unwritten).
+#[test]
+fn meter_field_every_index() {
+    for (i, f) in rr_dr60::meters::FIELDS.iter().enumerate() {
+        let mut b = Painted::new(40);
+        // SAFETY: a painted 4200-byte buffer, its size 40.
+        assert_eq!(
+            unsafe { rr_dr60_meter_field(i as u32, b.ptr()) },
+            RrDr60Status::Ok
+        );
+        assert!(b.untouched_after(40));
+        // SAFETY: a filled 40-byte struct; its strings static and NUL-terminated.
+        let m = unsafe { b.ptr::<RrDr60MeterField>().read() };
+        let s = |p| {
+            // SAFETY: a static NUL-terminated string of the library's tables.
+            unsafe { core::ffi::CStr::from_ptr(p) }.to_str().unwrap()
+        };
+        assert_eq!((m.index as usize, s(m.identifier)), (i, f.identifier));
+        assert_eq!((s(m.unit), s(m.sentence)), (f.unit, f.sentence));
     }
 }

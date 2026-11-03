@@ -41,7 +41,12 @@
 //! `rr_dr60_stop_recording_with_changes`, `rr_dr60_clock_of`, `rr_dr60_record_landing`; spec
 //! 017), `rr_dr60_get_state`,
 //! `rr_dr60_memory_status`, `rr_dr60_recording_length`, `rr_dr60_export_len`, the three
-//! latency and drain reads and `rr_dr60_footprint_bytes`. Not real-time safe:
+//! latency and drain reads, `rr_dr60_footprint_bytes` and (spec 026) the host reads
+//! (`rr_dr60_settings_one_pass_vas_runs`, `rr_dr60_settings_one_pass_codec_runs`,
+//! `rr_dr60_one_pass_report_latency_samples`, `rr_dr60_one_pass_drain_samples`,
+//! `rr_dr60_wording_first_hit`, `rr_dr60_meter_field_count`, `rr_dr60_meter_field`,
+//! `rr_dr60_meter_reached`, `rr_dr60_meter_lag_samples`, `rr_dr60_manifest_word`). Not
+//! real-time safe:
 //! `rr_dr60_create`, `rr_dr60_destroy`, `rr_dr60_reconfigure` (allocate), `rr_dr60_erase`,
 //! `rr_dr60_erase_all` (a bounded memmove), `rr_dr60_export`, `rr_dr60_import` (a CRC over
 //! the recording).
@@ -57,7 +62,7 @@ use rr_dr60::{
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 92;
+pub const RR_DR60_VERSION_MINOR: u32 = 93;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -4538,7 +4543,7 @@ mod tests {
         assert_eq!(d.reserved_010_tail, [0; 7]);
         assert_eq!(d.reserved_012, [0; 2]);
         assert_eq!(d.mic_hiss_offset_db, 0.0); // 012 FR-003
-        assert_eq!(RR_DR60_VERSION_MINOR, 92);
+        assert_eq!(RR_DR60_VERSION_MINOR, 93);
         let mut stale = rr_dr60_settings_default(48_000);
         stale.struct_size = 112; // a 0.10 or 0.11 caller (spec 012 FR-012)
         assert_eq!(

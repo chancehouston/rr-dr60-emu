@@ -21,7 +21,12 @@ oracle frequencies are the exact third-octave centres 1000 * 2^(n / 3) from 20 H
 the applied corner. The impulse length follows the pole radius (hardware plan review B5):
 a2 = |z_p|^2 = (1 - g k + g^2) / (1 + g k + g^2), L = ceil(2 ln(1e8) / (-ln a2)) + ceil(0.1 r).
 
-Usage: uv run tools/band-filter/design_band_filter.py [--check | --write]
+Spec 026 D2 (plan R-02): `--drain` prints the settle rule, ceil(15.3 / atanh(k phi)) + 4 with
+phi = g / (1 + g^2), against brute-force impulse responses of the closed-form sections on a grid
+(the seven rates, 20 Hz to 0.4 r, Q 0.5 to 10, the four types; the last sample at or above 1e-5
+of the peak never past the bound), and the bounds the core pins.
+
+Usage: uv run tools/band-filter/design_band_filter.py [--check | --write | --drain]
 """
 
 import cmath
@@ -228,7 +233,59 @@ def render(cs):
     return "\n".join(out + case_lines + [""] + row_lines) + "\n"
 
 
+def settle_rule(rate, freq, q):
+    """The drain's band term at rest (the core's `BandFilter::settle_bound`)."""
+    f = min(f32(freq), CEILING * rate)
+    g = math.tan(math.pi * f / rate)
+    kphi = min((1.0 / f32(q)) * g / (1.0 + g * g), 1.0 - 1e-15)
+    return math.ceil(15.3 / math.atanh(kphi)) + 4
+
+
+def impulse_settle(rate, freq, q, t, n):
+    """The last sample of type t's impulse response at or above 1e-5 of its peak (n samples)."""
+    f = min(f32(freq), CEILING * rate)
+    g = math.tan(math.pi * f / rate)
+    k = 1.0 / f32(q)
+    d0, d1, d2 = 1 + g * k + g * g, 2 * g * g - 2, 1 - g * k + g * g
+    num = [
+        (g * g, 2 * g * g, g * g),
+        (1.0, -2.0, 1.0),
+        (k * g, 0.0, -k * g),
+        (1 + g * g, 2 * g * g - 2, 1 + g * g),
+    ][t]
+    b0, b1, b2 = (c / d0 for c in num)
+    a1, a2 = d1 / d0, d2 / d0
+    x1 = x2 = y1 = y2 = 0.0
+    peak, h = 0.0, []
+    for i in range(n):
+        x = 1.0 if i == 0 else 0.0
+        y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+        x2, x1, y2, y1 = x1, x, y1, y
+        h.append(abs(y))
+        peak = max(peak, abs(y))
+    thr = 1e-5 * peak
+    return max((i + 1 for i, v in enumerate(h) if v >= thr), default=0)
+
+
+def drain():
+    worst = 0.0
+    for rate in RATES:
+        for freq in (20.0, 100.0, 1000.0, 0.4 * rate):
+            for q in (0.5, 0.7071, 2.0, 10.0):
+                bound = settle_rule(rate, freq, q)
+                for t in range(4):
+                    last = impulse_settle(rate, freq, q, t, 2 * bound + 64)
+                    assert last <= bound, (rate, freq, q, t, last, bound)
+                    worst = max(worst, last / bound)
+    print(f"drain: the rule is never short on the grid (worst ratio {worst:.3f} <= 1.0)")
+    for rate in RATES:
+        print(f"drain: 20 Hz, Q 10 at {rate} Hz: {settle_rule(rate, 20.0, 10.0)}")
+
+
 def main():
+    if "--drain" in sys.argv:
+        drain()
+        return
     cs = cases()
     if "--write" in sys.argv:
         OUT.write_text(render(cs))

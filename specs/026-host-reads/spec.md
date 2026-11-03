@@ -27,6 +27,13 @@
 - **D6's labels** are as plan R-06 lists them. The README keeps "—" by its generator's rule, so AS1 covers every non-empty cell.
 - **D7's promise** runs against four revisions, 0.92's merge (2a170d4) included.
 
+### Session 2026-11-03 (implementation restatements)
+
+- **D2's settles are computed in the core** from the committed coefficient tables, through the engine's own sections, when the engine is built (`stages::drain`); there is no generated `drain_coeffs.rs` (plan R-02's file). The design scripts' `--drain` prints are the oracle: `design_voiceband.py --drain` prints N₄ = 160 and N₁₀ = 121, `design_mic_chain.py --drain` stage 2's settle per rate (90 … 926 host samples, 498 at 48 kHz), `design_band_filter.py --drain` the settle rule checked against brute-force impulse responses of the closed-form sections on the grid (worst ratio 0.996) and the bound at 20 Hz, Q 10 for the seven rates; the core's tests pin each printed figure.
+- **D2's teeth** (AS1): "the figure under twice the silence needed" is asserted on the rows with one dominant term (every stage off but the conversion; the band filter at the slot's tap). On the full chain the bound is a sum of settles and reads about 4× the silence needed at the route output; those rows are reported.
+- **D4's lag for the playback group** runs to the output chain's input: the chain's own group delay (0.31 ms on the speaker route and 0.07 ms on the earphone route at 48 kHz) is not included. The guide says so.
+- **The C handle reads** take `RrDr60Pipeline *`, as every existing handle read does (contracts/c-api.md's `const` restated).
+
 ## Decisions for sign-off
 
 The owner reads this section first. Each decision gives the recommendation; the alternatives are in the Assumptions section.

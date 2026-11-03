@@ -573,6 +573,17 @@ mod tests {
         assert!(worst > 0.5, "the bound is not loose: worst ratio {worst}");
     }
 
+    /// Spec 026 D2: the bound at rest equals the print of `uv run
+    /// tools/band-filter/design_band_filter.py --drain` (20 Hz, Q 10, the seven rates).
+    #[test]
+    fn settle_bound_matches_the_script() {
+        let want = [14616u32, 19486, 38966, 107391, 116888, 214778, 233771];
+        for (&rate, &w) in crate::SUPPORTED_HOST_RATES.iter().zip(&want) {
+            let bf = BandFilter::new(rate, rate / 50, [0.0, 20.0, 10.0, 0.0]);
+            assert_eq!(bf.settle_bound(), w, "{rate}");
+        }
+    }
+
     #[test]
     fn ramp_trajectory() {
         let rate = 48_000;

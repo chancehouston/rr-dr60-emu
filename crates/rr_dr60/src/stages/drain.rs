@@ -76,8 +76,8 @@ pub(crate) fn playback_settle() -> u32 {
 mod tests {
     use super::*;
 
-    /// The figures the hardware review reproduced from the committed tables (N₄ 160, N₁₀ 121,
-    /// the pinned constant).
+    /// N₄ and N₁₀ as `uv run tools/filter-design/design_voiceband.py --drain` prints them (the
+    /// hardware review's figures; N₁₀ the pinned constant).
     #[test]
     fn device_settles() {
         assert_eq!(record_settle(), 160);
@@ -85,19 +85,11 @@ mod tests {
         assert_eq!(playback_settle() as usize, crate::paths::N10);
     }
 
-    /// Stage 2's settle by rate (`SUPPORTED_HOST_RATES` order): the 77 Hz coupling's decay, 9.6
-    /// – 15.0 ms by rate (the per-rate fits differ at the low rates).
+    /// Stage 2's settle by rate (`SUPPORTED_HOST_RATES` order), pinned to the print of
+    /// `uv run tools/mic-chain/design_mic_chain.py --drain` (the 77 Hz coupling's decay).
     #[test]
     fn mic_settle_by_rate() {
         let v: [u32; 7] = core::array::from_fn(mic_amp_settle);
-        for w in v.windows(2) {
-            assert!(w[1] >= w[0], "{v:?}");
-        }
-        let per_khz: [f64; 7] = core::array::from_fn(|i| {
-            f64::from(v[i]) / (f64::from(crate::SUPPORTED_HOST_RATES[i]) / 1000.0)
-        });
-        for p in per_khz {
-            assert!((9.6..=15.0).contains(&p), "{per_khz:?}");
-        }
+        assert_eq!(v, [90, 113, 200, 463, 498, 857, 926]);
     }
 }

@@ -22,7 +22,7 @@ The band-limiting codec stages (4 and 10) are described in [The engine at a glan
 - **Bypasses and taps.** Each modeled stage can be bypassed, and the output can be tapped after the microphone capsule or amplifier, the AGC (the limiter's own output at the host rate), the record stage, the VAS ("what the device recorded", before the codec), the decoder, the playback filter, the volume and amplifier stage, the speaker or the earphone (`Tap`); the default is the route output. The reported latency follows the configuration. `reconfigure` changes settings between streams.
 - **What the engine says about itself:** a constant [stage manifest](#what-the-engine-says-about-itself) of the fifteen signal-chain stages, each with its status, confidence, source and assumption IDs, what the engine leaves out, and the version that last changed its model, so an app's "about this model" view is generated from the engine.
 - **Latency.** Fixed and reported: 1923 samples (about 40.1 ms) at 48 kHz in the default configuration, 483 (about 10.1 ms) with the speech codec bypassed; 181 and 1 at 6 kHz. It is under 50 ms at every supported rate, and each configuration reports its own; the microphone and limiter taps report 0.
-- **Real-time safe.** `process`, `process_in_place`, `process_with_events` and `reset` never allocate, lock or do I/O, and neither do the recording and playback calls (`start_recording`, `record`, `stop_recording`, `start_playback`, `play`, `stop_playback`), the live controls (`set_route`, `set_volume`, `set_playback_speed` and their reads), the scheduled changes (`schedule_change`, `pending_changes`, `stream_position`, `clear_schedule`, the log-taking `process_with_events_and_changes`, `process_in_place_with_events_and_changes` and `play_with_changes`, `recording_counter`, `changes::speed_landing`; since 0.17 `input_position`, `record_with_changes`, `stop_recording_with_changes`, `changes::clock_of` and `changes::record_landing`), the state and figure reads, the meter read-out (`meters`, `rest_meters`), the battery value (`set_battery_volts`, `battery_volts`, `battery::ceiling_factor`, `battery::ceiling_db`; since 0.18), `export_len`, `playback_length_samples` and the latency reads. `erase`, `erase_all` (a bounded move of stored samples), `export` and `import` (a checksum over the recording) are not. `Pipeline::new` and `reconfigure` allocate, so call them outside the audio callback. Since 0.21 the four playback-stage switches through `schedule_change` and `output::stage11_bypass_level_db` (no handle) are real-time safe too.
+- **Real-time safe.** `process`, `process_in_place`, `process_with_events` and `reset` never allocate, lock or do I/O, and neither do the recording and playback calls (`start_recording`, `record`, `stop_recording`, `start_playback`, `play`, `stop_playback`), the live controls (`set_route`, `set_volume`, `set_playback_speed` and their reads), the scheduled changes (`schedule_change`, `pending_changes`, `stream_position`, `clear_schedule`, the log-taking `process_with_events_and_changes`, `process_in_place_with_events_and_changes` and `play_with_changes`, `recording_counter`, `changes::speed_landing`; since 0.17 `input_position`, `record_with_changes`, `stop_recording_with_changes`, `changes::clock_of` and `changes::record_landing`), the state and figure reads, the meter read-out (`meters`, `rest_meters`), the battery value (`set_battery_volts`, `battery_volts`, `battery::ceiling_factor`, `battery::ceiling_db`; since 0.18), `export_len`, `playback_length_samples` and the latency reads. `erase`, `erase_all` (a bounded move of stored samples), `export` and `import` (a checksum over the recording) are not. `Pipeline::new` and `reconfigure` allocate, so call them outside the audio callback. Since 0.21 the four playback-stage switches through `schedule_change` and `output::stage11_bypass_level_db` (no handle) are real-time safe too. Since 0.93 so are the host reads (`Settings::one_pass_vas_runs`, `one_pass_codec_runs`, `one_pass_report_latency_samples`, `one_pass_drain_samples`, `meter_reached`, `meter_lag_samples`, the `wording` matchers and the manifest words; see [Host reads](#host-reads-since-093)).
 - **Cost.** Measured on a laptop at 48 kHz: about 60 ns per sample (about 350× real time) with the limiter and the VAS on and the speech codec bypassed; below its knee the limiter costs one exponential per sample and nothing more. With the speech codec on it runs at about 135× real time at 48 kHz (about 155 ns per host sample, 1.2 µs per device sample against the 8 µs budget of spec 008; the worst 64-sample block takes about 0.14 ms of its 1.33 ms) and about 210× at 6 kHz. Recording and playing back through the memory costs about 2 % more than the one-pass call. The output chain adds about 19 % on the speaker route and 6 % on the earphone route to the codec-bypassed one-pass (68.2 and 60.9 against 57.4 ns per host sample; spec 009 SC-007), the microphone path about 4 ns (6 %) more, and the playback speed control about 10 % at the levels other than normal speed (about 1.5 % at normal speed).
 - **Deterministic.** The same input, settings and seed give bit-identical output for any block size and on every supported platform. The golden files (one per feature; the speech codec's entries carry a digest of the frame bytes as well as of the audio) are checked on Linux, macOS and Windows (x86-64 and ARM64), in the iOS simulator and on an iOS device.
 - **A C API** with a generated header ([`rr_dr60.h`](../crates/rr_dr60_ffi/include/rr_dr60.h)), and a [Swift package](../swift/README.md) that wraps it as an XCFramework.
@@ -123,36 +123,7 @@ The Rust program below prints the whole manifest in its canonical text form (it 
 //!
 //! Run: `cargo run -q -p rr_dr60_harness --example manifest`
 
-use rr_dr60::{Confidence, StagePath, StageStatus, manifest};
-
-fn status(s: StageStatus) -> &'static str {
-    match s {
-        StageStatus::NotModeled => "not_modeled",
-        StageStatus::Assumed => "assumed",
-        StageStatus::Sourced => "sourced",
-        StageStatus::Checked => "checked",
-        _ => "unknown",
-    }
-}
-
-fn path(p: StagePath) -> &'static str {
-    match p {
-        StagePath::Record => "record",
-        StagePath::Playback => "playback",
-        StagePath::Both => "both",
-        _ => "unknown",
-    }
-}
-
-fn confidence(c: Confidence) -> &'static str {
-    match c {
-        Confidence::NotApplicable => "not_applicable",
-        Confidence::Low => "low",
-        Confidence::Medium => "medium",
-        Confidence::High => "high",
-        _ => "unknown",
-    }
-}
+use rr_dr60::manifest;
 
 /// Prints `key: value`, or `key:` with nothing after the colon when the value is empty.
 fn line(key: &str, value: &str) {
@@ -183,9 +154,9 @@ fn main() {
         println!("stage {} {}", s.number, s.identifier);
         println!("name: {}", s.name);
         println!("description: {}", s.description);
-        println!("status: {}", status(s.status));
-        println!("path: {}", path(s.path));
-        println!("confidence: {}", confidence(s.confidence));
+        println!("status: {}", s.status.token());
+        println!("path: {}", s.path.token());
+        println!("confidence: {}", s.confidence.token());
         line("sources", &s.sources.join(", "));
         line("assumptions", &s.assumptions.join(", "));
         line("coverage", s.coverage);
@@ -203,33 +174,11 @@ The same from C (the `print_manifest` function of `crates/rr_dr60_ffi/tests/c/sm
 /* The stage manifest (spec 007): the fifteen signal-chain stages and what the engine says
  * about each, printed in the canonical text form. Needs no handle; every string pointer is
  * static for the life of the process. */
-static const char *status_word(uint32_t s) {
-  switch (s) {
-    case RR_DR60_STAGE_STATUS_NOT_MODELED: return "not_modeled";
-    case RR_DR60_STAGE_STATUS_ASSUMED: return "assumed";
-    case RR_DR60_STAGE_STATUS_SOURCED: return "sourced";
-    case RR_DR60_STAGE_STATUS_CHECKED: return "checked";
-    default: return "unknown";
-  }
-}
-
-static const char *path_word(uint32_t p) {
-  switch (p) {
-    case RR_DR60_STAGE_PATH_RECORD: return "record";
-    case RR_DR60_STAGE_PATH_PLAYBACK: return "playback";
-    case RR_DR60_STAGE_PATH_BOTH: return "both";
-    default: return "unknown";
-  }
-}
-
-static const char *confidence_word(uint32_t c) {
-  switch (c) {
-    case RR_DR60_CONFIDENCE_NOT_APPLICABLE: return "not_applicable";
-    case RR_DR60_CONFIDENCE_LOW: return "low";
-    case RR_DR60_CONFIDENCE_MEDIUM: return "medium";
-    case RR_DR60_CONFIDENCE_HIGH: return "high";
-    default: return "unknown";
-  }
+/* The canonical text's token of a status, path or confidence (spec 026 D6: the library's
+ * words, never a copy). */
+static const char *word(uint32_t kind, uint32_t value) {
+  const char *w = NULL;
+  return rr_dr60_manifest_word(kind, value, RR_DR60_MANIFEST_WORD_TOKEN, &w) == RR_DR60_STATUS_OK ? w : "unknown";
 }
 
 /* Prints "key: value", or "key:" with nothing after the colon when the value is empty. */
@@ -257,9 +206,9 @@ static void print_manifest(void) {
     printf("\nstage %u %s\n", e.number, e.identifier);
     manifest_line("name", e.name);
     manifest_line("description", e.description);
-    manifest_line("status", status_word(e.status));
-    manifest_line("path", path_word(e.path));
-    manifest_line("confidence", confidence_word(e.confidence));
+    manifest_line("status", word(RR_DR60_MANIFEST_WORD_STATUS, e.status));
+    manifest_line("path", word(RR_DR60_MANIFEST_WORD_PATH, e.path));
+    manifest_line("confidence", word(RR_DR60_MANIFEST_WORD_CONFIDENCE, e.confidence));
     printf("sources:");
     for (uint32_t i = 0; i < e.source_count; i++) {
       const char *id = NULL;
@@ -829,6 +778,24 @@ Since 0.92 the record path has one **slot**, at the published insertion point `b
 **The gain and the pause.** A large gain or a sharp resonance raises the capsule hiss that reaches the voice-activated pause; at enough gain a quiet recording no longer pauses. With the filter at 1 kHz and Q 0.7071, a quiet recording at 48 kHz stops pausing from about +16.5 dB of gain on the high-pass, +17.8 dB on the band-pass, +19.3 dB on the notch and +21.6 dB on the low-pass at sensitivity level 3, and about 6 dB less at level 5 (+10.5, +11.8, +13.3 and +15.6 dB); a Q 10 low-pass at 0 dB still pauses. These are lower estimates from 10 s runs (`insert_matrix_gate_offset_bisection`): a longer quiet stretch can still pause.
 
 **Changing a parameter on the one-pass.** `set_component_parameter` applies at once (a step) and only to the value it writes; use the schedule for a live change with its 20 ms transition.
+
+## Host reads (since 0.93)
+
+Optional reads, all appended: a host built on 0.92 runs unchanged and needs none of them. Each one answers, from the engine itself, a question a host would otherwise answer by copying the engine's rules or lists.
+
+**Which stages run on the one-pass.** `Settings::one_pass_vas_runs()` is true when the voice-activated pause is on and the tap is at the gate (`AfterVas`), the decoder (`AfterDecoder`) or after stage 10; `Settings::one_pass_codec_runs()` is true when the speech codec is on and the tap is `AfterDecoder` or after stage 10. At a tap before them the stage does not run, whatever its setting. C: `rr_dr60_settings_one_pass_vas_runs` and `rr_dr60_settings_one_pass_codec_runs` read a caller's `RrDr60Settings` (its `struct_size` must equal `sizeof(RrDr60Settings)`; a switch byte other than 0 or 1, or an unknown tap, is refused with `INVALID_ARGUMENT`), with no handle.
+
+**The latency the pause's reports align with.** The one-pass's pause reports (the `VasEvent` positions) leave out the speech codec's 180 device samples, so map them with `one_pass_report_latency_samples()` (C `rr_dr60_one_pass_report_latency_samples`), not `latency_samples()`: the same figure without the codec's term (483 instead of 1923 at 48 kHz by default; equal to `latency_samples()` whenever the codec does not run). Pass it to `timeline::onepass_output_to_input`.
+
+**The one-pass drain.** `one_pass_drain_samples()` (C `rr_dr60_one_pass_drain_samples`, a `uint64_t`) is the number of host samples of silence to feed after the input so that every kept sample reaches the output and settles within 10⁻⁵ of its own peak, at the current settings, tap and slot values. It is a bound, the sum of the stages' settles (each by the −100 dB rule the player's drain uses), both converters' responses and the codec's delay: 7910 host samples (about 165 ms) for the default engine at 48 kHz, 898 at 6 kHz, 0 at the capsule's tap. The slot's band filter is added on read; a 20 Hz, Q 10 filter adds about 2.45 s at every rate. It does not include the limiter's hold (a gain on silence outputs zero), the capsule hiss (a steady source), the decoder's quiet idle output or pending scheduled changes. In drop mode, a pause that begins before the kept samples are out holds them until the next resume; the figure holds in mute mode, with the pause off, or while the hang outlasts it. It is not the player's `drain_samples()`.
+
+**The words the engine's strings do not use.** `rr_dr60::wording` holds two lists: `ENGINE_STRINGS`, the list the stage and control manifests are checked against, and `CLAIMS`, the words the guide's sections avoid ("accurate", "authentic", "reveal", "uncover", "hidden voice", and "measured" except in "not measured"). `first_hit(text)` and `first_claim_hit(text)` return the first match and its byte range: whole words, ASCII case-insensitive, the leftmost match wins. C: `rr_dr60_wording_first_hit(text, len, kind, &entry, &start, &end)` with `RR_DR60_WORDING_ENGINE_STRINGS` or `RR_DR60_WORDING_CLAIMS` (text that is not UTF-8 is refused). These lists describe the engine's own strings, which describe signal processing only. They are not a store or copy check: a host layers its own rules on top.
+
+**The meter manifest.** `meters::FIELDS` describes each field of the [meter read-out](#meters-one-read-out-per-processing-call) in its declaration order: the identifier, the unit, one sentence, the kind (a maximum over the call, a count, or a state at the call's end) and the side (record or playback). `meter_reached(field, call)` says whether a one-pass, record or play call reaches the field's point at the engine's settings (an unreached field keeps its rest value). `meter_lag_samples(field, call)` says how far the point runs behind its reference, in host samples: 0 at the four front fields; the record path's latency to the encoder at the four device-rate fields; on a play call the playback latency at speed level 3, and on the one-pass the one-pass latency, up to the output chain's input (the chain's own small group delay, at most a fraction of a millisecond, is not included). C: `rr_dr60_meter_field_count`, `rr_dr60_meter_field` (`RrDr60MeterField`, 40 bytes, sized), `rr_dr60_meter_reached` and `rr_dr60_meter_lag_samples` (`RR_DR60_METER_NOT_REACHED` for a field the call does not reach), with `RR_DR60_METER_CALL_ONE_PASS`, `_RECORD` and `_PLAY`. Swift: `MeterManifest.fields`, `.reached` and `.lagSamples`.
+
+**The stage manifest's words.** `StageStatus`, `StagePath` and `Confidence` have `token()` (the canonical text's word, such as `not_modeled`) and `label()` (a display label in lowercase, such as "not modeled" or "record and playback"; the checked status's label is "checked against a real unit", never "checked" alone). C: `rr_dr60_manifest_word(kind, value, form, &out)` with `RR_DR60_MANIFEST_WORD_STATUS`, `_PATH` or `_CONFIDENCE` and `RR_DR60_MANIFEST_WORD_TOKEN` or `_LABEL`. Swift: `ManifestWord.token` and `.label`. The engine's own examples use these words rather than copies.
+
+**New statuses**: 44 `NO_SUCH_METER_FIELD`, 45 `NO_SUCH_METER_CALL`, 46 `INVALID_UTF8`, 47 `NO_SUCH_WORDING_KIND`, 48 `NO_SUCH_MANIFEST_WORD`. Every read is real-time safe and allocation-free.
 
 ## What the measurement harness checks
 

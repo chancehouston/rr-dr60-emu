@@ -53,6 +53,7 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+from scipy import signal
 from scipy.optimize import least_squares
 
 RATES = [6000, 8000, 16000, 44100, 48000, 88200, 96000]
@@ -842,6 +843,25 @@ def write(per_rate, clipinfo, xz, ratio):
     print(f"wrote {path}")
 
 
+def drain(per_rate):
+    """Spec 026 D2 (plan R-02): stage 2's settle per rate, the last sample of the cascade's
+    impulse response (input high-pass, output coupling, roll-off) at or above 1e-5 of its peak,
+    in host samples. The core's `stages::drain::mic_amp_settle` pins these figures."""
+    print("=" * 100)
+    print("Drain (spec 026): stage 2's settle, host samples")
+    print("=" * 100)
+    for fs in RATES:
+        secs = [per_rate[fs][k] for k in ("hp_in", "hp_out", "lp")]
+        x = np.zeros(400_000)
+        x[0] = 1.0
+        y = x
+        for b0, b1, a1 in secs:
+            y = signal.lfilter([b0, b1], [1.0, a1], y)
+        h = np.abs(y)
+        last = int(np.nonzero(h >= 1e-5 * h.max())[0][-1]) + 1
+        print(f"  {fs:>6} Hz  {last}")
+
+
 def main():
     args = set(sys.argv[1:])
     nom = circuit()
@@ -856,6 +876,8 @@ def main():
     w2 = max(len(r) for _, r, _, _ in FIGURES)
     for n, r, v, ok in FIGURES:
         print(f"{'  ' if ok else '✗ '}{n.ljust(w1)}   {r.ljust(w2)}   {v}")
+    if "--drain" in args:
+        drain(per_rate)
     if "--spice" in args:
         if not spice(nom):
             print("spice gate: FAIL")
