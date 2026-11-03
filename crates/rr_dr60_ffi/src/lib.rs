@@ -41,7 +41,12 @@
 //! `rr_dr60_stop_recording_with_changes`, `rr_dr60_clock_of`, `rr_dr60_record_landing`; spec
 //! 017), `rr_dr60_get_state`,
 //! `rr_dr60_memory_status`, `rr_dr60_recording_length`, `rr_dr60_export_len`, the three
-//! latency and drain reads and `rr_dr60_footprint_bytes`. Not real-time safe:
+//! latency and drain reads, `rr_dr60_footprint_bytes` and (spec 026) the host reads
+//! (`rr_dr60_settings_one_pass_vas_runs`, `rr_dr60_settings_one_pass_codec_runs`,
+//! `rr_dr60_one_pass_report_latency_samples`, `rr_dr60_one_pass_drain_samples`,
+//! `rr_dr60_wording_first_hit`, `rr_dr60_meter_field_count`, `rr_dr60_meter_field`,
+//! `rr_dr60_meter_reached`, `rr_dr60_meter_lag_samples`, `rr_dr60_manifest_word`). Not
+//! real-time safe:
 //! `rr_dr60_create`, `rr_dr60_destroy`, `rr_dr60_reconfigure` (allocate), `rr_dr60_erase`,
 //! `rr_dr60_erase_all` (a bounded memmove), `rr_dr60_export`, `rr_dr60_import` (a CRC over
 //! the recording).
@@ -57,7 +62,7 @@ use rr_dr60::{
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 92;
+pub const RR_DR60_VERSION_MINOR: u32 = 93;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -192,6 +197,16 @@ pub enum RrDr60Status {
     /// `rr_dr60_set_component` or `rr_dr60_set_component_parameter` while recording or playing
     /// (spec 024 D3): stop first, or schedule the parameter with `rr_dr60_schedule_change`.
     ComponentWhileActive = 43, // spec 024 D9: appended
+    /// A meter field index past `rr_dr60_meter_field_count` (spec 026 D4).
+    NoSuchMeterField = 44, // spec 026: appended
+    /// A meter call other than `RR_DR60_METER_CALL_*` (spec 026 D4).
+    NoSuchMeterCall = 45, // spec 026: appended
+    /// Text passed to `rr_dr60_wording_first_hit` that is not UTF-8 (spec 026 D3).
+    InvalidUtf8 = 46, // spec 026: appended
+    /// A wording kind other than `RR_DR60_WORDING_*` (spec 026 D3).
+    NoSuchWordingKind = 47, // spec 026: appended
+    /// A manifest word kind, value or form the library does not publish (spec 026 D6).
+    NoSuchManifestWord = 48, // spec 026: appended
 }
 
 /// Names the offending field for `rr_dr60_settings_validate` (spec 002 US2 AS5).
@@ -997,15 +1012,9 @@ fn validate_c(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Setti
     Ok(settings)
 }
 
-/// Converts C settings to Rust settings, validating `struct_size`, `tap` and `vas_mode`, and
-/// naming the failing field (spec 003 contracts/c-api.md › Conversion rules). The two reserved
-/// AGC slots are ignored (spec 005 contracts/c-api.md).
-fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60SettingField)> {
-    let invalid = |field| (RrDr60Status::InvalidArgument, field);
-    if s.struct_size != SETTINGS_SIZE {
-        return Err(invalid(RrDr60SettingField::StructSize));
-    }
-    let tap = match s.tap {
+/// The C tap value's `Tap`, or `None` for an unassigned value.
+fn tap_from_c(tap: u32) -> Option<Tap> {
+    Some(match tap {
         0 => Tap::AfterRecord,
         1 => Tap::AfterPlayback,
         2 => Tap::AfterAgc,
@@ -1018,8 +1027,19 @@ fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60Sett
         9 => Tap::AfterMicCapsule, // 012 FR-012
         10 => Tap::AfterMicAmp,    // 012 FR-012
         11 => Tap::AfterInsert,    // 024 D6
-        _ => return Err(invalid(RrDr60SettingField::Tap)),
-    };
+        _ => return None,
+    })
+}
+
+/// Converts C settings to Rust settings, validating `struct_size`, `tap` and `vas_mode`, and
+/// naming the failing field (spec 003 contracts/c-api.md › Conversion rules). The two reserved
+/// AGC slots are ignored (spec 005 contracts/c-api.md).
+fn to_settings(s: &RrDr60Settings) -> Result<Settings, (RrDr60Status, RrDr60SettingField)> {
+    let invalid = |field| (RrDr60Status::InvalidArgument, field);
+    if s.struct_size != SETTINGS_SIZE {
+        return Err(invalid(RrDr60SettingField::StructSize));
+    }
+    let tap = tap_from_c(s.tap).ok_or(invalid(RrDr60SettingField::Tap))?;
     let vas_mode = match s.vas_mode {
         0 => VasMode::Drop,
         1 => VasMode::Mute,
@@ -4387,6 +4407,8 @@ mod settings_read;
 pub use settings_read::*;
 mod insert;
 pub use insert::*;
+mod host_reads;
+pub use host_reads::*;
 
 #[cfg(test)]
 mod abi_tests;
@@ -4521,7 +4543,7 @@ mod tests {
         assert_eq!(d.reserved_010_tail, [0; 7]);
         assert_eq!(d.reserved_012, [0; 2]);
         assert_eq!(d.mic_hiss_offset_db, 0.0); // 012 FR-003
-        assert_eq!(RR_DR60_VERSION_MINOR, 92);
+        assert_eq!(RR_DR60_VERSION_MINOR, 93);
         let mut stale = rr_dr60_settings_default(48_000);
         stale.struct_size = 112; // a 0.10 or 0.11 caller (spec 012 FR-012)
         assert_eq!(

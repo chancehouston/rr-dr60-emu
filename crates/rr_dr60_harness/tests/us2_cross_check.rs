@@ -1378,3 +1378,43 @@ fn guide_insert() {
         assert!(!section.contains(word), "the insert section says {word:?}");
     }
 }
+
+#[test]
+fn guide_host_reads() {
+    // Spec 026 R-07: the guide's section exists, opens with the optional-reads sentence, names
+    // each read, and its text outside the quoted list passes both wording lists.
+    let text = std::fs::read_to_string(mc::repo_root().join("docs/guide.md")).unwrap();
+    let start = text
+        .find("## Host reads (since 0.93)")
+        .expect("the guide's section");
+    let end = text[start + 3..]
+        .find("\n## ")
+        .map_or(text.len(), |i| start + 3 + i);
+    let section = &text[start..end];
+    assert!(section.contains(
+        "Optional reads, all appended: a host built on 0.92 runs unchanged and needs none of them."
+    ));
+    for name in [
+        "one_pass_vas_runs",
+        "one_pass_codec_runs",
+        "one_pass_report_latency_samples",
+        "one_pass_drain_samples",
+        "first_claim_hit",
+        "meter_lag_samples",
+        "rr_dr60_manifest_word",
+    ] {
+        assert!(section.contains(name), "{name}");
+    }
+    // The list's own words are quoted in one paragraph: the rest passes both lists.
+    let rest = section
+        .split("\n\n")
+        .filter(|para| !para.starts_with("**The words the engine"))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    assert_eq!(rr_dr60::wording::first_claim_hit(&rest), None);
+    assert_eq!(
+        mc::denylist_hit(&rest.to_lowercase()),
+        None,
+        "the house denylist"
+    );
+}

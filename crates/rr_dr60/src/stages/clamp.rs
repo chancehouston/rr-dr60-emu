@@ -20,6 +20,11 @@ pub(crate) struct ClampStage {
 }
 
 impl ClampStage {
+    /// Whether the clamp saturates (spec 026 D4: a meter's reach).
+    pub(crate) fn enabled(&self) -> bool {
+        self.enabled
+    }
+
     /// A clamp that saturates when `enabled`, and passes samples unchanged otherwise.
     pub(crate) fn new(enabled: bool) -> Self {
         Self { enabled }

@@ -33,6 +33,11 @@
  *   and the stage manifest reads rr_dr60_manifest_stage_count, rr_dr60_manifest_header,
  *   rr_dr60_manifest_stage, rr_dr60_manifest_stage_source, rr_dr60_manifest_stage_assumption
  *   (spec 007; they need no handle and their strings are static for the life of the process).
+ *   Spec 026's host reads: rr_dr60_settings_one_pass_vas_runs,
+ *   rr_dr60_settings_one_pass_codec_runs, rr_dr60_one_pass_report_latency_samples,
+ *   rr_dr60_one_pass_drain_samples, rr_dr60_wording_first_hit, rr_dr60_meter_field_count,
+ *   rr_dr60_meter_field, rr_dr60_meter_reached, rr_dr60_meter_lag_samples,
+ *   rr_dr60_manifest_word (all appended; none is needed by a host built on 0.92).
  * Not real-time safe: rr_dr60_create, rr_dr60_destroy, rr_dr60_reconfigure (allocate);
  *   rr_dr60_erase, rr_dr60_erase_all (a bounded memmove); rr_dr60_export, rr_dr60_import
  *   (a CRC over the recording). The memory's figures and lengths are device samples:
@@ -52,7 +57,7 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 92
+#define RR_DR60_VERSION_MINOR 93
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
@@ -258,6 +263,39 @@
 // In decibels.
 #define RR_DR60_SCALE_DECIBEL 2
 
+// `rr_dr60_wording_first_hit`'s kind: the manifests' list.
+#define RR_DR60_WORDING_ENGINE_STRINGS 0
+
+// `rr_dr60_wording_first_hit`'s kind: the claims list.
+#define RR_DR60_WORDING_CLAIMS 1
+
+// `rr_dr60_meter_reached` and `rr_dr60_meter_lag_samples`'s call: a one-pass call.
+#define RR_DR60_METER_CALL_ONE_PASS 0
+
+// A record call.
+#define RR_DR60_METER_CALL_RECORD 1
+
+// A play call.
+#define RR_DR60_METER_CALL_PLAY 2
+
+// `rr_dr60_meter_lag_samples`'s value for a field the call does not reach.
+#define RR_DR60_METER_NOT_REACHED 18446744073709551615ull
+
+// `rr_dr60_manifest_word`'s kinds and forms.
+#define RR_DR60_MANIFEST_WORD_STATUS 0
+
+// The path.
+#define RR_DR60_MANIFEST_WORD_PATH 1
+
+// The confidence.
+#define RR_DR60_MANIFEST_WORD_CONFIDENCE 2
+
+// The canonical text's token.
+#define RR_DR60_MANIFEST_WORD_TOKEN 0
+
+// The display label.
+#define RR_DR60_MANIFEST_WORD_LABEL 1
+
 // Result of every fallible C API call.
 enum RrDr60Status
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -391,6 +429,16 @@ enum RrDr60Status
   // `rr_dr60_set_component` or `rr_dr60_set_component_parameter` while recording or playing
   // (spec 024 D3): stop first, or schedule the parameter with `rr_dr60_schedule_change`.
   RR_DR60_STATUS_COMPONENT_WHILE_ACTIVE = 43,
+  // A meter field index past `rr_dr60_meter_field_count` (spec 026 D4).
+  RR_DR60_STATUS_NO_SUCH_METER_FIELD = 44,
+  // A meter call other than `RR_DR60_METER_CALL_*` (spec 026 D4).
+  RR_DR60_STATUS_NO_SUCH_METER_CALL = 45,
+  // Text passed to `rr_dr60_wording_first_hit` that is not UTF-8 (spec 026 D3).
+  RR_DR60_STATUS_INVALID_UTF8 = 46,
+  // A wording kind other than `RR_DR60_WORDING_*` (spec 026 D3).
+  RR_DR60_STATUS_NO_SUCH_WORDING_KIND = 47,
+  // A manifest word kind, value or form the library does not publish (spec 026 D6).
+  RR_DR60_STATUS_NO_SUCH_MANIFEST_WORD = 48,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -1566,6 +1614,25 @@ typedef struct RrDr60RecordComponent {
   // Q and gain at 0 – 3).
   float store[16];
 } RrDr60RecordComponent;
+
+// One meter field's description (spec 026 D4), filled by `rr_dr60_meter_field`. Sized
+// (spec 022's rule; 40 bytes on 64-bit). The strings are static and NUL-terminated.
+typedef struct RrDr60MeterField {
+  // `sizeof(RrDr60MeterField)`; set by the caller before every call.
+  uint32_t struct_size;
+  // The field's index in `RrDr60Meters`'s declaration order.
+  uint32_t index;
+  // The field's name.
+  const char *identifier;
+  // Its unit.
+  const char *unit;
+  // One neutral sentence.
+  const char *sentence;
+  // 0 a maximum over the call, 1 a count, 2 a state at the call's end.
+  uint32_t kind;
+  // 0 the record side (input), 1 the playback side (output).
+  uint32_t side;
+} RrDr60MeterField;
 
 // `RR_DR60_TAP_AFTER_PLAYBACK` under the stage's name: after stage 10, before the output chain
 // (version 0.8's default output; spec 009 FR-011).
@@ -3039,6 +3106,109 @@ RrDr60Status rr_dr60_record_write_with_component(const struct RrDr60RecordReadou
                                                  uint8_t *out,
                                                  uintptr_t out_len,
                                                  uintptr_t *out_written);
+
+// Whether the voice-activation gate runs on the one-pass for a caller's settings (spec 026
+// D1; `Settings::one_pass_vas_runs`): enabled, and the tap at the gate, the decoder or after
+// stage 10. Refusals in order: NULL (`NULL_POINTER`); a `struct_size` other than
+// `sizeof(RrDr60Settings)`, a switch byte other than 0 or 1, or an unknown tap
+// (`INVALID_ARGUMENT`). Only the three fields are read. Real-time safe; no handle.
+//
+// # Safety
+//
+// `settings` NULL or readable for `sizeof(RrDr60Settings)` bytes; `out` NULL or writable.
+RrDr60Status rr_dr60_settings_one_pass_vas_runs(const struct RrDr60Settings *settings, bool *out);
+
+// Whether the speech coder runs on the one-pass for a caller's settings (spec 026 D1;
+// `Settings::one_pass_codec_runs`): on, and the tap at or after the decoder. The refusals of
+// `rr_dr60_settings_one_pass_vas_runs`. Real-time safe; no handle.
+//
+// # Safety
+//
+// As `rr_dr60_settings_one_pass_vas_runs`.
+RrDr60Status rr_dr60_settings_one_pass_codec_runs(const struct RrDr60Settings *settings, bool *out);
+
+// The latency the one-pass's voice-activation reports align with, in host samples (spec 026
+// D1; `Pipeline::one_pass_report_latency_samples`). Real-time safe.
+//
+// # Safety
+//
+// `pipeline` NULL or a live handle; `out` NULL or writable.
+RrDr60Status rr_dr60_one_pass_report_latency_samples(struct RrDr60Pipeline *pipeline,
+                                                     uint32_t *out);
+
+// The one-pass drain in host samples (spec 026 D2; `Pipeline::one_pass_drain_samples`, whose
+// scope and exclusions apply). Real-time safe.
+//
+// # Safety
+//
+// `pipeline` NULL or a live handle; `out` NULL or writable.
+RrDr60Status rr_dr60_one_pass_drain_samples(struct RrDr60Pipeline *pipeline, uint64_t *out);
+
+// The first word of a wording list in `text` (spec 026 D3; `wording::first_hit` for kind
+// `RR_DR60_WORDING_ENGINE_STRINGS`, `wording::first_claim_hit` for `RR_DR60_WORDING_CLAIMS`):
+// `*out_entry` the matched list entry (static, NUL-terminated) or NULL for no hit, and the
+// match's byte range `[*out_start, *out_end)`. These are the words the engine's own strings do
+// not use; not a store or copy check. Refusals in order: a NULL out pointer, or a NULL `text`
+// with a non-zero `len` (`NULL_POINTER`); an unknown kind (`NO_SUCH_WORDING_KIND`); text that is
+// not UTF-8 (`INVALID_UTF8`). Linear in `len`, allocation-free; no handle.
+//
+// # Safety
+//
+// `text` readable for `len` bytes (or NULL with `len` 0); the three outs NULL or writable.
+RrDr60Status rr_dr60_wording_first_hit(const uint8_t *text,
+                                       uintptr_t len,
+                                       uint32_t kind,
+                                       const char **out_entry,
+                                       uintptr_t *out_start,
+                                       uintptr_t *out_end);
+
+// The number of meter fields (13; spec 026 D4). Real-time safe; no handle.
+uint32_t rr_dr60_meter_field_count(void);
+
+// Meter field `index`'s description into `*out` (spec 026 D4; `meters::FIELDS`). Refusals in
+// order, nothing written: NULL (`NULL_POINTER`); a refused `struct_size` (`INVALID_ARGUMENT`);
+// an index past the fields (`NO_SUCH_METER_FIELD`). Real-time safe; no handle.
+//
+// # Safety
+//
+// `out` NULL or a writable `RrDr60MeterField` of its `struct_size`.
+RrDr60Status rr_dr60_meter_field(uint32_t index, struct RrDr60MeterField *out);
+
+// Whether `call` reaches meter field `index`'s point at the engine's settings (spec 026 D4;
+// `Pipeline::meter_reached`). Refusals in order: the handle; NULL (`NULL_POINTER`); an index
+// past the fields (`NO_SUCH_METER_FIELD`); an unknown call (`NO_SUCH_METER_CALL`). Real-time
+// safe.
+//
+// # Safety
+//
+// `pipeline` NULL or a live handle; `out` NULL or writable.
+RrDr60Status rr_dr60_meter_reached(struct RrDr60Pipeline *pipeline,
+                                   uint32_t index,
+                                   uint32_t call,
+                                   bool *out);
+
+// Meter field `index`'s lag in host samples for `call` (spec 026 D4;
+// `Pipeline::meter_lag_samples`), or `RR_DR60_METER_NOT_REACHED` when the call does not reach
+// it. The refusals of `rr_dr60_meter_reached`. Real-time safe.
+//
+// # Safety
+//
+// `pipeline` NULL or a live handle; `out` NULL or writable.
+RrDr60Status rr_dr60_meter_lag_samples(struct RrDr60Pipeline *pipeline,
+                                       uint32_t index,
+                                       uint32_t call,
+                                       uint64_t *out);
+
+// A stage manifest word (spec 026 D6): `kind` status, path or confidence; `value` the
+// `RrDr60StageStatus` / `RrDr60StagePath` / `RrDr60Confidence` value; `form` the canonical
+// text's token or the display label (lowercase; never "checked" alone). `*out` a static
+// NUL-terminated string. Refusals in order: NULL (`NULL_POINTER`); an unknown kind, value or
+// form (`NO_SUCH_MANIFEST_WORD`). Real-time safe; no handle.
+//
+// # Safety
+//
+// `out` NULL or writable.
+RrDr60Status rr_dr60_manifest_word(uint32_t kind, uint32_t value, uint32_t form, const char **out);
 
 #ifdef __cplusplus
 }  // extern "C"

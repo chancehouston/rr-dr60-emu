@@ -21,29 +21,11 @@ use regex::Regex;
 use rr_dr60::{Confidence, Manifest, StageEntry, StagePath, StageStatus};
 
 // 007 FR-011; docs/product/front-and-inside.md › Wording on the inside. Reword the string,
-// never this list. Stems are matched with the suffix set in `denylist_regex`.
-/// Word stems no manifest string may contain (007 FR-011).
-pub const DENYLIST_STEMS: &[&str] = &[
-    "verif",
-    "detect",
-    "sens",
-    "anomal",
-    "spik",
-    "activit",
-    "event",
-    "paranormal",
-    "evp",
-    "ghost",
-    "spirit",
-    "entit",
-];
-/// Phrases no manifest string may contain (007 FR-011).
-pub const DENYLIST_PHRASES: &[&str] = &[
-    "listening for",
-    "signal present",
-    "voice from",
-    "communication",
-];
+// never this list. The lists live in the core since spec 026 D3 (`rr_dr60::wording`).
+/// Word stems no manifest string may contain (007 FR-011): the core's list.
+pub const DENYLIST_STEMS: &[&str] = rr_dr60::wording::ENGINE_STRINGS.stems;
+/// Phrases no manifest string may contain (007 FR-011): the core's list.
+pub const DENYLIST_PHRASES: &[&str] = rr_dr60::wording::ENGINE_STRINGS.phrases;
 
 // Length limits in characters; engineering targets (007 FR-002, FR-003, FR-007).
 const MAX_IDENTIFIER: usize = 24;
@@ -463,30 +445,33 @@ pub fn semver_le(a: &str, b: &str) -> Option<bool> {
 
 // ---- The denylist (007 FR-011) ------------------------------------------------------------------
 
-fn denylist_regex() -> &'static Regex {
+/// The regex form of the manifest list (007's original matcher), kept as the differential
+/// oracle of the core's matcher (spec 026 D3, `us4_wording`): ASCII case folding, Unicode word
+/// boundaries.
+pub fn denylist_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
+        let sfx = rr_dr60::wording::ENGINE_STRINGS.suffixes.join("|");
         let stems = DENYLIST_STEMS
             .iter()
-            .map(|s| {
-                format!(
-                    r"\b{}(e|es|s|ed|ied|ies|y|ying|ing|ion|ions|ication|ications|or|ors|ous|ive)?\b",
-                    regex::escape(s)
-                )
-            })
+            .map(|s| format!(r"\b(?i-u:{}(?:{sfx})?)\b", regex::escape(s)))
             .collect::<Vec<_>>();
         let phrases = DENYLIST_PHRASES
             .iter()
-            .map(|p| format!(r"\b{}\b", regex::escape(p)))
+            .map(|p| format!(r"\b(?i-u:{})\b", regex::escape(p)))
             .collect::<Vec<_>>();
-        let all = stems.into_iter().chain(phrases).collect::<Vec<_>>().join("|");
-        Regex::new(&format!("(?i)({all})")).unwrap()
+        let all = stems
+            .into_iter()
+            .chain(phrases)
+            .collect::<Vec<_>>()
+            .join("|");
+        Regex::new(&format!("({all})")).unwrap()
     })
 }
 
-/// The first denylisted word or phrase in `s`, if any.
+/// The first denylisted word or phrase in `s`, if any: the core's matcher (spec 026 D3).
 pub fn denylist_hit(s: &str) -> Option<String> {
-    denylist_regex().find(s).map(|m| m.as_str().to_string())
+    rr_dr60::wording::first_hit(s).map(|h| s[h.start..h.end].to_string())
 }
 
 // ---- Wording and form (007 FR-002, FR-003, FR-011; FR-013 (h)) ----------------------------------
@@ -900,36 +885,19 @@ pub fn cross_check(m: &Manifest, r: &Registers<'_>) -> Vec<Finding> {
 
 // ---- Renderers (research R-05; data-model.md › Canonical rendering) ----------------------------
 
-/// The status as a lowercase snake word, for the canonical text.
+/// The status's canonical word (the core's `StageStatus::token`, spec 026 D6).
 pub fn status_word(s: StageStatus) -> &'static str {
-    match s {
-        StageStatus::NotModeled => "not_modeled",
-        StageStatus::Assumed => "assumed",
-        StageStatus::Sourced => "sourced",
-        StageStatus::Checked => "checked",
-        _ => "unknown",
-    }
+    s.token()
 }
 
-/// The path as a lowercase word.
+/// The path's canonical word (the core's `StagePath::token`).
 pub fn path_word(p: StagePath) -> &'static str {
-    match p {
-        StagePath::Record => "record",
-        StagePath::Playback => "playback",
-        StagePath::Both => "both",
-        _ => "unknown",
-    }
+    p.token()
 }
 
-/// The confidence as a lowercase snake word.
+/// The confidence's canonical word (the core's `Confidence::token`).
 pub fn confidence_word(c: Confidence) -> &'static str {
-    match c {
-        Confidence::NotApplicable => "not_applicable",
-        Confidence::Low => "low",
-        Confidence::Medium => "medium",
-        Confidence::High => "high",
-        _ => "unknown",
-    }
+    c.token()
 }
 
 fn line(out: &mut String, key: &str, value: &str) {
@@ -984,16 +952,11 @@ pub fn render_readme_table(m: &Manifest) -> String {
         "| # | Stage | Status | Confidence | Basis | Not modeled here | Model version |\n|---|---|---|---|---|---|---|\n",
     );
     for s in m.stages() {
-        let status = match s.status {
-            StageStatus::NotModeled => "not modeled",
-            StageStatus::Assumed => "assumed",
-            StageStatus::Sourced => "sourced",
-            StageStatus::Checked => "checked against a real unit",
-            _ => "unknown",
-        };
+        // The core's labels (spec 026 D6); the table renders "not applicable" as "—".
+        let status = s.status.label();
         let confidence = match s.confidence {
             Confidence::NotApplicable => "—",
-            c => confidence_word(c),
+            c => c.label(),
         };
         let basis = format!("{}; {}", s.sources.join(", "), s.assumptions.join(", "));
         out.push_str(&format!(

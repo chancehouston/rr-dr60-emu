@@ -127,6 +127,9 @@ pub struct Pipeline {
     /// R-01; Complexity Tracking row 1).
     pub(crate) one_pass: OnePass,
     pub(crate) latency: u32,
+    /// The one-pass drain's static terms (spec 026 D2), computed beside the latency; the slot's
+    /// band term is added on read.
+    pub(crate) drain_static: u32,
     /// The split engine's record path (spec 006 FR-001): ignores the tap, device-sample event
     /// positions, reset at every `start_recording`.
     pub(crate) recorder: RecordPath,
@@ -581,6 +584,7 @@ impl Pipeline {
             .play
             .set_start_values(route, volume, speed_level, battery_volts); // 015 D3, 018
         let latency = latency_samples(plan, &settings, &one_pass);
+        let drain_static = one_pass_drain_static(plan, &settings, &one_pass);
         let mut recorder = RecordPath::new(&settings, plan, false, true);
         recorder.ctl.set_stream(Stream::Record); // 020 D9
         recorder.set_store(&store); // 024 research R-06
@@ -588,6 +592,7 @@ impl Pipeline {
             settings,
             one_pass,
             latency,
+            drain_static,
             meters: Meters {
                 hang_remaining_samples: recorder.hang_samples(),
                 battery_ceiling: crate::battery::ceiling_factor(battery_volts), // 018
@@ -1329,6 +1334,46 @@ impl Pipeline {
         self.meters
     }
 
+    /// Whether `call` reaches the point of meter field `field` (the index in
+    /// [`meters::FIELDS`](crate::meters::FIELDS)) at these settings (spec 026 D4): the engine's
+    /// own rule, from its construction-time state and, for `amp_clip_count`, the live route.
+    /// A field a call does not reach reads its rest value. `false` for an index past the fields.
+    /// Real-time safe.
+    pub fn meter_reached(&self, field: usize, call: crate::meters::MeterCall) -> bool {
+        use crate::meters::MeterCall;
+        match (call, field) {
+            (MeterCall::OnePass, 0..=7) => self.one_pass.rec.meter_reached(field),
+            (MeterCall::OnePass, 8..=12) => self.one_pass.play.meter_reached(field),
+            (MeterCall::Record, 0..=7) => self.recorder.meter_reached(field),
+            (MeterCall::Play, 8..=12) => self.player.meter_reached(field),
+            _ => false,
+        }
+    }
+
+    /// How far behind its reference meter field `field`'s point runs, in host samples (spec 026
+    /// D4), for `call`. For the one-pass and the recorder the reference is the input: 0 at the
+    /// front points (fields 0 – 3); the record path's latency to the encoder (the conversion
+    /// and stage 4) at the device-rate points (4 – 7). For the playback group the reference is
+    /// the stored samples on a play call (the playback latency, at speed level 3; at other
+    /// levels see [`timeline::place_at`](crate::timeline::place_at)) and the input on the
+    /// one-pass (the one-pass latency), up to the output chain's input: the chain's own small
+    /// group delay is not included. `None` for an index past the fields or a field the call
+    /// does not reach. Real-time safe.
+    pub fn meter_lag_samples(&self, field: usize, call: crate::meters::MeterCall) -> Option<u32> {
+        use crate::meters::MeterCall;
+        if !self.meter_reached(field, call) {
+            return None;
+        }
+        Some(match (call, field) {
+            (_, 0..=3) => 0,
+            (MeterCall::OnePass, 4..=7) => self.one_pass.rec.pre_encoder_latency(),
+            (MeterCall::Record, 4..=7) => self.recorder.pre_encoder_latency(),
+            (MeterCall::Play, _) => self.player.latency_host_samples(),
+            (MeterCall::OnePass, _) => self.latency,
+            _ => return None,
+        })
+    }
+
     /// This engine's rest read-out (spec 016 FR-001): [`Meters::default`] with the configured
     /// hang length in `hang_remaining_samples`.
     pub fn rest_meters(&self) -> Meters {
@@ -1373,6 +1418,45 @@ impl Pipeline {
     /// FR-001).
     pub fn latency_samples(&self) -> u32 {
         self.latency
+    }
+
+    /// The one-pass drain (spec 026 D2): the host input samples of silence after the input that
+    /// bring every kept sample to the output and settle each sample's response within 10⁻⁵ of
+    /// that response's own peak (the impulse rule), while the gate stays open, at the current
+    /// settings, tap and slot values. An input cut abruptly on low-frequency content rings
+    /// longer at the front taps, up to about twice the figure (stage 2 at 48 kHz: 904 against
+    /// 498 on a 40 Hz tone cut on a peak); past the front taps the sum covers it. A bound: the sum of the
+    /// stages' settles (each by the −100 dB rule of `N_OUT`), both converters' responses and the
+    /// speech coder's delay. At the front taps, the settle of the front stages that run (0 at
+    /// the capsule's tap). **Excluded**: the limiter's charge (a state: a gain on silence
+    /// outputs zero), the hiss (a steady source), the decoder's idle output (quiet, never zero)
+    /// and pending scheduled changes. **In drop mode** a gate that pauses before the kept
+    /// samples are out holds them until the next resume; the figure holds in mute mode, with
+    /// the gate off, or while the hang outlasts it. The slot's band term is computed on read
+    /// (a 20 Hz, Q 10 band filter adds about 2.44 s at every rate). Not the player's
+    /// [`drain_samples`](Self::drain_samples). Real-time safe.
+    pub fn one_pass_drain_samples(&self) -> u32 {
+        let band = if matches!(self.settings.tap, Tap::AfterMicCapsule | Tap::AfterMicAmp) {
+            0
+        } else {
+            self.one_pass.rec.insert.settle_bound()
+        };
+        self.drain_static.saturating_add(band)
+    }
+
+    /// The latency the one-pass's voice-activation reports align with (spec 026 D1):
+    /// [`latency_samples`](Self::latency_samples) without the speech coder's delay when it runs
+    /// ([`Settings::one_pass_codec_runs`]). The reports' positions exclude the coder's delay;
+    /// the coder's term is added after the single rounding, so this is exact. Pass it to
+    /// [`timeline::onepass_output_to_input`](crate::timeline::onepass_output_to_input) for the
+    /// reports. Real-time safe.
+    pub fn one_pass_report_latency_samples(&self) -> u32 {
+        if self.settings.one_pass_codec_runs() {
+            self.latency
+                .saturating_sub(paths::codec_delay_host_samples(self.settings.host_rate_hz))
+        } else {
+            self.latency
+        }
     }
 
     /// The memory's encoding (spec 008 FR-012): speech-codec frames with the codec on,
@@ -1518,6 +1602,7 @@ impl Pipeline {
             .play
             .replace_playback_stage(PlaybackStage::with_sos(playback), &plan);
         p.latency = latency_samples(&plan, &settings, &p.one_pass);
+        p.drain_static = one_pass_drain_static(&plan, &settings, &p.one_pass);
         Ok(p)
     }
 
@@ -1758,6 +1843,51 @@ impl Pipeline {
             None => false,
         }
     }
+}
+
+/// Spec 026 D2 (plan R-02): the one-pass drain's static terms in host samples. At the front
+/// taps the settle of the front stages that run (0 at the capsule's tap; stage 2's after it;
+/// the slot's band term is added on read after the slot); otherwise stage 2's settle, both
+/// converters' full responses (4·D, where the conversion runs), and the device-rate terms
+/// ⌈(N₄·[stage 4] + 180·[coder] + N₁₀·[stage 10] + 1)·m / l⌉ (the + 1: the device grid's phase),
+/// plus the output chain's `N_OUT` when it runs.
+fn one_pass_drain_static(plan: &RatePlan, settings: &Settings, one_pass: &OnePass) -> u32 {
+    use crate::stages::drain;
+    let idx = crate::stages::output::rate_index(settings.host_rate_hz).unwrap_or(0);
+    let mic = if settings.mic.amp_enabled {
+        drain::mic_amp_settle(idx)
+    } else {
+        0
+    };
+    match settings.tap {
+        Tap::AfterMicCapsule => return 0,
+        Tap::AfterMicAmp | Tap::AfterInsert | Tap::AfterAgc => return mic,
+        _ => {}
+    }
+    let (l, m) = paths::l_m(plan);
+    let device = u64::from(if one_pass.rec.record_stage_runs() {
+        drain::record_settle()
+    } else {
+        0
+    }) + if settings.one_pass_codec_runs() {
+        u64::from(codec::DELAY_SAMPLES)
+    } else {
+        0
+    } + if one_pass.play.stage10_runs() {
+        paths::N10 as u64
+    } else {
+        0
+    } + 1;
+    let conversion = if l == m {
+        0
+    } else {
+        4 * u64::from(plan.delay_host_samples())
+    };
+    let total = u64::from(mic)
+        + conversion
+        + (u128::from(device) * u128::from(m)).div_ceil(u128::from(l)) as u64
+        + u64::from(one_pass.play.chain_settle());
+    u32::try_from(total).unwrap_or(u32::MAX)
 }
 
 /// 001 R-10: round(D_down + D_up + (τ_rec + τ_play) · host / DEVICE_RATE_HZ), rounded once. A
@@ -3487,5 +3617,52 @@ mod component_tests {
         // Spec 024 D4: above the ceiling but in the range: accepted.
         p.schedule_change(Stream::Record, 0, 33, 20_000.0, 1)
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod drain_tests {
+    use super::*;
+
+    fn drain(f: impl FnOnce(&mut Settings), rate: u32) -> u32 {
+        let mut s = Settings::new(rate);
+        f(&mut s);
+        Pipeline::new(s).unwrap().one_pass_drain_samples()
+    }
+
+    /// Spec 026 D2 (hardware review B2): the composition term by term. At 48 kHz (m/l = 8):
+    /// stage 2 498 (the mic script's print) + 4·D + ⌈(160 + 180 + 121 + 1)·8⌉ + N_OUT 2764;
+    /// each switch removes exactly its term.
+    #[test]
+    fn composition_pinned() {
+        let totals: [u32; 7] =
+            core::array::from_fn(|i| drain(|_| {}, crate::SUPPORTED_HOST_RATES[i]));
+        assert_eq!(totals, [898, 1350, 2674, 7274, 7910, 14475, 15749]);
+        let full = drain(|_| {}, 48_000);
+        assert_eq!(full - drain(|s| s.mic.amp_enabled = false, 48_000), 498);
+        assert_eq!(
+            full - drain(|s| s.speech_codec_enabled = false, 48_000),
+            180 * 8
+        );
+        assert_eq!(
+            full - drain(|s| s.record_stage_enabled = false, 48_000),
+            160 * 8
+        );
+        assert_eq!(
+            full - drain(|s| s.playback_stage_enabled = false, 48_000),
+            121 * 8
+        );
+        assert_eq!(full - drain(|s| s.tap = Tap::AfterPlayback, 48_000), 2764);
+        let conversion = full - 498 - 462 * 8 - 2764;
+        assert_eq!(conversion, 4 * plan_delay(48_000));
+        // At the 6 kHz identity there is no conversion term.
+        assert_eq!(
+            drain(|_| {}, 6000),
+            90 + 462 + crate::stages::output_coeffs::N_OUT[0]
+        );
+    }
+
+    fn plan_delay(rate: u32) -> u32 {
+        RatePlan::for_host(rate).unwrap().delay_host_samples()
     }
 }

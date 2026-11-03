@@ -101,33 +101,11 @@ static double rms(const float *x, size_t from, size_t to) {
 /* The stage manifest (spec 007): the fifteen signal-chain stages and what the engine says
  * about each, printed in the canonical text form. Needs no handle; every string pointer is
  * static for the life of the process. */
-static const char *status_word(uint32_t s) {
-  switch (s) {
-    case RR_DR60_STAGE_STATUS_NOT_MODELED: return "not_modeled";
-    case RR_DR60_STAGE_STATUS_ASSUMED: return "assumed";
-    case RR_DR60_STAGE_STATUS_SOURCED: return "sourced";
-    case RR_DR60_STAGE_STATUS_CHECKED: return "checked";
-    default: return "unknown";
-  }
-}
-
-static const char *path_word(uint32_t p) {
-  switch (p) {
-    case RR_DR60_STAGE_PATH_RECORD: return "record";
-    case RR_DR60_STAGE_PATH_PLAYBACK: return "playback";
-    case RR_DR60_STAGE_PATH_BOTH: return "both";
-    default: return "unknown";
-  }
-}
-
-static const char *confidence_word(uint32_t c) {
-  switch (c) {
-    case RR_DR60_CONFIDENCE_NOT_APPLICABLE: return "not_applicable";
-    case RR_DR60_CONFIDENCE_LOW: return "low";
-    case RR_DR60_CONFIDENCE_MEDIUM: return "medium";
-    case RR_DR60_CONFIDENCE_HIGH: return "high";
-    default: return "unknown";
-  }
+/* The canonical text's token of a status, path or confidence (spec 026 D6: the library's
+ * words, never a copy). */
+static const char *word(uint32_t kind, uint32_t value) {
+  const char *w = NULL;
+  return rr_dr60_manifest_word(kind, value, RR_DR60_MANIFEST_WORD_TOKEN, &w) == RR_DR60_STATUS_OK ? w : "unknown";
 }
 
 /* Prints "key: value", or "key:" with nothing after the colon when the value is empty. */
@@ -155,9 +133,9 @@ static void print_manifest(void) {
     printf("\nstage %u %s\n", e.number, e.identifier);
     manifest_line("name", e.name);
     manifest_line("description", e.description);
-    manifest_line("status", status_word(e.status));
-    manifest_line("path", path_word(e.path));
-    manifest_line("confidence", confidence_word(e.confidence));
+    manifest_line("status", word(RR_DR60_MANIFEST_WORD_STATUS, e.status));
+    manifest_line("path", word(RR_DR60_MANIFEST_WORD_PATH, e.path));
+    manifest_line("confidence", word(RR_DR60_MANIFEST_WORD_CONFIDENCE, e.confidence));
     printf("sources:");
     for (uint32_t i = 0; i < e.source_count; i++) {
       const char *id = NULL;
@@ -1297,6 +1275,87 @@ static void abi_cases(void) {
   }
 }
 
+/* `smoke --host-reads` (spec 026 T012): the rows as the Rust example `host_reads_rows` prints
+   them, through the C API: the meter fields, the manifest words, per tap the run rules, the
+   reports' latency, the drain and each field's lag per call, the band filter's drain, and the
+   wording hits. */
+static const char *const WORDING_TEXTS[6] = {
+    "a ghost here",
+    "the band filter",
+    "\xc3\x89v\xc3\xa9nement: EVENTS detected",
+    "not measured, then measured",
+    "an accurate hidden voices",
+    "",
+};
+
+static int print_host_reads(void) {
+  uint32_t n = rr_dr60_meter_field_count();
+  for (uint32_t i = 0; i < n; i++) {
+    SIZED(RrDr60MeterField, f);
+    if (rr_dr60_meter_field(i, &f) != RR_DR60_STATUS_OK) return 1;
+    printf("field %u %s %s %u %u %s\n", i, f.identifier, f.unit, f.kind, f.side, f.sentence);
+  }
+  const uint32_t counts[3] = {4, 3, 4};
+  for (uint32_t k = 0; k < 3; k++) {
+    for (uint32_t v = 0; v < counts[k]; v++) {
+      const char *tok = NULL, *lab = NULL;
+      if (rr_dr60_manifest_word(k, v, RR_DR60_MANIFEST_WORD_TOKEN, &tok) != RR_DR60_STATUS_OK) return 1;
+      if (rr_dr60_manifest_word(k, v, RR_DR60_MANIFEST_WORD_LABEL, &lab) != RR_DR60_STATUS_OK) return 1;
+      printf("word %u %u %s|%s\n", k, v, tok, lab);
+    }
+  }
+  for (uint32_t t = 0; t < 12; t++) {
+    RrDr60Settings s = rr_dr60_settings_default(48000);
+    s.tap = t;
+    bool vas = false, codec = false;
+    if (rr_dr60_settings_one_pass_vas_runs(&s, &vas) != RR_DR60_STATUS_OK) return 1;
+    if (rr_dr60_settings_one_pass_codec_runs(&s, &codec) != RR_DR60_STATUS_OK) return 1;
+    RrDr60Pipeline *p = NULL;
+    if (rr_dr60_create(&s, &p) != RR_DR60_STATUS_OK) return 1;
+    uint32_t lat = 0;
+    uint64_t drain = 0;
+    if (rr_dr60_one_pass_report_latency_samples(p, &lat) != RR_DR60_STATUS_OK) return 1;
+    if (rr_dr60_one_pass_drain_samples(p, &drain) != RR_DR60_STATUS_OK) return 1;
+    printf("tap %u %u %u %u %llu\n", t, vas ? 1u : 0u, codec ? 1u : 0u, lat, (unsigned long long)drain);
+    for (uint32_t c = 0; c < 3; c++) {
+      printf("reach %u %u", t, c);
+      for (uint32_t i = 0; i < n; i++) {
+        uint64_t lag = 0;
+        bool reached = false;
+        if (rr_dr60_meter_lag_samples(p, i, c, &lag) != RR_DR60_STATUS_OK) return 1;
+        if (rr_dr60_meter_reached(p, i, c, &reached) != RR_DR60_STATUS_OK) return 1;
+        if (reached != (lag != RR_DR60_METER_NOT_REACHED)) return 1;
+        if (lag == RR_DR60_METER_NOT_REACHED) printf(" -");
+        else printf(" %llu", (unsigned long long)lag);
+      }
+      printf("\n");
+    }
+    rr_dr60_destroy(p);
+  }
+  RrDr60Settings s = rr_dr60_settings_default(48000);
+  s.tap = 11; /* after the insertion point */
+  RrDr60Pipeline *p = NULL;
+  if (rr_dr60_create(&s, &p) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_set_component_parameter(p, RR_DR60_INSERTION_POINT_BEFORE_LIMITER, 1, 20.0) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_set_component_parameter(p, RR_DR60_INSERTION_POINT_BEFORE_LIMITER, 2, 10.0) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_set_component(p, RR_DR60_INSERTION_POINT_BEFORE_LIMITER, RR_DR60_COMPONENT_BAND_FILTER) != RR_DR60_STATUS_OK)
+    return 1;
+  uint64_t drain = 0;
+  if (rr_dr60_one_pass_drain_samples(p, &drain) != RR_DR60_STATUS_OK) return 1;
+  printf("slot %llu\n", (unsigned long long)drain);
+  rr_dr60_destroy(p);
+  for (uint32_t k = 0; k < 2; k++) {
+    for (uint32_t i = 0; i < 6; i++) {
+      const char *e = NULL;
+      size_t a = 0, z = 0;
+      const char *t = WORDING_TEXTS[i];
+      if (rr_dr60_wording_first_hit((const uint8_t *)t, strlen(t), k, &e, &a, &z) != RR_DR60_STATUS_OK) return 1;
+      printf("hit %u %u %s %zu %zu\n", k, i, e ? e : "-", a, z);
+    }
+  }
+  return 0;
+}
+
 /* `smoke --settings` (spec 025 T011): the rows as the Rust example `settings_rows` prints them:
    the reading's size and offsets; every control's reading on a default engine at 48 kHz (floats
    as bit patterns); for every setting the byte offsets a one-hot write by index changes in a
@@ -1426,6 +1485,9 @@ int main(int argc, char **argv) {
   }
   if (argc > 1 && strcmp(argv[1], "--settings") == 0) {
     return print_settings();
+  }
+  if (argc > 1 && strcmp(argv[1], "--host-reads") == 0) {
+    return print_host_reads();
   }
   static float in[N], out[N];
   for (size_t i = 0; i < N; i++) in[i] = (float)(0.1 * sin(2.0 * PI * 1000.0 * (double)i / FS));

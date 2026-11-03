@@ -2,7 +2,7 @@
 // (spec 020 US1 AS2 on the simulator): a ±0.125 square with a gap, a knee and a hiss change,
 // then a schedule of more than 64 entries (the refill loop), then the feed-point rule against
 // the C helper.
-import RRDR60
+@testable import RRDR60
 import RRDR60C
 import Testing
 
@@ -15,7 +15,9 @@ private let hissControl: UInt32 = 28
 
 /// Records `raw` with `schedule` (position, control, value) on a default 48 kHz engine with the
 /// codec on, collects the run, writes the record; returns (record, digest).
-private func recordAndWrite(raw: [Int32], schedule: [(UInt64, UInt32, Double)], filter: Bool = false) throws -> ([UInt8], UInt64) {
+private func recordAndWrite(
+    raw: [Int32], schedule: [(UInt64, UInt32, Double)], filter: Bool = false, storeOnly: Bool = false
+) throws -> ([UInt8], UInt64) {
     var settings = rr_dr60_settings_default(48000)
     settings.vas_hang_ms = 100
     var handle: OpaquePointer?
@@ -28,6 +30,13 @@ private func recordAndWrite(raw: [Int32], schedule: [(UInt64, UInt32, Double)], 
         #expect(isOK(rr_dr60_set_component_parameter(p, point, 0, Double(RR_DR60_BAND_FILTER_HIGH_PASS))))
         #expect(isOK(rr_dr60_set_component_parameter(p, point, 1, 700)))
         #expect(isOK(rr_dr60_set_component(p, point, UInt32(RR_DR60_COMPONENT_BAND_FILTER))))
+    }
+    if storeOnly {
+        // Spec 026 D5: a non-default store with the slot empty (every parameter moved).
+        let point = UInt32(RR_DR60_INSERTION_POINT_BEFORE_LIMITER)
+        for (i, v) in storeValues.enumerated() {
+            #expect(isOK(rr_dr60_set_component_parameter(p, point, UInt32(i), v)))
+        }
     }
     var next = 0
     func fill() {
@@ -137,6 +146,36 @@ private func squareWithGap() -> [Int32] {
     let (plain, plainDigest) = try recordAndWrite(raw: raw, schedule: [])
     #expect(plainDigest != digest)
     #expect(try ProcessingRecord.reRender(record: plain, raw: raw) == plainDigest)
+}
+
+/// The non-default store of `storeOnly` (the band filter's type, frequency, Q and gain).
+private let storeValues: [Double] = [Double(RR_DR60_BAND_FILTER_HIGH_PASS), 900, 2.5, 4]
+
+/// Spec 026 D5 (#77): an empty slot with a non-default store re-renders to the digest, and the
+/// restore leaves every stored parameter on the engine (controls 32 – 35 read back the store).
+@Test func reRenderRestoresTheStoreWithAnEmptySlot() throws {
+    let raw = squareWithGap()
+    let (record, digest) = try recordAndWrite(raw: raw, schedule: [], storeOnly: true)
+    let slot = try #require(try ProcessingRecord.component(of: record))
+    #expect(slot.component == UInt32(RR_DR60_COMPONENT_NONE))
+    #expect(try ProcessingRecord.reRender(record: record, raw: raw) == digest)
+    var s = rr_dr60_settings_default(48000)
+    var h: OpaquePointer?
+    #expect(isOK(rr_dr60_create(&s, &h)))
+    let p = try #require(h)
+    defer { rr_dr60_destroy(p) }
+    #expect(ProcessingRecord.restoreStore(p, slot))
+    for (i, v) in storeValues.enumerated() {
+        var r = RrDr60ControlReading.sized
+        #expect(isOK(rr_dr60_control_value(p, UInt32(32 + i), &r)))
+        let got = r.value_type == 3 ? Double(r.int_value) : Double(r.float_value)
+        #expect(got == v, "parameter \(i)")
+    }
+}
+
+/// Spec 026 D5: the fill floors the missing samples to whole frames with the coder on.
+@Test func frameSamplesIs120() {
+    #expect(ProcessingRecord.frameSamples() == 120)
 }
 
 @Test func scheduleRefillPast64() throws {

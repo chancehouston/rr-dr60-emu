@@ -83,3 +83,10 @@ echo "smoke --abi matches the Rust example"
 cargo run -q -p rr_dr60_harness --example settings_rows > target/example-settings.txt
 diff target/smoke-settings.txt target/example-settings.txt
 echo "smoke --settings matches the Rust example"
+# Spec 026 T012: the C program's host-read rows (the meter fields, the words, every tap's run
+# rules, latency, drain and reach, the band filter's drain, the wording hits) equal the Rust
+# example's. Not in the promise loop.
+./target/smoke --host-reads > target/smoke-host-reads.txt
+cargo run -q -p rr_dr60_harness --example host_reads_rows > target/example-host-reads.txt
+diff target/smoke-host-reads.txt target/example-host-reads.txt
+echo "smoke --host-reads matches the Rust example"

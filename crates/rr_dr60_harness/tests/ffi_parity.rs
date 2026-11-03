@@ -5253,3 +5253,215 @@ fn insert_record_parity() {
     );
     assert!(text.contains("\nband_filter.frequency_hz = 640\n"));
 }
+
+/// Spec 026 T012: the host reads through the C API equal the Rust API's: the run rules, the
+/// reports' latency and the drain on every tap, gate and coder combination at the measurement
+/// rates, with the slot's band filter; the wording hits on the engine's strings and on random
+/// text; the statuses' numbers.
+#[test]
+fn host_reads_parity() {
+    use rr_dr60::components::{ComponentId, InsertionPointId::BeforeLimiter};
+    use rr_dr60::{Settings, Tap, wording};
+    assert_eq!(RrDr60Status::NoSuchMeterField as u32, 44);
+    assert_eq!(RrDr60Status::NoSuchMeterCall as u32, 45);
+    assert_eq!(RrDr60Status::InvalidUtf8 as u32, 46);
+    assert_eq!(RrDr60Status::NoSuchWordingKind as u32, 47);
+    assert_eq!(RrDr60Status::NoSuchManifestWord as u32, 48);
+    let taps = [
+        Tap::AfterMicCapsule,
+        Tap::AfterMicAmp,
+        Tap::AfterInsert,
+        Tap::AfterAgc,
+        Tap::AfterRecord,
+        Tap::AfterVas,
+        Tap::AfterDecoder,
+        Tap::AfterPlayback,
+        Tap::RouteOutput,
+        Tap::AfterVolumeAmp,
+        Tap::AfterSpeaker,
+        Tap::AfterEarphone,
+    ];
+    for &rate in configs::measurement_rates() {
+        for tap in taps {
+            for (vas, codec, slot) in [
+                (false, false, false),
+                (true, false, false),
+                (false, true, true),
+                (true, true, true),
+            ] {
+                let mut s = Settings::new(rate);
+                s.tap = tap;
+                s.vas.enabled = vas;
+                s.speech_codec_enabled = codec;
+                let c = configs::c_settings(&s);
+                let (mut cv, mut cc) = (false, false);
+                // SAFETY: a valid settings structure and outs.
+                unsafe {
+                    assert_eq!(
+                        rr_dr60_settings_one_pass_vas_runs(&c, &mut cv),
+                        RrDr60Status::Ok
+                    );
+                    assert_eq!(
+                        rr_dr60_settings_one_pass_codec_runs(&c, &mut cc),
+                        RrDr60Status::Ok
+                    );
+                }
+                assert_eq!((cv, cc), (s.one_pass_vas_runs(), s.one_pass_codec_runs()));
+                let mut p = Pipeline::new(s).unwrap();
+                let h = create(&c);
+                if slot {
+                    p.set_component_parameter(BeforeLimiter, 1, 40.0).unwrap();
+                    p.set_component(BeforeLimiter, ComponentId::BandFilter)
+                        .unwrap();
+                    // SAFETY: a live handle.
+                    unsafe {
+                        assert_eq!(
+                            rr_dr60_set_component_parameter(h, 0, 1, 40.0),
+                            RrDr60Status::Ok
+                        );
+                        assert_eq!(rr_dr60_set_component(h, 0, 1), RrDr60Status::Ok);
+                    }
+                }
+                let (mut lat, mut drain) = (0u32, 0u64);
+                // SAFETY: a live handle and outs.
+                unsafe {
+                    assert_eq!(
+                        rr_dr60_one_pass_report_latency_samples(h, &mut lat),
+                        RrDr60Status::Ok
+                    );
+                    assert_eq!(
+                        rr_dr60_one_pass_drain_samples(h, &mut drain),
+                        RrDr60Status::Ok
+                    );
+                    rr_dr60_destroy(h);
+                }
+                assert_eq!(lat, p.one_pass_report_latency_samples(), "{rate} {tap:?}");
+                assert_eq!(
+                    drain,
+                    u64::from(p.one_pass_drain_samples()),
+                    "{rate} {tap:?}"
+                );
+            }
+        }
+    }
+    // The wording: the engine's own strings, then random text.
+    let mut texts: Vec<String> = rr_dr60::manifest()
+        .stages
+        .iter()
+        .flat_map(|e| [e.description.to_string(), e.coverage.to_string()])
+        .collect();
+    let alphabet: Vec<char> = "ab eventsGHOSTé_ ver.ifyingmeasured not ".chars().collect();
+    let mut x = 0x2545_f491_4f6c_dd1du64;
+    for _ in 0..2000 {
+        let n = (x % 40) as usize;
+        let t: String = (0..n)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                alphabet[(x % alphabet.len() as u64) as usize]
+            })
+            .collect();
+        texts.push(t);
+    }
+    for t in &texts {
+        for (kind, lists) in [(0u32, wording::ENGINE_STRINGS), (1, wording::CLAIMS)] {
+            let (mut e, mut a, mut z) = (core::ptr::null(), 0usize, 0usize);
+            // SAFETY: valid text and outs.
+            let st = unsafe {
+                rr_dr60_wording_first_hit(t.as_ptr(), t.len(), kind, &mut e, &mut a, &mut z)
+            };
+            assert_eq!(st, RrDr60Status::Ok);
+            let got = (!e.is_null()).then(|| {
+                // SAFETY: a static NUL-terminated entry.
+                let s = unsafe { core::ffi::CStr::from_ptr(e) }.to_str().unwrap();
+                (s, a, z)
+            });
+            let want = wording::first_hit_in(&lists, t).map(|h| (h.entry, h.start, h.end));
+            assert_eq!(got, want, "{t:?}");
+        }
+    }
+}
+
+/// Spec 026 T012: the meter manifest through the C API equals `meters::FIELDS`, and each field's
+/// reach and lag per call equal the Rust API's on every tap at the measurement rates.
+#[test]
+fn meters_manifest_parity() {
+    use rr_dr60::meters::{FIELDS, MeterCall};
+    use rr_dr60::{Settings, Tap};
+    let cstr = |p: *const core::ffi::c_char| {
+        // SAFETY: a static NUL-terminated string.
+        unsafe { core::ffi::CStr::from_ptr(p) }.to_str().unwrap()
+    };
+    assert_eq!(rr_dr60_meter_field_count() as usize, FIELDS.len());
+    for (i, f) in FIELDS.iter().enumerate() {
+        let mut m = RrDr60MeterField::default();
+        // SAFETY: a sized out.
+        assert_eq!(
+            unsafe { rr_dr60_meter_field(i as u32, &mut m) },
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            (
+                cstr(m.identifier),
+                cstr(m.unit),
+                cstr(m.sentence),
+                m.kind,
+                m.side
+            ),
+            (
+                f.identifier,
+                f.unit,
+                f.sentence,
+                f.kind as u32,
+                f.side as u32
+            )
+        );
+        assert_eq!(m.index as usize, i);
+    }
+    for &rate in configs::measurement_rates() {
+        for tap in [
+            Tap::AfterMicAmp,
+            Tap::AfterAgc,
+            Tap::AfterRecord,
+            Tap::AfterDecoder,
+            Tap::RouteOutput,
+            Tap::AfterEarphone,
+        ] {
+            for clamp in [false, true] {
+                let mut s = Settings::new(rate);
+                s.tap = tap;
+                s.output.clamp_enabled = clamp;
+                let p = Pipeline::new(s).unwrap();
+                let h = create(&configs::c_settings(&s));
+                for (c, call) in [MeterCall::OnePass, MeterCall::Record, MeterCall::Play]
+                    .into_iter()
+                    .enumerate()
+                {
+                    for i in 0..FIELDS.len() {
+                        let (mut r, mut l) = (false, 0u64);
+                        // SAFETY: a live handle and outs.
+                        unsafe {
+                            assert_eq!(
+                                rr_dr60_meter_reached(h, i as u32, c as u32, &mut r),
+                                RrDr60Status::Ok
+                            );
+                            assert_eq!(
+                                rr_dr60_meter_lag_samples(h, i as u32, c as u32, &mut l),
+                                RrDr60Status::Ok
+                            );
+                        }
+                        assert_eq!(r, p.meter_reached(i, call));
+                        assert_eq!(
+                            l,
+                            p.meter_lag_samples(i, call)
+                                .map_or(RR_DR60_METER_NOT_REACHED, u64::from)
+                        );
+                    }
+                }
+                // SAFETY: destroying once.
+                unsafe { rr_dr60_destroy(h) };
+            }
+        }
+    }
+}

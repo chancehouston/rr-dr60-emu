@@ -49,6 +49,16 @@ pub(crate) struct Insert {
 }
 
 impl Insert {
+    /// The slot's settle bound in host samples (spec 026 D2): the band filter's when it is in
+    /// the slot, 0 for an empty slot.
+    pub(crate) fn settle_bound(&self) -> u32 {
+        if self.component == ComponentId::BandFilter {
+            self.filter.settle_bound()
+        } else {
+            0
+        }
+    }
+
     /// A slot at `rate` holding `component`, its filter set from the store's band-filter values
     /// (indices 0 – 3, research R-06). Allocates only the test hooks' traces.
     pub(crate) fn new(rate: u32, component: ComponentId, values: [f32; 4]) -> Self {

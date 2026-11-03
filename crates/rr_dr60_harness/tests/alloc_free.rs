@@ -1559,3 +1559,72 @@ fn insert_allocate_nothing() {
         unsafe { rr_dr60_destroy(handle) };
     }
 }
+
+/// Spec 026 T012: the host reads allocate nothing, in Rust and through the C API.
+#[test]
+fn host_reads_allocate_nothing() {
+    use rr_dr60::Settings;
+    use rr_dr60::meters::{FIELDS, MeterCall};
+    use rr_dr60::wording;
+    use rr_dr60_ffi::{
+        RrDr60MeterField, rr_dr60_manifest_word, rr_dr60_meter_field, rr_dr60_meter_lag_samples,
+        rr_dr60_meter_reached, rr_dr60_one_pass_drain_samples,
+        rr_dr60_one_pass_report_latency_samples, rr_dr60_settings_one_pass_codec_runs,
+        rr_dr60_settings_one_pass_vas_runs, rr_dr60_wording_first_hit,
+    };
+    let _turn = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let text = "Événement: a ghost, not measured, then an accurate EVENT";
+    for &rate in configs::measurement_rates() {
+        let s = Settings::new(rate);
+        let p = Pipeline::new(s).unwrap();
+        let c = rr_dr60_ffi::rr_dr60_settings_default(rate);
+        let mut handle: *mut RrDr60Pipeline = core::ptr::null_mut();
+        // SAFETY: a valid settings struct and an out-pointer.
+        assert_eq!(unsafe { rr_dr60_create(&c, &mut handle) }, RrDr60Status::Ok);
+        let mut field = RrDr60MeterField::default();
+        let (mut b, mut l32, mut l64) = (false, 0u32, 0u64);
+        let (mut e, mut a, mut z) = (core::ptr::null(), 0usize, 0usize);
+        let mut w = core::ptr::null();
+        MEASURING.with(|m| m.set(true));
+        let before = counts();
+        let mut n = 0u64;
+        n += u64::from(s.one_pass_vas_runs()) + u64::from(s.one_pass_codec_runs());
+        n += u64::from(p.one_pass_report_latency_samples()) + u64::from(p.one_pass_drain_samples());
+        for i in 0..FIELDS.len() {
+            for call in [MeterCall::OnePass, MeterCall::Record, MeterCall::Play] {
+                n += u64::from(p.meter_reached(i, call));
+                n += u64::from(p.meter_lag_samples(i, call).unwrap_or(0));
+            }
+        }
+        n += wording::first_hit(text).map_or(0, |h| h.end as u64);
+        n += wording::first_claim_hit(text).map_or(0, |h| h.end as u64);
+        // SAFETY: a live handle and local outs.
+        unsafe {
+            let _ = rr_dr60_settings_one_pass_vas_runs(&c, &mut b);
+            let _ = rr_dr60_settings_one_pass_codec_runs(&c, &mut b);
+            let _ = rr_dr60_one_pass_report_latency_samples(handle, &mut l32);
+            let _ = rr_dr60_one_pass_drain_samples(handle, &mut l64);
+            for i in 0..13u32 {
+                let _ = rr_dr60_meter_field(i, &mut field);
+                for call in 0..3u32 {
+                    let _ = rr_dr60_meter_reached(handle, i, call, &mut b);
+                    let _ = rr_dr60_meter_lag_samples(handle, i, call, &mut l64);
+                }
+            }
+            for k in 0..2u32 {
+                let _ =
+                    rr_dr60_wording_first_hit(text.as_ptr(), text.len(), k, &mut e, &mut a, &mut z);
+            }
+            let _ = rr_dr60_manifest_word(0, 3, 1, &mut w);
+        }
+        let after = counts();
+        MEASURING.with(|m| m.set(false));
+        assert!(
+            n > 0 && !e.is_null() && !w.is_null(),
+            "{rate} Hz: every read ran"
+        );
+        assert_eq!(after, before, "{rate} Hz: the host reads allocated");
+        // SAFETY: destroying the handle once.
+        unsafe { rr_dr60_destroy(handle) };
+    }
+}
