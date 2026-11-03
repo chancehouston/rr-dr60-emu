@@ -19,6 +19,17 @@ Everything is appended (version 0.94.0); a host built on 0.93 runs unchanged.
 - Q: Keep the `f32` feed beside the 24-bit feed point? → A: **Keep both**, one kind per session (D3).
 - Q: Which engine does app 1.0 pin when the app resumes? → A: **The first release that contains 027** (a product decision recorded here; it changes nothing in 027).
 
+### Session 2026-11-03 (the plan reviews: restatements for the plan sign-off)
+
+- **D7's mechanism** (coach plan 1, hardware P4): the fill writes an item shaped like an import directly into the memory (zeros with the codec bypassed; with it on, one frame the speech encoder emits for silence from its rest state, repeated): the same span, the same absent slot block, counted against the 99 items, no throwaway engine, no input vector, no exported bytes. A fill of zero units adds no item. D7's intent (no single input vector, content unspecified, judged by behaviour) holds; "built by recording silence in fixed blocks" is replaced. **For the owner to confirm at the plan sign-off.**
+- **D5's empty outcome** (hardware P5): a Rebuild that keeps nothing cannot occur through the engine (the gate starts open, so any fed input keeps a sample), and a remaining capacity of 0 is refused at `new` (`MemoryFull`, the recorder's own refusal). `Reason::DiscardedEmpty` stays as a defensive value; US2 AS6 tests the refusal.
+- **D4's per-position limit** (coach plan 3): an edit that would put more than 64 rows at one position is refused at the edit (`ScheduleFull`), since the engine could never land them at one sample.
+- **D6's refusals at `new`** are named: imported origin `Error::ImportedRecord`, an unknown component `Error::UnknownComponent` (coach plan 2).
+- **`finish` keeps the session** (hardware P6): after `InputShort` the host feeds the rest and calls `finish` again; `finish` is `&mut self`.
+- **The outcome carries `rows_landed`** (hardware P3): the rows the engine applied; a faithful plan lands every row (asserted), an edited plan's rows the engine never reaches (past the input, after an earlier self-stop) are counted out.
+- **The meters** read the last engine call, at most 4096 host samples (hardware P8, coach plan 4).
+- **US4 AS4's mutants** become: no split; a stop call after a self-stop; the fill rounded up; the store left at its defaults; `feed` converting by `x / (2²³ − 1)`; one event dropped (hardware P1, P2, P11): the order of store and component is equivalent at the recording's start.
+
 ### Session 2026-11-03 (restatement)
 
 - **Timing** (coach 12): spec 026 placed this feature after app 1.0, with app 1.0 pinned to v0.92.0. The owner changed that on 2026-11-03: the app's first release is delayed for non-technical reasons, so the planned engine work proceeds now and 027 lands before the app. Which engine version app 1.0 pins is decided when the app resumes.
@@ -63,7 +74,7 @@ A host takes a record, changes a setting (a knee, the sensitivity, the band filt
 3. **Given** edits that do not validate (a knee out of range, a row with an unknown control or another stream, the host rate, a remaining capacity above the capacity), **Then** each is refused with the engine's own error, nothing built (`us2_rebuild::as3_refusals`).
 4. **Given** a smaller and a larger capacity than the original's, **Then** the rebuild self-stops earlier, or does not self-stop where the original did, and ends where the engine ends it (`us2_rebuild::as4_self_stop_both_ways`).
 5. **Given** an edit the input never reaches (a playback-side setting; a same-value edit), **Then** `edited` follows the field compare and `matches_original` is true (`us2_rebuild::as5_unreached_edit`).
-6. **Given** a codec-on Rebuild that keeps nothing, **Then** the outcome has no item and the reason `DiscardedEmpty` (`us2_rebuild::as6_empty`).
+6. **Given** a plan with a remaining capacity of 0, **Then** `new` refuses with `MemoryFull` (an empty Rebuild cannot occur; restated, see Clarifications) (`us2_rebuild::as6_empty`).
 
 ### User Story 3 - A host streams, shows progress and cancels (Priority: P2)
 
@@ -86,7 +97,7 @@ Rust, C and Swift re-render through the same engine code.
 1. **Given** the sixteen cells, **Then** the C session and the Swift `ReRenderSession` give the Rust digest, outcome, stored form and new record byte for byte (`ffi_parity rerender`, `swift test ReRenderTests`).
 2. **Given** the Swift package's sources, **Then** no fill, schedule refill or stop rule remains in Swift (a source scan) (`us4_surfaces::as2_no_swift_recipe`).
 3. **Given** `Pipeline::fill_to_remaining` and the harness's fill on both encodings, **Then** the remaining capacities and the digests of a recording made afterwards are equal, two different fillers give the same digest, and the call refuses while active or when fuller (`us4_surfaces::as3_fill`).
-4. **Given** six mutants (no refill split; a stop call after a self-stop; the fill not floored; the store restored after the component; `feed_f32` bypassing the i24 rule; one event dropped from the run), **Then** each fails a named test (`mutation rerender::`).
+4. **Given** six mutants (no refill split; a stop call after a self-stop; the fill rounded up; the store left at its defaults; `feed` converting by `x / (2²³ − 1)`; one event dropped from the run), **Then** each fails a named test (`mutation rerender::`) *(restated, see Clarifications)*.
 
 ### Edge Cases
 
