@@ -5481,9 +5481,11 @@ fn rerender_parity() {
             RrDr60Status::Ok
         );
         if let Some(k) = knee {
-            let mut v = RrDr60ControlReading::default();
-            v.value_type = 2;
-            v.float_value = k;
+            let v = RrDr60ControlReading {
+                value_type: 2,
+                float_value: k,
+                ..Default::default()
+            };
             assert_eq!(
                 rr_dr60_rerender_plan_set_control_value(plan, KNEE, &v),
                 RrDr60Status::Ok
