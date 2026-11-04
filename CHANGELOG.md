@@ -20,6 +20,7 @@ Changes to assumed hardware values ([assumption register](docs/hardware/assumpti
 
 ### Fixed
 
+- `Pipeline::meter_reached` (and `rr_dr60_meter_reached`) for `amp_clip_count` follows the requested route, the one `route()` returns, also before a plain `set_route` has landed at the stream's first sample; until now it read the applied route, so a fresh engine set to the earphone answered for the speaker (engine issue #83, found by the desktop workbench). No audio change.
 - **The Swift re-render restores every component's store** (spec 026 D5, issue #77): `ProcessingRecord.reRender` restored the first four store values whatever the component; it now restores each published component's parameters at `parameter_offset + i`, then the component, as the Rust recipe does, and its fill rounds the missing samples down to whole frames with the speech codec on. The output of every existing record is unchanged (the band filter is the only component and sits at 0 – 3).
 
 ## [0.90.0] - 2026-11-01
