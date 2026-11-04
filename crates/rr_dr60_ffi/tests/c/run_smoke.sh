@@ -90,6 +90,13 @@ echo "smoke --settings matches the Rust example"
 cargo run -q -p rr_dr60_harness --example host_reads_rows > target/example-host-reads.txt
 diff target/smoke-host-reads.txt target/example-host-reads.txt
 echo "smoke --host-reads matches the Rust example"
+# Spec 028 T007: the C one-pass map's rows (the heard points and the alignment at fixed output
+# positions, three taps, the coder off and on, 6 and 48 kHz) equal the Rust example's. Not in
+# the promise loop.
+./target/smoke --onepass-map > target/smoke-onepass-map.txt
+cargo run -q -p rr_dr60_harness --example onepass_map_rows > target/example-onepass-map.txt
+diff target/smoke-onepass-map.txt target/example-onepass-map.txt
+echo "smoke --onepass-map matches the Rust example"
 # Spec 027 T010: the C re-render's rows (faithful and with the knee edited) equal the Rust
 # example's. Not in the promise loop.
 ./target/smoke --rerender > target/smoke-rerender.txt

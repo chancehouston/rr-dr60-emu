@@ -1910,3 +1910,108 @@ fn rerender_real_session_fills() {
         }
     }
 }
+
+/// Spec 028 D6: the one-pass map's refusals in order (the handle, NULL, the size), the sized
+/// fill on a painted buffer (32 bytes, the tail zeroed), and the values equal to the core's.
+#[test]
+fn onepass_map_order_and_fill() {
+    let ev = [RrDr60VasEvent {
+        output_position: 20_000,
+        input_length: 3_000,
+    }];
+    let mut v = 7u64;
+    // SAFETY: NULL handle allowed.
+    unsafe {
+        assert_eq!(
+            rr_dr60_one_pass_splice_output_position(core::ptr::null_mut(), &ev[0], &mut v),
+            RrDr60Status::NullPointer
+        );
+        assert_eq!(
+            rr_dr60_one_pass_input_at_output(
+                core::ptr::null_mut(),
+                0,
+                ev.as_ptr(),
+                1,
+                core::ptr::null_mut()
+            ),
+            RrDr60Status::NullPointer
+        );
+    }
+    let h = handle();
+    // SAFETY: a live handle; painted buffers.
+    unsafe {
+        assert_eq!(
+            rr_dr60_one_pass_splice_output_position(h, core::ptr::null(), &mut v),
+            RrDr60Status::NullPointer
+        );
+        assert_eq!(
+            rr_dr60_one_pass_splice_output_position(h, &ev[0], core::ptr::null_mut()),
+            RrDr60Status::NullPointer
+        );
+        assert_eq!(v, 7);
+        let mut small = Painted::new(31);
+        assert_eq!(
+            rr_dr60_one_pass_input_at_output(h, 0, core::ptr::null(), 1, small.ptr()),
+            RrDr60Status::NullPointer
+        );
+        assert_eq!(
+            rr_dr60_one_pass_input_at_output(h, 0, ev.as_ptr(), 1, small.ptr()),
+            RrDr60Status::InvalidArgument
+        );
+        assert!(small.untouched_after(4));
+        let mut ok = Painted::new(40);
+        let o = 30_000;
+        assert_eq!(
+            rr_dr60_one_pass_input_at_output(h, o, ev.as_ptr(), 1, ok.ptr()),
+            RrDr60Status::Ok
+        );
+        assert_eq!(ok.size(), 32);
+        assert!(ok.zero_in(32, 40) && ok.untouched_after(40));
+        let mut a = RrDr60InputAlignment::default();
+        assert_eq!(
+            rr_dr60_one_pass_input_at_output(h, o, ev.as_ptr(), 1, &mut a),
+            RrDr60Status::Ok
+        );
+        let core_ev = [VasEvent::new(20_000, 3_000)];
+        let want = (*h).inner.one_pass_input_at_output(o, &core_ev);
+        assert_eq!(
+            (a.centre, a.first, a.last, a.clamped),
+            (want.centre, want.first, want.last, u32::from(want.clamped))
+        );
+        assert_eq!(
+            rr_dr60_one_pass_input_at_output(h, o, core::ptr::null(), 0, &mut a),
+            RrDr60Status::Ok
+        );
+        assert_eq!(a.centre, (*h).inner.one_pass_input_at_output(o, &[]).centre);
+        assert_eq!(
+            rr_dr60_one_pass_splice_output_position(h, &ev[0], &mut v),
+            RrDr60Status::Ok
+        );
+        assert_eq!(v, (*h).inner.one_pass_splice_output_position(&core_ev[0]));
+        rr_dr60_destroy(h);
+    }
+}
+
+/// A forced panic poisons the handle; the one-pass map then keeps the poisoned status.
+#[test]
+#[cfg(feature = "ffi-test-panic")]
+fn onepass_map_panic_guard() {
+    let h = handle();
+    let ev = RrDr60VasEvent::default();
+    let mut v = 7u64;
+    let mut a = RrDr60InputAlignment::default();
+    // SAFETY: a live handle; the forced panic poisons it.
+    unsafe {
+        rr_dr60__test_force_panic(h);
+        assert_eq!(
+            rr_dr60_one_pass_splice_output_position(h, &ev, &mut v),
+            RrDr60Status::InternalError
+        );
+        assert_eq!(
+            rr_dr60_one_pass_input_at_output(h, 0, core::ptr::null(), 0, &mut a),
+            RrDr60Status::InternalError
+        );
+        assert_eq!(v, 7);
+        rr_dr60_destroy(h);
+    }
+}

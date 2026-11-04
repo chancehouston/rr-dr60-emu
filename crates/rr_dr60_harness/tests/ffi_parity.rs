@@ -5742,3 +5742,52 @@ fn rerender_plan_c_reads_and_edits() {
         );
     }
 }
+
+/// Spec 028 US4 AS1 (FR-006): the C one-pass map equals the Rust read on every output and
+/// pause report of the labelled gap, in the five cells at the measurement rates.
+#[test]
+fn onepass_map_parity() {
+    use rr_dr60_harness::onepass_map_checks::{self as om, Cell};
+    for &rate in configs::measurement_rates() {
+        for cell in Cell::all() {
+            let r = om::render(cell, rate);
+            let h = create(&configs::c_settings(r.p.settings()));
+            let ev: Vec<RrDr60VasEvent> = r
+                .events
+                .iter()
+                .map(|e| RrDr60VasEvent {
+                    output_position: e.output_position,
+                    input_length: e.input_length,
+                })
+                .collect();
+            let mut a = RrDr60InputAlignment::default();
+            for o in (0..r.y.len() as u64).step_by(3) {
+                // SAFETY: a live handle, the reports readable, a sized out.
+                assert_eq!(
+                    unsafe {
+                        rr_dr60_one_pass_input_at_output(h, o, ev.as_ptr(), ev.len(), &mut a)
+                    },
+                    RrDr60Status::Ok
+                );
+                let w = r.p.one_pass_input_at_output(o, &r.events);
+                assert_eq!(
+                    (a.centre, a.first, a.last, a.clamped),
+                    (w.centre, w.first, w.last, u32::from(w.clamped)),
+                    "{rate} Hz {} o {o}",
+                    cell.name()
+                );
+            }
+            for (c, e) in ev.iter().zip(&r.events) {
+                let mut v = 0u64;
+                // SAFETY: as above.
+                assert_eq!(
+                    unsafe { rr_dr60_one_pass_splice_output_position(h, c, &mut v) },
+                    RrDr60Status::Ok
+                );
+                assert_eq!(v, r.p.one_pass_splice_output_position(e));
+            }
+            // SAFETY: a live handle.
+            unsafe { rr_dr60_destroy(h) };
+        }
+    }
+}

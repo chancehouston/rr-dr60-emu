@@ -1275,6 +1275,41 @@ static void abi_cases(void) {
   }
 }
 
+/* `smoke --onepass-map` (spec 028 T007): the one-pass map's rows as the Rust example
+ * `onepass_map_rows` prints them: at 6 and 48 kHz, three taps, the coder off and on, a fixed
+ * report list, each heard point and the alignment at fixed output positions. */
+static int print_onepass_map(void) {
+  const uint32_t rates[2] = {6000, 48000};
+  const uint32_t taps[3] = {RR_DR60_TAP_AFTER_PLAYBACK, RR_DR60_TAP_ROUTE_OUTPUT, RR_DR60_TAP_AFTER_VAS};
+  const RrDr60VasEvent ev[2] = {{20000, 3000}, {80000, 1500}};
+  const uint64_t pos[12] = {0, 1, 5000, 21000, 21500, 22000, 22500, 25000, 80000, 82000, 83000, 200000};
+  for (int r = 0; r < 2; r++) {
+    for (int t = 0; t < 3; t++) {
+      for (int c = 0; c < 2; c++) {
+        RrDr60Settings s = rr_dr60_settings_default(rates[r]);
+        s.tap = taps[t];
+        s.speech_codec_enabled = c == 1;
+        RrDr60Pipeline *p = NULL;
+        if (rr_dr60_create(&s, &p) != RR_DR60_STATUS_OK) return 1;
+        for (int i = 0; i < 2; i++) {
+          uint64_t heard = 0;
+          if (rr_dr60_one_pass_splice_output_position(p, &ev[i], &heard) != RR_DR60_STATUS_OK) return 1;
+          printf("heard %u %u %d %d %llu\n", rates[r], taps[t], c, i, (unsigned long long)heard);
+        }
+        for (int i = 0; i < 12; i++) {
+          SIZED(RrDr60InputAlignment, a);
+          if (rr_dr60_one_pass_input_at_output(p, pos[i], ev, 2, &a) != RR_DR60_STATUS_OK) return 1;
+          printf("map %u %u %d %llu %llu %llu %llu %u\n", rates[r], taps[t], c,
+                 (unsigned long long)pos[i], (unsigned long long)a.centre,
+                 (unsigned long long)a.first, (unsigned long long)a.last, a.clamped);
+        }
+        rr_dr60_destroy(p);
+      }
+    }
+  }
+  return 0;
+}
+
 /* `smoke --host-reads` (spec 026 T012): the rows as the Rust example `host_reads_rows` prints
    them, through the C API: the meter fields, the manifest words, per tap the run rules, the
    reports' latency, the drain and each field's lag per call, the band filter's drain, and the
@@ -1587,6 +1622,9 @@ int main(int argc, char **argv) {
   }
   if (argc > 1 && strcmp(argv[1], "--host-reads") == 0) {
     return print_host_reads();
+  }
+  if (argc > 1 && strcmp(argv[1], "--onepass-map") == 0) {
+    return print_onepass_map();
   }
   if (argc > 1 && strcmp(argv[1], "--rerender") == 0) {
     return print_rerender();

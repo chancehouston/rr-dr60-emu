@@ -1021,7 +1021,10 @@ typedef struct RrDr60BlockInfo {
 typedef struct RrDr60VasEvent {
   // Drop mode: stream output index of the first sample after the splice. Mute mode: stream
   // output index of the region's first muted sample. Counted from create, reset or
-  // reconfigure, so it does not depend on block sizes.
+  // reconfigure, so it does not depend on block sizes. On the one-pass this is where that
+  // sample enters the playback half; it is heard the speech coder's delay (when it runs)
+  // plus the playback half's latency later: `rr_dr60_one_pass_splice_output_position`
+  // (spec 028). The recorder's positions are device samples, not on this clock.
   uint64_t output_position;
   // Drop mode: host input samples removed at this splice. Mute mode: the region's length.
   uint64_t input_length;
@@ -2898,9 +2901,13 @@ RrDr60Status rr_dr60_input_to_kept(const struct RrDr60Settings *settings,
                                    uint64_t *out_removed_by_event);
 
 // The one-pass's clocks (spec 020 D8): the input-clock position output-clock `position`
-// aligns with, through the one-pass's `latency` (`rr_dr60_latency_samples`) and, with the gate
-// in `drop` mode (`vas_enabled` and `vas_mode` drop), its `event_count` voice-activation events
-// (in mute mode nothing is removed); `*out_clamped` when the result was clamped at 0.
+// aligns with, through a `latency` the caller passes and, with the gate in `drop` mode (the
+// gate running on the one-pass, `rr_dr60_settings_one_pass_vas_runs`, in drop mode), its
+// `event_count` voice-activation events (in mute mode nothing is removed); `*out_clamped` when
+// the result was clamped at 0. Right on the clock its latency defines. **For a one-pass output
+// position use `rr_dr60_one_pass_input_at_output`** (spec 028, engine issue #82): with
+// `rr_dr60_latency_samples` this map switches to the content after a removed pause the speech
+// coder's delay plus the playback half's latency early, and is right elsewhere.
 //
 // # Safety
 //
@@ -3277,6 +3284,36 @@ RrDr60Status rr_dr60_meter_lag_samples(struct RrDr60Pipeline *pipeline,
 //
 // `out` NULL or writable.
 RrDr60Status rr_dr60_manifest_word(uint32_t kind, uint32_t value, uint32_t form, const char **out);
+
+// The input behind one-pass output `position` (spec 028; `Pipeline::one_pass_input_at_output`,
+// whose contract applies): spec 020's alignment window into the sized `*out`. `events` is
+// every pause report the one-pass gave since the stream's last start, in report order (NULL
+// with `count` 0 for none). The engine supplies the latency, the speech coder's delay and the
+// gate's mode. Refusals in order: the handle's status; a NULL `out`, or a NULL `events` with a
+// non-zero `count` (`NULL_POINTER`); a `struct_size` below the first published layout.
+// Linear in `count`, allocation-free; real-time safe for a bounded list.
+//
+// # Safety
+//
+// `pipeline` NULL or a live handle; `events` NULL or readable for `count` reports; `out` NULL
+// or its `struct_size` bytes writable.
+RrDr60Status rr_dr60_one_pass_input_at_output(struct RrDr60Pipeline *pipeline,
+                                              uint64_t position,
+                                              const struct RrDr60VasEvent *events,
+                                              uintptr_t count,
+                                              struct RrDr60InputAlignment *out);
+
+// Where a one-pass pause report is heard on the output, in host samples (spec 028;
+// `Pipeline::one_pass_splice_output_position`): `event.output_position` plus the speech coder's
+// delay when it runs plus the playback half's latency. Refusals in order: the handle's status;
+// a NULL `event` or `out` (`NULL_POINTER`). Real-time safe.
+//
+// # Safety
+//
+// `pipeline` NULL or a live handle; `event` NULL or readable; `out` NULL or writable.
+RrDr60Status rr_dr60_one_pass_splice_output_position(struct RrDr60Pipeline *pipeline,
+                                                     const struct RrDr60VasEvent *event,
+                                                     uint64_t *out);
 
 // Reads a processing record into a new plan (spec 027 D4; spec 020's reader and refusals).
 //

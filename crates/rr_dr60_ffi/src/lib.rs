@@ -381,7 +381,10 @@ sized_default!(RrDr60BlockInfo);
 pub struct RrDr60VasEvent {
     /// Drop mode: stream output index of the first sample after the splice. Mute mode: stream
     /// output index of the region's first muted sample. Counted from create, reset or
-    /// reconfigure, so it does not depend on block sizes.
+    /// reconfigure, so it does not depend on block sizes. On the one-pass this is where that
+    /// sample enters the playback half; it is heard the speech coder's delay (when it runs)
+    /// plus the playback half's latency later: `rr_dr60_one_pass_splice_output_position`
+    /// (spec 028). The recorder's positions are device samples, not on this clock.
     pub output_position: u64,
     /// Drop mode: host input samples removed at this splice. Mute mode: the region's length.
     pub input_length: u64,
@@ -8133,9 +8136,13 @@ pub unsafe extern "C" fn rr_dr60_input_to_kept(
 }
 
 /// The one-pass's clocks (spec 020 D8): the input-clock position output-clock `position`
-/// aligns with, through the one-pass's `latency` (`rr_dr60_latency_samples`) and, with the gate
-/// in `drop` mode (`vas_enabled` and `vas_mode` drop), its `event_count` voice-activation events
-/// (in mute mode nothing is removed); `*out_clamped` when the result was clamped at 0.
+/// aligns with, through a `latency` the caller passes and, with the gate in `drop` mode (the
+/// gate running on the one-pass, `rr_dr60_settings_one_pass_vas_runs`, in drop mode), its
+/// `event_count` voice-activation events (in mute mode nothing is removed); `*out_clamped` when
+/// the result was clamped at 0. Right on the clock its latency defines. **For a one-pass output
+/// position use `rr_dr60_one_pass_input_at_output`** (spec 028, engine issue #82): with
+/// `rr_dr60_latency_samples` this map switches to the content after a removed pause the speech
+/// coder's delay plus the playback half's latency early, and is right elsewhere.
 ///
 /// # Safety
 ///
