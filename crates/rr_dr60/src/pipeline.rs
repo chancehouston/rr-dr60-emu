@@ -303,7 +303,11 @@ pub struct Meters {
 #[non_exhaustive]
 pub struct VasEvent {
     /// Drop mode: output index of the first sample after the splice. Mute mode: output index of
-    /// the region's first muted sample.
+    /// the region's first muted sample. On the one-pass this is where that sample enters the
+    /// playback half; it is heard the speech coder's delay (when it runs) plus the playback
+    /// half's latency later:
+    /// [`Pipeline::one_pass_splice_output_position`](crate::Pipeline::one_pass_splice_output_position)
+    /// (spec 028). The record path's device-sample positions are not on this clock.
     pub output_position: u64,
     /// Drop mode: host input samples removed at this splice. Mute mode: the region's length.
     pub input_length: u64,

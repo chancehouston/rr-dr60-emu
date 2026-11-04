@@ -45,7 +45,9 @@
 //! (`rr_dr60_settings_one_pass_vas_runs`, `rr_dr60_settings_one_pass_codec_runs`,
 //! `rr_dr60_one_pass_report_latency_samples`, `rr_dr60_one_pass_drain_samples`,
 //! `rr_dr60_wording_first_hit`, `rr_dr60_meter_field_count`, `rr_dr60_meter_field`,
-//! `rr_dr60_meter_reached`, `rr_dr60_meter_lag_samples`, `rr_dr60_manifest_word`). Not
+//! `rr_dr60_meter_reached`, `rr_dr60_meter_lag_samples`, `rr_dr60_manifest_word`) and (spec
+//! 028) the one-pass map (`rr_dr60_one_pass_input_at_output`,
+//! `rr_dr60_one_pass_splice_output_position`; for a bounded report list). Not
 //! real-time safe (offline work: `rr_dr60_rerender_*` and `rr_dr60_fill_to_remaining`, spec
 //! 027; `rr_dr60_rerender_new` allocates, and `_feed_i24`, `_feed_f32`, `_progress`, `_meters`
 //! and `_finish` allocate nothing but are not meant for an audio thread):
@@ -64,7 +66,7 @@ use rr_dr60::{
 /// Library major version (equal to the Rust crate's).
 pub const RR_DR60_VERSION_MAJOR: u32 = 0;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 94;
+pub const RR_DR60_VERSION_MINOR: u32 = 95;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -4592,7 +4594,7 @@ mod tests {
         assert_eq!(d.reserved_010_tail, [0; 7]);
         assert_eq!(d.reserved_012, [0; 2]);
         assert_eq!(d.mic_hiss_offset_db, 0.0); // 012 FR-003
-        assert_eq!(RR_DR60_VERSION_MINOR, 94);
+        assert_eq!(RR_DR60_VERSION_MINOR, 95);
         let mut stale = rr_dr60_settings_default(48_000);
         stale.struct_size = 112; // a 0.10 or 0.11 caller (spec 012 FR-012)
         assert_eq!(

@@ -1448,3 +1448,62 @@ fn guide_rerender() {
         "the house denylist"
     );
 }
+
+#[test]
+fn guide_onepass_map() {
+    // Spec 028 R-06 (US4 AS2): the guide's section names both reads, the heard point, the
+    // reports contract, the bisection and the region recipes and the cost; the earlier map's
+    // sentence no longer sends output positions through `latency_samples`; the section passes
+    // both wording lists; the rustdoc of both maps and of the pause report names the twin.
+    let text = std::fs::read_to_string(mc::repo_root().join("docs/guide.md")).unwrap();
+    let start = text
+        .find("## The one-pass output map (since 0.95)")
+        .expect("the guide's section");
+    let end = text[start + 3..]
+        .find("\n## ")
+        .map_or(text.len(), |i| start + 3 + i);
+    let section = &text[start..end];
+    for phrase in [
+        "one_pass_input_at_output",
+        "one_pass_splice_output_position",
+        "OnePassMap.inputAtOutput",
+        "the playback half's latency",
+        "the end of the hang",
+        "since the stream's last start",
+        "bisection",
+        "removed gaps",
+        "off the audio thread",
+        "onepass_output_to_input",
+    ] {
+        assert!(section.contains(phrase), "{phrase}");
+    }
+    assert_eq!(rr_dr60::wording::first_claim_hit(section), None);
+    assert_eq!(
+        mc::denylist_hit(&section.to_lowercase()),
+        None,
+        "the house denylist"
+    );
+    for sentence in text.split(". ") {
+        if sentence.contains("onepass_output_to_input") && sentence.contains("(`latency_samples`)")
+        {
+            panic!("an output position sent through latency_samples: {sentence}");
+        }
+    }
+    assert!(text.contains("Corrected 2026-11-04 (spec 028)"));
+    let root = mc::repo_root();
+    let timeline = std::fs::read_to_string(root.join("crates/rr_dr60/src/timeline.rs")).unwrap();
+    let pipeline = std::fs::read_to_string(root.join("crates/rr_dr60/src/pipeline.rs")).unwrap();
+    let header =
+        std::fs::read_to_string(root.join("crates/rr_dr60_ffi/include/rr_dr60.h")).unwrap();
+    assert!(timeline.contains(
+        "**For a one-pass output position use\n/// [`Pipeline::one_pass_input_at_output`]"
+    ));
+    assert!(pipeline.contains("**Note (2026-11-04, spec 028):**"));
+    assert!(pipeline.contains("Twin:\n    /// [`timeline::onepass_output_to_input`]"));
+    assert!(
+        header.contains(
+            "**For a one-pass output\n// position use `rr_dr60_one_pass_input_at_output`**"
+        ) || header.contains("use `rr_dr60_one_pass_input_at_output`**")
+    );
+    assert!(header.contains("`rr_dr60_one_pass_splice_output_position`"));
+}
