@@ -13,7 +13,7 @@ The RR-DR60 is a pocket digital voice recorder Panasonic sold in the late 1990s.
 
 | | |
 |---|---|
-| **Version** | 0.94.0, pre-alpha; the engine is feature complete (0.90) and the 0.9x series takes the fixes the app surfaces. Not yet released or published to crates.io; the API may still change before 1.0. |
+| **Version** | 0.95.0, pre-alpha; the engine is feature complete (0.90) and the 0.9x series takes the fixes the app surfaces. Not yet released or published to crates.io; the API may still change before 1.0. |
 | **Signal chain** | 13 of the 15 stages are modeled and on by default (the power supply as the battery's effect on the speaker amplifier's clip ceiling, a user-set value). Not modeled: noise reduction (no evidence the device has it) and the clock. |
 | **Accuracy** | Every modeled stage is built from documents (the service manual, the owner's manual, datasheets) plus recorded assumptions. **No stage has been checked against a real unit**; see [Accuracy](#accuracy). |
 | **Platforms** | Rust library (`no_std`), C API (64-bit targets) and a Swift package for iOS and macOS. Bit-identical output on Linux, macOS, Windows, the iOS simulator and an iOS device. |
@@ -47,6 +47,8 @@ Each stage can be switched off or tapped on its own, for example to hear the cod
 **Host reads (since 0.93).** Optional, appended reads that answer from the engine itself what a host used to copy from its code: whether the voice-activated pause and the speech codec run on the one-pass at a tap, the latency the pause's reports align with, how much silence drains the one-pass, the meter fields' descriptions with their reach and lag, the stage manifest's words, and the word lists the engine's own strings avoid (C: `rr_dr60_settings_one_pass_vas_runs` … `rr_dr60_manifest_word`, ten functions; Swift: `MeterManifest`, `ManifestWord`). A host built on 0.92 needs none of them; see the [guide](docs/guide.md#host-reads-since-093).
 
 **The re-render (since 0.94).** A processing record and the kept 24-bit microphone audio re-render the recording through one engine facility, streamed in blocks with progress and cancel: unedited, it says whether the result is identical; edited (a **Rebuild** with changed settings), it returns a new recording and its own processing record (Rust `rr_dr60::rerender`, C `rr_dr60_rerender_*`, Swift `ReRenderSession`; see the [guide](docs/guide.md#the-re-render-as-an-api-since-094)).
+
+**The one-pass output map (since 0.95).** For a one-pass render, `one_pass_input_at_output` gives the input behind any output sample (the same alignment window as the record path's map) and `one_pass_splice_output_position` where each voice-activated pause is heard, with the engine supplying its own latencies (C `rr_dr60_one_pass_input_at_output`, Swift `OnePassMap`; see the [guide](docs/guide.md#the-one-pass-output-map-since-095)).
 
 ## Quick start
 

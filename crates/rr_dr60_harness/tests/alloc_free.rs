@@ -1664,3 +1664,60 @@ fn rerender_allocate_nothing() {
         }
     }
 }
+
+/// Spec 028 FR-001: the one-pass map's reads allocate nothing, in Rust and C, with and without
+/// pause reports.
+#[test]
+fn onepass_map_allocates_nothing() {
+    use rr_dr60::Settings;
+    use rr_dr60_ffi::{
+        RrDr60InputAlignment, RrDr60VasEvent, rr_dr60_one_pass_input_at_output,
+        rr_dr60_one_pass_splice_output_position,
+    };
+    let _turn = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    for &rate in configs::measurement_rates() {
+        let s = Settings::new(rate);
+        let p = Pipeline::new(s).unwrap();
+        let c = rr_dr60_ffi::rr_dr60_settings_default(rate);
+        let mut handle: *mut RrDr60Pipeline = core::ptr::null_mut();
+        // SAFETY: a valid settings struct and an out-pointer.
+        assert_eq!(unsafe { rr_dr60_create(&c, &mut handle) }, RrDr60Status::Ok);
+        let ev: Vec<VasEvent> = (0..64u64)
+            .map(|i| VasEvent::new(5_000 + i * 9_000, 2_000))
+            .collect();
+        let cev: Vec<RrDr60VasEvent> = ev
+            .iter()
+            .map(|e| RrDr60VasEvent {
+                output_position: e.output_position,
+                input_length: e.input_length,
+            })
+            .collect();
+        let mut a = RrDr60InputAlignment::default();
+        let mut v = 0u64;
+        MEASURING.with(|m| m.set(true));
+        let before = counts();
+        let mut n = 0u64;
+        for o in (0..700_000u64).step_by(997) {
+            n = n.wrapping_add(p.one_pass_input_at_output(o, &ev).centre);
+            n = n.wrapping_add(p.one_pass_input_at_output(o, &[]).last);
+        }
+        for e in &ev {
+            n = n.wrapping_add(p.one_pass_splice_output_position(e));
+        }
+        // SAFETY: a live handle, readable reports and sized outs.
+        unsafe {
+            for o in (0..700_000u64).step_by(9973) {
+                let _ =
+                    rr_dr60_one_pass_input_at_output(handle, o, cev.as_ptr(), cev.len(), &mut a);
+                let _ = rr_dr60_one_pass_input_at_output(handle, o, core::ptr::null(), 0, &mut a);
+            }
+            let _ = rr_dr60_one_pass_splice_output_position(handle, &cev[0], &mut v);
+        }
+        let after = counts();
+        MEASURING.with(|m| m.set(false));
+        assert!(n > 0 && v > 0, "{rate} Hz: every read ran");
+        assert_eq!(after, before, "{rate} Hz: the one-pass map allocated");
+        // SAFETY: destroying the handle once.
+        unsafe { rr_dr60_destroy(handle) };
+    }
+}

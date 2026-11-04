@@ -258,7 +258,10 @@ unsafe fn read_value<T>(
 }
 
 /// The latency the one-pass's voice-activation reports align with, in host samples (spec 026
-/// D1; `Pipeline::one_pass_report_latency_samples`). Real-time safe.
+/// D1; `Pipeline::one_pass_report_latency_samples`). Real-time safe. **Note (2026-11-04, spec
+/// 028):** mapping a report's own position with it puts the input the playback half's latency
+/// earlier than spec 020's convention; the input of a pause is
+/// `rr_dr60_one_pass_input_at_output` at `rr_dr60_one_pass_splice_output_position`.
 ///
 /// # Safety
 ///
@@ -522,6 +525,99 @@ pub unsafe extern "C" fn rr_dr60_manifest_word(
     // SAFETY: out is non-null and writable (caller contract).
     unsafe { out.write(w.as_ptr().cast()) };
     RrDr60Status::Ok
+}
+
+/// The pause reports a C caller passed: NULL with a count of 0 is the empty list.
+///
+/// # Safety
+///
+/// `events` NULL or readable for `count` reports.
+unsafe fn reports<'a>(events: *const RrDr60VasEvent, count: usize) -> Option<&'a [VasEvent]> {
+    if events.is_null() {
+        return (count == 0).then_some(&[]);
+    }
+    // SAFETY: readable for the count (caller contract); the layouts match (lib.rs's assert).
+    Some(unsafe { std::slice::from_raw_parts(events.cast::<VasEvent>(), count) })
+}
+
+/// The input behind one-pass output `position` (spec 028; `Pipeline::one_pass_input_at_output`,
+/// whose contract applies): spec 020's alignment window into the sized `*out`. `events` is
+/// every pause report the one-pass gave since the stream's last start, in report order (NULL
+/// with `count` 0 for none). The engine supplies the latency, the speech coder's delay and the
+/// gate's mode. Refusals in order: the handle's status; a NULL `out`, or a NULL `events` with a
+/// non-zero `count` (`NULL_POINTER`); a `struct_size` below the first published layout.
+/// Linear in `count`, allocation-free; real-time safe for a bounded list.
+///
+/// # Safety
+///
+/// `pipeline` NULL or a live handle; `events` NULL or readable for `count` reports; `out` NULL
+/// or its `struct_size` bytes writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_one_pass_input_at_output(
+    pipeline: *mut RrDr60Pipeline,
+    position: u64,
+    events: *const RrDr60VasEvent,
+    count: usize,
+    out: *mut RrDr60InputAlignment,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    let p = match unsafe { live(pipeline) } {
+        Ok(p) => p,
+        Err(status) => return status,
+    };
+    if out.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: the caller's contract.
+    let Some(events) = (unsafe { reports(events, count) }) else {
+        return RrDr60Status::NullPointer;
+    };
+    let forced = take_forced_panic(p);
+    let a = match guarded(p, |inner| {
+        if forced {
+            panic!("rr_dr60__test_force_panic");
+        }
+        Ok(inner.one_pass_input_at_output(position, events))
+    }) {
+        Ok(a) => a,
+        Err(status) => return status,
+    };
+    // SAFETY: `out` non-null, its `struct_size` bytes writable (caller contract).
+    unsafe {
+        write_sized(out, ALIGNMENT_PUBLISHED, |t, _| {
+            t.clamped = u32::from(a.clamped);
+            t.centre = a.centre;
+            t.first = a.first;
+            t.last = a.last;
+        })
+    }
+}
+
+/// Where a one-pass pause report is heard on the output, in host samples (spec 028;
+/// `Pipeline::one_pass_splice_output_position`): `event.output_position` plus the speech coder's
+/// delay when it runs plus the playback half's latency. Refusals in order: the handle's status;
+/// a NULL `event` or `out` (`NULL_POINTER`). Real-time safe.
+///
+/// # Safety
+///
+/// `pipeline` NULL or a live handle; `event` NULL or readable; `out` NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rr_dr60_one_pass_splice_output_position(
+    pipeline: *mut RrDr60Pipeline,
+    event: *const RrDr60VasEvent,
+    out: *mut u64,
+) -> RrDr60Status {
+    // SAFETY: NULL or a live handle (caller contract).
+    if let Err(status) = unsafe { live(pipeline) } {
+        return status;
+    }
+    if event.is_null() {
+        return RrDr60Status::NullPointer;
+    }
+    // SAFETY: `event` non-null and readable (caller contract); the layouts match.
+    let e = unsafe { *event.cast::<VasEvent>() };
+    // SAFETY: the caller's contract, passed on.
+    unsafe { read_value(pipeline, out, |p| p.one_pass_splice_output_position(&e)) }
 }
 
 #[cfg(test)]

@@ -311,6 +311,26 @@ pub mod __test_hooks {
         pub skip_clear: bool,
     }
 
+    /// Deliberate defects of spec 028's one-pass map (research R-11), applied through
+    /// `Pipeline::__one_pass_map_mutated`; `Default` is the committed behavior.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct OnePassMapMutation {
+        /// The coder's delay taken as 0 in the whole clock.
+        pub no_c: bool,
+        /// The coder's delay applied twice.
+        pub c_twice: bool,
+        /// The playback half's latency omitted (the signed draft's rule).
+        pub no_l_post: bool,
+        /// The take-while on the report position (the existing map's switch).
+        pub take_while_on_report_position: bool,
+        /// The clamp applied before the removed input is added.
+        pub clamp_before_r: bool,
+        /// The coder's delay taken whenever the codec setting is on.
+        pub c_from_setting: bool,
+        /// The window's frame ends mapped without the removed input.
+        pub window_without_removed: bool,
+    }
+
     pub use crate::changes::{ChangeMutation, RecordMutation};
 
     pub use crate::stages::insert::InsertMutation;

@@ -23,6 +23,7 @@ pub mod insert_checks;
 pub mod manifest_checks;
 pub mod meters_checks;
 pub mod mic_checks;
+pub mod onepass_map_checks;
 pub mod output_checks;
 pub mod output_clamp_checks;
 pub mod pitch_checks;

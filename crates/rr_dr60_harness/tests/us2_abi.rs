@@ -476,9 +476,10 @@ fn spec_026_appended_only() {
     assert!(!rows.contains("MeterField") && !rows.contains("meter_field"));
 }
 
-/// Spec 027 D8 (FR-008, SC-003): from 0.93's merge (3890bfe) to the working header, every
-/// function, status and type is kept and the additions are exactly the ten reads, the one
-/// struct and the five statuses; `RrDr60MeterField` stays out of the frozen `--abi` rows.
+/// Spec 027 D8 (FR-008, SC-003): from 0.93's merge (3890bfe) to 0.94's merge (ad1ba8d), every
+/// function, status and type is kept and the additions are exactly the session's functions,
+/// statuses and types; `RrDr60MeterField` stays out of the frozen `--abi` rows. Restated by
+/// spec 028 (spec 023's lesson): two revisions, so the next feature's additions do not move it.
 #[test]
 fn spec_027_appended_only() {
     let Some(out) = git(&["show", "3890bfe:crates/rr_dr60_ffi/include/rr_dr60.h"]) else {
@@ -490,11 +491,15 @@ fn spec_027_appended_only() {
         return;
     }
     let old = String::from_utf8(out.stdout).unwrap();
-    let new = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../rr_dr60_ffi/include/rr_dr60.h"
-    ))
-    .unwrap();
+    let Some(new) = git(&[
+        "show",
+        "ad1ba8d401228c91480f12bd8ff3df68ac489e7f:crates/rr_dr60_ffi/include/rr_dr60.h",
+    ])
+    .filter(|o| o.status.success()) else {
+        eprintln!("ad1ba8d unavailable: skipped");
+        return;
+    };
+    let new = String::from_utf8(new.stdout).unwrap();
     let functions = |src: &str| -> std::collections::BTreeSet<String> {
         src.lines()
             .filter(|l| {
@@ -620,4 +625,64 @@ fn spec_027_appended_only() {
     ))
     .unwrap();
     assert!(!rows.contains("MeterField") && !rows.contains("meter_field"));
+}
+
+/// Spec 028 D6 (FR-006, SC-004): from 0.94's merge (ad1ba8d) to the working header, every
+/// function, status and type is kept and the additions are exactly the two one-pass map reads,
+/// with no status and no type.
+#[test]
+fn spec_028_onepass_map_appended_only() {
+    let Some(out) = git(&[
+        "show",
+        "ad1ba8d401228c91480f12bd8ff3df68ac489e7f:crates/rr_dr60_ffi/include/rr_dr60.h",
+    ])
+    .filter(|o| o.status.success()) else {
+        eprintln!("ad1ba8d unavailable: skipped");
+        return;
+    };
+    let old = String::from_utf8(out.stdout).unwrap();
+    let new = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../rr_dr60_ffi/include/rr_dr60.h"
+    ))
+    .unwrap();
+    // Every name on a line, not only the first (coach post-implementation 14); the defines by
+    // name, so only a value may move (`RR_DR60_VERSION_MINOR`).
+    let names = |src: &str, prefix: &str| -> std::collections::BTreeSet<String> {
+        src.lines()
+            .flat_map(|l| {
+                l.match_indices(prefix)
+                    .map(|(i, _)| {
+                        l[i + prefix.len()..]
+                            .chars()
+                            .take_while(|c| c.is_alphanumeric() || *c == '_')
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    };
+    for prefix in [
+        "rr_dr60_",
+        "RR_DR60_STATUS_",
+        "typedef struct ",
+        "#define RR_DR60_",
+    ] {
+        let (o, n) = (names(&old, prefix), names(&new, prefix));
+        assert!(
+            o.is_subset(&n),
+            "removed: {:?}",
+            o.difference(&n).collect::<Vec<_>>()
+        );
+        let added: Vec<_> = n.difference(&o).cloned().collect();
+        let want: &[&str] = if prefix == "rr_dr60_" {
+            &[
+                "one_pass_input_at_output",
+                "one_pass_splice_output_position",
+            ]
+        } else {
+            &[]
+        };
+        assert_eq!(added, want, "{prefix}");
+    }
 }
