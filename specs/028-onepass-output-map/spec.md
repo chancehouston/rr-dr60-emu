@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-04
 
-**Status**: Draft reviewed 2026-11-04 (coach 1 – 17, hardware B1 – B9, product M1 – M8, applied at the defaults below); clarified 2026-11-04 (three questions). The owner's spec sign-off next.
+**Status**: Draft reviewed 2026-11-04 (coach 1 – 17, hardware B1 – B9, product M1 – M8, applied at the defaults below); clarified 2026-11-04 (three questions). **Spec approved by the owner 2026-11-04 (D1 – D8).** Plan next.
 
 **Input**: Engine issue #82, filed by the desktop workbench (rr-dr60-workbench, feature 008, adopting 0.93.0); the owner chose option 2 on 2026-11-04 (a published map, with the existing documentation corrected). `timeline::onepass_output_to_input` maps a one-pass output position to the input position it aligns with, through a latency the caller passes, the voice-activation events and the gate's mode. Its documentation says to pass `latency_samples()` for an output position. With the speech coder running and the gate in drop mode, that counts every splice early by the coder's delay C (180 device samples, 30 ms; 1440 host samples at 48 kHz). The events' positions are on the clock before the coder; the samples inside the coder's delay line when the gate pauses stay there through the pause and come out at the resume, so a splice reaches the output at `event.output_position + C`. The outputs in `[event.output_position, event.output_position + C)` play the hang's last 30 ms, and the documented use maps them into the removed pause's last C host samples, whose last 20 ms (the gate's onset, A-024) are the start of the next sound that the gate consumed. The workbench's tested correction maps an output `o` as `onepass_output_to_input(o − C, latency − C, events, drop)`, with the clamped start for `o < C`.
 
