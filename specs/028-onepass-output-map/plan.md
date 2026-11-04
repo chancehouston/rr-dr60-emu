@@ -1,6 +1,6 @@
 # Implementation Plan: The one-pass output map
 
-**Branch**: `028-onepass-output-map` | **Date**: 2026-11-04 | **Spec**: [spec.md](spec.md) (approved by the owner 2026-11-04, D1 – D8; D2, D3, D4 and D5 restated with the owner's answers to the plan reviews, 2026-11-04, in its Clarifications) | Plan reviewed (coach 1 – 17, hardware P1 – P8, product M1 – M6, applied below); the owner's plan sign-off next.
+**Branch**: `028-onepass-output-map` | **Date**: 2026-11-04 | **Spec**: [spec.md](spec.md) (approved by the owner 2026-11-04, D1 – D8; D2, D3, D4 and D5 restated with the owner's answers to the plan reviews, 2026-11-04, in its Clarifications) | Plan reviewed (coach 1 – 17, hardware P1 – P8, product M1 – M6, applied below); **plan approved by the owner 2026-11-04**.
 
 ## Summary
 
