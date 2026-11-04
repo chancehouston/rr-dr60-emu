@@ -1437,3 +1437,76 @@ pub fn place_case_mismatches_in_mode(
     }
     (mismatches, trace.len())
 }
+
+/// Spec 027 US1 AS5: a recording with knee rows (−30 / −1 dBFS alternately: the limiter
+/// engages on −20 dBFS voice) at `positions`, made at block size 1 with the schedule topped up after every sample (never late by construction);
+/// returns (record, digest).
+pub fn dense_recording(rate: u32, raw: &[i32], positions: &[u64]) -> (Vec<u8>, u64) {
+    let count = positions.len() as u64;
+    let mut s = rr_dr60::Settings::new(rate);
+    s.vas.hang_ms = 100.0;
+    s.memory.capacity_s = 20;
+    let mut p = rr_dr60::Pipeline::new(s).unwrap();
+    let rows: Vec<(u64, f64)> = positions
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| (p, if i % 2 == 0 { -30.0 } else { -1.0 }))
+        .collect();
+    let mut next = 0;
+    let top = |p: &mut rr_dr60::Pipeline, next: &mut usize| {
+        while *next < rows.len()
+            && p.pending_changes(rr_dr60::changes::Stream::Record).unwrap() < 64
+        {
+            let (pos, v) = rows[*next];
+            p.schedule_change(
+                rr_dr60::changes::Stream::Record,
+                pos,
+                KNEE,
+                v,
+                *next as u64 + 1,
+            )
+            .unwrap();
+            *next += 1;
+        }
+    };
+    top(&mut p, &mut next);
+    p.start_recording().unwrap();
+    let x = samples(raw);
+    let (mut events, mut changes) = (Vec::new(), Vec::new());
+    let mut ev = vec![rr_dr60::VasEvent::default(); 8];
+    let mut ch =
+        vec![rr_dr60::changes::ChangeEntry::default(); rr_dr60::changes::MAX_CHANGES_PER_CALL];
+    for v in &x {
+        let info = p
+            .record_with_changes(std::slice::from_ref(v), &mut ev, &mut ch)
+            .unwrap();
+        events.extend_from_slice(&ev[..info.events]);
+        changes.extend_from_slice(&ch[..info.changes]);
+        top(&mut p, &mut next);
+    }
+    let mut ev = vec![rr_dr60::VasEvent::default(); p.max_record_events(rate as usize)];
+    let out = p.stop_recording_with_changes(&mut ev, &mut ch).unwrap();
+    events.extend_from_slice(&ev[..out.flush.events]);
+    changes.extend_from_slice(&ch[..out.changes]);
+    assert_eq!(
+        changes.len() as u64,
+        count,
+        "every row landed in the original"
+    );
+    assert!(
+        changes
+            .iter()
+            .all(|c| c.stream == rr_dr60::changes::STREAM_RECORD)
+    );
+    let number = p.memory_status().count;
+    let run = rr_dr60::record::RunData {
+        events: &events,
+        changes: &changes,
+        stop: rr_dr60::record::StopFields::from(&out),
+    };
+    let mut record = vec![0u8; p.processing_record_len(number, &run).unwrap()];
+    let _ = p
+        .processing_record_write(number, &run, &mut record)
+        .unwrap();
+    (record, p.recording_digest(number).unwrap())
+}

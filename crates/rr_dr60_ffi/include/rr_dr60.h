@@ -57,7 +57,7 @@
 #define RR_DR60_VERSION_MAJOR 0
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 93
+#define RR_DR60_VERSION_MINOR 94
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
@@ -439,6 +439,26 @@ enum RrDr60Status
   RR_DR60_STATUS_NO_SUCH_WORDING_KIND = 47,
   // A manifest word kind, value or form the library does not publish (spec 026 D6).
   RR_DR60_STATUS_NO_SUCH_MANIFEST_WORD = 48,
+  // A re-render's input ended before the record's stop position (spec 027 D6): the samples
+  // still needed are the stop position minus the input position (`rr_dr60_rerender_progress`).
+  RR_DR60_STATUS_INPUT_SHORT = 49,
+  // A 24-bit input code outside −2²³ … 2²³ − 1 (spec 027 D3); nothing taken.
+  RR_DR60_STATUS_INVALID_SAMPLE = 50,
+  // A re-render plan whose run could need more events than the session reserves (spec 027
+  // D5): set `collect_run` false and retry.
+  RR_DR60_STATUS_RUN_TOO_LARGE = 51,
+  // A re-render fed both 24-bit codes and engine samples (spec 027 D3).
+  RR_DR60_STATUS_FEED_KIND_MIXED = 52,
+  // A re-render plan edit that changes the host rate (spec 027 D4).
+  RR_DR60_STATUS_HOST_RATE_FIXED = 53,
+  // The rebuilt item's record read from a session without `collect_run` (spec 027 D5).
+  RR_DR60_STATUS_RUN_NOT_COLLECTED = 54,
+  // A re-render call in the wrong state: a feed after finish, an item read before it.
+  RR_DR60_STATUS_RERENDER_STATE = 55,
+  // A record of imported origin has no run to re-render (spec 027 D6).
+  RR_DR60_STATUS_IMPORTED_RECORD = 56,
+  // A record naming a component this library does not know (spec 027 D6).
+  RR_DR60_STATUS_UNKNOWN_COMPONENT = 57,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -846,6 +866,13 @@ typedef uint32_t RrDr60Clock;
 
 // Opaque pipeline handle.
 typedef struct RrDr60Pipeline RrDr60Pipeline;
+
+// A re-render session (spec 027 D2).
+typedef struct RrDr60ReRender RrDr60ReRender;
+
+// A re-render plan (spec 027 D4): read from a record, edited, consumed by
+// `rr_dr60_rerender_new` on success.
+typedef struct RrDr60ReRenderPlan RrDr60ReRenderPlan;
 
 // Pipeline settings. Start from `rr_dr60_settings_default` and change fields as needed.
 //
@@ -1633,6 +1660,47 @@ typedef struct RrDr60MeterField {
   // 0 the record side (input), 1 the playback side (output).
   uint32_t side;
 } RrDr60MeterField;
+
+// What one feed call did (spec 027 D2). Sized (spec 022; 24 bytes).
+typedef struct RrDr60ReRenderFed {
+  // `sizeof(RrDr60ReRenderFed)`; set by the caller.
+  uint32_t struct_size;
+  // The input reached the record's stop position.
+  bool reached_stop;
+  // The memory filled and the recording stopped by itself.
+  bool self_stopped;
+  // The host input samples the engine took.
+  uint64_t taken;
+  // Zero.
+  uint64_t reserved;
+} RrDr60ReRenderFed;
+
+// The result of `rr_dr60_rerender_finish` (spec 027 D5). Sized (56 bytes). The verdict
+// describes processing only; it does not vouch for what the input contains.
+typedef struct RrDr60ReRenderOutcome {
+  // `sizeof(RrDr60ReRenderOutcome)`; set by the caller.
+  uint32_t struct_size;
+  // 0 kept, 1 nothing kept.
+  uint32_t reason;
+  // 0 identical, 1 differs, 2 rebuilt.
+  uint32_t verdict;
+  // The record's flags (`RR_DR60_RECORD_FLAG_*`).
+  uint32_t flags;
+  // The plan's values differ from the record's.
+  bool edited;
+  // The digest equals the record's.
+  bool matches_original;
+  // `digest` is valid.
+  bool has_digest;
+  // The rebuilt item's digest.
+  uint64_t digest;
+  // The remaining capacity the fill reached, in device samples.
+  uint64_t remaining_at_start;
+  // The change rows the engine applied.
+  uint64_t rows_landed;
+  // Zero.
+  uint64_t reserved;
+} RrDr60ReRenderOutcome;
 
 // `RR_DR60_TAP_AFTER_PLAYBACK` under the stage's name: after stage 10, before the output chain
 // (version 0.8's default output; spec 009 FR-011).
@@ -3209,6 +3277,305 @@ RrDr60Status rr_dr60_meter_lag_samples(struct RrDr60Pipeline *pipeline,
 //
 // `out` NULL or writable.
 RrDr60Status rr_dr60_manifest_word(uint32_t kind, uint32_t value, uint32_t form, const char **out);
+
+// Reads a processing record into a new plan (spec 027 D4; spec 020's reader and refusals).
+//
+// # Safety
+//
+// `bytes` readable for `len` bytes; `out` writable.
+RrDr60Status rr_dr60_rerender_plan_from_record(const uint8_t *bytes,
+                                               uintptr_t len,
+                                               struct RrDr60ReRenderPlan **out);
+
+// Destroys a plan (NULL is a no-op).
+//
+// # Safety
+//
+// `plan` NULL or a plan handle not yet destroyed or consumed.
+void rr_dr60_rerender_plan_destroy(struct RrDr60ReRenderPlan *plan);
+
+// Copies a plan.
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` writable.
+RrDr60Status rr_dr60_rerender_plan_clone(const struct RrDr60ReRenderPlan *plan,
+                                         struct RrDr60ReRenderPlan **out);
+
+// The plan's slot component (`RR_DR60_COMPONENT_*`).
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_plan_component(const struct RrDr60ReRenderPlan *plan, uint32_t *out);
+
+// The plan's change-row count.
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_plan_row_count(const struct RrDr60ReRenderPlan *plan, uint64_t *out);
+
+// The plan's seed.
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_plan_seed(const struct RrDr60ReRenderPlan *plan, uint64_t *out);
+
+// The plan's recording counter.
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_plan_counter(const struct RrDr60ReRenderPlan *plan, uint64_t *out);
+
+// The plan's remaining capacity at the start, in device samples.
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_plan_remaining_samples(const struct RrDr60ReRenderPlan *plan,
+                                                     uint64_t *out);
+
+// The record's flags (`RR_DR60_RECORD_FLAG_*`).
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_plan_flags(const struct RrDr60ReRenderPlan *plan, uint32_t *out);
+
+// Whether the plan's values differ from the record's (a field compare).
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_plan_edited(const struct RrDr60ReRenderPlan *plan, bool *out);
+
+// The plan's value of settings control `index` (spec 025's reading; the live controls are
+// `NOT_A_SETTING`).
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` NULL or a writable reading of its `struct_size`.
+RrDr60Status rr_dr60_rerender_plan_control_value(const struct RrDr60ReRenderPlan *plan,
+                                                 uint32_t index,
+                                                 struct RrDr60ControlReading *out);
+
+// Store value `index` of the plan.
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_plan_parameter(const struct RrDr60ReRenderPlan *plan,
+                                             uint32_t index,
+                                             double *out);
+
+// Row `i` of the plan.
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_plan_row(const struct RrDr60ReRenderPlan *plan,
+                                       uint64_t i,
+                                       struct RrDr60ChangeEntry *out);
+
+// Sets the plan's seed.
+//
+// # Safety
+//
+// `plan` NULL or a live plan.
+RrDr60Status rr_dr60_rerender_plan_set_seed(struct RrDr60ReRenderPlan *plan, uint64_t seed);
+
+// Sets the plan's recording counter.
+//
+// # Safety
+//
+// `plan` NULL or a live plan.
+RrDr60Status rr_dr60_rerender_plan_set_counter(struct RrDr60ReRenderPlan *plan, uint64_t counter);
+
+// Sets the remaining capacity at the start (checked at `rr_dr60_rerender_new`).
+//
+// # Safety
+//
+// `plan` NULL or a live plan.
+RrDr60Status rr_dr60_rerender_plan_set_remaining_samples(struct RrDr60ReRenderPlan *plan,
+                                                         uint64_t remaining);
+
+// Collects the run (the default) or not (a digest-only session).
+//
+// # Safety
+//
+// `plan` NULL or a live plan.
+RrDr60Status rr_dr60_rerender_plan_set_collect_run(struct RrDr60ReRenderPlan *plan, bool collect);
+
+// Sets the plan's slot component (`RR_DR60_COMPONENT_*`).
+//
+// # Safety
+//
+// `plan` NULL or a live plan.
+RrDr60Status rr_dr60_rerender_plan_set_component(struct RrDr60ReRenderPlan *plan,
+                                                 uint32_t component);
+
+// Writes store value `index`, validated as `rr_dr60_set_component_parameter` validates it.
+//
+// # Safety
+//
+// `plan` NULL or a live plan.
+RrDr60Status rr_dr60_rerender_plan_set_parameter(struct RrDr60ReRenderPlan *plan,
+                                                 uint32_t index,
+                                                 double value);
+
+// Removes row `i`.
+//
+// # Safety
+//
+// `plan` NULL or a live plan.
+RrDr60Status rr_dr60_rerender_plan_remove_row(struct RrDr60ReRenderPlan *plan, uint64_t i);
+
+// Sets settings control `index` in the plan (spec 025's reading; settings controls only: the
+// live controls are `NOT_A_SETTING` and the slot's 31 – 35 go through
+// `rr_dr60_rerender_plan_set_component` and `_set_parameter`), validated as
+// `rr_dr60_reconfigure` validates the settings; another host rate is `HOST_RATE_FIXED`.
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `value` NULL or a readable reading.
+RrDr60Status rr_dr60_rerender_plan_set_control_value(struct RrDr60ReRenderPlan *plan,
+                                                     uint32_t index,
+                                                     const struct RrDr60ControlReading *value);
+
+// Replaces row `i` (re-sorted, stable; validated as `rr_dr60_schedule_change` validates it).
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `row` NULL or readable.
+RrDr60Status rr_dr60_rerender_plan_set_row(struct RrDr60ReRenderPlan *plan,
+                                           uint64_t i,
+                                           const struct RrDr60ChangeEntry *row);
+
+// Inserts a row (kept in position order after the rows at the same position).
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `row` NULL or readable.
+RrDr60Status rr_dr60_rerender_plan_insert_row(struct RrDr60ReRenderPlan *plan,
+                                              const struct RrDr60ChangeEntry *row);
+
+// Builds a session from `plan` (spec 027 D2): the engine, the slot, the fill, every buffer.
+// **Consumes the plan on success only**: after an error the plan is still the caller's (to
+// edit and retry, e.g. `collect_run` false after `RUN_TOO_LARGE`). Not real-time safe.
+//
+// # Safety
+//
+// `plan` NULL or a live plan; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_new(struct RrDr60ReRenderPlan *plan, struct RrDr60ReRender **out);
+
+// Feeds `n` 24-bit codes (spec 020's feed point). Allocation-free.
+//
+// # Safety
+//
+// `r` NULL or a live session; `codes` readable for `n` values (NULL with `n` 0); `out` NULL
+// or a writable `RrDr60ReRenderFed` of its `struct_size`.
+RrDr60Status rr_dr60_rerender_feed_i24(struct RrDr60ReRender *r,
+                                       const int32_t *codes,
+                                       uintptr_t n,
+                                       struct RrDr60ReRenderFed *out);
+
+// Feeds `n` engine samples (a host that kept them losslessly). Allocation-free.
+//
+// # Safety
+//
+// As `rr_dr60_rerender_feed_i24`.
+RrDr60Status rr_dr60_rerender_feed_f32(struct RrDr60ReRender *r,
+                                       const float *samples,
+                                       uintptr_t n,
+                                       struct RrDr60ReRenderFed *out);
+
+// The input position and the record's stop position (progress). After a self-stop the input
+// stays below the stop: treat `reached_stop || self_stopped` as done.
+//
+// # Safety
+//
+// `r` NULL or a live session; the outs NULL or writable.
+RrDr60Status rr_dr60_rerender_progress(struct RrDr60ReRender *r,
+                                       uint64_t *input_position,
+                                       uint64_t *stop_position);
+
+// The engine's meter read-out of its last call (at most 4096 host samples; spec 016's sized
+// struct).
+//
+// # Safety
+//
+// `r` NULL or a live session; `out` NULL or a writable `RrDr60Meters` of its `struct_size`.
+RrDr60Status rr_dr60_rerender_meters(struct RrDr60ReRender *r, struct RrDr60Meters *out);
+
+// Stops (unless the recording stopped by itself) and reads the rebuilt item (spec 027 D5,
+// D6). After `INPUT_SHORT` the session stays feedable.
+//
+// # Safety
+//
+// `r` NULL or a live session; `out` NULL or a writable `RrDr60ReRenderOutcome`.
+RrDr60Status rr_dr60_rerender_finish(struct RrDr60ReRender *r, struct RrDr60ReRenderOutcome *out);
+
+// The rebuilt item's stored form's length (0 when nothing was kept). After `finish`.
+//
+// # Safety
+//
+// `r` NULL or a live session; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_export_len(struct RrDr60ReRender *r, uintptr_t *out);
+
+// The rebuilt item's new processing record's length (0 when nothing was kept). After `finish`.
+//
+// # Safety
+//
+// `r` NULL or a live session; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_record_len(struct RrDr60ReRender *r, uintptr_t *out);
+
+// Writes the rebuilt item's stored form. After `finish`.
+//
+// # Safety
+//
+// As `rr_dr60_rerender_record_write`.
+RrDr60Status rr_dr60_rerender_export(struct RrDr60ReRender *r,
+                                     uint8_t *buf,
+                                     uintptr_t len,
+                                     uintptr_t *written);
+
+// Writes the rebuilt item's new processing record (an ordinary engine record). After
+// `finish`; `RUN_NOT_COLLECTED` without `collect_run`.
+//
+// # Safety
+//
+// `r` NULL or a live session; `buf` writable for `len` bytes; `written` NULL or writable.
+RrDr60Status rr_dr60_rerender_record_write(struct RrDr60ReRender *r,
+                                           uint8_t *buf,
+                                           uintptr_t len,
+                                           uintptr_t *written);
+
+// Turns a finished session into an engine handle holding the rebuilt item as its last
+// recording (to play it). Consumes the session on success (it is destroyed); `RERENDER_STATE`
+// before `finish`.
+//
+// # Safety
+//
+// `r` NULL or a live session; `out` NULL or writable.
+RrDr60Status rr_dr60_rerender_into_pipeline(struct RrDr60ReRender *r, struct RrDr60Pipeline **out);
+
+// Destroys a session (NULL is a no-op).
+//
+// # Safety
+//
+// `r` NULL or a session handle not yet destroyed or consumed.
+void rr_dr60_rerender_destroy(struct RrDr60ReRender *r);
+
+// Fills the memory so its remaining capacity is `remaining` device samples, floored to the
+// stored unit (spec 027 D7; `Pipeline::fill_to_remaining`). Idle only.
+//
+// # Safety
+//
+// `pipeline` NULL or a live handle.
+RrDr60Status rr_dr60_fill_to_remaining(struct RrDr60Pipeline *pipeline, uint64_t remaining);
 
 #ifdef __cplusplus
 }  // extern "C"

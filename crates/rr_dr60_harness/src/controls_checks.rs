@@ -931,6 +931,11 @@ pub fn setters(
         .collect();
     let mut found_core = Vec::new();
     for (path, text) in sources {
+        // Spec 027: the re-render plan's `set_*` edit a plan read from a record, not the engine
+        // (they are validated as the engine validates the same values); exact file only.
+        if path == "rerender.rs" || path.ends_with("/rerender.rs") {
+            continue;
+        }
         for cap in core.captures_iter(text) {
             found_core.push((path.clone(), cap[2].to_string()));
         }

@@ -90,3 +90,9 @@ echo "smoke --settings matches the Rust example"
 cargo run -q -p rr_dr60_harness --example host_reads_rows > target/example-host-reads.txt
 diff target/smoke-host-reads.txt target/example-host-reads.txt
 echo "smoke --host-reads matches the Rust example"
+# Spec 027 T010: the C re-render's rows (faithful and with the knee edited) equal the Rust
+# example's. Not in the promise loop.
+./target/smoke --rerender > target/smoke-rerender.txt
+cargo run -q -p rr_dr60_harness --example rerender_rows > target/example-rerender.txt
+diff target/smoke-rerender.txt target/example-rerender.txt
+echo "smoke --rerender matches the Rust example"

@@ -5465,3 +5465,280 @@ fn meters_manifest_parity() {
         }
     }
 }
+
+/// Spec 027 US4 AS1: the C session gives the Rust digest, outcome, stored form and new record
+/// byte for byte on every cell; a knee edit through `_plan_set_control_value` equals the Rust
+/// edit; the plan survives a failed `new`; a finished session becomes a playable engine.
+#[test]
+fn rerender_parity() {
+    use rr_dr60::rerender::{Plan, re_render};
+    use rr_dr60_harness::record_contract_checks::{self as rc, Cell, KNEE};
+    // SAFETY (whole test): every pointer passed is a live local or a handle made here.
+    let c_run = |record: &[u8], raw: &[i32], knee: Option<f32>| unsafe {
+        let mut plan = std::ptr::null_mut();
+        assert_eq!(
+            rr_dr60_rerender_plan_from_record(record.as_ptr(), record.len(), &mut plan),
+            RrDr60Status::Ok
+        );
+        if let Some(k) = knee {
+            let v = RrDr60ControlReading {
+                value_type: 2,
+                float_value: k,
+                ..Default::default()
+            };
+            assert_eq!(
+                rr_dr60_rerender_plan_set_control_value(plan, KNEE, &v),
+                RrDr60Status::Ok
+            );
+        }
+        let mut r = std::ptr::null_mut();
+        assert_eq!(rr_dr60_rerender_new(plan, &mut r), RrDr60Status::Ok);
+        for block in raw.chunks(4096) {
+            let mut fed = RrDr60ReRenderFed::default();
+            assert_eq!(
+                rr_dr60_rerender_feed_i24(r, block.as_ptr(), block.len(), &mut fed),
+                RrDr60Status::Ok
+            );
+            if fed.reached_stop || fed.self_stopped {
+                break;
+            }
+        }
+        let mut o = RrDr60ReRenderOutcome::default();
+        assert_eq!(rr_dr60_rerender_finish(r, &mut o), RrDr60Status::Ok);
+        let (mut el, mut rl, mut w) = (0usize, 0usize, 0usize);
+        assert_eq!(rr_dr60_rerender_export_len(r, &mut el), RrDr60Status::Ok);
+        let mut e = vec![0u8; el];
+        assert_eq!(
+            rr_dr60_rerender_export(r, e.as_mut_ptr(), el, &mut w),
+            RrDr60Status::Ok
+        );
+        assert_eq!(rr_dr60_rerender_record_len(r, &mut rl), RrDr60Status::Ok);
+        let mut b = vec![0u8; rl];
+        assert_eq!(
+            rr_dr60_rerender_record_write(r, b.as_mut_ptr(), rl, &mut w),
+            RrDr60Status::Ok
+        );
+        let mut p = std::ptr::null_mut();
+        assert_eq!(rr_dr60_rerender_into_pipeline(r, &mut p), RrDr60Status::Ok);
+        let mut st = RrDr60MemoryStatus::default();
+        assert_eq!(rr_dr60_memory_status(p, &mut st), RrDr60Status::Ok);
+        assert!(st.count >= 1);
+        rr_dr60_destroy(p);
+        (o, e, b)
+    };
+    for &rate in configs::measurement_rates() {
+        let raw = rc::raw_stimulus(rate);
+        for cell in Cell::all() {
+            let (_, run) = rc::record_run(&rr_dr60_harness::checks::standard, rate, cell, &raw);
+            for knee in [None, Some(-30.0f32)] {
+                let mut plan = Plan::from_record(&run.record).unwrap();
+                if let Some(k) = knee {
+                    let mut s = *plan.settings();
+                    s.agc.knee_dbfs = k;
+                    plan.set_settings(s).unwrap();
+                }
+                let r = re_render(plan, &raw).unwrap();
+                let ro = r.outcome().unwrap();
+                let mut e = vec![0u8; r.export_len().unwrap()];
+                let _ = r.export(&mut e).unwrap();
+                let mut b = vec![0u8; r.record_len().unwrap()];
+                let _ = r.record_write(&mut b).unwrap();
+                let (co, ce, cb) = c_run(&run.record, &raw, knee);
+                let tag = format!("{rate} Hz {} knee {knee:?}", cell.name());
+                assert_eq!(co.digest, ro.digest.unwrap(), "{tag}");
+                assert_eq!(co.matches_original, ro.matches_original, "{tag}");
+                assert_eq!(co.edited, ro.edited, "{tag}");
+                assert_eq!(co.rows_landed, ro.rows_landed, "{tag}");
+                assert_eq!((ce, cb), (e, b), "{tag}");
+            }
+        }
+    }
+    // The plan survives a failed `new` (RUN_TOO_LARGE → a digest-only retry).
+    let raw = rc::raw_stimulus(6000);
+    let cell = Cell::all()[0];
+    let (_, run) = rc::record_run(&rr_dr60_harness::checks::standard, 6000, cell, &raw);
+    // SAFETY: as above.
+    unsafe {
+        let mut plan = std::ptr::null_mut();
+        assert_eq!(
+            rr_dr60_rerender_plan_from_record(run.record.as_ptr(), run.record.len(), &mut plan),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_rerender_plan_set_remaining_samples(plan, 0),
+            RrDr60Status::Ok
+        );
+        let mut r = std::ptr::null_mut();
+        assert_eq!(rr_dr60_rerender_new(plan, &mut r), RrDr60Status::MemoryFull);
+        let mut rem = 0u64;
+        assert_eq!(
+            rr_dr60_rerender_plan_remaining_samples(plan, &mut rem),
+            RrDr60Status::Ok
+        );
+        assert_eq!(rem, 0, "the plan is still the caller's");
+        rr_dr60_rerender_plan_destroy(plan);
+    }
+}
+
+/// Spec 027 R-10: every C plan read and edit equals the Rust plan's, and the refusals map to
+/// the Rust errors' statuses.
+#[test]
+fn rerender_plan_c_reads_and_edits() {
+    use rr_dr60::rerender::Plan;
+    use rr_dr60_harness::record_contract_checks::{self as rc, Cell, KNEE};
+    let raw = rc::raw_stimulus(6000);
+    let cell = Cell {
+        codec: true,
+        changes: true,
+        mute: false,
+        self_stop: false,
+    };
+    let (_, run) = rc::record_run(&rr_dr60_harness::checks::standard, 6000, cell, &raw);
+    let rust = Plan::from_record(&run.record).unwrap();
+    // SAFETY (whole test): every pointer is a live local or a handle made here.
+    unsafe {
+        let mut plan = std::ptr::null_mut();
+        assert_eq!(
+            rr_dr60_rerender_plan_from_record(run.record.as_ptr(), run.record.len(), &mut plan),
+            RrDr60Status::Ok
+        );
+        let (mut c, mut n, mut seed, mut counter, mut rem, mut flags) =
+            (0u32, 0u64, 0u64, 0u64, 0u64, 0u32);
+        let mut edited = true;
+        assert_eq!(
+            rr_dr60_rerender_plan_component(plan, &mut c),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_rerender_plan_row_count(plan, &mut n),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_rerender_plan_seed(plan, &mut seed),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_rerender_plan_counter(plan, &mut counter),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_rerender_plan_remaining_samples(plan, &mut rem),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_rerender_plan_flags(plan, &mut flags),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_rerender_plan_edited(plan, &mut edited),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            (c, n, seed, counter, rem, flags, edited),
+            (
+                rust.component() as u32,
+                rust.rows().len() as u64,
+                rust.seed(),
+                rust.counter(),
+                rust.remaining_samples(),
+                rust.flags(),
+                false
+            )
+        );
+        let mut reading = RrDr60ControlReading::default();
+        assert_eq!(
+            rr_dr60_rerender_plan_control_value(plan, KNEE, &mut reading),
+            RrDr60Status::Ok
+        );
+        assert_eq!(reading.float_value, rust.settings().agc.knee_dbfs);
+        let mut p = 0.0;
+        assert_eq!(
+            rr_dr60_rerender_plan_parameter(plan, 1, &mut p),
+            RrDr60Status::Ok
+        );
+        assert_eq!(p, f64::from(rust.parameter(1).unwrap()));
+        assert_eq!(
+            rr_dr60_rerender_plan_parameter(plan, 99, &mut p),
+            RrDr60Status::NoSuchComponent
+        );
+        let mut row = RrDr60ChangeEntry::default();
+        assert_eq!(
+            rr_dr60_rerender_plan_row(plan, 0, &mut row),
+            RrDr60Status::Ok
+        );
+        assert_eq!(row.position, rust.rows()[0].position);
+        assert_eq!(
+            rr_dr60_rerender_plan_row(plan, 99, &mut row),
+            RrDr60Status::NoSuchControl
+        );
+        // Edits.
+        assert_eq!(
+            rr_dr60_rerender_plan_set_seed(plan, seed ^ 1),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_rerender_plan_set_counter(plan, counter),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_rerender_plan_set_collect_run(plan, true),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_rerender_plan_set_component(plan, 1),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_rerender_plan_set_component(plan, 99),
+            RrDr60Status::NoSuchComponent
+        );
+        assert_eq!(
+            rr_dr60_rerender_plan_set_parameter(plan, 1, 800.0),
+            RrDr60Status::Ok
+        );
+        let mut moved = row;
+        moved.position += 10;
+        assert_eq!(
+            rr_dr60_rerender_plan_set_row(plan, 0, &moved),
+            RrDr60Status::Ok
+        );
+        assert_eq!(
+            rr_dr60_rerender_plan_insert_row(plan, &row),
+            RrDr60Status::Ok
+        );
+        assert_eq!(rr_dr60_rerender_plan_remove_row(plan, 0), RrDr60Status::Ok);
+        let slot = RrDr60ControlReading {
+            value_type: 3,
+            ..Default::default()
+        };
+        assert_eq!(
+            rr_dr60_rerender_plan_set_control_value(plan, 31, &slot),
+            RrDr60Status::NotASetting
+        );
+        assert_eq!(
+            rr_dr60_rerender_plan_edited(plan, &mut edited),
+            RrDr60Status::Ok
+        );
+        assert!(edited);
+        let mut copy = std::ptr::null_mut();
+        assert_eq!(
+            rr_dr60_rerender_plan_clone(plan, &mut copy),
+            RrDr60Status::Ok
+        );
+        rr_dr60_rerender_plan_destroy(copy);
+        rr_dr60_rerender_plan_destroy(plan);
+        // NULL handles.
+        assert_eq!(
+            rr_dr60_rerender_plan_seed(std::ptr::null(), &mut seed),
+            RrDr60Status::NullPointer
+        );
+        assert_eq!(
+            rr_dr60_rerender_plan_set_seed(std::ptr::null_mut(), 1),
+            RrDr60Status::NullPointer
+        );
+        assert_eq!(
+            rr_dr60_fill_to_remaining(std::ptr::null_mut(), 0),
+            RrDr60Status::NullPointer
+        );
+    }
+}

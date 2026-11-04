@@ -2576,3 +2576,178 @@ mod insert {
         } = m;
     }
 }
+
+/// Spec 027 R-12 (FR-010): each re-render mutant fails its named oracle.
+mod rerender {
+    use rr_dr60::__test_hooks::RerenderMutation;
+    use rr_dr60::components::{ComponentId, InsertionPointId::BeforeLimiter};
+    use rr_dr60::rerender::{Plan, ReRender, Verdict};
+    use rr_dr60::{Pipeline, Settings};
+    use rr_dr60_harness::checks::standard;
+    use rr_dr60_harness::record_contract_checks::{self as rc, Cell};
+
+    const RATE: u32 = 6000;
+
+    fn cell(codec: bool, self_stop: bool) -> Cell {
+        Cell {
+            codec,
+            changes: true,
+            mute: false,
+            self_stop,
+        }
+    }
+
+    /// The session's verdict and new record with mutant `m`, or `None` on an error.
+    fn run_with(record: &[u8], raw: &[i32], m: RerenderMutation) -> Option<(Verdict, Vec<u8>)> {
+        let mut plan = Plan::from_record(record).ok()?;
+        plan.__set_mutation(m);
+        let mut r = ReRender::new(plan).ok()?;
+        let _ = r.feed(raw).ok()?;
+        let o = r.finish().ok()?;
+        let mut b = vec![0u8; r.record_len().ok()?];
+        let _ = r.record_write(&mut b).ok()?;
+        Some((o.verdict, b))
+    }
+
+    fn identical(record: &[u8], raw: &[i32], m: RerenderMutation) -> bool {
+        run_with(record, raw, m).is_some_and(|(v, b)| v == Verdict::Identical && b == record)
+    }
+
+    #[test]
+    fn the_committed_rerender_passes() {
+        let raw = rc::raw_stimulus(RATE);
+        for (codec, self_stop) in [(false, false), (true, true)] {
+            let (_, run) = rc::record_run(&standard, RATE, cell(codec, self_stop), &raw);
+            assert!(identical(&run.record, &raw, RerenderMutation::default()));
+        }
+    }
+
+    #[test]
+    fn no_split_is_caught_by_the_dense_rows() {
+        let raw = rc::raw_stimulus(RATE);
+        let positions: Vec<u64> = (0..64)
+            .map(|i| 50 + i)
+            .chain((0..16).map(|i| 1500 + i * 75))
+            .collect();
+        let (record, _) = rc::dense_recording(RATE, &raw, &positions);
+        assert!(identical(&record, &raw, RerenderMutation::default()));
+        assert!(!identical(
+            &record,
+            &raw,
+            RerenderMutation {
+                no_split: true,
+                ..Default::default()
+            }
+        ));
+    }
+
+    #[test]
+    fn self_stop_fields_dropped_is_caught_by_the_record_bytes() {
+        // Behavioural (hardware post-implementation Q2): the digest still matches; the new
+        // record's stop lines differ from the original's (or the writer refuses the run).
+        let raw = rc::raw_stimulus(RATE);
+        let (_, run) = rc::record_run(&standard, RATE, cell(true, true), &raw);
+        let mut plan = Plan::from_record(&run.record).unwrap();
+        plan.__set_mutation(RerenderMutation {
+            self_stop_fields_dropped: true,
+            ..Default::default()
+        });
+        let mut r = ReRender::new(plan).unwrap();
+        let _ = r.feed(&raw).unwrap();
+        let o = r.finish().unwrap();
+        assert_eq!(o.verdict, Verdict::Identical, "the digest does not see it");
+        let mut b = vec![0u8; r.record_len().unwrap_or(0)];
+        let written = r.record_write(&mut b);
+        println!(
+            "self_stop_fields_dropped: record_write {:?}",
+            written.map(|_| b == run.record)
+        );
+        assert!(written.is_err() || b != run.record);
+    }
+
+    #[test]
+    fn fill_rounded_up_is_caught_by_the_fill() {
+        let fill = |m: RerenderMutation| {
+            let mut s = Settings::new(RATE);
+            s.memory.capacity_s = 30;
+            let mut p = Pipeline::new(s).unwrap();
+            p.__set_rerender_mutation(m);
+            let now = p.memory_status().remaining_samples;
+            let target = now - (120 * 50 + 7);
+            p.fill_to_remaining(target).unwrap();
+            p.memory_status().remaining_samples >= target
+        };
+        assert!(fill(RerenderMutation::default()));
+        assert!(!fill(RerenderMutation {
+            fill_rounded_up: true,
+            ..Default::default()
+        }));
+    }
+
+    #[test]
+    fn store_skipped_is_caught_by_the_slot_cell() {
+        let raw = rc::raw_stimulus(RATE);
+        let make = |s: Settings| {
+            let mut p = Pipeline::new(s).unwrap();
+            p.set_component_parameter(BeforeLimiter, 0, 1.0).unwrap();
+            p.set_component_parameter(BeforeLimiter, 1, 700.0).unwrap();
+            p.set_component(BeforeLimiter, ComponentId::BandFilter)
+                .unwrap();
+            p
+        };
+        let (_, run) = rc::record_run(&make, RATE, cell(true, false), &raw);
+        assert!(identical(&run.record, &raw, RerenderMutation::default()));
+        assert!(!identical(
+            &run.record,
+            &raw,
+            RerenderMutation {
+                store_skipped: true,
+                ..Default::default()
+            }
+        ));
+    }
+
+    #[test]
+    fn i24_scale_is_caught_by_a_codec_off_cell() {
+        let raw = rc::raw_stimulus(RATE);
+        let (_, run) = rc::record_run(&standard, RATE, cell(false, false), &raw);
+        assert!(!identical(
+            &run.record,
+            &raw,
+            RerenderMutation {
+                i24_scale: true,
+                ..Default::default()
+            }
+        ));
+    }
+
+    #[test]
+    fn drop_event_is_caught_by_the_record_bytes() {
+        let raw = rc::raw_stimulus(RATE);
+        let (_, run) = rc::record_run(&standard, RATE, cell(false, false), &raw);
+        assert!(!run.events.is_empty());
+        let m = RerenderMutation {
+            drop_event: true,
+            ..Default::default()
+        };
+        // The digest still matches (rows do not enter it); only the record's bytes see it.
+        let mut plan = Plan::from_record(&run.record).unwrap();
+        plan.__set_mutation(m);
+        let mut r = ReRender::new(plan).unwrap();
+        let _ = r.feed(&raw).unwrap();
+        assert_eq!(r.finish().unwrap().verdict, Verdict::Identical);
+        assert!(!identical(&run.record, &raw, m));
+    }
+
+    #[test]
+    fn six_mutants() {
+        let RerenderMutation {
+            no_split: _,
+            self_stop_fields_dropped: _,
+            fill_rounded_up: _,
+            store_skipped: _,
+            i24_scale: _,
+            drop_event: _,
+        } = RerenderMutation::default();
+    }
+}

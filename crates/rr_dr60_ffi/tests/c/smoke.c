@@ -1356,6 +1356,105 @@ static int print_host_reads(void) {
   return 0;
 }
 
+/* `smoke --rerender` (spec 027 T010): the rows as the Rust example `rerender_rows` prints them.
+   A 1.2 s ±0.125 square at 48 kHz (exactly representable) with a knee change at input 10000,
+   recorded and its record written; then the C re-render faithful and with the knee at -30. */
+static int rerender_one(const uint8_t *rec, size_t len, const int32_t *codes, size_t n, int knee, const char *name) {
+  RrDr60ReRenderPlan *plan = NULL;
+  if (rr_dr60_rerender_plan_from_record(rec, len, &plan) != RR_DR60_STATUS_OK) return 1;
+  if (knee) {
+    SIZED(RrDr60ControlReading, v);
+    v.value_type = 2;
+    v.float_value = -30.0f;
+    if (rr_dr60_rerender_plan_set_control_value(plan, 10, &v) != RR_DR60_STATUS_OK) return 1;
+  }
+  RrDr60ReRender *r = NULL;
+  if (rr_dr60_rerender_new(plan, &r) != RR_DR60_STATUS_OK) return 1;
+  for (size_t pos = 0; pos < n; pos += 4096) {
+    size_t k = n - pos < 4096 ? n - pos : 4096;
+    SIZED(RrDr60ReRenderFed, fed);
+    if (rr_dr60_rerender_feed_i24(r, codes + pos, k, &fed) != RR_DR60_STATUS_OK) return 1;
+    if (fed.reached_stop || fed.self_stopped) break;
+  }
+  SIZED(RrDr60ReRenderOutcome, o);
+  if (rr_dr60_rerender_finish(r, &o) != RR_DR60_STATUS_OK) return 1;
+  size_t el = 0, rl = 0;
+  if (rr_dr60_rerender_export_len(r, &el) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_rerender_record_len(r, &rl) != RR_DR60_STATUS_OK) return 1;
+  uint8_t *b = malloc(rl);
+  size_t w = 0;
+  if (!b || rr_dr60_rerender_record_write(r, b, rl, &w) != RR_DR60_STATUS_OK) return 1;
+  int same = rl == len && memcmp(b, rec, len) == 0;
+  free(b);
+  printf("rerender %s verdict %u matches %u edited %u rows %llu export %zu record_same %d digest %016llx\n", name,
+         o.verdict, o.matches_original ? 1u : 0u, o.edited ? 1u : 0u, (unsigned long long)o.rows_landed, el, same,
+         (unsigned long long)o.digest);
+  rr_dr60_rerender_destroy(r);
+  return 0;
+}
+
+static int print_rerender(void) {
+  enum { RATE = 48000, LEN = 57600 };
+  static int32_t codes[LEN];
+  static float x[LEN];
+  for (size_t i = 0; i < LEN; i++) {
+    codes[i] = (i % 48) < 24 ? 1048576 : -1048576;
+    x[i] = (float)codes[i] / 8388608.0f;
+  }
+  RrDr60Settings s = rr_dr60_settings_default(RATE);
+  RrDr60Pipeline *p = NULL;
+  if (rr_dr60_create(&s, &p) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_schedule_change(p, RR_DR60_STREAM_RECORD, 10000, 10, -30.0, 1) != RR_DR60_STATUS_OK) return 1;
+  if (rr_dr60_start_recording(p) != RR_DR60_STATUS_OK) return 1;
+  static RrDr60VasEvent ev[4096];
+  static RrDr60ChangeEntry ch[256];
+  size_t ne = 0, nc = 0;
+  RrDr60VasEvent tmp_ev[256];
+  RrDr60ChangeEntry tmp_ch[RR_DR60_MAX_CHANGES_PER_CALL];
+  for (size_t pos = 0; pos < LEN; pos += 1024) {
+    SIZED(RrDr60RecordInfo, info);
+    size_t count = 0;
+    uint64_t total = 0;
+    size_t k = LEN - pos < 1024 ? LEN - pos : 1024;
+    if (rr_dr60_record_with_changes(p, x + pos, k, &info, tmp_ev, 256, tmp_ch, RR_DR60_MAX_CHANGES_PER_CALL, &count, &total) !=
+        RR_DR60_STATUS_OK)
+      return 1;
+    memcpy(ev + ne, tmp_ev, info.events * sizeof(RrDr60VasEvent));
+    ne += info.events;
+    memcpy(ch + nc, tmp_ch, count * sizeof(RrDr60ChangeEntry));
+    nc += count;
+  }
+  SIZED(RrDr60StopOutcome, out);
+  size_t count = 0;
+  uint64_t total = 0;
+  if (rr_dr60_stop_recording_with_changes(p, &out, tmp_ev, 256, tmp_ch, RR_DR60_MAX_CHANGES_PER_CALL, &count, &total) !=
+      RR_DR60_STATUS_OK)
+    return 1;
+  memcpy(ev + ne, tmp_ev, out.flush_events * sizeof(RrDr60VasEvent));
+  ne += out.flush_events;
+  memcpy(ch + nc, tmp_ch, count * sizeof(RrDr60ChangeEntry));
+  nc += count;
+  SIZED(RrDr60RunData, run);
+  run.stop.struct_size = sizeof(RrDr60StopFields);
+  run.stop.how = RR_DR60_STOP_CALL;
+  run.stop.stop_input_position = out.stop_input_position;
+  run.stop.padding_start_sample = out.padding_start_sample;
+  run.stop.input_samples_total = total;
+  run.stop.silence_fed_samples = out.silence_fed_samples;
+  run.events = ev;
+  run.event_count = ne;
+  run.changes = ch;
+  run.change_count = nc;
+  size_t len = 0, w = 0;
+  if (rr_dr60_processing_record_len(p, out.number, &run, &len) != RR_DR60_STATUS_OK) return 1;
+  uint8_t *rec = malloc(len);
+  if (!rec || rr_dr60_processing_record_write(p, out.number, &run, rec, len, &w) != RR_DR60_STATUS_OK) return 1;
+  rr_dr60_destroy(p);
+  int bad = rerender_one(rec, len, codes, LEN, 0, "faithful") || rerender_one(rec, len, codes, LEN, 1, "knee");
+  free(rec);
+  return bad;
+}
+
 /* `smoke --settings` (spec 025 T011): the rows as the Rust example `settings_rows` prints them:
    the reading's size and offsets; every control's reading on a default engine at 48 kHz (floats
    as bit patterns); for every setting the byte offsets a one-hot write by index changes in a
@@ -1488,6 +1587,9 @@ int main(int argc, char **argv) {
   }
   if (argc > 1 && strcmp(argv[1], "--host-reads") == 0) {
     return print_host_reads();
+  }
+  if (argc > 1 && strcmp(argv[1], "--rerender") == 0) {
+    return print_rerender();
   }
   static float in[N], out[N];
   for (size_t i = 0; i < N; i++) in[i] = (float)(0.1 * sin(2.0 * PI * 1000.0 * (double)i / FS));

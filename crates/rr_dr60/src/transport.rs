@@ -1201,6 +1201,46 @@ impl Pipeline {
         }
     }
 
+    /// Fills the memory so that its remaining capacity is `remaining` device samples, floored to
+    /// the stored unit (whole 120-sample frames with the speech codec on), by appending one
+    /// filler item shaped as an import is (spec 027 D7): it counts against the recordings, has
+    /// no processing-record block and its content is unspecified (zeros, or a frame of encoded
+    /// silence repeated). Only the remaining capacity matters to a later recording, which is
+    /// how a re-render reproduces a recording made into a part-full memory. A fill of zero units
+    /// adds nothing. Idle only; allocates nothing (the store is reserved at construction).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::RecordingInProgress`], [`Error::PlaybackInProgress`]; [`Error::DoesNotFit`]
+    /// when the remaining capacity is already below `remaining` or no recording slot is left.
+    /// The memory is unchanged on every error.
+    pub fn fill_to_remaining(&mut self, remaining: u64) -> Result<(), Error> {
+        match self.transport.state {
+            State::Recording => return Err(Error::RecordingInProgress),
+            State::Playing => return Err(Error::PlaybackInProgress),
+            State::Idle => {}
+        }
+        let now = self.memory_status().remaining_samples;
+        if now < remaining {
+            return Err(Error::DoesNotFit);
+        }
+        let unit = self.encoding().unit_samples() as u64;
+        #[cfg(feature = "__test-hooks")]
+        let units = if self.rerender_mutation.fill_rounded_up {
+            (now - remaining).div_ceil(unit)
+        } else {
+            (now - remaining) / unit
+        };
+        #[cfg(not(feature = "__test-hooks"))]
+        let units = (now - remaining) / unit;
+        let units = usize::try_from(units).map_err(|_| Error::DoesNotFit)?;
+        let mut frame = [0u8; crate::codec::FRAME_BYTES as usize];
+        if self.encoding() == crate::Encoding::Frames && units > 0 {
+            frame = crate::codec::silent_frame();
+        }
+        self.memory.fill_item(units, &frame)
+    }
+
     /// Selects the output route (spec 006 FR-015): speaker or earphone, at any time, during
     /// playback too; it takes effect at the next `play` block or processing call and survives
     /// `reset` and `reconfigure`. Since 0.9 the route selects which branch of the output chain

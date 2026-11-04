@@ -1628,3 +1628,39 @@ fn host_reads_allocate_nothing() {
         unsafe { rr_dr60_destroy(handle) };
     }
 }
+
+/// Spec 027 US3 AS1: a re-render session's `feed`, `meters` and `finish` allocate nothing (all
+/// buffers reserved in `new`), on a changes cell with the codec on and off.
+#[test]
+fn rerender_allocate_nothing() {
+    use rr_dr60::rerender::{Plan, ReRender};
+    use rr_dr60_harness::record_contract_checks::{self as rc, Cell};
+    let _turn = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    for &rate in configs::measurement_rates() {
+        for codec in [false, true] {
+            let raw = rc::raw_stimulus(rate);
+            let cell = Cell {
+                codec,
+                changes: true,
+                mute: false,
+                self_stop: false,
+            };
+            let (_, run) = rc::record_run(&rr_dr60_harness::checks::standard, rate, cell, &raw);
+            let mut r = ReRender::new(Plan::from_record(&run.record).unwrap()).unwrap();
+            MEASURING.with(|m| m.set(true));
+            let before = counts();
+            for block in raw.chunks(3000) {
+                let _ = r.feed(block).unwrap();
+                let _ = r.meters();
+            }
+            let o = r.finish().unwrap();
+            let after = counts();
+            MEASURING.with(|m| m.set(false));
+            assert_eq!(o.digest, Some(run.digest));
+            assert_eq!(
+                after, before,
+                "{rate} Hz codec {codec}: the session allocated"
+            );
+        }
+    }
+}

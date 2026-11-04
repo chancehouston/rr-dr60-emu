@@ -46,3 +46,6 @@ extension RrDr60ComponentParameter: RRDR60Sized {}
 extension RrDr60RecordComponent: RRDR60Sized {}
 // Spec 026 D9: the meter manifest's field.
 extension RrDr60MeterField: RRDR60Sized {}
+// Spec 027: the re-render session's feed report and outcome.
+extension RrDr60ReRenderFed: RRDR60Sized {}
+extension RrDr60ReRenderOutcome: RRDR60Sized {}

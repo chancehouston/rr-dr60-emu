@@ -224,6 +224,7 @@ mod paths;
 mod pipeline;
 mod rate;
 pub mod record;
+pub mod rerender;
 mod resample;
 mod sanitize;
 mod settings;
@@ -269,6 +270,27 @@ pub mod __test_hooks {
     /// The committed playback-stage coefficients (stage 10; spec 004 R-06).
     pub fn playback_sos() -> [[f64; 5]; 3] {
         crate::stages::voiceband_coeffs::PLAYBACK_SOS
+    }
+
+    /// Deliberate defects of the re-render for the spec 027 mutation tests (plan R-12);
+    /// `Default` is the committed behavior. Each fails a named test: `no_split` the dense-row
+    /// cell, `self_stop_fields_dropped` the self-stop cells' record bytes, `fill_rounded_up` the fill's
+    /// non-whole-frame target, `store_skipped` the non-default store, `i24_scale` the codec-off
+    /// cells, `drop_event` the record's bytes.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct RerenderMutation {
+        /// The schedule topped up only between host blocks.
+        pub no_split: bool,
+        /// A self-stopping call's stop fields not taken (the record's stop lines then wrong).
+        pub self_stop_fields_dropped: bool,
+        /// The fill's units rounded up.
+        pub fill_rounded_up: bool,
+        /// The component store left at its defaults.
+        pub store_skipped: bool,
+        /// The 24-bit input converted by `x / (2²³ − 1)`.
+        pub i24_scale: bool,
+        /// One event dropped from the run.
+        pub drop_event: bool,
     }
 
     /// Deliberate defects of the meter read-out for the spec 016 mutation tests (research

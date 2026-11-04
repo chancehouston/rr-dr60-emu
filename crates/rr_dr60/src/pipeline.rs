@@ -169,6 +169,9 @@ pub struct Pipeline {
     /// call, the first `SPEED_PLACE_TRACE_CAPACITY`; reserved at construction, never grown.
     #[cfg(feature = "__test-hooks")]
     pub(crate) speed_place_trace: alloc::vec::Vec<crate::timeline::PlaceState>,
+    /// Spec 027 R-12 (test hooks): the re-render mutants the engine side reads (the fill).
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) rerender_mutation: crate::__test_hooks::RerenderMutation,
     /// Spec 016: the meter read-out of the last non-empty processing call (research R-01).
     pub(crate) meters: Meters,
     /// Spec 017 D4: the tag of the last landed change per record-side value (by slot), carried
@@ -624,6 +627,8 @@ impl Pipeline {
             speed_trace: alloc::vec::Vec::with_capacity(SPEED_TRACE_CAPACITY), // never grown: a play call pushes within it
             #[cfg(feature = "__test-hooks")]
             speed_place_trace: alloc::vec::Vec::with_capacity(SPEED_PLACE_TRACE_CAPACITY),
+            #[cfg(feature = "__test-hooks")]
+            rerender_mutation: Default::default(),
         }
     }
 
@@ -1702,6 +1707,12 @@ impl Pipeline {
         p.one_pass.rec.mutate_mic(m);
         p.recorder.mutate_mic(m);
         Ok(p)
+    }
+
+    /// Test-only (hidden): the re-render mutants this engine applies (spec 027 R-12).
+    #[doc(hidden)]
+    pub fn __set_rerender_mutation(&mut self, m: crate::__test_hooks::RerenderMutation) {
+        self.rerender_mutation = m;
     }
 
     /// Test-only (hidden): a pipeline whose meter read-out carries the mutation `m` (spec 016

@@ -133,6 +133,10 @@ jobs:
         # 0.92's C smoke, compiled against 0.92's header, linked to this library: exit 0 and every
         # mode byte-identical to the current smoke's.
         run: scripts/abi-promise.sh 2a170d49340e09324020faef56e11e1845833002 # 2a170d4, 0.92's merge (the full id: a shallow checkout fetches it)
+      - name: The 0.93 ABI promise (spec 027 D8)
+        # 0.93's C smoke, compiled against 0.93's header, linked to this library: exit 0 and every
+        # mode byte-identical to the current smoke's.
+        run: scripts/abi-promise.sh 3890bfeb1fd402f3cca4f5a5497a712004dd7d35 # 3890bfe, 0.93's merge (the full id: a shallow checkout fetches it)
 
   coverage:
     # Constitution III: workspace line coverage >= 80%, enforced as soon as the workspace exists.
@@ -218,4 +222,4 @@ jobs:
       # rule under Miri, which reports an uninitialized padding byte where a painted-byte test
       # passes by luck (the first run caught `MaybeUninit::zeroed()`'s typed move).
       - name: Miri on the ABI helper's tests
-        run: cargo +nightly miri test -p rr_dr60_ffi --lib -- abi_tests::write_sized abi_tests::readout abi_tests::default_is abi_tests::published abi_tests::settings_read abi_tests::control_reading settings_read::tests insert::tests abi_tests::host_reads abi_tests::meter_field host_reads::tests
+        run: cargo +nightly miri test -p rr_dr60_ffi --lib -- abi_tests::write_sized abi_tests::readout abi_tests::default_is abi_tests::published abi_tests::settings_read abi_tests::control_reading settings_read::tests insert::tests abi_tests::host_reads abi_tests::meter_field host_reads::tests abi_tests::rerender_order
