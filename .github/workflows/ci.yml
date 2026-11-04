@@ -153,9 +153,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-llvm-cov
+          tool: cargo-llvm-cov,cargo-nextest
+      # One process per test (cargo-nextest). Under instrumentation the threads of one libtest
+      # process share the coverage counters' cache lines, which cost about ten times the CPU
+      # (us1_codec: 1266 CPU-seconds as one process, about 120 as separate processes) and
+      # serialized the one-test binaries; this job took 2 h 16 min on main before (2026-11-04).
+      # Doctests are not run here (nextest has none); the test job runs them uninstrumented.
       - name: Coverage gate (>= 80% lines)
-        run: cargo llvm-cov --all-features --workspace --fail-under-lines 80
+        run: cargo llvm-cov nextest --all-features --workspace --fail-under-lines 80
 
   golden-matrix:
     # FR-014 / SC-003: one golden file must match bit-for-bit on every target. One set of
