@@ -1484,7 +1484,10 @@ fn guide_onepass_map() {
         "the house denylist"
     );
     for sentence in text.split(". ") {
-        if sentence.contains("onepass_output_to_input") && sentence.contains("(`latency_samples`)")
+        if sentence.contains("onepass_output_to_input")
+            && sentence.contains("latency_samples")
+            && !sentence.contains("one_pass_input_at_output")
+            && !sentence.contains("one_pass_report_latency_samples")
         {
             panic!("an output position sent through latency_samples: {sentence}");
         }
@@ -1499,6 +1502,13 @@ fn guide_onepass_map() {
         "**For a one-pass output position use\n/// [`Pipeline::one_pass_input_at_output`]"
     ));
     assert!(pipeline.contains("**Note (2026-11-04, spec 028):**"));
+    assert!(
+        pipeline.contains("On the one-pass this position is on the clock before the speech coder")
+    );
+    let host_reads =
+        std::fs::read_to_string(root.join("crates/rr_dr60_ffi/src/host_reads.rs")).unwrap();
+    assert!(host_reads.contains("**Note (2026-11-04, spec\n/// 028):**"));
+    assert!(header.contains("clock before the speech coder"));
     assert!(pipeline.contains("Twin:\n    /// [`timeline::onepass_output_to_input`]"));
     assert!(
         header.contains(

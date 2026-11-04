@@ -1,6 +1,6 @@
 // Spec 028 D6 from Swift: the one-pass map's rows equal the Rust example's
 // (`cargo run -q -p rr_dr60_harness --example onepass_map_rows`, the fixture), the empty report
-// list, the refusals as statuses.
+// list and the heard point.
 import Foundation
 import RRDR60
 import RRDR60C
@@ -41,7 +41,7 @@ import Testing
     #expect(got == want)
 }
 
-@Test func onePassMapEmptyReportsAndRefusals() throws {
+@Test func onePassMapEmptyReportsAndTheHeardPoint() throws {
     var s = rr_dr60_settings_default(48000)
     var h: OpaquePointer?
     #expect(rr_dr60_create(&s, &h) == Int32(RR_DR60_STATUS_OK.rawValue))
@@ -50,8 +50,13 @@ import Testing
     let a = try OnePassMap.inputAtOutput(p, position: 100_000, events: [])
     #expect(a.first <= a.centre && a.centre <= a.last && a.struct_size == 32)
     var lat: UInt32 = 0
+    var rep: UInt32 = 0
+    var play: UInt32 = 0
     #expect(rr_dr60_latency_samples(p, &lat) == Int32(RR_DR60_STATUS_OK.rawValue))
+    #expect(rr_dr60_one_pass_report_latency_samples(p, &rep) == Int32(RR_DR60_STATUS_OK.rawValue))
+    #expect(rr_dr60_playback_latency_samples(p, &play) == Int32(RR_DR60_STATUS_OK.rawValue))
     #expect(a.centre == 100_000 - UInt64(lat))
+    // The heard point: the report's position plus the coder's delay plus the playback half's.
     let heard = try OnePassMap.spliceOutputPosition(p, event: RrDr60VasEvent(output_position: 10, input_length: 1))
-    #expect(heard > 10)
+    #expect(heard == 10 + UInt64(lat - rep) + UInt64(play))
 }

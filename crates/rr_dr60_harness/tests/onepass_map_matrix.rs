@@ -32,13 +32,19 @@ fn onepass_map_lead_reproduction() {
 /// existing map's and the workbench rule's differences (reported).
 #[test]
 fn onepass_map_seven_rates() {
-    println!("rate cell | L_post C | twin outputs off | min f_a − f_b | existing | workbench");
+    println!(
+        "rate cell | L_post C | twin outputs off excluded | min f_a − f_b | existing | workbench"
+    );
     for rate in configs::all_rates() {
         for cell in Cell::all() {
             let r = om::render(cell, rate);
             let t = om::twin(&r);
-            let (n, d, h, e) = om::lead_counts(&r, &t);
+            let (n, d, h, e, x) = om::lead_counts_excluded(&r, &t);
             assert_eq!(h, 0, "{rate} Hz {}", cell.name());
+            // D7 (iii): the outputs the twin clamps or the lead precedes, counted (the start, the
+            // stop's flush and padding).
+            let bound = r.c + r.l_post + 2 * u64::from(r.p.one_pass_drain_samples());
+            assert!(x <= bound, "{rate} Hz {}: {x} excluded", cell.name());
             let mut margin = f64::INFINITY;
             for ev in &r.events {
                 let (a, s) = (ev.output_position as usize, r.heard(ev) as usize);
@@ -52,7 +58,7 @@ fn onepass_map_seven_rates() {
                 assert!(margin >= 12.0, "{rate} Hz {}", cell.name());
             }
             println!(
-                "{rate} {} | {} {} | {n} {h} | {margin:.1} | {e} | {d}",
+                "{rate} {} | {} {} | {n} {h} {x} | {margin:.1} | {e} | {d}",
                 cell.name(),
                 r.l_post,
                 r.c
@@ -68,6 +74,7 @@ fn onepass_map_seven_rates() {
 fn onepass_map_read_cost() {
     use rr_dr60::{Pipeline, VasEvent};
     let p = Pipeline::new(Cell::all()[1].settings(48_000)).unwrap();
+    let mut t0 = 0.0;
     for n in [0usize, 100, 1000] {
         let ev: Vec<VasEvent> = (0..n as u64)
             .map(|i| VasEvent::new(10_000 + i * 20_000, 5_000))
@@ -80,9 +87,42 @@ fn onepass_map_read_cost() {
             acc = acc.wrapping_add(p.one_pass_input_at_output(end * i / reads, &ev).centre);
         }
         let ns = t.elapsed().as_nanos() as f64 / reads as f64;
-        println!(
-            "{n} reports: {ns:.0} ns per read ({:.2} ns per report) [{acc}]",
-            ns / n.max(1) as f64
-        );
+        if n == 0 {
+            t0 = ns;
+        }
+        let slope = if n == 0 { 0.0 } else { (ns - t0) / n as f64 };
+        println!("{n} reports: {ns:.1} ns per read, {slope:.2} ns per added report [{acc}]");
+    }
+}
+
+/// The taps the cells do not cover (hardware post-implementation Q4): with the coder on in drop
+/// mode at `AfterVas`, `AfterDecoder`, `AfterVolumeAmp`, `AfterSpeaker`, `RouteOutput` on the
+/// earphone route and `AfterEarphone`, the method is off the record-then-play twin on no output
+/// (asserted) and L_post is printed.
+#[test]
+fn onepass_map_taps() {
+    use rr_dr60::{Route, Tap};
+    let taps = [
+        (Tap::AfterVas, Route::Speaker),
+        (Tap::AfterDecoder, Route::Speaker),
+        (Tap::AfterVolumeAmp, Route::Speaker),
+        (Tap::AfterSpeaker, Route::Speaker),
+        (Tap::RouteOutput, Route::Earphone),
+        (Tap::AfterEarphone, Route::Earphone),
+    ];
+    for rate in configs::all_rates() {
+        for (tap, route) in taps {
+            let mut s = Cell::all()[4].settings(rate);
+            s.tap = tap;
+            let r = om::render_routed(s, route);
+            let t = om::twin(&r);
+            let (n, _, h, e) = om::lead_counts(&r, &t);
+            println!(
+                "{rate} {tap:?} {route:?}: L_post {} C {} | {n} outputs, {h} off | existing {e}",
+                r.l_post, r.c
+            );
+            assert!(n > 1000);
+            assert_eq!(h, 0, "{rate} Hz {tap:?} {route:?}");
+        }
     }
 }

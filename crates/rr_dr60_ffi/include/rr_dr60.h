@@ -1021,10 +1021,12 @@ typedef struct RrDr60BlockInfo {
 typedef struct RrDr60VasEvent {
   // Drop mode: stream output index of the first sample after the splice. Mute mode: stream
   // output index of the region's first muted sample. Counted from create, reset or
-  // reconfigure, so it does not depend on block sizes. On the one-pass this is where that
-  // sample enters the playback half; it is heard the speech coder's delay (when it runs)
-  // plus the playback half's latency later: `rr_dr60_one_pass_splice_output_position`
-  // (spec 028). The recorder's positions are device samples, not on this clock.
+  // reconfigure, so it does not depend on block sizes. On the one-pass this position is on the
+  // clock before the speech coder: the sample after the splice (or the region's first muted
+  // sample) enters the coder's delay line here, reaches the playback half's interpolator C
+  // host samples later (C = 0 when the coder does not run) and is heard C + L_post later, L_post
+  // the playback half's latency: `rr_dr60_one_pass_splice_output_position` (spec 028). The
+  // recorder's positions are device samples, not on this clock.
   uint64_t output_position;
   // Drop mode: host input samples removed at this splice. Mute mode: the region's length.
   uint64_t input_length;
@@ -3203,7 +3205,10 @@ RrDr60Status rr_dr60_settings_one_pass_vas_runs(const struct RrDr60Settings *set
 RrDr60Status rr_dr60_settings_one_pass_codec_runs(const struct RrDr60Settings *settings, bool *out);
 
 // The latency the one-pass's voice-activation reports align with, in host samples (spec 026
-// D1; `Pipeline::one_pass_report_latency_samples`). Real-time safe.
+// D1; `Pipeline::one_pass_report_latency_samples`). Real-time safe. **Note (2026-11-04, spec
+// 028):** mapping a report's own position with it puts the input the playback half's latency
+// earlier than spec 020's convention; the input of a pause is
+// `rr_dr60_one_pass_input_at_output` at `rr_dr60_one_pass_splice_output_position`.
 //
 // # Safety
 //

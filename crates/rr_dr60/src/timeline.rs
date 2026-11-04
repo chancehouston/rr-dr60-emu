@@ -314,6 +314,12 @@ impl OnePassClock {
     fn kept_input(&self, k: u64, events: &[VasEvent]) -> (u64, bool) {
         let pos = (u128::from(k) * u128::from(self.rate_m)).div_ceil(u128::from(self.rate_l));
         let pos = u64::try_from(pos).unwrap_or(u64::MAX);
+        #[cfg(feature = "__test-hooks")]
+        let events = if self.mutation.window_without_removed {
+            &[]
+        } else {
+            events
+        };
         let removed = if self.drop {
             events
                 .iter()
@@ -1087,10 +1093,25 @@ mod onepass_map_tests {
 
     #[test]
     fn onepass_map_front_tap_is_the_identity() {
-        let mut s = settings(48_000, true, VasMode::Drop);
-        s.tap = Tap::AfterAgc;
-        let p = Pipeline::new(s).unwrap();
-        let a = p.one_pass_input_at_output(5_000, &[]);
-        assert_eq!(a.centre, 5_000);
+        for rate in SUPPORTED_HOST_RATES {
+            for tap in [
+                Tap::AfterMicCapsule,
+                Tap::AfterMicAmp,
+                Tap::AfterInsert,
+                Tap::AfterAgc,
+            ] {
+                let mut s = settings(rate, true, VasMode::Drop);
+                s.tap = tap;
+                let p = Pipeline::new(s).unwrap();
+                for o in [3u64, 5_000] {
+                    let a = p.one_pass_input_at_output(o, &[]);
+                    assert_eq!(
+                        (a.centre, a.first, a.last, a.clamped),
+                        (o, o, o, false),
+                        "{rate} Hz {tap:?}"
+                    );
+                }
+            }
+        }
     }
 }

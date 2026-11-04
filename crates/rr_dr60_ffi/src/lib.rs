@@ -383,10 +383,12 @@ sized_default!(RrDr60BlockInfo);
 pub struct RrDr60VasEvent {
     /// Drop mode: stream output index of the first sample after the splice. Mute mode: stream
     /// output index of the region's first muted sample. Counted from create, reset or
-    /// reconfigure, so it does not depend on block sizes. On the one-pass this is where that
-    /// sample enters the playback half; it is heard the speech coder's delay (when it runs)
-    /// plus the playback half's latency later: `rr_dr60_one_pass_splice_output_position`
-    /// (spec 028). The recorder's positions are device samples, not on this clock.
+    /// reconfigure, so it does not depend on block sizes. On the one-pass this position is on the
+    /// clock before the speech coder: the sample after the splice (or the region's first muted
+    /// sample) enters the coder's delay line here, reaches the playback half's interpolator C
+    /// host samples later (C = 0 when the coder does not run) and is heard C + L_post later, L_post
+    /// the playback half's latency: `rr_dr60_one_pass_splice_output_position` (spec 028). The
+    /// recorder's positions are device samples, not on this clock.
     pub output_position: u64,
     /// Drop mode: host input samples removed at this splice. Mute mode: the region's length.
     pub input_length: u64,

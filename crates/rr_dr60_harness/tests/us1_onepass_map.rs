@@ -91,6 +91,18 @@ fn as3_onepass_map_record_then_play() {
             println!("{rate} {}: {n} outputs, {wrong} off", cell.name());
             assert!(n > 1000);
             assert_eq!(wrong, 0, "{rate} Hz {}", cell.name());
+            // At each heard splice the centre is the record path's map (a) within one host
+            // sample (D2; the one-pass reports carry the removed length in host units).
+            let mut at_s = 0i64;
+            for e in &r.events {
+                let s = r.heard(e);
+                if let Some(w) = t.at(&r, s) {
+                    let c = r.p.one_pass_input_at_output(s, &r.events).centre;
+                    at_s = at_s.max((c as i64 - w.centre as i64).abs());
+                }
+            }
+            println!("{rate} {}: at the heard splices within {at_s}", cell.name());
+            assert!(at_s <= 1, "{rate} Hz {}", cell.name());
             if cell.mode == VasMode::Drop {
                 for (j, e) in r.events.iter().enumerate() {
                     let end = r
@@ -175,10 +187,22 @@ fn as6_onepass_map_window() {
         for cell in Cell::all() {
             let r = om::render(cell, rate);
             let t = om::twin(&r);
+            // The decimator's half-length: the coder-off window of a far output with no report.
+            let half = {
+                let mut s = cell.settings(rate);
+                s.speech_codec_enabled = false;
+                let a = rr_dr60::Pipeline::new(s)
+                    .unwrap()
+                    .one_pass_input_at_output(1 << 30, &[]);
+                a.centre - a.first
+            };
             let (mut n, mut worst) = (0u64, 0i64);
             for o in 0..(r.y.len() as u64).saturating_sub(r.latency) {
                 let a = r.p.one_pass_input_at_output(o, &r.events);
                 assert!(a.first <= a.centre && a.centre <= a.last);
+                if !cell.codec && a.centre >= half {
+                    assert_eq!((a.first, a.last), (a.centre - half, a.centre + half));
+                }
                 let Some(w) = t.at(&r, o) else { continue };
                 let d = (a.first as i64 - w.first as i64)
                     .abs()

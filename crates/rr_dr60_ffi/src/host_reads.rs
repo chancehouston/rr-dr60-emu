@@ -258,7 +258,10 @@ unsafe fn read_value<T>(
 }
 
 /// The latency the one-pass's voice-activation reports align with, in host samples (spec 026
-/// D1; `Pipeline::one_pass_report_latency_samples`). Real-time safe.
+/// D1; `Pipeline::one_pass_report_latency_samples`). Real-time safe. **Note (2026-11-04, spec
+/// 028):** mapping a report's own position with it puts the input the playback half's latency
+/// earlier than spec 020's convention; the input of a pause is
+/// `rr_dr60_one_pass_input_at_output` at `rr_dr60_one_pass_splice_output_position`.
 ///
 /// # Safety
 ///

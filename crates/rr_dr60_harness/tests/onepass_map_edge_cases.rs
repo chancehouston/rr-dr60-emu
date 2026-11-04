@@ -1,8 +1,9 @@
 //! Spec 028 Edge Cases [TR: D2, D5, FR-002, FR-005]: the one-pass output map's corners.
 
-use rr_dr60::{Pipeline, VasEvent, VasMode};
+use rr_dr60::{Pipeline, VasEvent};
 use rr_dr60_harness::configs;
 use rr_dr60_harness::onepass_map_checks::{self as om, Cell, Region};
+use rr_dr60_harness::stimulus;
 
 /// Pause reports closer than the coder's delay (no render makes them; the arithmetic only):
 /// the centre jumps by each report's length at its own heard point and never decreases.
@@ -97,20 +98,38 @@ fn onepass_map_reads_current_settings() {
 }
 
 /// With the shortest hang (50 ms) splices are far apart and after the latency: the C + L_post
-/// outputs before a heard splice hold no earlier splice and never fall before the latency.
+/// outputs before a heard splice hold no earlier splice and never fall before the latency. The
+/// stimulus runs the gate at its fastest cycle (25 ms bursts, just past the 20 ms onset, and
+/// 80 ms gaps), so the gaps approach the bound: at most twice it, the smallest printed.
 #[test]
 fn onepass_map_shortest_hang_far_apart() {
     for &rate in configs::measurement_rates() {
         let mut s = Cell::all()[1].settings(rate);
         s.vas.hang_ms = 50.0;
-        let r = om::render_with(s);
-        assert!(!r.events.is_empty());
-        let min_gap = 301 * om::device_step(rate) - om::device_step(rate);
-        assert!(r.events[0].output_position >= r.latency, "{rate} Hz");
-        for w in r.events.windows(2) {
-            let gap = w[1].output_position - w[0].output_position;
-            assert!(gap >= min_gap && gap > r.c + r.l_post, "{rate} Hz: {gap}");
+        let fs = f64::from(rate);
+        let mut x = vec![0.0f32; rate as usize / 10];
+        for _ in 0..10 {
+            x.extend(stimulus::tone(om::F_BURST, 0.1, fs, rate as usize / 40));
+            x.extend(vec![0.0f32; rate as usize * 80 / 1000]);
         }
+        let (p, _, events) = om::render_input(s, &x);
+        assert!(events.len() >= 9, "{rate} Hz: {} pauses", events.len());
+        let min_gap = 301 * u64::from(rate) / 6000 - 1;
+        let latency = u64::from(p.latency_samples());
+        let lead = latency - u64::from(p.one_pass_report_latency_samples())
+            + u64::from(p.playback_latency_samples());
+        assert!(events[0].output_position >= latency, "{rate} Hz");
+        let mut smallest = u64::MAX;
+        for w in events.windows(2) {
+            let gap = w[1].output_position - w[0].output_position;
+            smallest = smallest.min(gap);
+            assert!(gap >= min_gap && gap > lead, "{rate} Hz: {gap}");
+        }
+        println!("{rate} Hz: the smallest gap {smallest} (bound {min_gap}, lead {lead})");
+        assert!(
+            smallest <= 2 * min_gap,
+            "{rate} Hz: the stimulus approaches the bound"
+        );
     }
 }
 
@@ -128,6 +147,5 @@ fn onepass_map_saturates() {
             assert!(a.first <= a.centre && a.centre <= a.last);
         }
         assert_eq!(p.one_pass_splice_output_position(&ev[1]), u64::MAX);
-        let _ = cell.mode == VasMode::Drop;
     }
 }

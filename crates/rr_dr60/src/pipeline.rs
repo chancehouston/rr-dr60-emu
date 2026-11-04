@@ -303,9 +303,10 @@ pub struct Meters {
 #[non_exhaustive]
 pub struct VasEvent {
     /// Drop mode: output index of the first sample after the splice. Mute mode: output index of
-    /// the region's first muted sample. On the one-pass this is where that sample enters the
-    /// playback half; it is heard the speech coder's delay (when it runs) plus the playback
-    /// half's latency later:
+    /// the region's first muted sample. On the one-pass this position is on the clock before the speech coder: the
+    /// sample after the splice (or the region's first muted sample) enters the coder's delay
+    /// line here, reaches the playback half's interpolator C host samples later (C = 0 when the
+    /// coder does not run) and is heard C + L_post later, L_post the playback half's latency:
     /// [`Pipeline::one_pass_splice_output_position`](crate::Pipeline::one_pass_splice_output_position)
     /// (spec 028). The record path's device-sample positions are not on this clock.
     pub output_position: u64,
@@ -1461,10 +1462,11 @@ impl Pipeline {
     /// [`timeline::onepass_output_to_input`](crate::timeline::onepass_output_to_input) for the
     /// reports. Real-time safe.
     ///
-    /// **Note (2026-11-04, spec 028):** a report's position is where the sample after the
-    /// splice enters the playback half, so mapping it with this latency puts the input the
-    /// playback half's latency (L_post, about 5 ms at 8 kHz and up, 0 at 6 kHz) earlier than
-    /// spec 020's convention. The input of a pause is
+    /// **Note (2026-11-04, spec 028):** a report's position is on the clock before the speech
+    /// coder (the sample after the splice enters the coder's delay line there and is heard
+    /// C + L_post later), so mapping it with this latency puts the input the playback half's
+    /// latency (L_post, about 5 ms at 8 kHz and up, 0 at 6 kHz) earlier than spec 020's
+    /// convention. The input of a pause is
     /// `one_pass_input_at_output(one_pass_splice_output_position(e), events)`
     /// ([`one_pass_input_at_output`](Self::one_pass_input_at_output)): the first input after the
     /// removed run.
@@ -1495,8 +1497,10 @@ impl Pipeline {
     ///
     /// The centre never decreases as `position` grows, so the first output at or after input
     /// `p` (the inverse direction) is found by bisection; an input inside a removed pause lands
-    /// on that pause's heard point. The 30 ms before a heard splice (with the coder running)
-    /// play the end of the hang, the last input the gate kept before it paused.
+    /// on that pause's heard point. The C + L_post outputs before a heard splice (about 35 ms at
+    /// 48 kHz with the coder running, about 5 ms with it off) play the end of the hang, the last
+    /// input the gate kept before it paused. The convention runs up to the output chain's input:
+    /// the chain adds about 0.3 ms on the speaker route.
     ///
     /// Linear in `events`, allocation-free, infallible; real-time safe for a bounded list
     /// (mapping every output of a long render costs outputs × reports: do it off the audio
@@ -1517,8 +1521,9 @@ impl Pipeline {
     /// mode) or the muted region's start (mute mode) at `event.output_position + C + L_post`,
     /// with C the speech coder's delay when it runs on the one-pass and L_post the playback
     /// half's latency, the 1 kHz group-delay convention of
-    /// [`one_pass_input_at_output`](Self::one_pass_input_at_output). The resumed sound starts
-    /// entering the output's interpolator at the leading edge `event.output_position + C`. The
+    /// [`one_pass_input_at_output`](Self::one_pass_input_at_output). The report's position is on
+    /// the clock before the coder; the resumed sound reaches the output's interpolator at the
+    /// leading edge `event.output_position + C`. The
     /// recorder's device-sample report positions are not on this clock. Infallible, real-time
     /// safe; saturates on a crafted report.
     #[must_use]
@@ -1542,8 +1547,13 @@ impl Pipeline {
         } else {
             u64::from(self.one_pass.rec.pre_encoder_latency())
         };
-        let half = crate::rate::RatePlan::for_host(s.host_rate_hz)
-            .map_or(0, |p| u64::from(p.delay_host_samples()));
+        // A front tap runs no decimator: the output is the input sample for sample.
+        let half = if s.tap.is_front() {
+            0
+        } else {
+            crate::rate::RatePlan::for_host(s.host_rate_hz)
+                .map_or(0, |p| u64::from(p.delay_host_samples()))
+        };
         let (rate_l, rate_m) = self.plan_l_m;
         let clk = crate::timeline::OnePassClock {
             latency,

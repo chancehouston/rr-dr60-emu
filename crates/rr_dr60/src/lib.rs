@@ -327,6 +327,8 @@ pub mod __test_hooks {
         pub clamp_before_r: bool,
         /// The coder's delay taken whenever the codec setting is on.
         pub c_from_setting: bool,
+        /// The window's frame ends mapped without the removed input.
+        pub window_without_removed: bool,
     }
 
     pub use crate::changes::{ChangeMutation, RecordMutation};

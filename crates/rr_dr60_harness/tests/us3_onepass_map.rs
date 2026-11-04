@@ -39,7 +39,8 @@ fn as1_onepass_map_no_codec() {
         let mut s = Cell::all()[1].settings(rate);
         s.tap = Tap::AfterVas;
         let r = om::render_with(s);
-        equal_outside(&r, r.l_post);
+        let d = equal_outside(&r, r.l_post);
+        assert_eq!(d, r.l_post * r.events.len() as u64, "{rate} Hz AfterVas");
     }
 }
 
@@ -54,7 +55,8 @@ fn as2_onepass_map_mute() {
     }
 }
 
-/// AS3: a render with no pause: equal in every cell.
+/// AS3: a render with no pause: equal in every cell. Definitional (with no report both maps are
+/// `o − L`; no mutant can fail it): it pins that no pause leaves nothing to correct.
 #[test]
 fn as3_onepass_map_no_pause() {
     for &rate in configs::measurement_rates() {

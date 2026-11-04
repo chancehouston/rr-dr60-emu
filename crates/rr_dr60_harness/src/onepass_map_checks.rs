@@ -101,6 +101,20 @@ pub fn labelled_gap(rate: u32, tail: usize) -> Gap {
     let start = x.len();
     x.resize(start + tail, 0.0);
     regions.push((start, x.len(), Region::Silence));
+    // The composition (research R-09): f_a and f_b, three bursts each with its f_a, two f_b
+    // between them, the silence; every region in place and of its length.
+    assert_eq!(regions.len(), 2 + BURSTS + BURSTS + (BURSTS - 1) + 1);
+    assert!(regions.windows(2).all(|w| w[0].1 == w[1].0));
+    for r in &regions {
+        let want = match r.2 {
+            Region::Burst(_) => n(0.3),
+            Region::Fa => fa_len,
+            Region::Fb if r.0 == fa_len => n(0.3),
+            Region::Fb => gap - fa_len,
+            Region::Silence => tail,
+        };
+        assert_eq!(r.1 - r.0, want, "{r:?}");
+    }
     Gap { x, regions }
 }
 
@@ -222,14 +236,23 @@ pub fn render(cell: Cell, rate: u32) -> Render {
 /// latency to the encoder's input and L_post the rest; at the playback taps L_post is
 /// `playback_latency_samples()` (asserted).
 pub fn render_with(s: Settings) -> Render {
+    render_routed(s, rr_dr60::Route::Speaker)
+}
+
+/// [`render_with`] on `route` (set before the first sample).
+pub fn render_routed(s: Settings, route: rr_dr60::Route) -> Render {
     let rate = s.host_rate_hz;
     let probe = Pipeline::new(s).expect("settings");
     let tail = probe.one_pass_drain_samples() as usize;
     let gap = labelled_gap(rate, tail);
-    let (p, y, events) = render_input(s, &gap.x);
+    let (p, y, events) = render_input_routed(s, route, &gap.x);
     let latency = u64::from(p.latency_samples());
     let c = latency - u64::from(p.one_pass_report_latency_samples());
-    let l_pre = u64::from(p.record_latency_pre_encoder_samples());
+    let l_pre = if s.tap.is_front() {
+        0
+    } else {
+        u64::from(p.record_latency_pre_encoder_samples())
+    };
     let l_post = latency - c - l_pre;
     if s.tap == Tap::AfterPlayback || s.tap == Tap::RouteOutput {
         assert_eq!(
@@ -252,7 +275,17 @@ pub fn render_with(s: Settings) -> Render {
 
 /// The one-pass output and pause reports of `x` with `s`, in 1024-sample blocks.
 pub fn render_input(s: Settings, x: &[f32]) -> (Pipeline, Vec<f32>, Vec<VasEvent>) {
+    render_input_routed(s, rr_dr60::Route::Speaker, x)
+}
+
+/// [`render_input`] on `route`.
+pub fn render_input_routed(
+    s: Settings,
+    route: rr_dr60::Route,
+    x: &[f32],
+) -> (Pipeline, Vec<f32>, Vec<VasEvent>) {
     let mut p = Pipeline::new(s).expect("settings");
+    p.set_route(route);
     let mut y = Vec::with_capacity(x.len());
     let mut events = Vec::new();
     let mut out = vec![0.0f32; 1024];
@@ -330,16 +363,26 @@ pub fn device_step(rate: u32) -> u64 {
 /// The lead reproduction (research R-00) for one cell: `(outputs compared, draft rule wrong,
 /// heard-point rule wrong, existing map wrong)` against the twin within `⌈m/l⌉` host samples.
 pub fn lead_counts(r: &Render, t: &Twin) -> (u64, u64, u64, u64) {
+    let c = lead_counts_excluded(r, t);
+    (c.0, c.1, c.2, c.3)
+}
+
+/// [`lead_counts`] with the outputs excluded (before the lead, or where the twin clamps: the
+/// start, the stop's flush and padding) as the fifth figure (D7 iii, "excluded and counted").
+pub fn lead_counts_excluded(r: &Render, t: &Twin) -> (u64, u64, u64, u64, u64) {
     let tol = device_step(r.p.settings().host_rate_hz) as i64;
-    let (mut n, mut bad_draft, mut bad_heard, mut bad_existing) = (0, 0, 0, 0);
+    let (mut n, mut bad_draft, mut bad_heard, mut bad_existing, mut excluded) = (0, 0, 0, 0, 0);
     let end = (r.y.len() as u64).saturating_sub(r.latency);
     for o in 0..end {
-        let Some(want) = t.at(r, o) else { continue };
+        let Some(want) = t.at(r, o) else {
+            excluded += 1;
+            continue;
+        };
         let off = |v: u64| (v as i64 - want.centre as i64).abs() > tol;
         n += 1;
         bad_draft += u64::from(off(r.draft(o)));
         bad_heard += u64::from(off(r.p.one_pass_input_at_output(o, &r.events).centre));
         bad_existing += u64::from(off(r.existing(o)));
     }
-    (n, bad_draft, bad_heard, bad_existing)
+    (n, bad_draft, bad_heard, bad_existing, excluded)
 }

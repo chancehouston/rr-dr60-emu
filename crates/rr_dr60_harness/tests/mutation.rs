@@ -2820,13 +2820,41 @@ mod onepass_map {
             .any(|e| heard(&r, m, e) != e.output_position + r.l_post)
     }
 
+    /// `us2_onepass_map::as2_onepass_map_splice_mute`: at the mutated read the f_a label does
+    /// not fall by 6 dB (the coder-on mute cell).
+    fn mute_fails(m: OnePassMapMutation) -> bool {
+        let r = om::render(Cell::all()[3], RATE);
+        let ms = RATE as usize / 1000;
+        r.events.iter().any(|e| {
+            let s = heard(&r, m, e) as usize;
+            let late = om::window_db(&r.y, RATE, om::F_A, s - 5 * ms, 4 * ms);
+            let after = om::window_db(&r.y, RATE, om::F_A, s + ms, 4 * ms);
+            after > late - 6.0
+        })
+    }
+
+    /// `us1_onepass_map::as6_onepass_map_window`: some window end off the twin's by more than
+    /// one device sample.
+    fn window_fails(m: OnePassMapMutation) -> bool {
+        let r = om::render(Cell::all()[1], RATE);
+        let t = om::twin(&r);
+        let tol = om::device_step(RATE) as i64;
+        (0..r.y.len() as u64 - r.latency).any(|o| {
+            let a = r.p.__one_pass_map_mutated(m, o, &r.events).0;
+            t.at(&r, o).is_some_and(|w| {
+                let d = (a.first as i64 - w.first as i64).abs();
+                d.max((a.last as i64 - w.last as i64).abs()) > tol
+            })
+        })
+    }
+
     #[test]
     fn onepass_map_no_c_is_caught() {
         let m = OnePassMapMutation {
             no_c: true,
             ..Default::default()
         };
-        assert!(labelled_gap_fails(m) && splice_drop_fails(m));
+        assert!(labelled_gap_fails(m) && splice_drop_fails(m) && mute_fails(m));
     }
 
     #[test]
@@ -2844,7 +2872,7 @@ mod onepass_map {
             no_l_post: true,
             ..Default::default()
         };
-        assert!(twin_fails(m) && splice_drop_fails(m));
+        assert!(twin_fails(m) && splice_drop_fails(m) && mute_fails(m));
     }
 
     #[test]
@@ -2858,7 +2886,8 @@ mod onepass_map {
 
     #[test]
     fn onepass_map_clamp_before_r_is_caught() {
-        // `onepass_map_edge_cases::onepass_map_clamp_order`'s synthetic report.
+        // `onepass_map_edge_cases::onepass_map_clamp_order`'s synthetic report and its
+        // independent figure: the removed input added before the clamp.
         let m = OnePassMapMutation {
             clamp_before_r: true,
             ..Default::default()
@@ -2866,14 +2895,14 @@ mod onepass_map {
         let p = rr_dr60::Pipeline::new(Cell::all()[1].settings(RATE)).unwrap();
         let e = VasEvent::new(10, 1000);
         let s = p.one_pass_splice_output_position(&e);
-        let committed = p.one_pass_input_at_output(s, &[e]).centre;
-        assert_eq!(
-            p.__one_pass_map_mutated(OnePassMapMutation::default(), s, &[e])
-                .0
-                .centre,
-            committed
-        );
-        assert_ne!(p.__one_pass_map_mutated(m, s, &[e]).0.centre, committed);
+        let l = u64::from(p.latency_samples());
+        assert!(s < l);
+        let want = s + 1000 - l;
+        let a = p
+            .__one_pass_map_mutated(OnePassMapMutation::default(), s, &[e])
+            .0;
+        assert_eq!(a.centre, want);
+        assert_ne!(p.__one_pass_map_mutated(m, s, &[e]).0.centre, want);
     }
 
     #[test]
@@ -2887,6 +2916,16 @@ mod onepass_map {
     }
 
     #[test]
+    fn onepass_map_window_without_removed_is_caught() {
+        let m = OnePassMapMutation {
+            window_without_removed: true,
+            ..Default::default()
+        };
+        assert!(window_fails(m));
+        assert!(!window_fails(OnePassMapMutation::default()));
+    }
+
+    #[test]
     fn onepass_map_committed_passes_every_oracle() {
         let m = OnePassMapMutation::default();
         assert!(
@@ -2894,11 +2933,12 @@ mod onepass_map {
                 && !splice_edges_fail(m)
                 && !twin_fails(m)
                 && !splice_drop_fails(m)
+                && !mute_fails(m)
         );
     }
 
     #[test]
-    fn onepass_map_six_mutants() {
+    fn onepass_map_seven_mutants() {
         let OnePassMapMutation {
             no_c: _,
             c_twice: _,
@@ -2906,6 +2946,7 @@ mod onepass_map {
             take_while_on_report_position: _,
             clamp_before_r: _,
             c_from_setting: _,
+            window_without_removed: _,
         } = OnePassMapMutation::default();
     }
 }

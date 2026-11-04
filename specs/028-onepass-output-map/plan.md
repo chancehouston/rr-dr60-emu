@@ -1,6 +1,6 @@
 # Implementation Plan: The one-pass output map
 
-**Branch**: `028-onepass-output-map` | **Date**: 2026-11-04 | **Spec**: [spec.md](spec.md) (approved by the owner 2026-11-04, D1 – D8; D2, D3, D4 and D5 restated with the owner's answers to the plan reviews, 2026-11-04, in its Clarifications) | Plan reviewed (coach 1 – 17, hardware P1 – P8, product M1 – M6, applied below); **plan approved by the owner 2026-11-04**.
+**Branch**: `028-onepass-output-map` | **Date**: 2026-11-04 | **Spec**: [spec.md](spec.md) (approved by the owner 2026-11-04, D1 – D8; D2, D3, D4 and D5 restated with the owner's answers to the plan reviews, 2026-11-04, in its Clarifications) | Plan reviewed (coach 1 – 17, hardware P1 – P8, product M1 – M6, applied below); **plan approved by the owner 2026-11-04**. Implemented 2026-11-04; the implementation and post-implementation restatements are in the spec's Clarifications (a seventh mutant `window_without_removed`, the taps row, the front-tap window).
 
 ## Summary
 
@@ -36,7 +36,7 @@ Rust 2024, MSRV 1.85, `no_std` + `alloc` core; C API by cbindgen; Swift package.
 
 ## Research
 
-- **R-00 Reproduce first** (coach 1). Before any core code, `onepass_map_matrix::onepass_map_lead_reproduction` prints the following, and implementation proceeds only if they match:
+- **R-00 Reproduce first** (coach 1). *Restated 2026-11-04 (implementation; spec Clarifications): the harness reads 723 outputs at 48 kHz (3 × L_post), not the scratch run's 702; the mute windows are 4 ms and 20 ms.* Before any core code, `onepass_map_matrix::onepass_map_lead_reproduction` prints the following, and implementation proceeds only if they match:
   - the record-then-play deviation of the signed draft's rule and of the heard-point rule, around each splice, at seven rates, coder on and off, in drop mode;
   - the mute-mode 5 ms window levels at 48 kHz.
 
@@ -120,7 +120,7 @@ Rust 2024, MSRV 1.85, `no_std` + `alloc` core; C API by cbindgen; Swift package.
   - An empty array passes a NULL base with count 0.
   - No Swift alignment view: the app handles one alignment type on both paths.
 
-- **R-09 The labelled gap** (D7; hardware P4, coach 7, 12). `rr_dr60_harness::onepass_map_checks` (new).
+- **R-09 The labelled gap** (D7; hardware P4, coach 7, 12). *Restated 2026-11-04 (implementation and the post-implementation reviews; spec Clarifications): the labels are 1400 Hz (f_a) and 2200 Hz (f_b); the drop-mode onset reader is the first output above −30 dBFS within one 1 kHz period of `S(e)` either side; the mute reader compares 4 ms windows either side of `S(e)` and the 20 ms before (a fall of at least 6 dB with the coder on, 40 dB off); the hiss margin is covered by the span check.* `rr_dr60_harness::onepass_map_checks` (new).
   - **The stimulus**, built with `stimulus::tone` at `peak_phase`, with each region's composition asserted:
     1. a leading f_a (500 Hz, about −46 dBFS) for the hang + 200 ms, then f_b (1500 Hz) for 0.3 s;
     2. three bursts, 0.3 s of −20 dBFS 1 kHz, each followed by f_a for the hang + 200 ms and then f_b up to the next burst (1.2 s gaps);
@@ -154,6 +154,7 @@ Rust 2024, MSRV 1.85, `no_std` + `alloc` core; C API by cbindgen; Swift package.
   | `take_while_on_report_position` | the existing map's switch at `pos` | `us1_onepass_map::as1_onepass_map_labelled_gap` |
   | `clamp_before_r` | an arithmetic mutant no render reaches (a splice needs pos ≥ the hang > L_pre) | `onepass_map_edge_cases::onepass_map_clamp_order` (synthetic) |
   | `c_from_setting` | c whenever `speech_codec_enabled` | `us2_onepass_map::as3_onepass_map_splice_no_codec`, `us3_onepass_map::as1_onepass_map_no_codec` at `Tap::AfterVas` with the codec setting on |
+| `window_without_removed` (added at the post-implementation review, hardware Q5) | the window's frame ends mapped without the removed input | `us1_onepass_map::as6_onepass_map_window` |
 
 - **R-12 Tests** (coach 3, 4, 15; product M2, M5).
   - **The core**, `timeline::onepass_map_tests`:
@@ -211,7 +212,7 @@ Rust 2024, MSRV 1.85, `no_std` + `alloc` core; C API by cbindgen; Swift package.
 | D5, FR-005 | R-05, R-06 | `guide_onepass_map`, `onepass_map_edge_cases::{onepass_map_shortest_hang_far_apart, onepass_map_reads_current_settings}`, `onepass_map_matrix::onepass_map_read_cost` |
 | D6, FR-006 | R-07, R-08 | `ffi_parity::onepass_map_parity`, `abi_tests::onepass_map_*`, `swift test OnePassMapTests`, `us2_abi::spec_028_onepass_map_appended_only`, six promise steps |
 | D7, FR-007 | R-09, R-10 | `us1_/us2_/us3_onepass_map`, `onepass_map_matrix::onepass_map_seven_rates` |
-| FR-008 | R-11 | `mutation onepass_map::` (six, each shown failing) |
+| FR-008 | R-11 | `mutation onepass_map::` (seven, each shown failing) |
 | D8, FR-009 | R-13 | `us2_abi::us3_guards_unmoved`, the golden diff |
 | SC-001 | R-09 | US1 AS1, AS3 including the default-engine cell |
 | SC-002 | R-04 | US2 AS1, AS2 |
@@ -225,7 +226,7 @@ Rust 2024, MSRV 1.85, `no_std` + `alloc` core; C API by cbindgen; Swift package.
 2. The core `onepass_map_tests`: red, then green.
 3. US1 against the labelled gap and the twin.
 4. US2 and US3.
-5. The six mutants, each shown failing.
+5. The mutants, each shown failing (seven since the post-implementation review).
 6. C: `abi_tests`, Miri, the smoke, the header.
 7. Swift.
 8. The documentation, the records and the version bump.

@@ -5761,7 +5761,7 @@ fn onepass_map_parity() {
                 })
                 .collect();
             let mut a = RrDr60InputAlignment::default();
-            for o in (0..r.y.len() as u64).step_by(3) {
+            for o in 0..r.y.len() as u64 {
                 // SAFETY: a live handle, the reports readable, a sized out.
                 assert_eq!(
                     unsafe {

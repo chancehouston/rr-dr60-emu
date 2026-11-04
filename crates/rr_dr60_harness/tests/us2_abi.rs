@@ -646,20 +646,28 @@ fn spec_028_onepass_map_appended_only() {
         "/../rr_dr60_ffi/include/rr_dr60.h"
     ))
     .unwrap();
+    // Every name on a line, not only the first (coach post-implementation 14); the defines by
+    // name, so only a value may move (`RR_DR60_VERSION_MINOR`).
     let names = |src: &str, prefix: &str| -> std::collections::BTreeSet<String> {
         src.lines()
-            .filter_map(|l| {
-                let i = l.find(prefix)? + prefix.len();
-                Some(
-                    l[i..]
-                        .chars()
-                        .take_while(|c| c.is_alphanumeric() || *c == '_')
-                        .collect(),
-                )
+            .flat_map(|l| {
+                l.match_indices(prefix)
+                    .map(|(i, _)| {
+                        l[i + prefix.len()..]
+                            .chars()
+                            .take_while(|c| c.is_alphanumeric() || *c == '_')
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect()
     };
-    for prefix in ["rr_dr60_", "RR_DR60_STATUS_", "typedef struct "] {
+    for prefix in [
+        "rr_dr60_",
+        "RR_DR60_STATUS_",
+        "typedef struct ",
+        "#define RR_DR60_",
+    ] {
         let (o, n) = (names(&old, prefix), names(&new, prefix));
         assert!(
             o.is_subset(&n),
