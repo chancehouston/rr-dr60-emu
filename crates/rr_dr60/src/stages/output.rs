@@ -608,13 +608,16 @@ impl OutputChain {
     /// Spec 026 D4: whether a playback-group meter field the chain writes is reached (the
     /// rules of [`finalize_into`](Self::finalize_into)): `route_peak` (9) and
     /// `output_clamp_count` (10, also the clamp option) at the route output; `amp_clip_count`
-    /// (11) at the knee's taps on the speaker route with stage 11 on (the live route);
+    /// (11) at the knee's taps on the speaker route with stage 11 on (the requested route);
     /// `battery_ceiling` (12) at the knee's taps.
-    pub(crate) fn meter_reached(&self, field: usize) -> bool {
+    ///
+    /// `route` is the requested route (engine issue #83): a plain route change lands at the
+    /// stream's first produced sample, so the reach answers for the route the next call plays.
+    pub(crate) fn meter_reached(&self, field: usize, route: Route) -> bool {
         match field {
             9 => self.meter_route,
             10 => self.meter_route && self.clamp,
-            11 => self.meter_amp && self.route == Route::Speaker && self.run_amp,
+            11 => self.meter_amp && route == Route::Speaker && self.run_amp,
             12 => self.meter_amp,
             _ => false,
         }

@@ -1341,16 +1341,17 @@ impl Pipeline {
 
     /// Whether `call` reaches the point of meter field `field` (the index in
     /// [`meters::FIELDS`](crate::meters::FIELDS)) at these settings (spec 026 D4): the engine's
-    /// own rule, from its construction-time state and, for `amp_clip_count`, the live route.
-    /// A field a call does not reach reads its rest value. `false` for an index past the fields.
+    /// own rule, from its construction-time state and, for `amp_clip_count`, the route
+    /// [`route`](Self::route) returns (engine issue #83: also before a plain
+    /// `set_route` has landed at the stream's first sample). A field a call does not reach reads its rest value. `false` for an index past the fields.
     /// Real-time safe.
     pub fn meter_reached(&self, field: usize, call: crate::meters::MeterCall) -> bool {
         use crate::meters::MeterCall;
         match (call, field) {
             (MeterCall::OnePass, 0..=7) => self.one_pass.rec.meter_reached(field),
-            (MeterCall::OnePass, 8..=12) => self.one_pass.play.meter_reached(field),
+            (MeterCall::OnePass, 8..=12) => self.one_pass.play.meter_reached(field, self.route),
             (MeterCall::Record, 0..=7) => self.recorder.meter_reached(field),
-            (MeterCall::Play, 8..=12) => self.player.meter_reached(field),
+            (MeterCall::Play, 8..=12) => self.player.meter_reached(field, self.route),
             _ => false,
         }
     }

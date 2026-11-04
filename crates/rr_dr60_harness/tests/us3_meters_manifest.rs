@@ -336,3 +336,42 @@ fn as3_lag_measured() {
         }
     }
 }
+
+/// Engine issue #83: the amplifier clip count's reach follows the requested route, as
+/// `control_value` does, also before the first sample (a plain `set_route` lands there), and
+/// agrees with the read-out once a call has run.
+#[test]
+fn as5_reach_follows_the_requested_route() {
+    for &rate in measurement_rates() {
+        for call in [MeterCall::OnePass, MeterCall::Play] {
+            let mut p = Pipeline::new(Settings::new(rate)).unwrap();
+            assert!(
+                p.meter_reached(11, call),
+                "{rate} {call:?}: speaker at rest"
+            );
+            p.set_route(Route::Earphone);
+            assert!(
+                !p.meter_reached(11, call),
+                "{rate} {call:?}: earphone, no sample yet"
+            );
+            p.set_route(Route::Speaker);
+            assert!(
+                p.meter_reached(11, call),
+                "{rate} {call:?}: back to the speaker"
+            );
+            // The battery factor (field 12) is reported on both routes.
+            p.set_route(Route::Earphone);
+            assert!(p.meter_reached(12, call));
+        }
+        // After a one-pass call the reach and the applied route agree.
+        let mut p = Pipeline::new(Settings::new(rate)).unwrap();
+        p.set_route(Route::Earphone);
+        let x = vec![0.0f32; 64];
+        let mut y = vec![0.0f32; 64];
+        let _ = p.process(&x, &mut y).unwrap();
+        assert!(
+            !p.meter_reached(11, MeterCall::OnePass),
+            "{rate}: after a call"
+        );
+    }
+}

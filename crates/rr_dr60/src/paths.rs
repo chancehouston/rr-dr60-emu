@@ -1188,10 +1188,10 @@ impl PlaybackPath {
     }
 
     /// Spec 026 D4: whether a playback-group meter field (8 – 12) is reached on this path.
-    pub(crate) fn meter_reached(&self, field: usize) -> bool {
+    pub(crate) fn meter_reached(&self, field: usize, route: crate::Route) -> bool {
         match field {
             8 => self.meter_playback,
-            9..=12 => self.chain.meter_reached(field),
+            9..=12 => self.chain.meter_reached(field, route),
             _ => false,
         }
     }
