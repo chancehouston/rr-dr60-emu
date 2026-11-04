@@ -1583,7 +1583,9 @@ impl Pipeline {
         }
         clk.mutation = m;
         let a = crate::timeline::onepass_input_at(&clk, codec, position, events);
-        let heard = events.first().map(|e| crate::timeline::onepass_heard(&clk, e));
+        let heard = events
+            .first()
+            .map(|e| crate::timeline::onepass_heard(&clk, e));
         (a, heard)
     }
 

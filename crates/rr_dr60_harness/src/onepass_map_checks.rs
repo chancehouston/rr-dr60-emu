@@ -2,8 +2,8 @@
 //! record-then-play twin for the one-pass output map.
 //!
 //! The gaps between −20 dBFS 1 kHz bursts are filled with sub-threshold tones whose frequency
-//! labels the region: f_a = 500 Hz from each burst's end for the hang + 200 ms (the hang's end
-//! is kept, the rest removed or muted), f_b = 1500 Hz from there to the next burst. A map that
+//! labels the region: f_a = 1400 Hz from each burst's end for the hang + 200 ms (the hang's end
+//! is kept, the rest removed or muted), f_b = 2200 Hz from there to the next burst. A map that
 //! points an output into the wrong region is caught by the label, not by an onset.
 
 use rr_dr60::timeline::{self, InputAlignment};
@@ -13,10 +13,12 @@ use crate::analysis;
 use crate::record_contract_checks::record_samples;
 use crate::stimulus;
 
-/// The label tones (research R-09; test conventions).
-pub const F_A: f64 = 500.0;
+/// The label tones (research R-09; test conventions): inside the band every cell passes (the
+/// microphone amplifier's 818 Hz input high-pass, A-046, cuts 500 Hz in the default cell), each
+/// a whole number of cycles in 20 ms.
+pub const F_A: f64 = 1400.0;
 /// The label after the hang's end region.
-pub const F_B: f64 = 1500.0;
+pub const F_B: f64 = 2200.0;
 /// The bursts' frequency.
 pub const F_BURST: f64 = 1000.0;
 /// The bursts' level, −20 dBFS peak.
@@ -213,26 +215,29 @@ impl Render {
 
 /// Renders `cell` at `rate` in 1024-sample blocks.
 pub fn render(cell: Cell, rate: u32) -> Render {
-    let s = cell.settings(rate);
+    render_with(cell.settings(rate))
+}
+
+/// Renders the labelled gap with `s` in 1024-sample blocks. L_pre is the record path's
+/// latency to the encoder's input and L_post the rest; at the playback taps L_post is
+/// `playback_latency_samples()` (asserted).
+pub fn render_with(s: Settings) -> Render {
+    let rate = s.host_rate_hz;
     let probe = Pipeline::new(s).expect("settings");
     let tail = probe.one_pass_drain_samples() as usize;
     let gap = labelled_gap(rate, tail);
-    let mut p = Pipeline::new(s).expect("settings");
-    let mut y = Vec::with_capacity(gap.x.len());
-    let mut events = Vec::new();
-    let mut out = vec![0.0f32; 1024];
-    for block in gap.x.chunks(1024) {
-        let mut ev = vec![VasEvent::default(); p.max_events(block.len())];
-        let info = p
-            .process_with_events(block, &mut out[..block.len()], &mut ev)
-            .expect("process");
-        events.extend_from_slice(&ev[..info.events]);
-        y.extend_from_slice(&out[..info.produced]);
-    }
+    let (p, y, events) = render_input(s, &gap.x);
     let latency = u64::from(p.latency_samples());
     let c = latency - u64::from(p.one_pass_report_latency_samples());
-    let l_post = u64::from(p.playback_latency_samples());
-    let l_pre = latency - c - l_post;
+    let l_pre = u64::from(p.record_latency_pre_encoder_samples());
+    let l_post = latency - c - l_pre;
+    if s.tap == Tap::AfterPlayback || s.tap == Tap::RouteOutput {
+        assert_eq!(
+            l_post,
+            u64::from(p.playback_latency_samples()),
+            "{rate} Hz: L_post"
+        );
+    }
     Render {
         p,
         gap,
@@ -243,6 +248,23 @@ pub fn render(cell: Cell, rate: u32) -> Render {
         l_post,
         l_pre,
     }
+}
+
+/// The one-pass output and pause reports of `x` with `s`, in 1024-sample blocks.
+pub fn render_input(s: Settings, x: &[f32]) -> (Pipeline, Vec<f32>, Vec<VasEvent>) {
+    let mut p = Pipeline::new(s).expect("settings");
+    let mut y = Vec::with_capacity(x.len());
+    let mut events = Vec::new();
+    let mut out = vec![0.0f32; 1024];
+    for block in x.chunks(1024) {
+        let mut ev = vec![VasEvent::default(); p.max_events(block.len())];
+        let info = p
+            .process_with_events(block, &mut out[..block.len()], &mut ev)
+            .expect("process");
+        events.extend_from_slice(&ev[..info.events]);
+        y.extend_from_slice(&out[..info.produced]);
+    }
+    (p, y, events)
 }
 
 /// The record-then-play twin (research R-10): the recorder's pause reports and stop on the same
@@ -283,12 +305,20 @@ pub fn level_db(y: &[f32], rate: u32, f: f64, a: usize, b: usize) -> f64 {
     let len = b - a;
     let start = a + len / 6;
     let n = len * 2 / 3;
-    analysis::db(analysis::single_bin(y, f, f64::from(rate), start, n).norm().max(1e-12))
+    analysis::db(
+        analysis::single_bin(y, f, f64::from(rate), start, n)
+            .norm()
+            .max(1e-12),
+    )
 }
 
 /// The amplitude of `f` over `y[a..a + len)`.
 pub fn window_db(y: &[f32], rate: u32, f: f64, a: usize, len: usize) -> f64 {
-    analysis::db(analysis::single_bin(y, f, f64::from(rate), a, len).norm().max(1e-12))
+    analysis::db(
+        analysis::single_bin(y, f, f64::from(rate), a, len)
+            .norm()
+            .max(1e-12),
+    )
 }
 
 /// Host samples per device sample, rounded up (`⌈m/l⌉`).

@@ -941,11 +941,15 @@ mod onepass_map_tests {
 
     /// A deterministic increasing event list (an LCG; positions at least 2000 apart).
     fn events(seed: u64, n: usize) -> Vec<VasEvent> {
-        let mut x = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let mut x = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let mut pos = 3000u64;
         (0..n)
             .map(|_| {
-                x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                x = x
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 pos += 2000 + (x >> 40) % 9000;
                 VasEvent::new(pos, 1 + (x >> 20) % 30_000)
             })
@@ -992,8 +996,11 @@ mod onepass_map_tests {
                             mode == VasMode::Drop,
                         );
                         let got = p.one_pass_input_at_output(o, &ev);
-                        assert_eq!((got.centre, got.clamped && got.centre == 0), (want.0, want.1),
-                            "{rate} Hz codec {codec} {mode:?} o {o}");
+                        assert_eq!(
+                            (got.centre, got.clamped && got.centre == 0),
+                            (want.0, want.1),
+                            "{rate} Hz codec {codec} {mode:?} o {o}"
+                        );
                     }
                 }
             }
@@ -1044,14 +1051,23 @@ mod onepass_map_tests {
             let p = Pipeline::new(settings(rate, false, VasMode::Drop)).unwrap();
             let (clk, _) = p.one_pass_clock();
             let a = p.one_pass_input_at_output(100_000, &[]);
-            assert_eq!((a.first, a.last), (a.centre - clk.half, a.centre + clk.half));
+            assert_eq!(
+                (a.first, a.last),
+                (a.centre - clk.half, a.centre + clk.half)
+            );
             let p = Pipeline::new(settings(rate, true, VasMode::Drop)).unwrap();
             let a = p.one_pass_input_at_output(100_000, &[]);
             // The coder's reach: about −22 … +30 ms around the frame (up to 20 ms back to it) plus the
             // decimator's half-length; the exact check is the twin (`us1_onepass_map`).
             let ms = u64::from(rate) / 1000;
-            assert!(a.centre - a.first >= 15 * ms && a.centre - a.first <= 50 * ms, "{rate} Hz {a:?}");
-            assert!(a.last - a.centre >= 5 * ms && a.last - a.centre <= 45 * ms, "{rate} Hz {a:?}");
+            assert!(
+                a.centre - a.first >= 15 * ms && a.centre - a.first <= 50 * ms,
+                "{rate} Hz {a:?}"
+            );
+            assert!(
+                a.last - a.centre >= 5 * ms && a.last - a.centre <= 45 * ms,
+                "{rate} Hz {a:?}"
+            );
             assert!(p.one_pass_input_at_output(0, &[]).clamped);
         }
     }
@@ -1059,7 +1075,10 @@ mod onepass_map_tests {
     #[test]
     fn onepass_map_saturates() {
         let p = Pipeline::new(settings(48_000, true, VasMode::Drop)).unwrap();
-        let ev = [VasEvent::new(u64::MAX - 10, u64::MAX), VasEvent::new(u64::MAX, 5)];
+        let ev = [
+            VasEvent::new(u64::MAX - 10, u64::MAX),
+            VasEvent::new(u64::MAX, 5),
+        ];
         let a = p.one_pass_input_at_output(u64::MAX, &ev);
         assert!(a.centre <= a.last);
         assert_eq!(p.one_pass_splice_output_position(&ev[1]), u64::MAX);

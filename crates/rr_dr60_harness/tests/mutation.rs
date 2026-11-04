@@ -2751,3 +2751,161 @@ mod rerender {
         } = RerenderMutation::default();
     }
 }
+
+/// Spec 028 research R-11: each one-pass map mutant fails the oracle the plan names (the
+/// committed behaviour passes the same check in `us1_onepass_map`, `us2_onepass_map`,
+/// `us3_onepass_map` and `onepass_map_edge_cases`).
+mod onepass_map {
+    use rr_dr60::__test_hooks::OnePassMapMutation;
+    use rr_dr60::{Tap, VasEvent};
+    use rr_dr60_harness::onepass_map_checks::{self as om, Cell, Region, Render};
+
+    const RATE: u32 = 48_000;
+
+    fn centre(r: &Render, m: OnePassMapMutation, o: u64) -> u64 {
+        r.p.__one_pass_map_mutated(m, o, &r.events).0.centre
+    }
+
+    fn heard(r: &Render, m: OnePassMapMutation, e: &VasEvent) -> u64 {
+        r.p.__one_pass_map_mutated(m, 0, core::slice::from_ref(e))
+            .1
+            .unwrap()
+    }
+
+    /// `as1_onepass_map_labelled_gap`: some span output maps outside f_a.
+    fn labelled_gap_fails(m: OnePassMapMutation) -> bool {
+        let r = om::render(Cell::all()[1], RATE);
+        r.events.iter().any(|e| {
+            (e.output_position..r.heard(e)).any(|o| r.gap.label(centre(&r, m, o)) != Region::Fa)
+        })
+    }
+
+    /// `as2_onepass_map_splice_edges`: the centre at the heard point is not the first input
+    /// after the removed run.
+    fn splice_edges_fail(m: OnePassMapMutation) -> bool {
+        let r = om::render(Cell::all()[1], RATE);
+        let mut removed = 0;
+        r.events.iter().any(|e| {
+            let i_e = e.output_position + removed - r.l_pre;
+            removed += e.input_length;
+            centre(&r, m, r.heard(e)) != i_e + e.input_length
+        })
+    }
+
+    /// `as3_onepass_map_record_then_play`: some output off the twin.
+    fn twin_fails(m: OnePassMapMutation) -> bool {
+        let r = om::render(Cell::all()[1], RATE);
+        let t = om::twin(&r);
+        let tol = om::device_step(RATE) as i64;
+        (0..r.y.len() as u64 - r.latency).any(|o| {
+            t.at(&r, o)
+                .is_some_and(|w| (centre(&r, m, o) as i64 - w.centre as i64).abs() > tol)
+        })
+    }
+
+    /// `us2_onepass_map::as1_onepass_map_splice_drop`: the read is not `pos + C + L_post`.
+    fn splice_drop_fails(m: OnePassMapMutation) -> bool {
+        let r = om::render(Cell::all()[1], RATE);
+        r.events.iter().any(|e| heard(&r, m, e) != r.heard(e))
+    }
+
+    /// `us2_onepass_map::as3_onepass_map_splice_no_codec` at `Tap::AfterVas` with the codec
+    /// setting on.
+    fn no_codec_fails(m: OnePassMapMutation) -> bool {
+        let mut s = Cell::all()[1].settings(RATE);
+        s.tap = Tap::AfterVas;
+        let r = om::render_with(s);
+        r.events
+            .iter()
+            .any(|e| heard(&r, m, e) != e.output_position + r.l_post)
+    }
+
+    #[test]
+    fn onepass_map_no_c_is_caught() {
+        let m = OnePassMapMutation {
+            no_c: true,
+            ..Default::default()
+        };
+        assert!(labelled_gap_fails(m) && splice_drop_fails(m));
+    }
+
+    #[test]
+    fn onepass_map_c_twice_is_caught() {
+        let m = OnePassMapMutation {
+            c_twice: true,
+            ..Default::default()
+        };
+        assert!(splice_edges_fail(m) && twin_fails(m));
+    }
+
+    #[test]
+    fn onepass_map_no_l_post_is_caught() {
+        let m = OnePassMapMutation {
+            no_l_post: true,
+            ..Default::default()
+        };
+        assert!(twin_fails(m) && splice_drop_fails(m));
+    }
+
+    #[test]
+    fn onepass_map_take_while_on_report_position_is_caught() {
+        let m = OnePassMapMutation {
+            take_while_on_report_position: true,
+            ..Default::default()
+        };
+        assert!(labelled_gap_fails(m));
+    }
+
+    #[test]
+    fn onepass_map_clamp_before_r_is_caught() {
+        // `onepass_map_edge_cases::onepass_map_clamp_order`'s synthetic report.
+        let m = OnePassMapMutation {
+            clamp_before_r: true,
+            ..Default::default()
+        };
+        let p = rr_dr60::Pipeline::new(Cell::all()[1].settings(RATE)).unwrap();
+        let e = VasEvent::new(10, 1000);
+        let s = p.one_pass_splice_output_position(&e);
+        let committed = p.one_pass_input_at_output(s, &[e]).centre;
+        assert_eq!(
+            p.__one_pass_map_mutated(OnePassMapMutation::default(), s, &[e])
+                .0
+                .centre,
+            committed
+        );
+        assert_ne!(p.__one_pass_map_mutated(m, s, &[e]).0.centre, committed);
+    }
+
+    #[test]
+    fn onepass_map_c_from_setting_is_caught() {
+        let m = OnePassMapMutation {
+            c_from_setting: true,
+            ..Default::default()
+        };
+        assert!(no_codec_fails(m));
+        assert!(!no_codec_fails(OnePassMapMutation::default()));
+    }
+
+    #[test]
+    fn onepass_map_committed_passes_every_oracle() {
+        let m = OnePassMapMutation::default();
+        assert!(
+            !labelled_gap_fails(m)
+                && !splice_edges_fail(m)
+                && !twin_fails(m)
+                && !splice_drop_fails(m)
+        );
+    }
+
+    #[test]
+    fn onepass_map_six_mutants() {
+        let OnePassMapMutation {
+            no_c: _,
+            c_twice: _,
+            no_l_post: _,
+            take_while_on_report_position: _,
+            clamp_before_r: _,
+            c_from_setting: _,
+        } = OnePassMapMutation::default();
+    }
+}
