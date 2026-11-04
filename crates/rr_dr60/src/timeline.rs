@@ -209,14 +209,20 @@ pub fn input_to_kept(
 }
 
 /// The one-pass's clocks (spec 015 and 017's pointer to 020): the input-clock position an
-/// output-clock `position` aligns with, through the one-pass's `latency` (the engine's
-/// [`latency_samples`](crate::Pipeline::latency_samples), host samples; for the
-/// voice-activation reports' positions, which exclude the speech coder's delay, pass
-/// [`one_pass_report_latency_samples`](crate::Pipeline::one_pass_report_latency_samples): spec
-/// 026 D1) and, with the gate in
-/// `drop` mode, the host samples its voice-activation `events` removed at or before the output
-/// (in mute mode nothing is removed); `(input, clamped)` with the clamp at 0 (the first outputs
-/// align with inputs before the stream's start).
+/// output-clock `position` aligns with, through a `latency` the caller passes and, with the gate
+/// in `drop` mode, the host samples its voice-activation `events` removed at or before the
+/// output (in mute mode nothing is removed); `(input, clamped)` with the clamp at 0 (the first
+/// outputs align with inputs before the stream's start).
+///
+/// The map is right on the clock its `latency` defines. **For a one-pass output position use
+/// [`Pipeline::one_pass_input_at_output`](crate::Pipeline::one_pass_input_at_output)** (spec
+/// 028, engine issue #82): an event's `output_position` is where the sample after the splice
+/// enters the playback half, and the splice is heard C + L_post host samples later (the speech
+/// coder's delay when it runs, then the playback half's latency;
+/// [`one_pass_splice_output_position`](crate::Pipeline::one_pass_splice_output_position)). With
+/// [`latency_samples`](crate::Pipeline::latency_samples) this map therefore switches to the
+/// content after a removed pause C + L_post outputs early in drop mode, and is right elsewhere;
+/// `drop` is the engine's `one_pass_vas_runs()` with the gate in drop mode.
 #[must_use]
 pub fn onepass_output_to_input(
     position: u64,
@@ -240,6 +246,136 @@ pub fn onepass_output_to_input(
     } else {
         (raw - latency, false)
     }
+}
+
+/// The one-pass's clocks for spec 028's reads (research R-01): built per call from the engine,
+/// nothing cached. Host samples throughout.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct OnePassClock {
+    /// The one-pass latency, `latency_samples()`.
+    pub(crate) latency: u64,
+    /// The speech coder's delay when it runs on the one-pass, else 0.
+    pub(crate) c: u64,
+    /// The record half's latency to the encoder's input.
+    pub(crate) l_pre: u64,
+    /// The playback half's latency, `latency − c − l_pre`.
+    pub(crate) l_post: u64,
+    /// The gate runs on the one-pass in drop mode.
+    pub(crate) drop: bool,
+    /// The decimator's half-length.
+    pub(crate) half: u64,
+    /// The rate plan's `(l, m)`: `m / l` host samples per device sample.
+    pub(crate) rate_l: u64,
+    pub(crate) rate_m: u64,
+    /// Spec 028 research R-11: a deliberate defect (test hooks only).
+    #[cfg(feature = "__test-hooks")]
+    pub(crate) mutation: crate::__test_hooks::OnePassMapMutation,
+}
+
+impl OnePassClock {
+    /// The shift from an event's position to its heard point, `c + l_post`.
+    fn heard_shift(&self) -> u64 {
+        #[cfg(feature = "__test-hooks")]
+        if self.mutation.take_while_on_report_position {
+            return 0;
+        }
+        self.c.saturating_add(self.l_post)
+    }
+
+    /// The host input removed by every event heard at or before output `o` (drop mode).
+    fn removed_heard(&self, o: u64, events: &[VasEvent]) -> u64 {
+        if !self.drop {
+            return 0;
+        }
+        let shift = self.heard_shift();
+        events
+            .iter()
+            .take_while(|e| e.output_position.saturating_add(shift) <= o)
+            .fold(0u64, |a, e| a.saturating_add(e.input_length))
+    }
+
+    /// The centre of output `o` (research R-02): `o + R(o) − latency`, clamped at 0.
+    fn centre(&self, o: u64, events: &[VasEvent]) -> (u64, bool) {
+        let r = self.removed_heard(o, events);
+        #[cfg(feature = "__test-hooks")]
+        if self.mutation.clamp_before_r {
+            let base = o.checked_sub(self.latency);
+            return (base.map_or(0, |b| b.saturating_add(r)), base.is_none());
+        }
+        let raw = o.saturating_add(r);
+        match raw.checked_sub(self.latency) {
+            Some(c) => (c, false),
+            None => (0, true),
+        }
+    }
+
+    /// A one-pass kept device index's input through the events' own clock and `l_pre`, as
+    /// `kept_to_input` maps through the pre-encoder latency (research R-03).
+    fn kept_input(&self, k: u64, events: &[VasEvent]) -> (u64, bool) {
+        let pos = (u128::from(k) * u128::from(self.rate_m)).div_ceil(u128::from(self.rate_l));
+        let pos = u64::try_from(pos).unwrap_or(u64::MAX);
+        let removed = if self.drop {
+            events
+                .iter()
+                .take_while(|e| e.output_position <= pos)
+                .fold(0u64, |a, e| a.saturating_add(e.input_length))
+        } else {
+            0
+        };
+        match pos.saturating_add(removed).checked_sub(self.l_pre) {
+            Some(c) => (c, false),
+            None => (0, true),
+        }
+    }
+}
+
+/// Spec 028 D2 – D3: the input behind one-pass output `o` with spec 020's direct-path window.
+pub(crate) fn onepass_input_at(
+    clk: &OnePassClock,
+    codec: bool,
+    o: u64,
+    events: &[VasEvent],
+) -> InputAlignment {
+    let (centre, mut clamped) = clk.centre(o, events);
+    if centre < clk.half {
+        clamped = true;
+    }
+    let mut first = centre.saturating_sub(clk.half);
+    let mut last = centre.saturating_add(clk.half);
+    if codec {
+        let lead = clk.c.saturating_add(clk.l_post);
+        let q = match o.checked_sub(lead) {
+            Some(q) => q,
+            None => {
+                clamped = true;
+                0
+            }
+        };
+        let k = u64::try_from(u128::from(q) * u128::from(clk.rate_l) / u128::from(clk.rate_m))
+            .unwrap_or(u64::MAX);
+        let frame_start = k / FRAME * FRAME;
+        if frame_start < CODEC_WINDOW_BEFORE {
+            clamped = true;
+        }
+        let lo = frame_start.saturating_sub(CODEC_WINDOW_BEFORE);
+        let hi = frame_start.saturating_add(CODEC_WINDOW_AFTER);
+        let (lo_in, lo_clamped) = clk.kept_input(lo, events);
+        let (hi_in, _) = clk.kept_input(hi, events);
+        clamped |= lo_clamped;
+        first = first.min(lo_in.saturating_sub(clk.half));
+        last = last.max(hi_in.saturating_add(clk.half));
+    }
+    InputAlignment {
+        centre,
+        first,
+        last,
+        clamped,
+    }
+}
+
+/// Spec 028 D3: the heard point of a one-pass pause report, `output_position + c + l_post`.
+pub(crate) fn onepass_heard(clk: &OnePassClock, e: &VasEvent) -> u64 {
+    e.output_position.saturating_add(clk.heard_shift())
 }
 
 /// The speed control's place automaton replayed over a schedule (research R-04: the
@@ -779,5 +915,163 @@ mod tests {
         let st = place_at(10, 6000, 3, 10, &[e(10, 5.0)]).unwrap();
         assert!(st.latched && st.level == 3);
         assert!(place_at(0, 6000, 3, 10, &[e(0, 9.0)]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod onepass_map_tests {
+    //! Spec 028 (research R-12): the one-pass map's arithmetic against the existing map, its
+    //! pins to the engine's latencies, monotonicity and saturation.
+    extern crate std;
+    use super::*;
+    use crate::settings::{MicSettings, OutputSettings, Tap, VasMode};
+    use crate::{Pipeline, SUPPORTED_HOST_RATES};
+    use std::vec::Vec;
+
+    fn settings(rate: u32, codec: bool, mode: VasMode) -> Settings {
+        let mut s = Settings::new(rate);
+        s.mic = MicSettings::BYPASSED;
+        s.output = OutputSettings::BYPASSED;
+        s.tap = Tap::AfterPlayback;
+        s.vas.mode = mode;
+        s.vas.hang_ms = 100.0;
+        s.speech_codec_enabled = codec;
+        s
+    }
+
+    /// A deterministic increasing event list (an LCG; positions at least 2000 apart).
+    fn events(seed: u64, n: usize) -> Vec<VasEvent> {
+        let mut x = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let mut pos = 3000u64;
+        (0..n)
+            .map(|_| {
+                x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                pos += 2000 + (x >> 40) % 9000;
+                VasEvent::new(pos, 1 + (x >> 20) % 30_000)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn onepass_map_pins_the_engine_latencies() {
+        for rate in SUPPORTED_HOST_RATES {
+            for codec in [false, true] {
+                let p = Pipeline::new(settings(rate, codec, VasMode::Drop)).unwrap();
+                let (clk, runs) = p.one_pass_clock();
+                assert_eq!(runs, codec);
+                assert_eq!(
+                    clk.c,
+                    u64::from(p.latency_samples() - p.one_pass_report_latency_samples()),
+                    "{rate} Hz"
+                );
+                assert_eq!(
+                    clk.l_post,
+                    u64::from(p.playback_latency_samples()),
+                    "{rate} Hz codec {codec}: L_post is the playback half's latency"
+                );
+                assert_eq!(clk.latency, clk.c + clk.l_pre + clk.l_post);
+            }
+        }
+    }
+
+    #[test]
+    fn onepass_map_equals_the_existing_map_shifted() {
+        for rate in SUPPORTED_HOST_RATES {
+            for codec in [false, true] {
+                for mode in [VasMode::Drop, VasMode::Mute] {
+                    let p = Pipeline::new(settings(rate, codec, mode)).unwrap();
+                    let (clk, _) = p.one_pass_clock();
+                    let lead = clk.c + clk.l_post;
+                    let ev = events(u64::from(rate) + u64::from(codec), 40);
+                    let end = ev.last().unwrap().output_position + 20_000;
+                    for o in (lead..end).step_by(7) {
+                        let want = onepass_output_to_input(
+                            o - lead,
+                            u32::try_from(clk.l_pre).unwrap(),
+                            &ev,
+                            mode == VasMode::Drop,
+                        );
+                        let got = p.one_pass_input_at_output(o, &ev);
+                        assert_eq!((got.centre, got.clamped && got.centre == 0), (want.0, want.1),
+                            "{rate} Hz codec {codec} {mode:?} o {o}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn onepass_map_splice_read_is_the_heard_point() {
+        for rate in SUPPORTED_HOST_RATES {
+            for codec in [false, true] {
+                let p = Pipeline::new(settings(rate, codec, VasMode::Drop)).unwrap();
+                let (clk, _) = p.one_pass_clock();
+                let e = VasEvent::new(12_345, 678);
+                assert_eq!(
+                    p.one_pass_splice_output_position(&e),
+                    12_345 + clk.c + clk.l_post
+                );
+                // The centre jumps at the heard point, to the first input after the run.
+                let s = p.one_pass_splice_output_position(&e);
+                let before = p.one_pass_input_at_output(s - 1, &[e]).centre;
+                let at = p.one_pass_input_at_output(s, &[e]).centre;
+                assert_eq!(at, before + 1 + 678, "{rate} Hz codec {codec}");
+            }
+        }
+    }
+
+    #[test]
+    fn onepass_map_monotone() {
+        for rate in SUPPORTED_HOST_RATES {
+            for mode in [VasMode::Drop, VasMode::Mute] {
+                let p = Pipeline::new(settings(rate, true, mode)).unwrap();
+                let ev = events(u64::from(rate) ^ 0x5a, 30);
+                let end = ev.last().unwrap().output_position + 10_000;
+                let mut prev = 0u64;
+                for o in 0..end {
+                    let a = p.one_pass_input_at_output(o, &ev);
+                    assert!(a.centre >= prev, "{rate} Hz {mode:?} o {o}");
+                    assert!(a.first <= a.centre && a.centre <= a.last);
+                    prev = a.centre;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn onepass_map_window_parts() {
+        for rate in SUPPORTED_HOST_RATES {
+            let p = Pipeline::new(settings(rate, false, VasMode::Drop)).unwrap();
+            let (clk, _) = p.one_pass_clock();
+            let a = p.one_pass_input_at_output(100_000, &[]);
+            assert_eq!((a.first, a.last), (a.centre - clk.half, a.centre + clk.half));
+            let p = Pipeline::new(settings(rate, true, VasMode::Drop)).unwrap();
+            let a = p.one_pass_input_at_output(100_000, &[]);
+            // The coder's reach: about −22 … +30 ms around the frame (up to 20 ms back to it) plus the
+            // decimator's half-length; the exact check is the twin (`us1_onepass_map`).
+            let ms = u64::from(rate) / 1000;
+            assert!(a.centre - a.first >= 15 * ms && a.centre - a.first <= 50 * ms, "{rate} Hz {a:?}");
+            assert!(a.last - a.centre >= 5 * ms && a.last - a.centre <= 45 * ms, "{rate} Hz {a:?}");
+            assert!(p.one_pass_input_at_output(0, &[]).clamped);
+        }
+    }
+
+    #[test]
+    fn onepass_map_saturates() {
+        let p = Pipeline::new(settings(48_000, true, VasMode::Drop)).unwrap();
+        let ev = [VasEvent::new(u64::MAX - 10, u64::MAX), VasEvent::new(u64::MAX, 5)];
+        let a = p.one_pass_input_at_output(u64::MAX, &ev);
+        assert!(a.centre <= a.last);
+        assert_eq!(p.one_pass_splice_output_position(&ev[1]), u64::MAX);
+        let _ = p.one_pass_input_at_output(0, &[VasEvent::new(0, u64::MAX)]);
+    }
+
+    #[test]
+    fn onepass_map_front_tap_is_the_identity() {
+        let mut s = settings(48_000, true, VasMode::Drop);
+        s.tap = Tap::AfterAgc;
+        let p = Pipeline::new(s).unwrap();
+        let a = p.one_pass_input_at_output(5_000, &[]);
+        assert_eq!(a.centre, 5_000);
     }
 }

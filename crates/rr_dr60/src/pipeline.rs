@@ -1456,6 +1456,14 @@ impl Pipeline {
     /// the coder's term is added after the single rounding, so this is exact. Pass it to
     /// [`timeline::onepass_output_to_input`](crate::timeline::onepass_output_to_input) for the
     /// reports. Real-time safe.
+    ///
+    /// **Note (2026-11-04, spec 028):** a report's position is where the sample after the
+    /// splice enters the playback half, so mapping it with this latency puts the input the
+    /// playback half's latency (L_post, about 5 ms at 8 kHz and up, 0 at 6 kHz) earlier than
+    /// spec 020's convention. The input of a pause is
+    /// `one_pass_input_at_output(one_pass_splice_output_position(e), events)`
+    /// ([`one_pass_input_at_output`](Self::one_pass_input_at_output)): the first input after the
+    /// removed run.
     pub fn one_pass_report_latency_samples(&self) -> u32 {
         if self.settings.one_pass_codec_runs() {
             self.latency
@@ -1463,6 +1471,120 @@ impl Pipeline {
         } else {
             self.latency
         }
+    }
+
+    /// The input behind one-pass output `position` (spec 028 D1 – D3, engine issue #82), with
+    /// spec 020's direct-path window ([`InputAlignment`](crate::timeline::InputAlignment): the
+    /// decimator's half-length around the centre; with the speech coder running, widened to
+    /// the model coder's reach around its frame). The centre is `position + R − L` on the 1 kHz
+    /// group-delay convention (L = [`latency_samples`](Self::latency_samples)), where R is the
+    /// host input removed by every pause heard at or before `position`
+    /// ([`one_pass_splice_output_position`](Self::one_pass_splice_output_position)); in mute
+    /// mode nothing is removed. `clamped` when an end was pulled to the stream's start; no end
+    /// clamp (the one-pass has no stop position: clamp at the input you fed).
+    ///
+    /// The engine supplies the latency, the coder's delay and the gate's mode; pass only
+    /// `events`: every pause report the one-pass gave since the stream's last start
+    /// (construction, `reset`, `reconfigure`), in report order, as the processing calls wrote
+    /// them (the positions are cumulative: concatenate the calls' buffers). Reports from before
+    /// a `reset` or `reconfigure` belong to another stream. Map with the settings that rendered.
+    ///
+    /// The centre never decreases as `position` grows, so the first output at or after input
+    /// `p` (the inverse direction) is found by bisection; an input inside a removed pause lands
+    /// on that pause's heard point. The 30 ms before a heard splice (with the coder running)
+    /// play the end of the hang, the last input the gate kept before it paused.
+    ///
+    /// Linear in `events`, allocation-free, infallible; real-time safe for a bounded list
+    /// (mapping every output of a long render costs outputs × reports: do it off the audio
+    /// thread). The arithmetic saturates on a crafted list. Twin:
+    /// [`timeline::onepass_output_to_input`](crate::timeline::onepass_output_to_input), which
+    /// takes the latency from the caller.
+    #[must_use]
+    pub fn one_pass_input_at_output(
+        &self,
+        position: u64,
+        events: &[VasEvent],
+    ) -> crate::timeline::InputAlignment {
+        let (clk, codec) = self.one_pass_clock();
+        crate::timeline::onepass_input_at(&clk, codec, position, events)
+    }
+
+    /// Where a one-pass pause report is heard on the output (spec 028 D3): the splice (drop
+    /// mode) or the muted region's start (mute mode) at `event.output_position + C + L_post`,
+    /// with C the speech coder's delay when it runs on the one-pass and L_post the playback
+    /// half's latency, the 1 kHz group-delay convention of
+    /// [`one_pass_input_at_output`](Self::one_pass_input_at_output). The resumed sound starts
+    /// entering the output's interpolator at the leading edge `event.output_position + C`. The
+    /// recorder's device-sample report positions are not on this clock. Infallible, real-time
+    /// safe; saturates on a crafted report.
+    #[must_use]
+    pub fn one_pass_splice_output_position(&self, event: &VasEvent) -> u64 {
+        let (clk, _) = self.one_pass_clock();
+        crate::timeline::onepass_heard(&clk, event)
+    }
+
+    /// Spec 028 research R-01: the one-pass's clocks from the engine's current state.
+    pub(crate) fn one_pass_clock(&self) -> (crate::timeline::OnePassClock, bool) {
+        let s = &self.settings;
+        let codec = s.one_pass_codec_runs();
+        let latency = u64::from(self.latency);
+        let c = if codec {
+            u64::from(paths::codec_delay_host_samples(s.host_rate_hz))
+        } else {
+            0
+        };
+        let l_pre = if s.tap.is_front() {
+            0
+        } else {
+            u64::from(self.one_pass.rec.pre_encoder_latency())
+        };
+        let half = crate::rate::RatePlan::for_host(s.host_rate_hz)
+            .map_or(0, |p| u64::from(p.delay_host_samples()));
+        let (rate_l, rate_m) = self.plan_l_m;
+        let clk = crate::timeline::OnePassClock {
+            latency,
+            c,
+            l_pre,
+            l_post: latency.saturating_sub(c).saturating_sub(l_pre),
+            drop: s.one_pass_vas_runs() && s.vas.mode == crate::settings::VasMode::Drop,
+            half,
+            rate_l,
+            rate_m,
+            #[cfg(feature = "__test-hooks")]
+            mutation: crate::__test_hooks::OnePassMapMutation::default(),
+        };
+        (clk, codec)
+    }
+
+    /// Test-only (hidden; spec 028 research R-11): the one-pass map with the mutant `m`.
+    #[cfg(feature = "__test-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn __one_pass_map_mutated(
+        &self,
+        m: crate::__test_hooks::OnePassMapMutation,
+        position: u64,
+        events: &[VasEvent],
+    ) -> (crate::timeline::InputAlignment, Option<u64>) {
+        let (mut clk, mut codec) = self.one_pass_clock();
+        let delay = u64::from(paths::codec_delay_host_samples(self.settings.host_rate_hz));
+        if m.c_from_setting && self.settings.speech_codec_enabled && !codec {
+            clk.c = delay;
+            codec = true;
+        }
+        if m.no_c {
+            clk.c = 0;
+        }
+        if m.c_twice {
+            clk.c = clk.c.saturating_mul(2);
+        }
+        if m.no_l_post {
+            clk.l_post = 0;
+        }
+        clk.mutation = m;
+        let a = crate::timeline::onepass_input_at(&clk, codec, position, events);
+        let heard = events.first().map(|e| crate::timeline::onepass_heard(&clk, e));
+        (a, heard)
     }
 
     /// The memory's encoding (spec 008 FR-012): speech-codec frames with the codec on,
