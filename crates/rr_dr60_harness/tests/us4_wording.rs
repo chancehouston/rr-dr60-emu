@@ -151,3 +151,39 @@ fn as5_documented_differences() {
     let mark = "a ghost\u{301} here";
     assert!(!re.is_match(mark) && wording::first_hit(mark).is_some());
 }
+
+/// Spec 029 D7 / FR-007 (plan R-10): the report's strings pass both engine lists and the phrase
+/// list; the phrase list catches the words it exists for and allows the two compound terms.
+#[test]
+fn nonspeech_strings_pass() {
+    use rr_dr60_harness::nonspeech_checks as ns;
+    for s in ns::strings() {
+        assert!(wording::first_hit(&s).is_none(), "engine list: {s}");
+        assert!(wording::first_claim_hit(&s).is_none(), "claims list: {s}");
+        assert!(ns::phrase_hit(&s).is_none(), "phrase list: {s}");
+    }
+    for bad in [
+        "a voice-like peak",
+        "listeners agree",
+        "the formants move",
+        "syllabic rate",
+        "it sounds like speech",
+        "noise reduction",
+        "hidden content",
+        "words appear",
+        "the pitch rises",
+    ] {
+        assert!(
+            ns::phrase_hit(bad).is_some(),
+            "the phrase list must catch {bad:?}"
+        );
+    }
+    for ok in [
+        "stage 5, the Voice-activated pause (VAS)",
+        "the voice band of the codec",
+        "not a noise reduction stage",
+        "computed by the harness",
+    ] {
+        assert!(ns::phrase_hit(ok).is_none(), "{ok:?} is allowed");
+    }
+}

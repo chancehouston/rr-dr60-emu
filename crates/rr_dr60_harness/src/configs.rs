@@ -207,6 +207,36 @@ pub fn settings(name: &str, host_rate_hz: u32) -> Settings {
         // Spec 008 (contracts/golden-format.md): the codec configurations (the output chain
         // bypassed, 009 FR-016).
         "default_codec" => s.speech_codec_enabled = true,
+        // Spec 029 (D3; plan R-03): the ladder's rungs, each with its tap. C0 is `bypass_all`,
+        // C1 `default`, C2 `codec_only`; C3 the band, the clamp and the coder with the gate and
+        // limiter off, at `AfterPlayback`; C4 … C6 are built on `Settings::new` below.
+        "nonspeech_c0" => s = settings("bypass_all", host_rate_hz),
+        "nonspeech_c1" => s = settings("default", host_rate_hz),
+        "nonspeech_c2" => s = settings("codec_only", host_rate_hz),
+        "nonspeech_c3" => {
+            s = settings("default_codec", host_rate_hz);
+            no_agc(&mut s);
+            no_vas(&mut s);
+            s.tap = Tap::AfterPlayback;
+        }
+        // C4: the microphone, the limiter, the band, the clamp and the coder; the gate off; the
+        // output chain's three stages off; before the output chain. C5 adds the gate at level 3
+        // (the default record path before the output chain); C6 is C5 at sensitivity 5 with the
+        // hiss offset +12 dB (plan P2 of the draft reviews: the gate stays open on the hiss);
+        // C7 is the default engine at the route output.
+        "nonspeech_c4" | "nonspeech_c5" | "nonspeech_c6" => {
+            s = Settings::new(host_rate_hz);
+            s.output = rr_dr60::OutputSettings::BYPASSED;
+            s.tap = Tap::AfterPlayback;
+            if name == "nonspeech_c4" {
+                no_vas(&mut s);
+            }
+            if name == "nonspeech_c6" {
+                s.vas.sensitivity = 5;
+                s.mic.hiss_offset_db = 12.0;
+            }
+        }
+        "nonspeech_c7" => s = Settings::new(host_rate_hz),
         "codec_only" | "codec_only_vas" => {
             no_agc(&mut s);
             no_stages(&mut s);

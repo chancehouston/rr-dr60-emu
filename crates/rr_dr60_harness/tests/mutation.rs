@@ -2950,3 +2950,111 @@ mod onepass_map {
         } = OnePassMapMutation::default();
     }
 }
+
+/// Spec 029 FR-009 (US3 AS3, restated at the plan reviews, P3): five reader mutants, each
+/// failing a named D6 check with its figure printed; reader-only, at 6 kHz.
+mod nonspeech {
+    use rr_dr60_harness::nonspeech_checks::{
+        self as ns, Configuration as C, PRODUCTION, ReaderOptions, Stimulus as S,
+    };
+
+    const RATE: u32 = 6000;
+
+    fn measures(s: S, c: C, o: ReaderOptions) -> ns::Measures {
+        ns::compute_cell(s, c, RATE, ns::BLOCK, o).measures
+    }
+
+    /// (v): the noise rows' peaks ≤ 1.5 in C0 and C1.
+    #[test]
+    fn no_prominence_fails_peaks_bound() {
+        let o = ReaderOptions {
+            prominence: false,
+            ..PRODUCTION
+        };
+        let mut worst_prod = 0.0f64;
+        let mut worst_mut = 0.0f64;
+        for s in [S::A35, S::B, S::C, S::E] {
+            for c in [C::C0, C::C1] {
+                worst_prod = worst_prod.max(measures(s, c, PRODUCTION).peaks.unwrap());
+                worst_mut = worst_mut.max(measures(s, c, o).peaks.unwrap());
+            }
+        }
+        println!(
+            "no_prominence: peaks {worst_prod} (production) vs {worst_mut} (mutant), bound 1.5"
+        );
+        assert!(worst_prod <= 1.5 && worst_mut > 1.5);
+    }
+
+    /// (v): the pink row's lowest-peak median at pass-through within 900 – 1500 Hz (the
+    /// pre-emphasis row, added at the post-implementation reviews; the resonator row's median
+    /// cannot be its oracle: the mutant reads 740 against 700 Hz, inside the band).
+    #[test]
+    fn no_preemphasis_fails_pink_median() {
+        let o = ReaderOptions {
+            pre_emphasis: false,
+            ..PRODUCTION
+        };
+        let p = measures(S::E, C::C0, PRODUCTION)
+            .lowest_peak_median_hz
+            .unwrap();
+        let m = measures(S::E, C::C0, o).lowest_peak_median_hz.unwrap();
+        let (lo, hi) = ns::PINK_MEDIAN_HZ;
+        println!(
+            "no_preemphasis on e: median {p} Hz (production) vs {m} Hz (mutant), band {lo}-{hi}"
+        );
+        assert!((lo..=hi).contains(&p) && !(lo..=hi).contains(&m));
+    }
+
+    /// (i): the reference's periodic-frame fraction ≥ 0.9.
+    #[test]
+    fn lag_max_50_fails_reference_fraction() {
+        let o = ReaderOptions {
+            lag_max: 50,
+            ..PRODUCTION
+        };
+        let p = measures(S::G, C::C0, PRODUCTION).periodic_fraction.unwrap();
+        let m = measures(S::G, C::C0, o).periodic_fraction.unwrap();
+        println!("lag_max_50: fraction {p} (production) vs {m} (mutant), bound 0.9");
+        assert!(p >= 0.9 && m < 0.9);
+    }
+
+    /// (iii): the C2 / C3 silence residue stays inactive at −75 dBFS and turns active at −95.
+    #[test]
+    fn floor_minus_95_fails_silence_residue() {
+        let o = ReaderOptions {
+            active_floor_dbfs: -95.0,
+            ..PRODUCTION
+        };
+        let p = measures(S::F, C::C2, PRODUCTION).active;
+        let m = measures(S::F, C::C2, o).active;
+        println!("floor_-95: active {p} (production) vs {m} (mutant), bound 0");
+        assert!(p == 0 && m > 0);
+    }
+
+    /// (vi): the pair count on (d) in C0 equals Σ(run − 1) over the active runs.
+    #[test]
+    fn no_reset_fails_pair_count() {
+        let o = ReaderOptions {
+            reset_state: false,
+            ..PRODUCTION
+        };
+        let sp = ns::process(S::D, C::C0, RATE, ns::BLOCK);
+        let want = ns::pairs_oracle(&sp.samples, &sp.splices, ns::ACTIVE_DBFS);
+        let p = ns::read(&sp.samples, &sp.splices, PRODUCTION).pairs;
+        let m = ns::read(&sp.samples, &sp.splices, o).pairs;
+        println!("no_reset: pairs {p} (production) vs {m} (mutant), oracle {want}");
+        assert!(p == want && m != want);
+    }
+
+    /// The count asserted as five (plan R-11).
+    #[test]
+    fn five_mutants() {
+        let src = include_str!("mutation.rs");
+        let start = src.find("mod nonspeech {").unwrap();
+        let n = src[start..]
+            .lines()
+            .filter(|l| l.starts_with("    fn ") && l.contains("_fails_"))
+            .count();
+        assert_eq!(n, 5);
+    }
+}

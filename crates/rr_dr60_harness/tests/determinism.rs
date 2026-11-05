@@ -1207,3 +1207,18 @@ fn rerender_same_input_same_result() {
         assert_eq!(go(), go(), "{rate} Hz");
     }
 }
+
+/// Spec 029 FR-011: the same cells read the same text twice (two cells at the measurement rates).
+#[test]
+fn nonspeech_same_input_same_text() {
+    use rr_dr60_harness::nonspeech_checks::{self as ns, Configuration as C, Stimulus as S};
+    for &rate in configs::measurement_rates() {
+        for (s, c) in [(S::B, C::C3), (S::D, C::C5)] {
+            let a = ns::compute_cell(s, c, rate, ns::BLOCK, ns::PRODUCTION);
+            let b = ns::compute_cell(s, c, rate, ns::BLOCK, ns::PRODUCTION);
+            assert_eq!(a, b, "{} {} at {rate}", s.id(), c.id());
+            let c0 = ns::compute_cell(s, C::C0, rate, ns::BLOCK, ns::PRODUCTION).measures;
+            assert_eq!(ns::row_text(&a, &c0), ns::row_text(&b, &c0));
+        }
+    }
+}

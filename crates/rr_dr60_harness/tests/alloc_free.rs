@@ -1721,3 +1721,37 @@ fn onepass_map_allocates_nothing() {
         unsafe { rr_dr60_destroy(handle) };
     }
 }
+
+/// Spec 029 FR-011: the engine's processing calls under the report's configurations allocate
+/// nothing (the reader runs outside the window).
+#[test]
+fn nonspeech_processing_allocates_nothing() {
+    use rr_dr60_harness::nonspeech_checks::{Configuration as C, Stimulus as S};
+    let _turn = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    for &rate in configs::measurement_rates() {
+        for c in [C::C3, C::C5, C::C7] {
+            let x = S::B.samples(rate);
+            let mut p = Pipeline::new(c.settings(rate)).unwrap();
+            let mut out = vec![0.0f32; 4096];
+            let mut ev = vec![VasEvent::default(); p.max_events(4096)];
+            MEASURING.with(|m| m.set(true));
+            let before = counts();
+            let mut n = 0usize;
+            for ch in x.chunks(4096) {
+                n += p
+                    .process_with_events(ch, &mut out[..ch.len()], &mut ev)
+                    .unwrap()
+                    .produced;
+            }
+            let after = counts();
+            MEASURING.with(|m| m.set(false));
+            assert!(n > 0);
+            assert_eq!(
+                after,
+                before,
+                "{} at {rate}: the processing calls allocated",
+                c.id()
+            );
+        }
+    }
+}

@@ -192,6 +192,10 @@ fn us3_guards_unmoved() {
             "golden_bypass.rs",
             "c2cb096231380ec29a0f2ca3c815e360bceee8d70164558398769214ce06b1e6",
         ),
+        (
+            "golden_nonspeech.rs", // spec 029's text golden (2026-11-04)
+            "460fea9dc5b1e71522684c48bcd0e6922015c387fd403567bb156dad8bf2d13d",
+        ),
     ];
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/");
     for (file, sha) in want {
@@ -685,4 +689,30 @@ fn spec_028_onepass_map_appended_only() {
         };
         assert_eq!(added, want, "{prefix}");
     }
+}
+
+/// Spec 029 FR-010: the three core crates are untouched against the merge base (the full id;
+/// restated to two revisions in the post-merge records; skipped where the base is absent).
+#[test]
+fn spec_029_nonspeech_untouched() {
+    let base = "4dad7147e1c6847477b705372295d5e4dbffb832";
+    let Some(out) = git(&[
+        "diff",
+        "--quiet",
+        base,
+        "--",
+        "crates/rr_dr60",
+        "crates/rr_dr60_detmath",
+        "crates/rr_dr60_ffi",
+    ]) else {
+        eprintln!("git unavailable: skipped");
+        return;
+    };
+    // A shallow checkout (CI) does not hold the merge base: git exits 128, the pin is skipped
+    // there as `us3_core_untouched` is; a full clone asserts it.
+    if !out.status.success() && out.status.code() != Some(1) {
+        eprintln!("git diff could not run (no {base}?): skipped");
+        return;
+    }
+    assert!(out.status.success(), "spec 029 touched a core crate");
 }
