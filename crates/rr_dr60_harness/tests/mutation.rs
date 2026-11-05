@@ -2985,30 +2985,24 @@ mod nonspeech {
         assert!(worst_prod <= 1.5 && worst_mut > 1.5);
     }
 
-    /// (v) with plan P3's fallback: on the tilted rows (pink noise e, the resonator row h) the
-    /// production reader's lowest-peak median sits above the mutant's; the figures printed.
+    /// (v): the pink row's lowest-peak median at pass-through within 900 – 1500 Hz (the
+    /// pre-emphasis row, added at the post-implementation reviews; the resonator row's median
+    /// cannot be its oracle: the mutant reads 740 against 700 Hz, inside the band).
     #[test]
-    fn no_preemphasis_fails_tilted_median() {
+    fn no_preemphasis_fails_pink_median() {
         let o = ReaderOptions {
             pre_emphasis: false,
             ..PRODUCTION
         };
-        for s in [S::E, S::H] {
-            let p = measures(s, C::C0, PRODUCTION)
-                .lowest_peak_median_hz
-                .unwrap();
-            let m = measures(s, C::C0, o).lowest_peak_median_hz.unwrap();
-            println!(
-                "no_preemphasis on {}: median {p} Hz (production) vs {m} Hz (mutant)",
-                s.id()
-            );
-            if s == S::E {
-                assert!(
-                    p - m >= 100.0,
-                    "the tilted row's median moves down by ≥ 100 Hz without pre-emphasis"
-                );
-            }
-        }
+        let p = measures(S::E, C::C0, PRODUCTION)
+            .lowest_peak_median_hz
+            .unwrap();
+        let m = measures(S::E, C::C0, o).lowest_peak_median_hz.unwrap();
+        let (lo, hi) = ns::PINK_MEDIAN_HZ;
+        println!(
+            "no_preemphasis on e: median {p} Hz (production) vs {m} Hz (mutant), band {lo}-{hi}"
+        );
+        assert!((lo..=hi).contains(&p) && !(lo..=hi).contains(&m));
     }
 
     /// (i): the reference's periodic-frame fraction ≥ 0.9.

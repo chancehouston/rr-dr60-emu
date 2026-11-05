@@ -194,7 +194,7 @@ fn us3_guards_unmoved() {
         ),
         (
             "golden_nonspeech.rs", // spec 029's text golden (2026-11-04)
-            "a0ca4dd245c337b75f5b4b03b20a06b4fd99664adca8f80390d79c0d8ddaf930",
+            "460fea9dc5b1e71522684c48bcd0e6922015c387fd403567bb156dad8bf2d13d",
         ),
     ];
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/");

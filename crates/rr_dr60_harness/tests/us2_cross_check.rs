@@ -1561,7 +1561,7 @@ fn guide_nonspeech() {
         );
     }
     // Every quoted figure on a named row of the 6 kHz text.
-    let table = ns::rate_text(ns::DEVICE_HZ);
+    let table = ns::committed_golden();
     let rows: std::collections::HashMap<String, &str> = table
         .lines()
         .filter(|l| !l.starts_with("cfg ") && !l.starts_with("rate ") && !l.starts_with("stim "))
@@ -1572,7 +1572,7 @@ fn guide_nonspeech() {
         })
         .collect();
     let row_re = regex::Regex::new(r"\b([a-h](?:35|50|55)?)/(C[0-7])\b").unwrap();
-    let num_re = regex::Regex::new(r"[−-]?\d+\.\d+").unwrap();
+    let num_re = regex::Regex::new(r"[−-]?\d+\.\d+|\b\d+ frames").unwrap();
     let mut checked = 0;
     for para in section.lines().filter(|l| l.starts_with("- **")) {
         let named: Vec<&str> = row_re.find_iter(para).map(|m| m.as_str()).collect();
@@ -1582,9 +1582,24 @@ fn guide_nonspeech() {
             .map(|k| *rows.get(*k).unwrap_or_else(|| panic!("row {k}")))
             .collect();
         for n in num_re.find_iter(para) {
-            let v = n.as_str().replace('−', "-");
+            let v = n
+                .as_str()
+                .replace('−', "-")
+                .trim_end_matches(" frames")
+                .to_string();
             if v == "5.30" {
-                // the stated difference of two quoted levels
+                // the stated difference of two quoted levels on the named rows
+                let lv = |k: &str| {
+                    rows[k]
+                        .split_whitespace()
+                        .nth(2)
+                        .unwrap()
+                        .parse::<f64>()
+                        .unwrap()
+                };
+                let got = (lv("a50/C1") - lv("a50/C3")).abs();
+                assert!((got - 5.30).abs() < 0.006, "5.30 is a50/C1 − a50/C3: {got}");
+                checked += 1;
                 continue;
             }
             assert!(

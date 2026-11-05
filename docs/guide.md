@@ -835,9 +835,9 @@ Two reads on the engine answer "which input is behind this one-pass output?" and
 
 **The earlier map.** `timeline::onepass_output_to_input` keeps its behaviour. It is right on the clock its latency defines: with `latency_samples()` it switches to the content after a removed pause early by the codec's delay plus the playback half's latency in drop mode, and is right elsewhere (mute mode, no pause). The harness reads the new map against record-then-play through `kept_to_input` on every output in five configurations and six further taps at seven rates (no centre off by more than one device sample, within one host sample at each heard splice) and against tones that label the hang's end and the removed part.
 
-## What the chain does to noise, bursts and silence (since 0.95)
+## What the chain does to noise, bursts and silence (spec 029; harness, engine 0.95.0)
 
-The model's figures for steady and modulated noise, short bursts and digital silence through the main stages, computed by the harness at the 6 kHz host rate on engine 0.95.0 (spec 029). Each figure is set beside the same reader's figure for the input itself. The measures are engineering descriptors of spectral and temporal structure: the level, the active frames (20 ms frames above −75 dBFS, of the 575 in the 11.5 s span), the periodicity (the mean of each frame's largest normalised autocorrelation over 60 – 300 Hz lags), the 2 – 8 Hz share of the level envelope's fluctuation (slow swells and bursts) and the LPC envelope's peaks per frame (order 8, 200 – 2300 Hz, 3 dB prominence). The full text, with every row and the 44.1 and 48 kHz tables, is `crates/rr_dr60_harness/golden/nonspeech-v1.txt`.
+The model's figures for steady and modulated noise, short bursts and digital silence through the main stages, computed by the harness at the 6 kHz host rate on engine 0.95.0 (spec 029). Each figure is set beside the same reader's figure for the input itself. The measures are engineering descriptors of spectral and temporal structure: the level, the active frames (20 ms frames above −75 dBFS, of the 575 in the 11.5 s span), the periodicity (the mean of each frame's largest normalised autocorrelation over 60 – 300 Hz lags), the 2 – 8 Hz share of the level envelope's fluctuation (slow swells and bursts; "—" where fewer than 90 % of the 575 frames are active) and the LPC envelope's peaks per frame (order 8, 200 – 2300 Hz, 3 dB prominence). The periodicity measure's floor depends on the spectrum: noise through a resonator reads 0.326 at the input (h/C0) against 0.222 for flat noise (a35/C0), with no periodic frame in either. The full text, with every row and the 44.1 and 48 kHz tables, is `crates/rr_dr60_harness/golden/nonspeech-v1.txt`.
 
 <!-- nonspeech-section:start -->
 | Input | Configuration | Level (dBFS) | Active frames (of 575) | Periodicity (0 – 1) | 2 – 8 Hz envelope share (0 – 1) | LPC envelope peaks per frame |
@@ -845,7 +845,7 @@ The model's figures for steady and modulated noise, short bursts and digital sil
 | Steady noise, −50 dBFS | Input (C0) | -50.00 | 575 | 0.222 | 0.209 | 0.139 |
 | Steady noise, −50 dBFS | Band filters and clamp, stages 4 and 10 (C1) | -50.64 | 575 | 0.239 | 0.238 | 0.447 |
 | Steady noise, −50 dBFS | Band filters and coder, stages 4, 7, 9, 10 (C3) | -55.94 | 575 | 0.292 | 0.256 | 0.567 |
-| Steady noise, −50 dBFS | Default record path before the output chain (C5) | -55.69 | 23 | 0.310 | 0.333 | 1.174 |
+| Steady noise, −50 dBFS | Default record path before the output chain (C5) | -55.69 | 23 | 0.310 | — | 1.174 |
 | Steady noise, −50 dBFS | Sensitivity 5, hiss offset +12 dB (C6) | -52.82 | 575 | 0.305 | 0.252 | 0.998 |
 | Noise modulated at 4 Hz, −35 dBFS | Input (C0) | -35.00 | 575 | 0.224 | 0.988 | 0.139 |
 | Noise modulated at 4 Hz, −35 dBFS | Band filters and clamp, stages 4 and 10 (C1) | -35.64 | 575 | 0.240 | 0.984 | 0.430 |
@@ -860,16 +860,16 @@ The model's figures for steady and modulated noise, short bursts and digital sil
 | Digital silence | Input (C0) | -inf | 0 | — | — | — |
 | Digital silence | Band filters and clamp, stages 4 and 10 (C1) | -inf | 0 | — | — | — |
 | Digital silence | Band filters and coder, stages 4, 7, 9, 10 (C3) | -80.42 | 0 | — | — | — |
-| Digital silence | Default record path before the output chain (C5) | -67.51 | 23 | 0.301 | 0.291 | 1.261 |
+| Digital silence | Default record path before the output chain (C5) | -67.51 | 23 | 0.301 | — | 1.261 |
 | Digital silence | Sensitivity 5, hiss offset +12 dB (C6) | -55.72 | 575 | 0.297 | 0.229 | 0.972 |
 <!-- nonspeech-section:end -->
 
 Computed by the harness from the model at engine 0.95.0, not from a unit, at the 6 kHz host rate (the 44.1 and 48 kHz tables are in the golden); the coder is a class match (A-004).
 
-- **The band (A-027).** The record and playback filters take steady 0 – 2900 Hz noise from −50.00 to −50.64 dBFS (a50/C0 → a50/C1) and leave an envelope whose edges read as peaks: 0.139 → 0.447 peaks per frame.
-- **The coder (A-004, A-040, A-041).** The band and the coder together read the same noise at −55.94 dBFS (a50/C3), 5.30 dB below the band alone. This is the model coder's level on noise (spec 008 calibrated its level on its synthetic harmonic stimulus only); it is not a noise reduction stage, which is not modeled (stage 6, A-009). The coder raises the periodicity from 0.239 to 0.292 (a50/C1 → a50/C3) while the periodic-frame fraction stays at 0.017 (a50/C3); on the modulated noise the 2 – 8 Hz share goes 0.984 → 0.937 (b/C1 → b/C3). Digital silence through the band and the coder reads −80.42 dBFS with no active frame (f/C3): the decoder's residue (spec 008).
-- **Stage 5, the VAS gate (A-022, A-023), on the capsule's hiss (A-048).** The step from the coder cells to the default record path adds the microphone (A-046, A-048) and the limiter before the gate: with the gate off the hiss alone reads −67.60 dBFS over all 575 frames (f/C4); the default gate at level 3 closes after 23 frames (f/C5); at sensitivity 5 with the hiss offset +12 dB it stays open for all 575 at −55.72 dBFS (f/C6). On the bursts the default gate keeps 570 frames (d/C5), the hiss between the bursts included.
-- **The route (A-010, A-031).** At the speaker route output the modulated noise reads −43.19 dBFS against −40.68 before the output chain (b/C7 against b/C5), and the speaker template's 750 Hz resonance lifts the peaks per frame from 0.897 to 1.327.
+- **The band (A-027).** The record and playback filters take steady 0 – 2900 Hz noise from −50.00 to −50.64 dBFS (a50/C0 → a50/C1); the LPC envelope peaks per frame go 0.139 → 0.447.
+- **The coder (A-004, A-040, A-041).** The band and the coder together read the same noise at −55.94 dBFS (a50/C3), 5.30 dB below the band alone. This is the model coder's level on noise (spec 008 asserts the coder's level on its harmonic stimulus; its calibration already records the reference coder rendering the noise segment of the unvoiced-to-voiced stimulus low); it is not a noise reduction stage, which is not modeled (stage 6, A-009). The coder raises the periodicity from 0.239 to 0.292 (a50/C1 → a50/C3) over the floor stated above, while the periodic-frame fraction is 0.017 (a50/C3; 0.000 in a50/C1); on the modulated noise the 2 – 8 Hz share goes 0.984 → 0.937 (b/C1 → b/C3). Digital silence through the band and the coder reads −80.42 dBFS with no active frame (f/C3): the decoder's residue (spec 008).
+- **Stage 5, the VAS gate (A-022, A-023), on the capsule's hiss (A-048).** The step from the coder cells to the default record path adds the microphone (A-046, A-048) and the limiter before the gate: with the gate off the hiss alone, through the band and the coder, reads −67.60 dBFS over all 575 frames (f/C4; the capsule's hiss is about −62 dBFS, A-048); the default gate at level 3 is open at the start and keeps 23 frames of the span after the 0.5 s settle, then pauses (f/C5); at sensitivity 5 with the hiss offset +12 dB it stays open for all 575 at −55.72 dBFS (f/C6). On the bursts the default gate keeps 570 frames (d/C5), the hiss between the bursts included.
+- **The route (A-010, A-031).** At the speaker route output the modulated noise reads −43.19 dBFS against −40.68 before the output chain (b/C7 against b/C5), and the LPC envelope peaks per frame go 0.897 → 1.327; the speaker template is a 750 Hz, Q 1.8 resonance with a rising shelf (A-010, A-042).
 
 ## What the measurement harness checks
 

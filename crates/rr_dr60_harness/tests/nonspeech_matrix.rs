@@ -37,14 +37,20 @@ fn nonspeech_configs() {
     }
 }
 
-/// D5: the partition identity on C2 and C5 with a35 and g at 6 and 48 kHz.
+/// D5: the partition identity (samples and heard splices) on C2 and C5 with a35 and g at 6 and
+/// 48 kHz, and on the pausing cells d / f in C5 at 6 kHz.
 #[test]
 #[cfg_attr(coverage, ignore)]
 fn nonspeech_partitions() {
     for rate in [6000, 48_000] {
-        for (s, c) in [(S::A35, C::C2), (S::G, C::C5)] {
+        let cells: Vec<(S, C)> = if rate == 6000 {
+            vec![(S::A35, C::C2), (S::G, C::C5), (S::D, C::C5), (S::F, C::C5)]
+        } else {
+            vec![(S::A35, C::C2), (S::G, C::C5)]
+        };
+        for (s, c) in cells {
             let x = s.samples(rate);
-            let base = ns::process_raw(c.settings(rate), &x, &[4096]).0;
+            let base = ns::process_raw(c.settings(rate), &x, &[4096]);
             // Block size 1 at 6 kHz only (the plain-build cost; the irregular partition covers
             // the other rates' call boundaries).
             let parts: Vec<Vec<usize>> = if rate == 6000 {
@@ -53,10 +59,18 @@ fn nonspeech_partitions() {
                 vec![vec![64], vec![1, 7, 64, 1000, 4096, 3]]
             };
             for part in parts {
+                let got = ns::process_raw(c.settings(rate), &x, &part);
                 assert_eq!(
-                    ns::process_raw(c.settings(rate), &x, &part).0,
-                    base,
-                    "{} {} at {rate}: partition {part:?}",
+                    got.0,
+                    base.0,
+                    "{} {} at {rate}: partition {part:?} (samples)",
+                    s.id(),
+                    c.id()
+                );
+                assert_eq!(
+                    got.1,
+                    base.1,
+                    "{} {} at {rate}: partition {part:?} (splices)",
                     s.id(),
                     c.id()
                 );
@@ -101,9 +115,11 @@ fn nonspeech_rates() {
                 c.configuration,
                 C::C0 | C::C1 | C::C2 | C::C3 | C::C4 | C::C6
             ) && matches!(c.stimulus, S::A35 | S::A50 | S::A55 | S::B | S::C | S::E);
+            // A presence mismatch is infinite: it fails a bounded row and is reported elsewhere.
             let d = |a: Option<f64>, b: Option<f64>| match (a, b) {
                 (Some(a), Some(b)) => Some((a - b).abs()),
-                _ => None,
+                (None, None) => None,
+                _ => Some(f64::INFINITY),
             };
             let level = if c.measures.level_dbfs.is_finite() && b.measures.level_dbfs.is_finite() {
                 Some((c.measures.level_dbfs - b.measures.level_dbfs).abs())

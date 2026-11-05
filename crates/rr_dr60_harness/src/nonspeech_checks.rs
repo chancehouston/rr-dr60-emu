@@ -75,6 +75,9 @@ pub const RESAMPLE_CUTOFF_HZ: f64 = 2700.0;
 pub const RESAMPLE_ZEROS: usize = 32;
 /// The frame rate of the envelope series (Hz).
 pub const ENVELOPE_HZ: f64 = 50.0;
+/// The frames of a full span: ⌊(12 s − 0.5 s) ÷ 20 ms⌋ = 575 (the nominal span; drop mode shortens
+/// the output, never this figure).
+pub const SPAN_FRAMES: usize = ((STIMULUS_S - SETTLE_S) * DEVICE_HZ as f64) as usize / FRAME;
 /// The block size every cell is processed with.
 pub const BLOCK: usize = 4096;
 /// The rates the golden covers (D1; clarified 2026-11-04).
@@ -205,12 +208,12 @@ impl Stimulus {
             Self::G => (
                 REFERENCE_SEED,
                 "-20.00",
-                "harmonic reference: a pulse train, 90-220 Hz gliding fundamental, fixed resonances (spec 008 R-09)",
+                "harmonic reference: a pulse train, 90-220 Hz gliding fundamental, three resonances sweeping 300-750, 1100-1900 and 2300-2600 Hz (spec 008 R-09)",
             ),
             Self::H => (
                 NOISE_SEED,
                 "-35.00",
-                "the a35 noise through a two-pole 750 Hz Q 1.8 resonator, then levelled",
+                "the a35 noise through a two-pole resonator, pole at 750 Hz, Q 1.8 (magnitude peak near 725 Hz), then levelled",
             ),
         };
         format!("stim {} seed={seed} level={level} {def}", self.id())
@@ -316,14 +319,13 @@ fn uniform(r: &mut Pcg32, lo: f64, hi: f64) -> f64 {
     lo + (hi - lo) * (f64::from(r.next_u32()) / 4_294_967_296.0)
 }
 
-/// The bursts (data-model.md › d): a `Pcg32(BURST_SEED)` stream of (gap, duration, level)
-/// triples, positions rounded at 6 kHz and placed at `n6 · rate ÷ 6000`.
-pub fn bursts(rate: u32, len: usize) -> Vec<f64> {
-    let core = noise_core(NOISE_SEED, rate, len);
-    let mut out = vec![0.0; len];
+/// The bursts' draw (data-model.md › d) as (start, duration) in 6 kHz samples with the level,
+/// in order, for the 12 s stimulus: rate-independent by construction.
+pub fn burst_schedule() -> Vec<(u64, u64, f64)> {
     let mut r = Pcg32::new(BURST_SEED, 0);
     let mut t6: u64 = 0;
-    let rate = u64::from(rate);
+    let end6 = (STIMULUS_S * f64::from(DEVICE_HZ)) as u64;
+    let mut v = Vec::new();
     loop {
         let gap = uniform(&mut r, 0.1, 1.1);
         let dur = uniform(&mut r, 0.01, 0.16);
@@ -331,6 +333,22 @@ pub fn bursts(rate: u32, len: usize) -> Vec<f64> {
         let gap6 = (gap * 6000.0 + 0.5) as u64;
         let dur6 = ((dur * 6000.0 + 0.5) as u64).max(1);
         t6 += gap6;
+        if t6 + dur6 > end6 {
+            break;
+        }
+        v.push((t6, dur6, level));
+        t6 += dur6;
+    }
+    v
+}
+
+/// The bursts (data-model.md › d): the schedule's bursts, each placed at `n6 · rate ÷ 6000`, the
+/// noise × sin² scaled to its own level.
+pub fn bursts(rate: u32, len: usize) -> Vec<f64> {
+    let core = noise_core(NOISE_SEED, rate, len);
+    let mut out = vec![0.0; len];
+    let rate = u64::from(rate);
+    for (t6, dur6, level) in burst_schedule() {
         let start = (t6 * rate / 6000) as usize;
         let n = ((t6 + dur6) * rate / 6000) as usize - start;
         if start + n > len {
@@ -344,7 +362,6 @@ pub fn bursts(rate: u32, len: usize) -> Vec<f64> {
             .collect();
         let seg = level_to(&seg, level);
         out[start..start + n].copy_from_slice(&seg);
-        t6 += dur6;
     }
     out
 }
@@ -787,7 +804,6 @@ fn median(v: &mut [f64]) -> Option<f64> {
 /// The reader (D4): `span` at 6 kHz, `splices` as frame indices.
 pub fn read(span: &[f64], splices: &[usize], o: ReaderOptions) -> Measures {
     let frames = span.len() / FRAME;
-    let t = tables();
     let mut env_series = Vec::with_capacity(frames);
     let mut active = 0usize;
     let mut peaks_total = 0usize;
@@ -838,7 +854,6 @@ pub fn read(span: &[f64], splices: &[usize], o: ReaderOptions) -> Measures {
             }
             None => (vec![0.0; GRID_N], Vec::new()),
         };
-        let _ = &t;
         peaks_total += pk.len();
         if let Some(&g) = pk.first() {
             lowest.push(g as f64 * GRID_HZ);
@@ -885,12 +900,14 @@ pub fn read(span: &[f64], splices: &[usize], o: ReaderOptions) -> Measures {
             Some(v.iter().sum::<f64>() / v.len() as f64)
         }
     };
-    let share =
-        if active as f64 >= SHARE_ACTIVE * frames as f64 && splices.is_empty() && frames >= 4 {
-            Some(mod_share(&env_series))
-        } else {
-            None
-        };
+    let share = if active as f64 >= SHARE_ACTIVE * SPAN_FRAMES as f64
+        && splices.is_empty()
+        && frames >= 4
+    {
+        Some(mod_share(&env_series))
+    } else {
+        None
+    };
     Measures {
         level_dbfs: aes17_db(mean_square(&span[..frames * FRAME])),
         peaks: if active > 0 {
@@ -963,6 +980,8 @@ pub fn mod_share(series: &[f64]) -> f64 {
 pub struct Span {
     /// The span at 6 kHz (whole frames).
     pub samples: Vec<f64>,
+    /// The output's length in host samples.
+    pub output_len: usize,
     /// Splices as frame indices into `samples`.
     pub splices: Vec<usize>,
     /// The configuration's latency (host samples).
@@ -1028,6 +1047,7 @@ pub fn span_of(out: &[f32], in_len: usize, latency: u32, rate: u32, heard: &[u64
     if end <= start {
         return Span {
             samples: Vec::new(),
+            output_len: out.len(),
             splices: Vec::new(),
             latency,
         };
@@ -1035,7 +1055,6 @@ pub fn span_of(out: &[f32], in_len: usize, latency: u32, rate: u32, heard: &[u64
     // The guard: `q · M` host samples = `q · L` device samples, with q·M ≥ half-span + 2.
     let q = (rs.half_span() + 2).div_ceil(m).max(1);
     let guard_host = q * m;
-    let guard_dev = q * l;
     let seg_start = start.saturating_sub(guard_host);
     let seg_end = (end + guard_host).min(out.len());
     let seg: Vec<f64> = out[seg_start..seg_end]
@@ -1051,7 +1070,6 @@ pub fn span_of(out: &[f32], in_len: usize, latency: u32, rate: u32, heard: &[u64
     } else {
         Vec::new()
     };
-    let _ = guard_dev;
     let splices = heard
         .iter()
         .filter_map(|&h| {
@@ -1064,6 +1082,7 @@ pub fn span_of(out: &[f32], in_len: usize, latency: u32, rate: u32, heard: &[u64
         .collect();
     Span {
         samples,
+        output_len: out.len(),
         splices,
         latency,
     }
@@ -1094,6 +1113,8 @@ pub struct Cell {
     pub input_own: Option<Measures>,
     /// The frames with a splice.
     pub splices: usize,
+    /// The output's length in host samples (kept output in drop mode).
+    pub output_len: usize,
 }
 
 /// Computes a cell without the memo, on settings a caller doctored (US2 AS1).
@@ -1144,6 +1165,7 @@ fn finish_cell(
         measures,
         input_own,
         splices: span.splices.len(),
+        output_len: span.output_len,
     }
 }
 
@@ -1393,54 +1415,710 @@ pub fn phrase_hit(text: &str) -> Option<rr_dr60::wording::Hit> {
     rr_dr60::wording::first_hit_in(&PHRASES, &t)
 }
 
-/// The guide's generated table (D8; plan R-09): the 6 kHz rows a50, b, d and f through the five
-/// labelled configurations, five columns with their definitional scales, every figure beside
-/// the Input row's.
+/// The committed golden's text.
+pub fn committed_golden() -> String {
+    std::fs::read_to_string(golden_path()).unwrap_or_else(|e| {
+        panic!(
+            "{}: {e}; bless with RR_DR60_BLESS=nonspeech",
+            golden_path().display()
+        )
+    })
+}
+
+/// The rows of one rate's section of a canonical text, keyed `stim/Cn`, as their line.
+pub fn golden_rows(text: &str, rate: u32) -> std::collections::BTreeMap<String, String> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut in_rate = false;
+    for l in text.lines() {
+        if let Some(r) = l.strip_prefix("rate ") {
+            in_rate = r.trim() == rate.to_string();
+            continue;
+        }
+        if !in_rate || l.starts_with("cfg ") || l.starts_with("stim ") {
+            continue;
+        }
+        let mut w = l.split_whitespace();
+        if let (Some(a), Some(b)) = (w.next(), w.next())
+            && b.starts_with('C')
+            && b.len() == 2
+        {
+            out.insert(format!("{a}/{b}"), l.to_string());
+        }
+    }
+    out
+}
+
+/// The guide's generated table (D8; plan R-09), read from the committed golden's 6 kHz section:
+/// the rows a50, b, d and f through the five labelled configurations, five columns with their
+/// definitional scales, every figure beside the Input row's.
 pub fn guide_table() -> String {
-    const ROWS: [(Stimulus, &str); 4] = [
-        (Stimulus::A50, "Steady noise, −50 dBFS"),
-        (Stimulus::B, "Noise modulated at 4 Hz, −35 dBFS"),
-        (Stimulus::D, "Sparse bursts, 10 – 160 ms"),
-        (Stimulus::F, "Digital silence"),
+    guide_table_from(&committed_golden())
+}
+
+/// [`guide_table`] from a given canonical text.
+pub fn guide_table_from(text: &str) -> String {
+    const ROWS: [(&str, &str); 4] = [
+        ("a50", "Steady noise, −50 dBFS"),
+        ("b", "Noise modulated at 4 Hz, −35 dBFS"),
+        ("d", "Sparse bursts, 10 – 160 ms"),
+        ("f", "Digital silence"),
     ];
-    const CFGS: [(Configuration, &str); 5] = [
-        (Configuration::C0, "Input (C0)"),
-        (
-            Configuration::C1,
-            "Band filters and clamp, stages 4 and 10 (C1)",
-        ),
-        (
-            Configuration::C3,
-            "Band filters and coder, stages 4, 7, 9, 10 (C3)",
-        ),
-        (
-            Configuration::C5,
-            "Default record path before the output chain (C5)",
-        ),
-        (Configuration::C6, "Sensitivity 5, hiss offset +12 dB (C6)"),
+    const CFGS: [(&str, &str); 5] = [
+        ("C0", "Input (C0)"),
+        ("C1", "Band filters and clamp, stages 4 and 10 (C1)"),
+        ("C3", "Band filters and coder, stages 4, 7, 9, 10 (C3)"),
+        ("C5", "Default record path before the output chain (C5)"),
+        ("C6", "Sensitivity 5, hiss offset +12 dB (C6)"),
     ];
-    let f = |v: Option<f64>, prec: usize| fmt_opt(v, prec, 0).trim().to_string();
+    let rows = golden_rows(text, DEVICE_HZ);
     let mut s = String::from(
-        "| Input | Configuration | Level (dBFS) | Active frames (of 575) | Periodicity (0 – 1) | 2 – 8 Hz envelope share (0 – 1) | LPC envelope peaks per frame |
-|---|---|---|---|---|---|---|
-",
+        "| Input | Configuration | Level (dBFS) | Active frames (of 575) | Periodicity (0 – 1) | 2 – 8 Hz envelope share (0 – 1) | LPC envelope peaks per frame |\n|---|---|---|---|---|---|---|\n",
     );
     for (st, label) in ROWS {
         for (cf, clabel) in CFGS {
-            let m = cell(st, cf, DEVICE_HZ).measures;
-            let _ = f(None, 0);
+            let line = rows
+                .get(&format!("{st}/{cf}"))
+                .unwrap_or_else(|| panic!("{st}/{cf}"));
+            let w: Vec<&str> = line.split_whitespace().collect();
+            // columns: stim cfg level active peaks move move0 r rfrac lagst lagst0 share flux flux0 lowpk pairs
             s.push_str(&format!(
-                "| {label} | {clabel} | {} | {} | {} | {} | {} |
-",
-                fmt_opt(Some(m.level_dbfs), 2, 0).trim(),
-                m.active,
-                fmt_opt(m.periodicity, 3, 0).trim(),
-                fmt_opt(m.mod_share, 3, 0).trim(),
-                fmt_opt(m.peaks, 3, 0).trim(),
+                "| {label} | {clabel} | {} | {} | {} | {} | {} |\n",
+                w[2], w[3], w[7], w[11], w[4]
             ));
         }
     }
     s
+}
+
+// ---- The D6 checks (shared by the test binaries and the bless gate; D1) --------------------------
+
+use crate::checks::{MeasurementResult, Tolerance};
+
+/// D6 (i): the reference's periodic-frame fraction and peaks; the noise cells' fraction.
+pub const REFERENCE_FRACTION_MIN: f64 = 0.9;
+/// See [`REFERENCE_FRACTION_MIN`] (plan P1).
+pub const REFERENCE_PEAKS_MIN: f64 = 1.8;
+/// See [`REFERENCE_FRACTION_MIN`].
+pub const NOISE_FRACTION_MAX: f64 = 0.1;
+/// The noise bounds apply to cells with at least this many active frames (the bursts row through
+/// the coder alone has about 85 and reads the decoder's continuation; the first print, 2026-11-04).
+pub const NOISE_MIN_ACTIVE: usize = 500;
+/// D6 (iii): the residue bound (spec 008: ≤ −78 dBFS; margin 3 dB) and C6's open-gate share of
+/// the nominal span.
+pub const RESIDUE_MAX_DBFS: f64 = -75.0;
+/// See [`RESIDUE_MAX_DBFS`].
+pub const OPEN_GATE_MIN_SHARE: f64 = 0.9;
+/// D6 (iv): C3's periodicity over C1's on the steady and modulated rows (observed +0.034 … +0.098
+/// at seven rates; the bursts and pink rows reported: the post-implementation review Q4).
+pub const PERIODICITY_RISE_MIN: f64 = 0.03;
+/// D6 (v): the measures' own teeth.
+pub const SHARE_B_MIN: f64 = 0.8;
+/// See [`SHARE_B_MIN`].
+pub const SHARE_STEADY_MAX: f64 = 0.35;
+/// See [`SHARE_B_MIN`].
+pub const NOISE_PEAKS_MAX: f64 = 1.5;
+/// The resonator row's rise over a35 and its median band (plan P2, restated at the first print:
+/// the rise reads 0.20 – 0.40 by rate, the median 700 – 720 Hz; the pole's magnitude peak is near
+/// 725 Hz).
+pub const RESONATOR_RISE_MIN: f64 = 0.15;
+/// See [`RESONATOR_RISE_MIN`].
+pub const RESONATOR_MEDIAN_HZ: (f64, f64) = (650.0, 800.0);
+/// The reference's lowest-peak median band (its first resonance sweeps 300 – 750 Hz).
+pub const REFERENCE_MEDIAN_HZ: (f64, f64) = (250.0, 800.0);
+/// The pink row's lowest-peak median band at pass-through (the pre-emphasis mutant's D6 row,
+/// post-implementation reviews coach 9 / Q6: production 1170 – 1265 Hz, the mutant 320).
+pub const PINK_MEDIAN_HZ: (f64, f64) = (900.0, 1500.0);
+/// D6 (ii) at the rates other than 6 kHz (plan R-05b; the first print, then the re-bless of
+/// 2026-11-04 for the two added rows): 2 × the largest |C0 − input-own| over the stimuli at six
+/// rates, with the floors (the lag-stable fraction reads 0 apart and takes a 0.01 floor; the
+/// lowest-peak median 45 Hz apart on the bursts and pink rows → 100 Hz).
+pub const PASS_THROUGH_TOL: [(&str, f64); 8] = [
+    ("level", 0.07),
+    ("peaks", 0.14),
+    ("periodicity", 0.002),
+    ("periodic fraction", 0.03),
+    ("lag-stable", 0.01),
+    ("share", 0.01),
+    ("flux", 0.03),
+    ("lowest-peak median", 100.0),
+];
+
+const TRACE: &[&str] = &["029 D6"];
+const NOISE_ROWS: [Stimulus; 7] = [
+    Stimulus::A35,
+    Stimulus::A50,
+    Stimulus::A55,
+    Stimulus::B,
+    Stimulus::C,
+    Stimulus::D,
+    Stimulus::E,
+];
+
+#[allow(clippy::too_many_arguments)]
+fn row(
+    req: &'static str,
+    prop: &'static str,
+    rate: u32,
+    cfg: &'static str,
+    stim: String,
+    v: f64,
+    unit: &'static str,
+    t: Tolerance,
+) -> MeasurementResult {
+    MeasurementResult::new(req, prop, TRACE, rate, cfg, stim, v, unit, t)
+}
+
+/// The absolute difference of two optional figures; a presence mismatch is infinite (it fails any
+/// bound); two absent figures are 0.
+fn diff(a: Option<f64>, b: Option<f64>) -> f64 {
+    match (a, b) {
+        (Some(a), Some(b)) => (a - b).abs(),
+        (None, None) => 0.0,
+        _ => f64::INFINITY,
+    }
+}
+
+/// D6 (i): the reference separates; every noise cell with ≥ 500 active frames reads low.
+pub fn d6_separation(rates: &[u32]) -> Vec<MeasurementResult> {
+    let mut out = Vec::new();
+    for &rate in rates {
+        for cfg in [
+            Configuration::C0,
+            Configuration::C1,
+            Configuration::C2,
+            Configuration::C3,
+        ] {
+            let m = cell(Stimulus::G, cfg, rate).measures;
+            out.push(row(
+                "029 D6 i",
+                "reference periodic-frame fraction",
+                rate,
+                cfg.id(),
+                "g".into(),
+                m.periodic_fraction.unwrap_or(f64::NAN),
+                "",
+                Tolerance::AtLeast(REFERENCE_FRACTION_MIN),
+            ));
+            out.push(row(
+                "029 D6 i",
+                "reference LPC peaks per frame",
+                rate,
+                cfg.id(),
+                "g".into(),
+                m.peaks.unwrap_or(f64::NAN),
+                "",
+                Tolerance::AtLeast(REFERENCE_PEAKS_MIN),
+            ));
+        }
+        for cfg in [
+            Configuration::C4,
+            Configuration::C5,
+            Configuration::C6,
+            Configuration::C7,
+        ] {
+            let m = cell(Stimulus::G, cfg, rate).measures;
+            out.push(row(
+                "029 D6 i",
+                "reference periodic-frame fraction (reported)",
+                rate,
+                cfg.id(),
+                "g".into(),
+                m.periodic_fraction.unwrap_or(f64::NAN),
+                "",
+                Tolerance::Report,
+            ));
+        }
+        let mut cells: Vec<(Stimulus, Configuration)> = NOISE_ROWS
+            .iter()
+            .flat_map(|&s| CONFIGURATIONS.iter().map(move |&c| (s, c)))
+            .collect();
+        cells.push((Stimulus::F, Configuration::C6));
+        for (s, c) in cells {
+            let m = cell(s, c, rate).measures;
+            let Some(f) = m.periodic_fraction else {
+                continue;
+            };
+            let t = if m.active >= NOISE_MIN_ACTIVE {
+                Tolerance::AtMost(NOISE_FRACTION_MAX)
+            } else {
+                Tolerance::Report
+            };
+            out.push(row(
+                "029 D6 i",
+                "noise periodic-frame fraction",
+                rate,
+                c.id(),
+                format!("{} ({} active)", s.id(), m.active),
+                f,
+                "",
+                t,
+            ));
+        }
+    }
+    out
+}
+
+/// D6 (ii): C0 equals the input's own reading, bit for bit at 6 kHz, within the recorded
+/// tolerances elsewhere; a presence mismatch fails.
+pub fn d6_pass_through(rates: &[u32]) -> Vec<MeasurementResult> {
+    let mut out = Vec::new();
+    let tol = |name: &str| {
+        PASS_THROUGH_TOL
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|&(_, t)| t)
+            .unwrap()
+    };
+    for &rate in rates {
+        for s in STIMULI {
+            let c = cell(s, Configuration::C0, rate);
+            let own = c.input_own.expect("C0 rows carry the input's own reading");
+            if rate == DEVICE_HZ {
+                let same = c.measures == own;
+                out.push(row(
+                    "029 D6 ii",
+                    "C0 equals input-own (bit for bit)",
+                    rate,
+                    "C0",
+                    s.id().into(),
+                    f64::from(u8::from(!same)),
+                    "",
+                    Tolerance::Exact(0.0),
+                ));
+                continue;
+            }
+            let m = c.measures;
+            let level = match (m.level_dbfs.is_finite(), own.level_dbfs.is_finite()) {
+                (true, true) => (m.level_dbfs - own.level_dbfs).abs(),
+                (false, false) => 0.0,
+                _ => f64::INFINITY,
+            };
+            out.push(row(
+                "029 D6 ii",
+                "|C0 − own| level",
+                rate,
+                "C0",
+                s.id().into(),
+                level,
+                "dB",
+                Tolerance::AtMost(tol("level")),
+            ));
+            out.push(row(
+                "029 D6 ii",
+                "|C0 − own| peaks",
+                rate,
+                "C0",
+                s.id().into(),
+                diff(m.peaks, own.peaks),
+                "",
+                Tolerance::AtMost(tol("peaks")),
+            ));
+            out.push(row(
+                "029 D6 ii",
+                "|C0 − own| periodicity",
+                rate,
+                "C0",
+                s.id().into(),
+                diff(m.periodicity, own.periodicity),
+                "",
+                Tolerance::AtMost(tol("periodicity")),
+            ));
+            out.push(row(
+                "029 D6 ii",
+                "|C0 − own| periodic fraction",
+                rate,
+                "C0",
+                s.id().into(),
+                diff(m.periodic_fraction, own.periodic_fraction),
+                "",
+                Tolerance::AtMost(tol("periodic fraction")),
+            ));
+            out.push(row(
+                "029 D6 ii",
+                "|C0 − own| lag-stable",
+                rate,
+                "C0",
+                s.id().into(),
+                diff(m.lag_stable, own.lag_stable),
+                "",
+                Tolerance::AtMost(tol("lag-stable")),
+            ));
+            out.push(row(
+                "029 D6 ii",
+                "|C0 − own| share",
+                rate,
+                "C0",
+                s.id().into(),
+                diff(m.mod_share, own.mod_share),
+                "",
+                Tolerance::AtMost(tol("share")),
+            ));
+            out.push(row(
+                "029 D6 ii",
+                "|C0 − own| flux",
+                rate,
+                "C0",
+                s.id().into(),
+                diff(m.flux_db, own.flux_db),
+                "dB",
+                Tolerance::AtMost(tol("flux")),
+            ));
+            out.push(row(
+                "029 D6 ii",
+                "|C0 − own| lowest-peak median",
+                rate,
+                "C0",
+                s.id().into(),
+                diff(m.lowest_peak_median_hz, own.lowest_peak_median_hz),
+                "Hz",
+                Tolerance::AtMost(tol("lowest-peak median")),
+            ));
+            out.push(row(
+                "029 D6 ii",
+                "|C0 − own| movement (reported)",
+                rate,
+                "C0",
+                s.id().into(),
+                diff(m.movement_hz, own.movement_hz),
+                "Hz",
+                Tolerance::Report,
+            ));
+            out.push(row(
+                "029 D6 ii",
+                "|C0 − own| active frames",
+                rate,
+                "C0",
+                s.id().into(),
+                (m.active as f64 - own.active as f64).abs(),
+                "frames",
+                Tolerance::AtMost(1.0),
+            ));
+        }
+    }
+    out
+}
+
+/// D6 (iii): digital silence through the ladder.
+pub fn d6_silence(rates: &[u32]) -> Vec<MeasurementResult> {
+    let mut out = Vec::new();
+    for &rate in rates {
+        for c in [Configuration::C0, Configuration::C1] {
+            let m = cell(Stimulus::F, c, rate).measures;
+            out.push(row(
+                "029 D6 iii",
+                "silence: active frames",
+                rate,
+                c.id(),
+                "f".into(),
+                m.active as f64,
+                "frames",
+                Tolerance::Exact(0.0),
+            ));
+            out.push(row(
+                "029 D6 iii",
+                "silence: digital zero (level −∞)",
+                rate,
+                c.id(),
+                "f".into(),
+                f64::from(u8::from(m.level_dbfs != f64::NEG_INFINITY)),
+                "",
+                Tolerance::Exact(0.0),
+            ));
+        }
+        for c in [Configuration::C2, Configuration::C3] {
+            let m = cell(Stimulus::F, c, rate).measures;
+            out.push(row(
+                "029 D6 iii",
+                "silence: active frames",
+                rate,
+                c.id(),
+                "f".into(),
+                m.active as f64,
+                "frames",
+                Tolerance::Exact(0.0),
+            ));
+            out.push(row(
+                "029 D6 iii",
+                "silence: the decoder's residue",
+                rate,
+                c.id(),
+                "f".into(),
+                m.level_dbfs,
+                "dBFS",
+                Tolerance::AtMost(RESIDUE_MAX_DBFS),
+            ));
+        }
+        let c5 = cell(Stimulus::F, Configuration::C5, rate);
+        let s5 = Configuration::C5.settings(rate);
+        let bound = ((f64::from(s5.vas.onset_ms)
+            + f64::from(s5.vas.hang_ms)
+            + 1000.0 * f64::from(c5.latency) / f64::from(rate))
+            / 20.0)
+            .ceil()
+            - 25.0;
+        out.push(row(
+            "029 D6 iii",
+            "silence: C5 closes the gate (active ≤ ⌈(onset + hang + latency)/20 ms⌉ − 25)",
+            rate,
+            "C5",
+            "f".into(),
+            c5.measures.active as f64,
+            "frames",
+            Tolerance::AtMost(bound),
+        ));
+        let c6 = cell(Stimulus::F, Configuration::C6, rate).measures;
+        out.push(row(
+            "029 D6 iii",
+            "silence: C6 stays open (active ≥ 90 % of the nominal 575)",
+            rate,
+            "C6",
+            "f".into(),
+            c6.active as f64 / SPAN_FRAMES as f64,
+            "",
+            Tolerance::AtLeast(OPEN_GATE_MIN_SHARE),
+        ));
+        out.push(row(
+            "029 D6 iii",
+            "silence: C6's level (reported)",
+            rate,
+            "C6",
+            "f".into(),
+            c6.level_dbfs,
+            "dBFS",
+            Tolerance::Report,
+        ));
+    }
+    out
+}
+
+/// D6 (iv): the coder's periodicity, C3 against C1, on the steady and modulated rows; the bursts
+/// and pink rows, the level change and the share ratio reported.
+pub fn d6_coder_periodicity(rates: &[u32]) -> Vec<MeasurementResult> {
+    let mut out = Vec::new();
+    for &rate in rates {
+        for s in NOISE_ROWS {
+            let c1 = cell(s, Configuration::C1, rate).measures;
+            let c3 = cell(s, Configuration::C3, rate).measures;
+            let asserted = matches!(
+                s,
+                Stimulus::A35 | Stimulus::A50 | Stimulus::A55 | Stimulus::B | Stimulus::C
+            ) && c1.active >= NOISE_MIN_ACTIVE
+                && c3.active >= NOISE_MIN_ACTIVE;
+            let t = if asserted {
+                Tolerance::AtLeast(PERIODICITY_RISE_MIN)
+            } else {
+                Tolerance::Report
+            };
+            out.push(row(
+                "029 D6 iv",
+                "coder periodicity rise, C3 − C1",
+                rate,
+                "C3",
+                s.id().into(),
+                c3.periodicity.unwrap_or(f64::NAN) - c1.periodicity.unwrap_or(f64::NAN),
+                "",
+                t,
+            ));
+            out.push(row(
+                "029 D6 iv",
+                "coder level change, C3 − C1 (reported)",
+                rate,
+                "C3",
+                s.id().into(),
+                c3.level_dbfs - c1.level_dbfs,
+                "dB",
+                Tolerance::Report,
+            ));
+            if let (Some(a), Some(b)) = (c3.mod_share, c1.mod_share) {
+                out.push(row(
+                    "029 D6 iv",
+                    "2-8 Hz share ratio C3 ÷ C1 (reported)",
+                    rate,
+                    "C3",
+                    s.id().into(),
+                    a / b,
+                    "",
+                    Tolerance::Report,
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// D6 (v): the measures' own teeth on pass-through rows.
+pub fn d6_teeth(rates: &[u32]) -> Vec<MeasurementResult> {
+    let mut out = Vec::new();
+    for &rate in rates {
+        let b = cell(Stimulus::B, Configuration::C0, rate).measures;
+        out.push(row(
+            "029 D6 v",
+            "2-8 Hz share on (b) in C0",
+            rate,
+            "C0",
+            "b".into(),
+            b.mod_share.unwrap_or(f64::NAN),
+            "",
+            Tolerance::AtLeast(SHARE_B_MIN),
+        ));
+        let a = cell(Stimulus::A35, Configuration::C0, rate).measures;
+        out.push(row(
+            "029 D6 v",
+            "2-8 Hz share on steady noise in C0",
+            rate,
+            "C0",
+            "a35".into(),
+            a.mod_share.unwrap_or(f64::NAN),
+            "",
+            Tolerance::AtMost(SHARE_STEADY_MAX),
+        ));
+        for s in NOISE_ROWS {
+            for c in [Configuration::C0, Configuration::C1] {
+                let m = cell(s, c, rate).measures;
+                out.push(row(
+                    "029 D6 v",
+                    "noise LPC peaks per frame",
+                    rate,
+                    c.id(),
+                    s.id().into(),
+                    m.peaks.unwrap_or(f64::NAN),
+                    "",
+                    Tolerance::AtMost(NOISE_PEAKS_MAX),
+                ));
+            }
+        }
+        let h = cell(Stimulus::H, Configuration::C0, rate).measures;
+        out.push(row(
+            "029 D6 v",
+            "resonator row's peak rise over a35 in C0",
+            rate,
+            "C0",
+            "h".into(),
+            h.peaks.unwrap_or(f64::NAN) - a.peaks.unwrap_or(f64::NAN),
+            "",
+            Tolerance::AtLeast(RESONATOR_RISE_MIN),
+        ));
+        out.push(row(
+            "029 D6 v",
+            "resonator row's lowest-peak median",
+            rate,
+            "C0",
+            "h".into(),
+            h.lowest_peak_median_hz.unwrap_or(f64::NAN),
+            "Hz",
+            Tolerance::Range(RESONATOR_MEDIAN_HZ.0, RESONATOR_MEDIAN_HZ.1),
+        ));
+        let g = cell(Stimulus::G, Configuration::C0, rate).measures;
+        out.push(row(
+            "029 D6 v",
+            "reference's lowest-peak median",
+            rate,
+            "C0",
+            "g".into(),
+            g.lowest_peak_median_hz.unwrap_or(f64::NAN),
+            "Hz",
+            Tolerance::Range(REFERENCE_MEDIAN_HZ.0, REFERENCE_MEDIAN_HZ.1),
+        ));
+        let e = cell(Stimulus::E, Configuration::C0, rate).measures;
+        out.push(row(
+            "029 D6 v",
+            "pink row's lowest-peak median (the pre-emphasis row)",
+            rate,
+            "C0",
+            "e".into(),
+            e.lowest_peak_median_hz.unwrap_or(f64::NAN),
+            "Hz",
+            Tolerance::Range(PINK_MEDIAN_HZ.0, PINK_MEDIAN_HZ.1),
+        ));
+    }
+    out
+}
+
+/// D6 (vi): every figure finite where present, absent only where the cell has no active frames
+/// (the level finite unless the span is digital zero); the pair count on (d) in C0 and C5 equals
+/// the structural oracle.
+pub fn d6_finite_and_pairs(rates: &[u32]) -> Vec<MeasurementResult> {
+    let mut out = Vec::new();
+    for &rate in rates {
+        for c in table(rate) {
+            let m = c.measures;
+            let opts = [
+                m.peaks,
+                m.movement_hz,
+                m.periodicity,
+                m.periodic_fraction,
+                m.lag_stable,
+                m.mod_share,
+                m.flux_db,
+                m.lowest_peak_median_hz,
+            ];
+            let finite = opts.iter().all(|v| v.is_none_or(f64::is_finite))
+                && (m.level_dbfs.is_finite()
+                    || (m.level_dbfs == f64::NEG_INFINITY && m.active == 0));
+            let present_rule = if m.active == 0 {
+                opts.iter().all(Option::is_none)
+            } else {
+                m.peaks.is_some() && m.periodicity.is_some() && m.periodic_fraction.is_some()
+            };
+            out.push(row(
+                "029 D6 vi",
+                "figures finite where present, absent only on inactive cells",
+                rate,
+                c.configuration.id(),
+                c.stimulus.id().into(),
+                f64::from(u8::from(!(finite && present_rule))),
+                "",
+                Tolerance::Exact(0.0),
+            ));
+        }
+    }
+    for &rate in rates {
+        for cfg in [Configuration::C0, Configuration::C5] {
+            let sp = process(Stimulus::D, cfg, rate, BLOCK);
+            let m = read(&sp.samples, &sp.splices, PRODUCTION);
+            let want = pairs_oracle(&sp.samples, &sp.splices, ACTIVE_DBFS);
+            out.push(row(
+                "029 D6 vi",
+                "pair count equals Σ(run − 1) split at splices",
+                rate,
+                cfg.id(),
+                format!("d ({} splices)", sp.splices.len()),
+                m.pairs as f64 - want as f64,
+                "pairs",
+                Tolerance::Exact(0.0),
+            ));
+        }
+    }
+    out
+}
+
+/// Every D6 check at `rates` (the bless gate runs them at the golden's rates; D1).
+pub fn d6_all(rates: &[u32]) -> Vec<MeasurementResult> {
+    let mut v = d6_separation(rates);
+    v.extend(d6_pass_through(rates));
+    v.extend(d6_silence(rates));
+    v.extend(d6_coder_periodicity(rates));
+    v.extend(d6_teeth(rates));
+    v.extend(d6_finite_and_pairs(rates));
+    v
+}
+
+/// A min / max summary per property of a result list (the records quote printed ranges).
+pub fn summary(results: &[MeasurementResult]) -> Vec<String> {
+    let mut m: std::collections::BTreeMap<&str, (f64, f64)> = std::collections::BTreeMap::new();
+    for r in results {
+        if !r.measured.is_finite() {
+            continue;
+        }
+        let e = m
+            .entry(r.property)
+            .or_insert((f64::INFINITY, f64::NEG_INFINITY));
+        e.0 = e.0.min(r.measured);
+        e.1 = e.1.max(r.measured);
+    }
+    m.iter()
+        .map(|(k, (lo, hi))| format!("summary {k}: {lo:.3} … {hi:.3}"))
+        .collect()
 }
 
 /// The golden file's path.
@@ -1689,7 +2367,10 @@ mod tests {
         )
         .lowest_peak_median_hz;
         assert!(with.is_some() && without.is_some());
-        assert!(with.unwrap() >= without.unwrap(), "{with:?} vs {without:?}");
+        assert!(
+            with.unwrap() > without.unwrap() + 50.0,
+            "{with:?} vs {without:?}"
+        );
         // The prominence rule removes peaks.
         let pro = read(&n[..20 * FRAME], &[], PRODUCTION).peaks.unwrap();
         let no = read(
