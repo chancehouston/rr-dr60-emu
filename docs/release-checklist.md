@@ -38,6 +38,12 @@ release PR or issue and tick each item. The reason for each item is in brackets.
       `cargo test -p rr_dr60_harness --release --test timing -- --ignored --nocapture`.
       Record the ns/sample and the "x real time" figure here. [FR-015, SC-006]
 
+      Last run (2026-11-05, 1.0.0-rc.1's release branch, the development Mac, one test at a
+      time): 12 passed. With the codec on, 161.2 ns per host sample at 48 kHz (1.290 µs per
+      device sample, budget 8; 129x real time) and 842.8 ns at 6 kHz (198x); the one-pass
+      161.7 ns/sample against record + play 163.3, ratio 1.010; with the codec bypassed
+      63.0 ns/sample at blocks of 4096 (328x real time at 48 kHz).
+
 ## Content
 
 - [ ] **The golden file is unchanged since the last release**, or every change to it has a
@@ -52,11 +58,14 @@ release PR or issue and tick each item. The reason for each item is in brackets.
 - [ ] **SemVer:** the version is bumped in `Cargo.toml` (workspace) for both the Rust API and the
       C API. The C version defines (`RR_DR60_VERSION_*` in `crates/rr_dr60_ffi/src/lib.rs`)
       match, and the header has been regenerated. Breaking changes to either surface need a
-      MAJOR bump after 1.0 (MINOR while 0.x). [Constitution: Public Repository Standards]
+      MAJOR bump after 1.0 (MINOR while 0.x). A pre-release (`1.0.0-rc.N`) carries its suffix in
+      the workspace version and `rr_dr60_version_string()` only; the three defines and the stored
+      form's header are the numeric part. [Constitution: Public Repository Standards]
 - [ ] `CHANGELOG.md`: move `[Unreleased]` into a dated version section.
 - [ ] Documentation describes signal processing only, and says "modeled on" or "assumed" for
       unmeasured behavior. [Constitution VI]
 
 ## After release
 
-- [ ] Tag `vX.Y.Z` on `main`, and create the GitHub release with the CHANGELOG section.
+- [ ] Tag `vX.Y.Z` on `main`, and create the GitHub release with the CHANGELOG section (a
+      release candidate is tagged `vX.Y.Z-rc.N` and published as a GitHub pre-release).

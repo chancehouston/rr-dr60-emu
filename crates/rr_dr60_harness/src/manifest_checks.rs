@@ -848,7 +848,12 @@ pub fn cross_check(m: &Manifest, r: &Registers<'_>) -> Vec<Finding> {
                 "modeled but no model version",
             ));
         } else {
-            match semver_le(e.model_version, rr_dr60::VERSION) {
+            // The library's numeric version: a pre-release's suffix (`-rc.1`) is not `X.Y.Z`.
+            let library = rr_dr60::VERSION
+                .split('-')
+                .next()
+                .unwrap_or(rr_dr60::VERSION);
+            match semver_le(e.model_version, library) {
                 None => out.push(finding(
                     Rule::ModelVersion,
                     n,

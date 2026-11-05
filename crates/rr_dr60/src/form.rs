@@ -424,7 +424,9 @@ mod tests {
     }
 
     fn lib_version() -> [u16; 3] {
-        let mut parts = crate::VERSION.split('.').map(|p| p.parse::<u16>().unwrap());
+        // The numeric part: a pre-release's SemVer suffix (`-rc.1`) is not in the header.
+        let numeric = crate::VERSION.split('-').next().unwrap();
+        let mut parts = numeric.split('.').map(|p| p.parse::<u16>().unwrap());
         [
             parts.next().unwrap(),
             parts.next().unwrap(),

@@ -53,11 +53,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Library major version (equal to the Rust crate's).
-#define RR_DR60_VERSION_MAJOR 0
+// Library major version (equal to the Rust crate's). A pre-release (a release candidate)
+// carries its SemVer suffix in [`rr_dr60_version_string`] only: the three defines are the numeric
+// part.
+#define RR_DR60_VERSION_MAJOR 1
 
 // Library minor version.
-#define RR_DR60_VERSION_MINOR 95
+#define RR_DR60_VERSION_MINOR 0
 
 // Library patch version.
 #define RR_DR60_VERSION_PATCH 0
@@ -2587,8 +2589,8 @@ RrDr60Status rr_dr60_abi_check(uint32_t abi_version,
                                uintptr_t vas_event_size,
                                uintptr_t change_entry_size);
 
-// The library version as a static NUL-terminated string, e.g. `"0.1.0"`. Never NULL; do not
-// free.
+// The library version as a static NUL-terminated string, e.g. `"1.0.0"`, or `"1.0.0-rc.1"` for a
+// pre-release (the SemVer suffix after the three numeric parts). Never NULL; do not free.
 const char *rr_dr60_version_string(void);
 
 // The number of stage entries in the manifest, 15 (spec 007 FR-017). Real-time safe.
