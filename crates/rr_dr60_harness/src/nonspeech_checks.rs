@@ -3,14 +3,14 @@
 //! (D4), the span rule (plan R-04), the memo (plan P5) and the canonical text (D1).
 //!
 //! Every figure that reaches the text golden is computed with `rr_dr60_detmath` and basic IEEE
-//! operations only (plan R-01): this module calls no `analysis::` item and no `std` transcendental,
+//! operations only (plan R-01): this module calls nothing from the analysis module and no `std` transcendental,
 //! so the text is byte-identical on every CI target. The measures are engineering descriptors of
 //! spectral and temporal structure; the report makes no statement, either way, about what a
 //! listener perceives (D9).
 
 use std::collections::BTreeMap;
 use std::f64::consts::PI;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use rr_dr60::wording::Lists;
 use rr_dr60::{Pipeline, Settings, VasEvent};
@@ -1149,9 +1149,15 @@ fn finish_cell(
 
 type Key = (Stimulus, Configuration, u32);
 
-fn memo() -> &'static Mutex<BTreeMap<(u32, u8, u8), Cell>> {
-    static M: OnceLock<Mutex<BTreeMap<(u32, u8, u8), Cell>>> = OnceLock::new();
+/// The memo: one slot per cell, so concurrent requests for a cell compute it once (the first
+/// caller fills the slot, the others wait on it).
+fn memo() -> &'static Mutex<BTreeMap<(u32, u8, u8), Arc<OnceLock<Cell>>>> {
+    static M: OnceLock<Mutex<BTreeMap<(u32, u8, u8), Arc<OnceLock<Cell>>>>> = OnceLock::new();
     M.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn slot(k: (u32, u8, u8)) -> Arc<OnceLock<Cell>> {
+    memo().lock().unwrap().entry(k).or_default().clone()
 }
 
 fn key_of((s, c, r): Key) -> (u32, u8, u8) {
@@ -1165,36 +1171,28 @@ fn key_of((s, c, r): Key) -> (u32, u8, u8) {
 /// The production cell (block 4096, the production reader), memoized per (stimulus,
 /// configuration, rate).
 pub fn cell(stimulus: Stimulus, configuration: Configuration, rate: u32) -> Cell {
-    let k = key_of((stimulus, configuration, rate));
-    if let Some(c) = memo().lock().unwrap().get(&k) {
-        return c.clone();
-    }
-    let c = compute_cell(stimulus, configuration, rate, BLOCK, PRODUCTION);
-    memo().lock().unwrap().insert(k, c.clone());
-    c
+    slot(key_of((stimulus, configuration, rate)))
+        .get_or_init(|| compute_cell(stimulus, configuration, rate, BLOCK, PRODUCTION))
+        .clone()
 }
 
-/// Fills the memo for every cell at `rate` in parallel (collected by index), then returns them in
-/// the report's order.
+/// Fills the memo for every cell at `rate` in parallel (one thread per missing cell, each
+/// filling its own slot), then returns them in the report's order.
 pub fn table(rate: u32) -> Vec<Cell> {
     let todo: Vec<Key> = STIMULI
         .iter()
         .flat_map(|&s| CONFIGURATIONS.iter().map(move |&c| (s, c, rate)))
-        .filter(|&k| !memo().lock().unwrap().contains_key(&key_of(k)))
+        .filter(|&k| slot(key_of(k)).get().is_none())
         .collect();
-    let computed: Vec<Cell> = std::thread::scope(|sc| {
+    std::thread::scope(|sc| {
         let handles: Vec<_> = todo
             .iter()
-            .map(|&(s, c, r)| sc.spawn(move || compute_cell(s, c, r, BLOCK, PRODUCTION)))
+            .map(|&(s, c, r)| sc.spawn(move || cell(s, c, r)))
             .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).collect()
-    });
-    {
-        let mut m = memo().lock().unwrap();
-        for c in computed {
-            m.insert(key_of((c.stimulus, c.configuration, c.rate)), c);
+        for h in handles {
+            h.join().unwrap();
         }
-    }
+    });
     STIMULI
         .iter()
         .flat_map(|&s| CONFIGURATIONS.iter().map(move |&c| cell(s, c, rate)))

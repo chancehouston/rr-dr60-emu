@@ -399,6 +399,12 @@ fn nonspeech_reader_uses_detmath_only() {
         "/src/nonspeech_checks.rs"
     ))
     .unwrap();
+    // Code lines only (comments describe the rule).
+    let src: String = src
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
         !src.contains("analysis::"),
         "nonspeech_checks must not call analysis::"
