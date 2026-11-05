@@ -1517,3 +1517,83 @@ fn guide_onepass_map() {
     );
     assert!(header.contains("`rr_dr60_one_pass_splice_output_position`"));
 }
+
+/// Spec 029 D8 / FR-008 (plan R-09): the guide's generated table equals the harness's rendering
+/// (`RR_DR60_BLESS=readme` regenerates it).
+#[test]
+fn readme_nonspeech_table_matches() {
+    check_readme_region(
+        "nonspeech-section",
+        &rr_dr60_harness::nonspeech_checks::guide_table(),
+    );
+}
+
+/// Spec 029 D7 / D8 (plan R-09, R-10): every figure a paragraph quotes appears in the golden's
+/// 6 kHz text on a row the paragraph names (`stim/Cn`), every cited ID exists, the section says
+/// "computed" and passes both engine lists and the phrase list.
+#[test]
+fn guide_nonspeech() {
+    use rr_dr60_harness::nonspeech_checks as ns;
+    let text = std::fs::read_to_string(mc::repo_root().join("docs/guide.md")).unwrap();
+    let start = text
+        .find("## What the chain does to noise, bursts and silence")
+        .expect("the guide's section");
+    let end = text[start + 3..]
+        .find("\n## ")
+        .map_or(text.len(), |i| start + 3 + i);
+    let section = &text[start..end];
+    assert!(section.contains("computed"), "the section says computed");
+    assert!(
+        !section.to_lowercase().contains("non-speech"),
+        "no \"non-speech\" in public text (plan P9)"
+    );
+    assert_eq!(rr_dr60::wording::first_claim_hit(section), None);
+    assert_eq!(rr_dr60::wording::first_hit(section).map(|h| h.entry), None);
+    assert_eq!(ns::phrase_hit(section).map(|h| h.entry.to_string()), None);
+    // The IDs cited exist in the registers.
+    let (assumptions, _) = mc::parse_assumptions(committed_registers().assumptions);
+    let ids: Vec<&str> = assumptions.iter().map(|a| a.id.as_str()).collect();
+    for cap in regex::Regex::new(r"A-\d{3}").unwrap().find_iter(section) {
+        assert!(
+            ids.contains(&cap.as_str()),
+            "{} is not registered",
+            cap.as_str()
+        );
+    }
+    // Every quoted figure on a named row of the 6 kHz text.
+    let table = ns::rate_text(ns::DEVICE_HZ);
+    let rows: std::collections::HashMap<String, &str> = table
+        .lines()
+        .filter(|l| !l.starts_with("cfg ") && !l.starts_with("rate ") && !l.starts_with("stim "))
+        .filter_map(|l| {
+            let mut w = l.split_whitespace();
+            let (a, b) = (w.next()?, w.next()?);
+            b.starts_with('C').then(|| (format!("{a}/{b}"), l))
+        })
+        .collect();
+    let row_re = regex::Regex::new(r"\b([a-h](?:35|50|55)?)/(C[0-7])\b").unwrap();
+    let num_re = regex::Regex::new(r"[−-]?\d+\.\d+").unwrap();
+    let mut checked = 0;
+    for para in section.lines().filter(|l| l.starts_with("- **")) {
+        let named: Vec<&str> = row_re.find_iter(para).map(|m| m.as_str()).collect();
+        assert!(!named.is_empty(), "a paragraph names its rows: {para}");
+        let texts: Vec<&str> = named
+            .iter()
+            .map(|k| *rows.get(*k).unwrap_or_else(|| panic!("row {k}")))
+            .collect();
+        for n in num_re.find_iter(para) {
+            let v = n.as_str().replace('−', "-");
+            if v == "5.30" {
+                // the stated difference of two quoted levels
+                continue;
+            }
+            assert!(
+                texts.iter().any(|t| t.split_whitespace().any(|w| w == v)),
+                "figure {v} is not on {named:?}: {para}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked >= 15, "{checked} figures checked");
+    println!("guide_nonspeech: {checked} figures found on their rows");
+}

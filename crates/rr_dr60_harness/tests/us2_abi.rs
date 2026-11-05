@@ -686,3 +686,23 @@ fn spec_028_onepass_map_appended_only() {
         assert_eq!(added, want, "{prefix}");
     }
 }
+
+/// Spec 029 FR-010: the three core crates are untouched against the merge base (the full id;
+/// restated to two revisions in the post-merge records).
+#[test]
+fn spec_029_nonspeech_untouched() {
+    let out = std::process::Command::new("git")
+        .args([
+            "diff",
+            "--quiet",
+            "4dad7147e1c6847477b705372295d5e4dbffb832",
+            "--",
+            "crates/rr_dr60",
+            "crates/rr_dr60_detmath",
+            "crates/rr_dr60_ffi",
+        ])
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+        .status()
+        .expect("git");
+    assert!(out.success(), "spec 029 touched a core crate");
+}

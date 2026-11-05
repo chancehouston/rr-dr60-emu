@@ -50,6 +50,8 @@ Each stage can be switched off or tapped on its own, for example to hear the cod
 
 **The one-pass output map (since 0.95).** For a one-pass render, `one_pass_input_at_output` gives the input behind any output sample (the same alignment window as the record path's map) and `one_pass_splice_output_position` where each voice-activated pause is heard, with the engine supplying its own latencies (C `rr_dr60_one_pass_input_at_output`, Swift `OnePassMap`; see the [guide](docs/guide.md#the-one-pass-output-map-since-095)).
 
+**What the chain does to noise, bursts and silence (since 0.95).** The model's figures, computed by the harness, for steady, modulated and bursty noise and for silence, stage by stage: the level, the active frames, the periodicity, the 2 – 8 Hz envelope share and the LPC envelope peaks through the band, the coder, the gate and the route (the [guide](docs/guide.md#what-the-chain-does-to-noise-bursts-and-silence-since-095)).
+
 ## Quick start
 
 The library is not on crates.io yet; depend on the repository:

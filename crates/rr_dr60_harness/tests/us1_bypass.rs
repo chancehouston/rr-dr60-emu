@@ -40,6 +40,8 @@ fn as1_pre_021_configurations_unmoved() {
         for cap in re.captures_iter(&text) {
             let file = match &cap[1] {
                 "GOLDEN_V1_SHA256" => "golden-v1.json".to_string(),
+                // Spec 029 (2026-11-04): the text golden of the noise, bursts and silence report.
+                "GOLDEN_NONSPEECH_V1_SHA256" => "nonspeech-v1.txt".to_string(),
                 c => {
                     let stem = c
                         .trim_start_matches("GOLDEN_")
@@ -62,9 +64,11 @@ fn as1_pre_021_configurations_unmoved() {
     // Fourteen at 0.21; spec 023 added the pitch-kept guard (2026-10-31), spec 024 the insert
     // guard (2026-11-01): the test reads every guard but 021's own, so it keeps checking later
     // goldens too.
+    // Spec 029 (2026-11-04) added the text golden's guard (`nonspeech-v1.txt`, its own arm
+    // above): 16 → 17.
     assert_eq!(
-        checked, 16,
-        "the fourteen earlier golden guards, the pitch-kept one and the insert one"
+        checked, 17,
+        "the fourteen earlier golden guards, the pitch-kept one, the insert one and 029's text golden"
     );
     let mut rows = Vec::new();
     for &rate in configs::measurement_rates() {
