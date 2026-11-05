@@ -104,7 +104,8 @@ fn doctored_hang() {
     let mut moved = Vec::new();
     for s in ns::STIMULI {
         let c0 = ns::cell(s, C::C0, rate).measures;
-        for c in ns::CONFIGURATIONS {
+        // The gated rungs and one ungated control (C4): the hang cannot reach C0 – C3.
+        for c in [C::C4, C::C5, C::C6, C::C7] {
             let prod = ns::cell(s, c, rate);
             let doc = ns::compute_cell_with(s, c, rate, ns::BLOCK, ns::PRODUCTION, &doctor);
             let same = ns::row_text(&prod, &c0) == ns::row_text(&doc, &c0);

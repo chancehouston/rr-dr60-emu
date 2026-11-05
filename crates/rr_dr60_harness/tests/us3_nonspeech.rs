@@ -321,7 +321,9 @@ fn nonspeech_teeth() {
 #[test]
 fn nonspeech_finite_and_pairs() {
     let mut out = Vec::new();
-    for &rate in configs::measurement_rates() {
+    // The finite rule over the golden's rates (the cells that print); the pair oracle at the
+    // measurement rates.
+    for rate in ns::GOLDEN_RATES {
         for c in ns::table(rate) {
             let m = c.measures;
             let finite = [m.peaks, m.periodicity, m.periodic_fraction]
@@ -353,6 +355,8 @@ fn nonspeech_finite_and_pairs() {
                 Tolerance::Exact(1.0),
             ));
         }
+    }
+    for &rate in configs::measurement_rates() {
         for cfg in [C::C0, C::C5] {
             let sp = ns::process(S::D, cfg, rate, ns::BLOCK);
             let m = ns::read(&sp.samples, &sp.splices, ns::PRODUCTION);

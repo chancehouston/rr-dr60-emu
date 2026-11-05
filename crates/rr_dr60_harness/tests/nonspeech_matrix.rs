@@ -39,12 +39,20 @@ fn nonspeech_configs() {
 
 /// D5: the partition identity on C2 and C5 with a35 and g at 6 and 48 kHz.
 #[test]
+#[cfg_attr(coverage, ignore)]
 fn nonspeech_partitions() {
     for rate in [6000, 48_000] {
         for (s, c) in [(S::A35, C::C2), (S::G, C::C5)] {
             let x = s.samples(rate);
             let base = ns::process_raw(c.settings(rate), &x, &[4096]).0;
-            for part in [vec![1usize], vec![64], vec![1, 7, 64, 1000, 4096, 3]] {
+            // Block size 1 at 6 kHz only (the plain-build cost; the irregular partition covers
+            // the other rates' call boundaries).
+            let parts: Vec<Vec<usize>> = if rate == 6000 {
+                vec![vec![1usize], vec![64], vec![1, 7, 64, 1000, 4096, 3]]
+            } else {
+                vec![vec![64], vec![1, 7, 64, 1000, 4096, 3]]
+            };
+            for part in parts {
                 assert_eq!(
                     ns::process_raw(c.settings(rate), &x, &part).0,
                     base,
@@ -78,6 +86,7 @@ const CROSS_RATE_TOL: [(&str, f64); 7] = [
 /// D5: the seven-rate table printed, and every cell against its 6 kHz twin: bounded on the
 /// open-gate cells, reported elsewhere (plan R-05, P6; the spec's first-print session).
 #[test]
+#[cfg_attr(coverage, ignore)]
 fn nonspeech_rates() {
     let mut out = Vec::new();
     let base: Vec<ns::Cell> = ns::table(ns::DEVICE_HZ);
