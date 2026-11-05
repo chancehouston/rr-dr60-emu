@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-04
 
-**Status**: Draft reviewed 2026-11-04 (coach 1 – 25, hardware B1 – B15, product M1 – M8, applied at the defaults below); clarified 2026-11-04 (five questions, every answer the recommended default). **Spec approved by the owner 2026-11-04 (D1 – D9).**
+**Status**: Draft reviewed 2026-11-04 (coach 1 – 25, hardware B1 – B15, product M1 – M8, applied at the defaults below); clarified 2026-11-04 (five questions, every answer the recommended default). **Spec approved by the owner 2026-11-04 (D1 – D9).** Plan reviewed 2026-11-04 (coach 1 – 20, hardware P1 – P15, product M1 – M11); the restatements below await the owner's plan sign-off.
 
 **Input**: The owner's request of 2026-11-04. A harness-only measurement feature: a report of how the modeled signal chain reshapes **noise, bursts and silence** stage by stage, stated in figures. The project's records and the guide describe the chain's effect on such input in words (band-limiting; the coder's level, envelope and periodicity effects; the gate's behaviour on the capsule's hiss; spec 008's silence residue and 2 kHz lift; spec 012's gate margin); app creators who feed the engine room sound have no figures for what comes out. A scratch probe on 2026-11-04 (6 kHz, seeded noise through an ablation ladder; the hardware review re-ran and extended it at three rates) showed the effects are measurable with frame-level measures and that a synthetic harmonic reference reads an order of magnitude higher than every noise cell on the periodicity measures, so the measures respond. Two of the probe's figures turned out to be reader artifacts (the hardware review's B1, B3) and are not carried. **No library change, no audio change, no listening test, no statement, either way, about what a listener perceives.**
 
@@ -35,6 +35,17 @@
 - Q: Does the guide's table show the harmonic reference row? → A: No; it stays in the golden and the checks, and the guide compares every figure with the pass-through row of the same input (D8).
 
 - Q: Is the 2 – 8 Hz envelope-modulation claim dropped from the checks and the guide? → A: Yes; no inequality on the share between configurations; the measure keeps its own teeth on the pass-through rows; the guide prints the C3 ÷ C1 ratio as a figure with no directional sentence (D6 v, D8).
+
+### Session 2026-11-04 (the plan reviews: restatements for the plan sign-off)
+
+- **D6 (i)** (hardware P1): the reference's peaks-per-frame bound **≥ 1.8** (was 2.5): the spec's own 200 – 2300 Hz search excludes the reference's third resonance (2300 → 2600 Hz), so it reads 2.00 under D4's rules; margin 0.2. The Assumptions line "≥ 2.84 → ≥ 2.5" reads "2.00 → ≥ 1.8".
+- **D6 (v)** (hardware P2): the resonator row (h) is a locate-the-resonance check: it raises C0's peaks per frame by **≥ 0.4** over (a, −35) (observed +0.66) and its lowest-peak median lies in **705 – 800 Hz** (observed 730); the "≤ 0.2" clause is withdrawn (a 20 ms order-8 fit narrows the resonator's width below the 300 Hz rule).
+- **US3 AS3, FR-009** (coach 1, hardware P3): the five mutants are prominence-and-width off → (v) the noise rows' peaks ≤ 1.5; pre-emphasis off → (v) the resonator row's median (730 → 680 Hz); the lag range halved (`lag_max` 50) → (i) the reference's fraction (0.72); **the active threshold lowered to −95 dBFS** (replacing the flush mutant, a no-op under the span rule and the Hann window) → (iii) the C2 / C3 silence residue turns active; **no state reset** → (vi) gains a structural oracle, the pair count behind measures 2, 5 and 7 equal to Σ(run − 1) over the active runs computed from the frame-RMS mask and split at splices, on (d) in C0 and C5 (the flush and no-reset mutants as signed could not fail any check).
+- **D4's span** (hardware P4): each cell is fed exactly its latency in zeros after the stimulus, so the span `[settle + L, in_len + L)` holds 575 frames where nothing pauses (as signed it was short by L); the splice reset lands on the frame of spec 028's heard point; measure (6) prints "—" when the span holds a splice; inactive frames enter the envelope series at the −75 dBFS floor; flux runs over the 200 – 2300 Hz grid (hardware P8).
+- **D2 (e)** (hardware P6): the Kellet pink filter is followed by a second-order 100 Hz high-pass before the level is set, so the in-band share is the same at every rate.
+- **D5** (coach 18, hardware P8): the cross-rate bound is asserted within 029 after the first print, scoped to open-gate cells on stimuli a – f, (g) excepted, C5 / C7 counts reported; a regression guard.
+- **D7 / D8 wording** (product M1 – M9, coach 12): the phrase list is a stem list with exactly two allowed compound terms ("Voice-activated pause (VAS)", "voice band"), applied to the report's strings as well; "non-speech" leaves every public string (the golden's first line `rr_dr60 noise, bursts and silence report v1`); the guide's gate paragraph quotes C4 against C5 from the golden and says the C3 → C5 step includes the microphone; the coder paragraph pairs its level figure with "not a noise-reduction stage (stage 6, A-009)"; the caption says "computed" and gives the rate.
+- **The probe figures in Assumptions** are restated from the harness print in a later session before the bless (coach 19; the "625 / 625" frames are the probe's, the span holds 575).
 
 ## Decisions for sign-off
 
