@@ -48,9 +48,12 @@ Deviations as built (2026-11-04): T001 / T003 / T004 / T005's unit pins are cons
 
 ## Phase 7: The gate, the reviews and the PR (build order 7)
 
-- [ ] T021 The full gate: `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-features`, `RUSTFLAGS="-D warnings" cargo build -p rr_dr60_ffi --release`, the coverage command as CLAUDE.md states it (the minutes recorded against P5's ≤ 10 min budget; else the checks drop to 6 kHz under coverage), `scripts/check-traceability.sh`, every manifest-pinning and guard-scanning binary (`us1_bypass as1_pre_021`, `us2_abi`, `us1_controls`, `us2_cross_check`); the C smoke and the Swift package unchanged.
-- [ ] T022 The post-implementation coach and hardware reviews (read-only), applied at their defaults; any restatement recorded in a dated session of `specs/029-nonspeech-report/spec.md`.
-- [ ] T023 `/speckit-analyze` and `/speckit-converge`; the PR (the `ab-timing` label is not needed: no library change) with the figures as the harness printed them; the owner merges.
+- [X] T021 The full gate: `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-features`, `RUSTFLAGS="-D warnings" cargo build -p rr_dr60_ffi --release`, the coverage command as CLAUDE.md states it (the minutes recorded against P5's ≤ 10 min budget; else the checks drop to 6 kHz under coverage), `scripts/check-traceability.sh`, every manifest-pinning and guard-scanning binary (`us1_bypass as1_pre_021`, `us2_abi`, `us1_controls`, `us2_cross_check`); the C smoke and the Swift package unchanged.
+  - *Done 2026-11-04: fmt, clippy `-D warnings`, `cargo test --all-features` (151 binaries, 1643 passed, 0 failed, 46 ignored; 28.5 min; the four nonspeech binaries 7.6 / 55 / 25 / 71 s), the feature-less FFI release build, the traceability audit, `us1_bypass as1_pre_021`, `us2_abi us3_guards_unmoved`, the manifest-pinning binaries (in the suite). Coverage: the first run 80 min at 96.17 % lines with `us3_nonspeech` at 32.1 min, over P5's budget, so the checks run at 6 kHz under coverage (`check_rates`); the re-run 52 min at 96.02 % lines. Two restatements at the gate, both in the spec's gate session: D6 (ii)'s lowest-peak median asserted on the shaped rows only (105 – 360 Hz on the noise and burst rows at 16, 88.2 and 96 kHz); the coverage rates.*
+- [X] T022 The post-implementation coach and hardware reviews (read-only), applied at their defaults; any restatement recorded in a dated session of `specs/029-nonspeech-report/spec.md`.
+  - *Done 2026-11-04: coach 1 – 20 and hardware Q1 – Q11 applied (commit 776a2bc; the restatements in the spec's post-implementation session).*
+- [X] T023 `/speckit-analyze` and `/speckit-converge`; the PR (the `ab-timing` label is not needed: no library change) with the figures as the harness printed them; the owner merges.
+  - *Done 2026-11-04: analyze (the naming drift, 639895a), converge (T024 – T026); PR #PRNUM.*
 
 ## Phase 8: Convergence
 

@@ -82,6 +82,28 @@ pub const SPAN_FRAMES: usize = ((STIMULUS_S - SETTLE_S) * DEVICE_HZ as f64) as u
 pub const BLOCK: usize = 4096;
 /// The rates the golden covers (D1; clarified 2026-11-04).
 pub const GOLDEN_RATES: [u32; 3] = [6000, 44_100, 48_000];
+
+/// The rates the check binaries (`us1_nonspeech`, `us3_nonspeech`) read: the measurement rates in
+/// the plain build; 6 kHz alone under coverage instrumentation (plan P5's fallback: the gate of
+/// 2026-11-04 read `us3_nonspeech` at 32 min under coverage against the 10 min budget; the matrix's
+/// identity loop keeps the measurement rates there, so the resampler stays covered).
+pub fn check_rates() -> &'static [u32] {
+    if cfg!(coverage) {
+        &[6000]
+    } else {
+        configs::measurement_rates()
+    }
+}
+
+/// The rates of the finite-and-pairs rule (D6 vi): the golden's rates in the plain build, 6 kHz
+/// alone under coverage (see [`check_rates`]).
+pub fn finite_rates() -> &'static [u32] {
+    if cfg!(coverage) {
+        &[6000]
+    } else {
+        &GOLDEN_RATES
+    }
+}
 /// Line 1 of the canonical text (D1; plan P9).
 pub const TITLE: &str = "rr_dr60 noise, bursts and silence report v1";
 

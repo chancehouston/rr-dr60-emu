@@ -3,7 +3,7 @@
 
 use rr_dr60_harness::checks::assert_all;
 use rr_dr60_harness::nonspeech_checks as ns;
-use rr_dr60_harness::{configs, report};
+use rr_dr60_harness::report;
 
 fn run(results: Vec<rr_dr60_harness::checks::MeasurementResult>) {
     report::print(&results);
@@ -16,28 +16,28 @@ fn run(results: Vec<rr_dr60_harness::checks::MeasurementResult>) {
 /// D6 (i): the reference separates; every noise cell with ≥ 500 active frames reads low.
 #[test]
 fn nonspeech_separation() {
-    run(ns::d6_separation(configs::measurement_rates()));
+    run(ns::d6_separation(ns::check_rates()));
 }
 
 /// D6 (ii): C0 equals the input's own reading, bit for bit at 6 kHz, within the recorded
 /// tolerances elsewhere; a presence mismatch fails.
 #[test]
 fn nonspeech_pass_through() {
-    run(ns::d6_pass_through(configs::measurement_rates()));
+    run(ns::d6_pass_through(ns::check_rates()));
 }
 
 /// D6 (v): the measures' own teeth on pass-through rows (incl. the pink row's median, the
 /// pre-emphasis mutant's row).
 #[test]
 fn nonspeech_teeth() {
-    run(ns::d6_teeth(configs::measurement_rates()));
+    run(ns::d6_teeth(ns::check_rates()));
 }
 
 /// D6 (vi): every figure finite where present (the golden's rates), the pair oracle (the
 /// measurement rates).
 #[test]
 fn nonspeech_finite_and_pairs() {
-    run(ns::d6_finite_and_pairs(&ns::GOLDEN_RATES));
+    run(ns::d6_finite_and_pairs(ns::finite_rates()));
 }
 
 /// FR-003: the header's definitions equal a hand-written block (coach 16).
