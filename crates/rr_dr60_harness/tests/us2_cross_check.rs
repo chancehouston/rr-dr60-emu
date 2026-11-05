@@ -1561,16 +1561,7 @@ fn guide_nonspeech() {
         );
     }
     // Every quoted figure on a named row of the 6 kHz text.
-    let table = ns::committed_golden();
-    let rows: std::collections::HashMap<String, &str> = table
-        .lines()
-        .filter(|l| !l.starts_with("cfg ") && !l.starts_with("rate ") && !l.starts_with("stim "))
-        .filter_map(|l| {
-            let mut w = l.split_whitespace();
-            let (a, b) = (w.next()?, w.next()?);
-            b.starts_with('C').then(|| (format!("{a}/{b}"), l))
-        })
-        .collect();
+    let rows = ns::golden_rows(&ns::committed_golden(), ns::DEVICE_HZ);
     let row_re = regex::Regex::new(r"\b([a-h](?:35|50|55)?)/(C[0-7])\b").unwrap();
     let num_re = regex::Regex::new(r"[−-]?\d+\.\d+|\b\d+ frames").unwrap();
     let mut checked = 0;
@@ -1579,7 +1570,11 @@ fn guide_nonspeech() {
         assert!(!named.is_empty(), "a paragraph names its rows: {para}");
         let texts: Vec<&str> = named
             .iter()
-            .map(|k| *rows.get(*k).unwrap_or_else(|| panic!("row {k}")))
+            .map(|k| {
+                rows.get(*k)
+                    .map(String::as_str)
+                    .unwrap_or_else(|| panic!("row {k}"))
+            })
             .collect();
         for n in num_re.find_iter(para) {
             let v = n
