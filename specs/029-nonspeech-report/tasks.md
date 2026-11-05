@@ -53,7 +53,7 @@ Deviations as built (2026-11-04): T001 / T003 / T004 / T005's unit pins are cons
 - [X] T022 The post-implementation coach and hardware reviews (read-only), applied at their defaults; any restatement recorded in a dated session of `specs/029-nonspeech-report/spec.md`.
   - *Done 2026-11-04: coach 1 – 20 and hardware Q1 – Q11 applied (commit 776a2bc; the restatements in the spec's post-implementation session).*
 - [X] T023 `/speckit-analyze` and `/speckit-converge`; the PR (the `ab-timing` label is not needed: no library change) with the figures as the harness printed them; the owner merges.
-  - *Done 2026-11-04: analyze (the naming drift, 639895a), converge (T024 – T026); PR #PRNUM.*
+  - *Done 2026-11-04: analyze (the naming drift, 639895a), converge (T024 – T026); PR #91.*
 
 ## Phase 8: Convergence
 
