@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-04
 
-**Status**: Draft reviewed 2026-11-04 (coach 1 – 25, hardware B1 – B15, product M1 – M8, applied at the defaults below); awaiting `/speckit-clarify` and the owner's sign-off.
+**Status**: Draft reviewed 2026-11-04 (coach 1 – 25, hardware B1 – B15, product M1 – M8, applied at the defaults below); clarified 2026-11-04 (five questions, every answer the recommended default). **Awaiting the owner's spec sign-off (D1 – D9).**
 
 **Input**: The owner's request of 2026-11-04. A harness-only measurement feature: a report of how the modeled signal chain reshapes **noise, bursts and silence** stage by stage, stated in figures. The project's records and the guide describe the chain's effect on such input in words (band-limiting; the coder's level, envelope and periodicity effects; the gate's behaviour on the capsule's hiss; spec 008's silence residue and 2 kHz lift; spec 012's gate margin); app creators who feed the engine room sound have no figures for what comes out. A scratch probe on 2026-11-04 (6 kHz, seeded noise through an ablation ladder; the hardware review re-ran and extended it at three rates) showed the effects are measurable with frame-level measures and that a synthetic harmonic reference reads an order of magnitude higher than every noise cell on the periodicity measures, so the measures respond. Two of the probe's figures turned out to be reader artifacts (the hardware review's B1, B3) and are not carried. **No library change, no audio change, no listening test, no statement, either way, about what a listener perceives.**
 
@@ -23,6 +23,18 @@
 - The four speech-named measures are **renamed for what they compute** (product M1, coach 17, hardware B14), and the guide's table compares every figure with the pass-through row and omits the harmonic reference row (product M2, M6).
 - A **pink-noise stimulus** is added (product answer 5).
 - The scratch probes of 2026-11-04 are **not part of the feature** and are not committed (coach 20, product M4); the reader is written fresh under the harness's math rules.
+
+### Session 2026-11-04 (clarify)
+
+- Q: Which host rates should the text golden cover? → A: Three fixed rates, 6, 44.1 and 48 kHz (`NONSPEECH_GOLDEN_RATES`); the other four reported by the matrix only (D1, D3).
+
+- Q: How are the noise stimuli defined so every rate carries the same in-band signal? → A: Uniform noise at the host rate through a deterministic Kaiser low-pass at 2900 Hz, the level set as the in-band AES17 RMS; each rate its own realisation, so the cross-rate rows are a reading (D2).
+
+- Q: What hiss offset does the quiet-room rung C6 use? → A: +12 dB, the range maximum, at least 2.5 dB above spec 012's stop estimates; the app's quiet-room preset is not settled and may quote this rung (D3, D6 iii).
+
+- Q: Does the guide's table show the harmonic reference row? → A: No; it stays in the golden and the checks, and the guide compares every figure with the pass-through row of the same input (D8).
+
+- Q: Is the 2 – 8 Hz envelope-modulation claim dropped from the checks and the guide? → A: Yes; no inequality on the share between configurations; the measure keeps its own teeth on the pass-through rows; the guide prints the C3 ÷ C1 ratio as a figure with no directional sentence (D6 v, D8).
 
 ## Decisions for sign-off
 
