@@ -1,5 +1,5 @@
 //! Spec 029 [TR: D3, D5; FR-002, FR-005]: the configurations' identities, the partitions, the
-//! seven-rate table and the cross-rate rows (reported until the tolerances are recorded).
+//! seven-rate table and the cross-rate rows (bounded on the open-gate cells; the rest reported).
 
 use rr_dr60_harness::checks::{MeasurementResult, Tolerance, assert_all};
 use rr_dr60_harness::nonspeech_checks::{self as ns, Configuration as C, Stimulus as S};
@@ -57,8 +57,26 @@ fn nonspeech_partitions() {
     }
 }
 
-/// D5: the seven-rate table printed, and every cell against its 6 kHz twin (reported until the
-/// tolerances are recorded in the spec's Clarifications; plan R-05, P6).
+/// D5's cross-rate bound (plan R-05, P6; recorded 2026-11-04 from the first harness print as
+/// 2 × the largest |rate − 6 kHz| over the open-gate rungs C0 – C4 and C6 on the steady,
+/// modulated and pink rows a35, a50, a55, b, c, e, with the floors): level 0.89 → 1.8 dB, peaks
+/// 0.314 → 0.7, periodicity 0.026 → 0.06, periodic fraction 0.031 → 0.07, share 0.097 → 0.2,
+/// flux 0.27 → 0.6 dB, active frames ±1. A regression guard, not a precision figure. The bursts
+/// row (few active frames; the decoder's continuation differs by rate), silence (the residue's
+/// level moves with the engine's resampler), the reference (generated per rate), the resonator
+/// row and the pausing rungs C5 / C7 are reported only.
+const CROSS_RATE_TOL: [(&str, f64); 7] = [
+    ("level", 1.8),
+    ("peaks", 0.7),
+    ("periodicity", 0.06),
+    ("periodic fraction", 0.07),
+    ("share", 0.2),
+    ("flux", 0.6),
+    ("active frames", 1.0),
+];
+
+/// D5: the seven-rate table printed, and every cell against its 6 kHz twin: bounded on the
+/// open-gate cells, reported elsewhere (plan R-05, P6; the spec's first-print session).
 #[test]
 fn nonspeech_rates() {
     let mut out = Vec::new();
@@ -70,25 +88,21 @@ fn nonspeech_rates() {
             continue;
         }
         for (c, b) in t.iter().zip(&base) {
-            let open_gate = matches!(
+            let bounded = matches!(
                 c.configuration,
                 C::C0 | C::C1 | C::C2 | C::C3 | C::C4 | C::C6
-            ) && c.stimulus != S::G
-                && c.stimulus != S::H;
+            ) && matches!(c.stimulus, S::A35 | S::A50 | S::A55 | S::B | S::C | S::E);
             let d = |a: Option<f64>, b: Option<f64>| match (a, b) {
                 (Some(a), Some(b)) => Some((a - b).abs()),
                 _ => None,
             };
+            let level = if c.measures.level_dbfs.is_finite() && b.measures.level_dbfs.is_finite() {
+                Some((c.measures.level_dbfs - b.measures.level_dbfs).abs())
+            } else {
+                None
+            };
             let rows = [
-                (
-                    "level",
-                    if c.measures.level_dbfs.is_finite() {
-                        Some((c.measures.level_dbfs - b.measures.level_dbfs).abs())
-                    } else {
-                        None
-                    },
-                    "dB",
-                ),
+                ("level", level, "dB"),
                 ("peaks", d(c.measures.peaks, b.measures.peaks), ""),
                 (
                     "periodicity",
@@ -110,20 +124,29 @@ fn nonspeech_rates() {
             ];
             for (name, v, unit) in rows {
                 let Some(v) = v else { continue };
+                let tol = CROSS_RATE_TOL
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .map(|&(_, t)| t)
+                    .unwrap();
+                let (prop, t) = if bounded {
+                    (
+                        "cross-rate |rate − 6 kHz| (bounded)",
+                        Tolerance::AtMost(tol),
+                    )
+                } else {
+                    ("cross-rate |rate − 6 kHz| (reported)", Tolerance::Report)
+                };
                 out.push(MeasurementResult::new(
                     "029 D5",
-                    if open_gate {
-                        "cross-rate |rate − 6 kHz| (open gate)"
-                    } else {
-                        "cross-rate |rate − 6 kHz| (reported)"
-                    },
+                    prop,
                     TRACE,
                     rate,
                     c.configuration.id(),
                     format!("{} {name}", c.stimulus.id()),
                     v,
                     unit,
-                    Tolerance::Report,
+                    t,
                 ));
             }
         }

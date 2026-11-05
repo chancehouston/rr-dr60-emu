@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 /// SHA-256 of `golden/nonspeech-v1.txt` as blessed by spec 029 (T017). The scanner of
 /// `us1_bypass` maps this constant to `nonspeech-v1.txt` (its text-golden arm).
 const GOLDEN_NONSPEECH_V1_SHA256: &str =
-    "0000000000000000000000000000000000000000000000000000000000000000"; // to be blessed (029 T017)
+    "a0ca4dd245c337b75f5b4b03b20a06b4fd99664adca8f80390d79c0d8ddaf930"; // blessed 2026-11-04 (029 T017)
 
 fn sha(bytes: &[u8]) -> String {
     Sha256::digest(bytes)

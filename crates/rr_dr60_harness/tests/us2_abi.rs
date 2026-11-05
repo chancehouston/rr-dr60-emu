@@ -192,6 +192,10 @@ fn us3_guards_unmoved() {
             "golden_bypass.rs",
             "c2cb096231380ec29a0f2ca3c815e360bceee8d70164558398769214ce06b1e6",
         ),
+        (
+            "golden_nonspeech.rs", // spec 029's text golden (2026-11-04)
+            "a0ca4dd245c337b75f5b4b03b20a06b4fd99664adca8f80390d79c0d8ddaf930",
+        ),
     ];
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/");
     for (file, sha) in want {

@@ -23,10 +23,21 @@ const NOISE_PEAKS_MAX: f64 = 1.5;
 const RESONATOR_RISE_MIN: f64 = 0.15;
 const RESONATOR_MEDIAN_HZ: (f64, f64) = (650.0, 800.0);
 const REFERENCE_MEDIAN_HZ: (f64, f64) = (250.0, 800.0);
+/// D6 (ii) at the rates other than 6 kHz (plan R-05b; recorded 2026-11-04 from the first harness
+/// print: 2 × the largest |C0 − input-own| over the stimuli at seven rates, with the floors):
+/// level 0.032 → 0.07 dB, peaks 0.067 → 0.14, periodicity 0.001 → 0.002, periodic fraction
+/// 0.013 → 0.03, share 0.003 → 0.01, flux 0.015 → 0.03 dB, active frames 0 → ±1.
+const PASS_THROUGH_TOL_LEVEL_DB: f64 = 0.07;
+const PASS_THROUGH_TOL_PEAKS: f64 = 0.14;
+const PASS_THROUGH_TOL_PERIODICITY: f64 = 0.002;
+const PASS_THROUGH_TOL_FRACTION: f64 = 0.03;
+const PASS_THROUGH_TOL_SHARE: f64 = 0.01;
+const PASS_THROUGH_TOL_FLUX_DB: f64 = 0.03;
 
 const NOISE: [S; 5] = [S::A35, S::A50, S::A55, S::B, S::C];
 const TRACE: &[&str] = &["029 D6"];
 
+#[allow(clippy::too_many_arguments)]
 fn r(
     req: &'static str,
     prop: &'static str,
@@ -157,7 +168,7 @@ fn nonspeech_pass_through() {
                     s.id().into(),
                     level,
                     "dB",
-                    Tolerance::Report,
+                    Tolerance::AtMost(PASS_THROUGH_TOL_LEVEL_DB),
                 ));
                 out.push(r(
                     "029 D6 ii",
@@ -167,7 +178,7 @@ fn nonspeech_pass_through() {
                     s.id().into(),
                     d(c.measures.peaks, own.peaks),
                     "",
-                    Tolerance::Report,
+                    Tolerance::AtMost(PASS_THROUGH_TOL_PEAKS),
                 ));
                 out.push(r(
                     "029 D6 ii",
@@ -177,7 +188,7 @@ fn nonspeech_pass_through() {
                     s.id().into(),
                     d(c.measures.periodicity, own.periodicity),
                     "",
-                    Tolerance::Report,
+                    Tolerance::AtMost(PASS_THROUGH_TOL_PERIODICITY),
                 ));
                 out.push(r(
                     "029 D6 ii",
@@ -187,7 +198,7 @@ fn nonspeech_pass_through() {
                     s.id().into(),
                     d(c.measures.periodic_fraction, own.periodic_fraction),
                     "",
-                    Tolerance::Report,
+                    Tolerance::AtMost(PASS_THROUGH_TOL_FRACTION),
                 ));
                 out.push(r(
                     "029 D6 ii",
@@ -197,7 +208,7 @@ fn nonspeech_pass_through() {
                     s.id().into(),
                     d(c.measures.mod_share, own.mod_share),
                     "",
-                    Tolerance::Report,
+                    Tolerance::AtMost(PASS_THROUGH_TOL_SHARE),
                 ));
                 out.push(r(
                     "029 D6 ii",
@@ -207,7 +218,7 @@ fn nonspeech_pass_through() {
                     s.id().into(),
                     d(c.measures.flux_db, own.flux_db),
                     "dB",
-                    Tolerance::Report,
+                    Tolerance::AtMost(PASS_THROUGH_TOL_FLUX_DB),
                 ));
                 out.push(r(
                     "029 D6 ii",

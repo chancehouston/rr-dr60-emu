@@ -702,8 +702,8 @@ pub fn envelope_db(a: &[f64]) -> Vec<f64> {
     (0..GRID_N)
         .map(|g| {
             let mut p = c[0];
-            for m in 1..=order {
-                p += 2.0 * c[m] * t.cos_env[g][m];
+            for (m, &cm) in c.iter().enumerate().skip(1) {
+                p += 2.0 * cm * t.cos_env[g][m];
             }
             -10.0 * ln(p.max(1e-30)) / ln10()
         })
@@ -1151,8 +1151,10 @@ type Key = (Stimulus, Configuration, u32);
 
 /// The memo: one slot per cell, so concurrent requests for a cell compute it once (the first
 /// caller fills the slot, the others wait on it).
-fn memo() -> &'static Mutex<BTreeMap<(u32, u8, u8), Arc<OnceLock<Cell>>>> {
-    static M: OnceLock<Mutex<BTreeMap<(u32, u8, u8), Arc<OnceLock<Cell>>>>> = OnceLock::new();
+type Memo = Mutex<BTreeMap<(u32, u8, u8), Arc<OnceLock<Cell>>>>;
+
+fn memo() -> &'static Memo {
+    static M: OnceLock<Memo> = OnceLock::new();
     M.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
