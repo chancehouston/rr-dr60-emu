@@ -120,7 +120,7 @@ A later feature changes a stage (a coder constant, the gate's onset, the capsule
 **Acceptance Scenarios**:
 
 1. **Given** the committed golden, **When** the gate's hang is doubled in the C5 cells by a doctored configuration, **Then** the comparison reports a row-level diff in which exactly the C5 and C7 rows whose kept output is shorter than the input plus the latency differ (silence, bursts, the −50 and −55 dBFS noise, and the pink row at 6 kHz), C6 and the C4 control are unmoved; the test prints the moved rows (`golden_nonspeech doctored_hang`; restated 2026-11-04).
-2. **Given** the committed golden, **When** the report runs with block sizes 64 and 4096, **Then** the two texts are identical (D5; `nonspeech_matrix partitions`).
+2. **Given** the committed golden, **When** the report runs with block sizes 64 and 4096, **Then** the two texts are identical (D5; `nonspeech_matrix nonspeech_partitions`).
 
 ---
 
@@ -135,7 +135,7 @@ The harmonic reference reads high on periodicity and peaks, the pass-through row
 **Acceptance Scenarios**:
 
 1. **Given** the reference in C0 – C3, **When** read, **Then** its periodic-frame fraction ≥ 0.9 and peaks per frame ≥ 1.8 (restated); every noise cell with ≥ 500 active frames reads a periodic-frame fraction ≤ 0.1 (D6 i; `us3_nonspeech nonspeech_separation`).
-2. **Given** any stimulus in C0, **When** read, **Then** the measures equal the input's own within D6 ii's tolerances (`us3_nonspeech pass_through`).
+2. **Given** any stimulus in C0, **When** read, **Then** the measures equal the input's own within D6 ii's tolerances (`us3_nonspeech nonspeech_pass_through`).
 3. **Given** a mutant reader, **When** the checks run, **Then** each fails a named D6 check (the golden is not an oracle for mutants; restated 2026-11-04, plan P3 and the post-implementation reviews): the prominence-and-width rule removed fails (v)'s noise-row peaks bound; the pre-emphasis removed fails (v)'s pink-row median band; the lag range halved fails (i)'s reference fraction; the activity threshold lowered to −95 dBFS fails (iii)'s silence rows; the frame-state reset removed fails (vi)'s pair-count oracle (`mutation nonspeech::`).
 
 ---
@@ -153,8 +153,8 @@ The harmonic reference reads high on periodicity and peaks, the pass-through row
 ## Requirements *(mandatory)*
 
 - **FR-001**: D2's eight stimuli as seeded constants of the report, bit-reproducible at every rate (`nonspeech_checks`; `determinism nonspeech`).
-- **FR-002**: D3's eight configurations named in `configs::settings` with their taps; the limiter-off twin of C4 bit-identical (`nonspeech_matrix configs`).
-- **FR-003**: D4's nine measures by one reader under the harness's deterministic math (no `std` transcendental on the reader's or the resampler's path), the definitions printed in the header equal to the constants (`us3_nonspeech reader_definitions`).
+- **FR-002**: D3's eight configurations named in `configs::settings` with their taps; the limiter-off twin of C4 bit-identical (`nonspeech_matrix nonspeech_configs`).
+- **FR-003**: D4's nine measures by one reader under the harness's deterministic math (no `std` transcendental on the reader's or the resampler's path), the definitions printed in the header equal to the constants (`us3_nonspeech nonspeech_reader_definitions`).
 - **FR-004**: D1's canonical text golden at the fixed rates, byte-compared and SHA-pinned, re-blessed only by the documented command with a CHANGELOG entry (`golden_nonspeech`; its guard counted by `us1_bypass`'s scanner, whose pin is restated 16 → 17 with a dated comment).
 - **FR-005**: D5's block-size identity asserted; cross-rate agreement reported in the first version, bounded in a later session (`nonspeech_matrix`).
 - **FR-006**: D6's six checks, each citing its decision and its margin, D6 ii with per-measure tolerances recorded in Clarifications (`us1_nonspeech`, `us3_nonspeech`).
