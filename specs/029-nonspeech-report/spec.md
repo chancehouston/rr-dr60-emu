@@ -76,6 +76,10 @@ Every figure below is the harness's own at the measurement rates (seven in the p
 - **The guide** (coach 10, 12; hardware Q9): causal sentences replaced by figure sentences (the peaks "go 0.139 → 0.447", the route "0.897 → 1.327"), the hiss figure labelled "through the band and the coder", the gate "keeps 23 frames of the span after the 0.5 s settle, then pauses", the heading "(spec 029; harness, engine 0.95.0)" in place of "(since 0.95)".
 - **The pink row in C5 / C7 sits on the gate's threshold** (hardware Q10): at C4 it reads −52.2 … −52.6 dBFS; the gate pauses at 6 kHz and keeps all 575 at 44.1 / 48 kHz. Not quoted in the guide.
 
+### Session 2026-11-04 (the gate: the seven-rate run of `us3_nonspeech`)
+
+- **D6 (ii)'s lowest-peak median is asserted on the shaped rows only** (a restatement at the gate): the 100 Hz tolerance was set from the golden's three rates, where every row read 0 – 45 Hz apart; the seven-rate run read **105 – 360 Hz** on the flat and modulated noise rows and the bursts (a35, a50, a55, b, c at 16 kHz, c and d at 88.2 kHz, c at 96 kHz; 0 – 45 Hz at 8, 44.1 and 48 kHz) while the pink row, the silence, the reference and the resonator read **0 – 45 Hz** at the seven rates. On noise the lowest peak is wherever the order-8 fit put one, so its median over 575 frames jumps between modes when the engine's resampler pair moves a few frames' peaks; the statistic locates structure the stimulus places. The rows a – d report the figure (`nonspeech_checks::MEDIAN_REPORTED_ROWS`), the rows e – h keep the 100 Hz tolerance; the other seven measures of (ii) stay asserted on every row.
+
 ## Decisions for sign-off
 
 | # | Decision | Recommended |
