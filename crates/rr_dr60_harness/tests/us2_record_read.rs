@@ -128,7 +128,14 @@ fn as2_differences_reported() {
         assert_eq!(read(&p, b).unwrap().flags, 0, "{tag}");
         let r = read(
             &p,
-            &resign(doctor(b, "library_version = 0.", "library_version = 9.")),
+            &resign(doctor(
+                b,
+                &format!(
+                    "library_version = {}.",
+                    rr_dr60::VERSION.split('.').next().unwrap()
+                ),
+                "library_version = 9.",
+            )),
         )
         .unwrap();
         assert_eq!(r.flags, flags::LIBRARY_DIFFERS, "{tag}");

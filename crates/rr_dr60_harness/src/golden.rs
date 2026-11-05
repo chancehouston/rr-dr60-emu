@@ -3174,7 +3174,13 @@ pub fn generate_record_contract(make: Make<'_>) -> GoldenFile {
         let stored = rr_dr60::__test_hooks::stored_samples(&p, run.number).to_vec();
         let text = String::from_utf8(run.record.clone()).expect("ASCII");
         let (lines, library, stages) = normalize_record(&text);
-        assert_eq!(library, rr_dr60::VERSION, "{rate} Hz: the library line");
+        // The record names the library by its numeric version (a pre-release's suffix is not in
+        // the stored form's header, which the record's line follows).
+        assert_eq!(
+            library,
+            rr_dr60::VERSION.split('-').next().unwrap(),
+            "{rate} Hz: the library line"
+        );
         assert_eq!(stages, manifest_stage_lines(), "{rate} Hz: the stage lines");
         let r = rc::readout(&run.record);
         let mut e = entry("matrix_voice", "record_contract", rate, &stored);

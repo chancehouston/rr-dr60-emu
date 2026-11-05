@@ -26,7 +26,10 @@ private func isOK(_ status: Int32) -> Bool {
 
 @Test func versionMatchesTheHeader() {
     let version = String(cString: rr_dr60_version_string())
-    #expect(version == "\(RR_DR60_VERSION_MAJOR).\(RR_DR60_VERSION_MINOR).\(RR_DR60_VERSION_PATCH)")
+    // The defines are the numeric part; a pre-release carries its SemVer suffix ("-rc.1") in
+    // the string only.
+    let numeric = version.split(separator: "-").first.map(String.init) ?? version
+    #expect(numeric == "\(RR_DR60_VERSION_MAJOR).\(RR_DR60_VERSION_MINOR).\(RR_DR60_VERSION_PATCH)")
 }
 
 @Test func defaultOnePassMatchesTheRustPath() throws {

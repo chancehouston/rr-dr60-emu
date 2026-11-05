@@ -1687,7 +1687,7 @@ mod tests {
         read(
             &resign(doctor(
                 &bytes,
-                "library_version = 0.",
+                &alloc::format!("library_version = {}.", crate::form::LIB_VERSION[0]),
                 "library_version = 9.",
             )),
             &mut got,

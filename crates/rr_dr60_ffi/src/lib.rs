@@ -63,10 +63,12 @@ use rr_dr60::{
     StopOutcome, StopReason, StopResult, Stream, Tap, VasEvent, VasMode,
 };
 
-/// Library major version (equal to the Rust crate's).
-pub const RR_DR60_VERSION_MAJOR: u32 = 0;
+/// Library major version (equal to the Rust crate's). A pre-release (a release candidate)
+/// carries its SemVer suffix in [`rr_dr60_version_string`] only: the three defines are the numeric
+/// part.
+pub const RR_DR60_VERSION_MAJOR: u32 = 1;
 /// Library minor version.
-pub const RR_DR60_VERSION_MINOR: u32 = 95;
+pub const RR_DR60_VERSION_MINOR: u32 = 0;
 /// Library patch version.
 pub const RR_DR60_VERSION_PATCH: u32 = 0;
 
@@ -3803,8 +3805,8 @@ pub extern "C" fn rr_dr60_abi_check(
     }
 }
 
-/// The library version as a static NUL-terminated string, e.g. `"0.1.0"`. Never NULL; do not
-/// free.
+/// The library version as a static NUL-terminated string, e.g. `"1.0.0"`, or `"1.0.0-rc.1"` for a
+/// pre-release (the SemVer suffix after the three numeric parts). Never NULL; do not free.
 #[unsafe(no_mangle)]
 pub extern "C" fn rr_dr60_version_string() -> *const c_char {
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast()
@@ -4473,11 +4475,13 @@ mod tests {
     #[test]
     fn version_constants_match_crate_version() {
         let v = format!("{RR_DR60_VERSION_MAJOR}.{RR_DR60_VERSION_MINOR}.{RR_DR60_VERSION_PATCH}");
-        assert_eq!(v, env!("CARGO_PKG_VERSION"));
-        assert_eq!(v, rr_dr60::VERSION);
+        // The defines are the numeric part; the string carries a pre-release's SemVer suffix.
+        let full = env!("CARGO_PKG_VERSION");
+        assert_eq!(v, full.split('-').next().unwrap());
+        assert_eq!(full, rr_dr60::VERSION);
         // SAFETY: the version string is a static NUL-terminated string.
         let s = unsafe { std::ffi::CStr::from_ptr(rr_dr60_version_string()) };
-        assert_eq!(s.to_str().unwrap(), v);
+        assert_eq!(s.to_str().unwrap(), full);
     }
 
     #[test]
@@ -4596,7 +4600,14 @@ mod tests {
         assert_eq!(d.reserved_010_tail, [0; 7]);
         assert_eq!(d.reserved_012, [0; 2]);
         assert_eq!(d.mic_hiss_offset_db, 0.0); // 012 FR-003
-        assert_eq!(RR_DR60_VERSION_MINOR, 95);
+        assert_eq!(
+            (
+                RR_DR60_VERSION_MAJOR,
+                RR_DR60_VERSION_MINOR,
+                RR_DR60_VERSION_PATCH
+            ),
+            (1, 0, 0)
+        );
         let mut stale = rr_dr60_settings_default(48_000);
         stale.struct_size = 112; // a 0.10 or 0.11 caller (spec 012 FR-012)
         assert_eq!(
