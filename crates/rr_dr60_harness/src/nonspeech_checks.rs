@@ -1460,11 +1460,10 @@ pub fn golden_rows(text: &str, rate: u32) -> std::collections::BTreeMap<String, 
             continue;
         }
         let mut w = l.split_whitespace();
-        if let (Some(a), Some(b)) = (w.next(), w.next())
-            && b.starts_with('C')
-            && b.len() == 2
-        {
-            out.insert(format!("{a}/{b}"), l.to_string());
+        if let (Some(a), Some(b)) = (w.next(), w.next()) {
+            if b.starts_with('C') && b.len() == 2 {
+                out.insert(format!("{a}/{b}"), l.to_string());
+            }
         }
     }
     out
