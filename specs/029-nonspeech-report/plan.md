@@ -2,7 +2,7 @@
 
 **Branch**: `029-nonspeech-report` | **Date**: 2026-11-04 | **Spec**: [spec.md](spec.md) (approved by the owner 2026-11-04, D1 – D9)
 
-**Status**: plan reviewed 2026-11-04 (coach 1 – 20, hardware P1 – P15, product M1 – M11, applied at the defaults below); the restatements of signed text are in the spec's Clarifications (session "the plan reviews") and listed under "Decisions for the plan sign-off". **Awaiting the owner's plan sign-off.**
+**Status**: plan reviewed 2026-11-04 (coach 1 – 20, hardware P1 – P15, product M1 – M11, applied at the defaults below); the restatements of signed text are in the spec's Clarifications (session "the plan reviews") and listed under "Decisions for the plan sign-off". **Plan approved by the owner 2026-11-04 (P1 – P9).**
 
 **Input**: the signed spec; the hardware review's scratch readers of the D4 definitions (session scratchpad, `np/src/bin/{plan,lat,twin}.rs`, std math, not committed) as the expectation for the margins; every figure they gave is reproduced in the harness at the first print before the records quote it (spec 019's lesson).
 
