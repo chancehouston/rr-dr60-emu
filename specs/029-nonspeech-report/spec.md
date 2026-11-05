@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-04
 
-**Status**: Draft reviewed 2026-11-04 (coach 1 – 25, hardware B1 – B15, product M1 – M8, applied at the defaults below); clarified 2026-11-04 (five questions, every answer the recommended default). **Awaiting the owner's spec sign-off (D1 – D9).**
+**Status**: Draft reviewed 2026-11-04 (coach 1 – 25, hardware B1 – B15, product M1 – M8, applied at the defaults below); clarified 2026-11-04 (five questions, every answer the recommended default). **Spec approved by the owner 2026-11-04 (D1 – D9).**
 
 **Input**: The owner's request of 2026-11-04. A harness-only measurement feature: a report of how the modeled signal chain reshapes **noise, bursts and silence** stage by stage, stated in figures. The project's records and the guide describe the chain's effect on such input in words (band-limiting; the coder's level, envelope and periodicity effects; the gate's behaviour on the capsule's hiss; spec 008's silence residue and 2 kHz lift; spec 012's gate margin); app creators who feed the engine room sound have no figures for what comes out. A scratch probe on 2026-11-04 (6 kHz, seeded noise through an ablation ladder; the hardware review re-ran and extended it at three rates) showed the effects are measurable with frame-level measures and that a synthetic harmonic reference reads an order of magnitude higher than every noise cell on the periodicity measures, so the measures respond. Two of the probe's figures turned out to be reader artifacts (the hardware review's B1, B3) and are not carried. **No library change, no audio change, no listening test, no statement, either way, about what a listener perceives.**
 
