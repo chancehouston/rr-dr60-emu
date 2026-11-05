@@ -51,3 +51,9 @@ Deviations as built (2026-11-04): T001 / T003 / T004 / T005's unit pins are cons
 - [ ] T021 The full gate: `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-features`, `RUSTFLAGS="-D warnings" cargo build -p rr_dr60_ffi --release`, the coverage command as CLAUDE.md states it (the minutes recorded against P5's ≤ 10 min budget; else the checks drop to 6 kHz under coverage), `scripts/check-traceability.sh`, every manifest-pinning and guard-scanning binary (`us1_bypass as1_pre_021`, `us2_abi`, `us1_controls`, `us2_cross_check`); the C smoke and the Swift package unchanged.
 - [ ] T022 The post-implementation coach and hardware reviews (read-only), applied at their defaults; any restatement recorded in a dated session of `specs/029-nonspeech-report/spec.md`.
 - [ ] T023 `/speckit-analyze` and `/speckit-converge`; the PR (the `ab-timing` label is not needed: no library change) with the figures as the harness printed them; the owner merges.
+
+## Phase 8: Convergence
+
+- [X] T024 Pin the bursts' schedule (`nonspeech_checks::burst_schedule`): the count and the first three starts against the placed bursts at 6 and 48 kHz, in `crates/rr_dr60_harness/src/nonspeech_checks.rs` (`tests::stimuli_lengths_levels_and_seeds`) per FR-001 / data-model.md › Stimuli (partial)
+- [X] T025 Align the resampler pin's doc comment with its method (zero crossings within 1 Hz, the level within 0.05 dB) in `crates/rr_dr60_harness/src/nonspeech_checks.rs` per D4 / plan R-02 (partial)
+- [X] T026 Restate plan P5's "the mutants reuse the cached 6 kHz outputs" to the behaviour as built (each mutant re-processes its cells at 6 kHz, about one second each) in `specs/029-nonspeech-report/plan.md` per plan P5 (partial)

@@ -2184,6 +2184,34 @@ mod tests {
             let d = bursts(rate, 12 * rate as usize);
             (0..d.len()).find(|&i| d[i] != 0.0).unwrap() * 6000 / rate as usize
         };
+        // T024: the schedule's count and first three starts against the placed bursts at 6 and
+        // 48 kHz (a burst's first non-zero sample sits one host sample in: the envelope starts
+        // at 0).
+        let sched = burst_schedule();
+        assert!(sched.len() >= 10, "{} bursts", sched.len());
+        for rate in [6000u32, 48_000] {
+            let d = bursts(rate, 12 * rate as usize);
+            let mut starts = Vec::new();
+            let mut i = 0usize;
+            while i < d.len() {
+                if d[i] != 0.0 {
+                    starts.push(i);
+                    while i < d.len() && d[i] != 0.0 {
+                        i += 1;
+                    }
+                }
+                i += 1;
+            }
+            assert_eq!(starts.len(), sched.len(), "burst count at {rate}");
+            for (k, (t6, _, _)) in sched.iter().take(3).enumerate() {
+                let want = (t6 * u64::from(rate) / 6000) as i64;
+                assert!(
+                    (starts[k] as i64 - want).abs() <= 1 + i64::from(rate / 6000),
+                    "burst {k} at {rate}: {} vs {want}",
+                    starts[k]
+                );
+            }
+        }
         // (the envelope's first sample is 0, so the first non-zero sample sits one host sample
         // in: within one device sample across rates)
         assert!((first(6000) as i64 - first(48_000) as i64).abs() <= 1);
@@ -2267,8 +2295,8 @@ mod tests {
         assert!(p4 > 100.0 * p3, "4 Hz bin {p4} vs off-bin {p3}");
     }
 
-    /// T003: the resampler at the seven rates on a −20 dBFS 1 kHz tone (level within 0.05 dB,
-    /// frequency within 0.1 Hz by a sine fit), and the identity at 6 kHz.
+    /// T003: the resampler at the seven rates on a −20 dBFS 1 kHz tone (the level within 0.05 dB,
+    /// the frequency within 1 Hz by zero crossings; T025), and the identity at 6 kHz.
     #[test]
     fn resampler_tone_level_and_frequency_at_each_rate() {
         for rate in configs::all_rates() {
