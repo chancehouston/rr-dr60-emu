@@ -21,8 +21,8 @@ By participating you agree to follow our [Code of Conduct](CODE_OF_CONDUCT.md).
    cargo fmt --all -- --check
    cargo clippy --all-targets --all-features -- -D warnings
    cargo test --all-features
-   # coverage (one-time setup: cargo install cargo-llvm-cov; rustup component add llvm-tools-preview)
-   cargo llvm-cov --all-features --workspace --fail-under-lines 80
+   # coverage (one-time setup: cargo install cargo-llvm-cov cargo-nextest; rustup component add llvm-tools-preview)
+   cargo llvm-cov nextest --all-features --workspace --fail-under-lines 80
    ```
 
 ## Workflow: spec first
